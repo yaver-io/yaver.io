@@ -4,7 +4,7 @@ import { api, internal } from "./_generated/api";
 import { listGrantedMachineIdsForGrant, listVisibleInfraGrantsForGuest } from "./access";
 import { isOwnerUserId } from "./ownerAllowlist";
 import { randomHex, sha256Hex } from "./auth";
-import { createHetznerProvider } from "./cloudProviders/hetzner";
+import { selectComputeProvider } from "./cloudProviders/selection";
 
 // Machine specs by type. The Hetzner server_type strings are what you pass
 // to POST https://api.hetzner.cloud/v1/servers.
@@ -2077,7 +2077,81 @@ export const provision = internalAction({
       });
       return;
     }
-    const cloudProvider = createHetznerProvider(HCLOUD_TOKEN);
+    // Provider-neutral placement. The user CANNOT influence this: the decision
+    // is server-side only, defaults to Hetzner, and refuses any provider that
+    // is not production-eligible or cannot satisfy the paid-placement
+    // capability floor (delete-stops-spend, durable volume, tagged cleanup).
+    // An operator may force an adapter for testing via a server-side env var,
+    // which is loud and auditable — never a request field.
+    let cloudProvider;
+    let selectedProviderId: string = "hetzner";
+    try {
+      const selection = selectComputeProvider();
+      cloudProvider = selection.provider;
+      selectedProviderId = selection.providerId;
+      if (selection.operatorForced) {
+        console.warn(`[cloudMachines.provision] ${selection.reason}`);
+      }
+    } catch (e) {
+      // Never silently fall back to a different provider — a placement we did
+      // not intend is how spend lands somewhere nobody is watching.
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId: args.machineId,
+        status: "error",
+        errorMessage: `No eligible compute provider: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      return;
+    }
+
+    await ctx.runMutation(internal.cloudMachines.setProviderId, {
+      machineId: args.machineId,
+      provider: selectedProviderId,
+    });
+
+    // ─── Serverless pool assignment (hosted tier only) ────────────────────
+    // A hosted backend must STAY UP to serve requests, so it can never park —
+    // which removes the one mechanism that makes a dedicated box affordable.
+    // Dedicated is 14% gross at $29; pooled ~10 tenants it is 91%. So the same
+    // rule that fixed Relay Pro applies: it cannot park, therefore it shares.
+    //
+    // Assigned BEFORE any provider spend so a reused host never reaches the
+    // create path. byok workspaces are untouched — they park, so they stay
+    // dedicated and keep VM-level isolation.
+    let serverlessSlot: { hostKey: string; needsProvision: boolean; reason: string } | null = null;
+    {
+      const pre = await ctx.runQuery(internal.cloudMachines.getInternal, {
+        machineId: args.machineId,
+      });
+      if (pre?.tier === "hosted") {
+        serverlessSlot = await ctx.runMutation(internal.serverlessPool.assignToPool, {
+          machineId: args.machineId,
+          region: pre.region || "eu",
+        });
+        const host = await ctx.runQuery(internal.serverlessPool.hostEndpoint, {
+          hostKey: serverlessSlot.hostKey,
+        });
+        if (host?.serverId && host.serverIp) {
+          // REUSE: this is the entire saving. Creating a second box here would
+          // silently restore the 14% margin with no visible symptom.
+          //
+          // ⚠️ Placement readiness is NOT runtime readiness. Co-tenanting
+          // executing tenant functions requires the isolation floor in
+          // desktop/agent/serverless_isolation.go, which itself reports NOT
+          // ready for untrusted third-party code on a shared kernel.
+          await ctx.runMutation(internal.cloudMachines.setProvisioned, {
+            machineId: args.machineId,
+            hetznerServerId: host.serverId,
+            serverIp: host.serverIp,
+            hostname: `${String(args.machineId).substring(0, 8)}.cloud.yaver.io`,
+            serverType: "shared",
+          });
+          console.log(
+            `[cloudMachines.provision] hosted backend joined shared host ${serverlessSlot.hostKey} (${serverlessSlot.reason})`,
+          );
+          return;
+        }
+      }
+    }
 
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, {
       machineId: args.machineId,
@@ -2266,6 +2340,11 @@ export const provision = internalAction({
       : "ubuntu-24.04";
     const baseImageId = typeof bootImage === "number" ? String(bootImage) : bootImage;
     let persistentVolumeId: string | undefined;
+    // Provider-native id of a server that EXISTS but whose row has not been
+    // written yet. This window is the R1 orphan: create succeeds, a later step
+    // throws, and the VM bills forever with nothing referencing it and no sweep
+    // able to find it (2026-07-21 audit).
+    let createdCloudResourceId: string | undefined;
     let persistentVolumeSizeGb: number | undefined;
 
     try {
@@ -2323,9 +2402,13 @@ export const provision = internalAction({
           userData: finalCloudInit,
       });
       const hetznerServerId = created.cloudResourceId;
+      // Remember the server the MOMENT it exists. Everything below can throw,
+      // and until setProvisioned runs there is no row pointing at this server —
+      // so without this the catch has no idea a billing VM was created.
+      createdCloudResourceId = hetznerServerId;
       const serverIp = created.serverIp;
       if (!serverIp) {
-        throw new Error("Hetzner provider returned no public IPv4 address");
+        throw new Error(`${selectedProviderId} provider returned no public IPv4 address`);
       }
 
       // ── 2. Cloudflare DNS for the auto subdomain ───────────────
@@ -2455,8 +2538,24 @@ export const provision = internalAction({
         `[cloudMachines.provision] provisioned ${serverName} (${serverIp}) → ${autoDomain}`,
       );
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      let msg = e instanceof Error ? e.message : String(e);
       console.error("[cloudMachines.provision] failed:", msg);
+      // ── Reclaim the SERVER first: it is the expensive thing, and it is the
+      // one this path used to abandon. Ordered before the volume because a
+      // Hetzner volume delete fails while still attached to a live server.
+      if (createdCloudResourceId) {
+        try {
+          await cloudProvider.deleteMachine({ cloudResourceId: createdCloudResourceId });
+        } catch (deleteErr) {
+          // We could not stop the meter. Say so LOUDLY on the row with the
+          // provider id — a running server nobody knows about is the one
+          // outcome we never accept, and this string is the only breadcrumb.
+          const de = deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
+          msg = `${msg} — AND the created server could not be deleted (${de}). ` +
+            `${selectedProviderId} resource ${createdCloudResourceId} is STILL RUNNING and billing: delete it manually.`;
+          console.error("[cloudMachines.provision] ORPHAN SERVER:", createdCloudResourceId, de);
+        }
+      }
       if (persistentVolumeId) {
         try {
           await cloudProvider.deleteVolume({ volumeId: persistentVolumeId });
@@ -2836,8 +2935,150 @@ export const clearResources = internalMutation({
       volumeId: undefined,
       volumeSizeGb: undefined,
       baseImageId: undefined,
+      egressIpId: undefined,
+      egressIpAddress: undefined,
+      egressIpScope: undefined,
+      egressIpReservedAt: undefined,
       updatedAt: Date.now(),
     });
+    return { ok: true };
+  },
+});
+
+/**
+ * Every provider-native resource id Convex believes it owns, across all rows.
+ * This is the "expected" side of provider→Convex reconciliation; anything the
+ * provider holds that is NOT in here is an orphan.
+ *
+ * Deliberately unscoped by user: an orphan has no owner by definition, so the
+ * sweep must see the whole fleet. It returns opaque provider ids only — no
+ * paths, no secrets, no customer data.
+ */
+export const listKnownProviderResourceIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ids = new Set<string>();
+    for (const m of await ctx.db.query("cloudMachines").collect()) {
+      for (const id of [
+        m.hetznerServerId,
+        m.cloudResourceId,
+        m.volumeId,
+        m.baseImageId,
+        m.lastSnapshotId,
+        m.egressIpId,
+      ]) {
+        if (id) ids.add(String(id));
+      }
+    }
+    // Relay Pro boxes live on the SAME provider account but in a different
+    // table. Omitting them would make every managed relay server and its grace
+    // snapshot look like an orphan — a sweep that cries wolf gets ignored, and
+    // an ignored sweep is worse than no sweep at all.
+    for (const r of await ctx.db.query("managedRelays").collect()) {
+      for (const id of [r.hetznerServerId, r.cloudResourceId, r.lastSnapshotId]) {
+        if (id) ids.add(String(id));
+      }
+    }
+    return Array.from(ids);
+  },
+});
+
+/**
+ * Stamp which IaaS this row actually landed on.
+ *
+ * `createCloudMachine` never wrote this field, so every managed row carried
+ * `provider === undefined` and every reader defaulted it to "hetzner". That is
+ * fine while Hetzner is the only placement — and becomes a silent, expensive
+ * lie the moment it is not: `cloudLifecycle.pauseMachine` reads
+ * `machine.provider` for telemetry but calls `hetznerDelete` unconditionally,
+ * so a mis-stamped row would be marked "paused" while its real VM kept running.
+ * Recording the truth at provision time is what makes that fixable.
+ */
+export const setProviderId = internalMutation({
+  args: { machineId: v.id("cloudMachines"), provider: v.string() },
+  handler: async (ctx, { machineId, provider }) => {
+    await ctx.db.patch(machineId, { provider, updatedAt: Date.now() });
+    return { ok: true };
+  },
+});
+
+/** Record a newly reserved stable egress address for this workspace. */
+export const setEgressIp = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    egressIpId: v.string(),
+    egressIpAddress: v.string(),
+    egressIpScope: v.string(),
+  },
+  handler: async (ctx, { machineId, egressIpId, egressIpAddress, egressIpScope }) => {
+    await ctx.db.patch(machineId, {
+      egressIpId,
+      egressIpAddress,
+      egressIpScope,
+      egressIpReservedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+/** Rows holding a reserved egress IP while parked — input to the release sweep. */
+export const listParkedWithEgressIp = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("cloudMachines").collect();
+    return rows
+      .filter(
+        (m) =>
+          Boolean(m.egressIpId) &&
+          (m.status === "paused" || m.status === "stopped" || m.status === "suspended"),
+      )
+      .map((m) => ({
+        machineId: m._id,
+        egressIpId: m.egressIpId as string,
+        egressIpAddress: m.egressIpAddress,
+        // lastParkedAt is the honest clock; fall back to the reservation time
+        // so a row missing the park stamp still ages out instead of leaking.
+        parkedAt: m.lastParkedAt ?? m.egressIpReservedAt ?? m.updatedAt ?? 0,
+      }));
+  },
+});
+
+/**
+ * Drop the pointer to ONE detachable paid resource, and only after the
+ * provider actually reclaimed it.
+ *
+ * Clearing a pointer we did NOT reclaim is how a resource becomes invisible
+ * AND still billed: the row stops mentioning the volume/IP, so no retry, no
+ * sweep, and no human ever looks for it again. So every caller must pass only
+ * the resources whose delete returned success. reclaimAuxResources enforces
+ * this by deriving the flags from its own per-resource outcomes.
+ */
+export const clearAuxPointers = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    clearVolume: v.optional(v.boolean()),
+    clearEgressIp: v.optional(v.boolean()),
+    clearSnapshot: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { machineId, clearVolume, clearEgressIp, clearSnapshot }) => {
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (clearVolume) {
+      patch.volumeId = undefined;
+      patch.volumeSizeGb = undefined;
+    }
+    if (clearEgressIp) {
+      patch.egressIpId = undefined;
+      patch.egressIpAddress = undefined;
+      patch.egressIpScope = undefined;
+      patch.egressIpReservedAt = undefined;
+    }
+    if (clearSnapshot) {
+      patch.lastSnapshotId = undefined;
+      patch.lastSnapshotAt = undefined;
+      patch.snapshotSizeGb = undefined;
+    }
+    await ctx.db.patch(machineId, patch);
     return { ok: true };
   },
 });
@@ -3036,11 +3277,14 @@ export const destroy = internalAction({
 
     let warn = "";
     const mustSnapshot = snapshotIsMandatory(machine.tier);
+    // Hoisted out of the server block: the aux-resource reclaim below has to
+    // know which snapshot is the user's freshly-taken data copy so it deletes
+    // the STALE park snapshot and never the one we just made to protect them.
+    let preservedSnapshotId = "";
     if (machine.hetznerServerId) {
       // Pre-delete snapshot. For a hosted box this is the user's ONLY
       // data copy → a failure ABORTS the delete (status:error, box
       // kept). For byok it's disposable → best-effort, continue.
-      let snapshotId = "";
       // Snapshot ONLY when it's the user's only data copy (hosted) or
       // they explicitly opted in. byok boxes are DISPOSABLE — taking a
       // pre-delete snapshot of one is recurring storage cost for
@@ -3056,7 +3300,7 @@ export const destroy = internalAction({
         if (snap.ok) {
           try {
             const sj = (await snap.json()) as { image?: { id?: number } };
-            if (sj.image?.id) snapshotId = String(sj.image.id);
+            if (sj.image?.id) preservedSnapshotId = String(sj.image.id);
           } catch { /* id is best-effort metadata */ }
         } else if (mustSnapshot) {
           await ctx.runMutation(internal.cloudMachines.setStatus, {
@@ -3080,11 +3324,11 @@ export const destroy = internalAction({
         warn = `grace snapshot failed (${e instanceof Error ? e.message : String(e)}); continued with delete; `;
       }
       } // end snapshot gate — byok skips, so no orphan/cost
-      if (snapshotId) {
+      if (preservedSnapshotId) {
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId,
           status: machine.status ?? "stopping",
-          lastSnapshotId: snapshotId,
+          lastSnapshotId: preservedSnapshotId,
         });
       }
       // Delete. Surface a real failure as status:error — do NOT fall
@@ -3110,6 +3354,34 @@ export const destroy = internalAction({
         });
         return;
       }
+    }
+
+    // ─── Reclaim the satellites the server delete does NOT stop ───────────
+    // A deleted server does not stop the volume, the reserved egress IP, or a
+    // stale snapshot — they are designed to outlive it (that is how park keeps
+    // state cheap). Until 2026-07-21 this path stopped at the server, so every
+    // customer decommission left its volume billing forever, and no sweep
+    // existed that could ever have found it. `preExistingSnapshotId` is the
+    // pre-delete copy taken above for hosted/opt-in boxes: that one is the
+    // user's data and is deliberately preserved.
+    const auxReclaim = await ctx.runAction(internal.cloudLifecycle.reclaimAuxResources, {
+      machineId,
+      deleteSnapshot: true,
+      keepSnapshotId: preservedSnapshotId || undefined,
+    });
+    if (!auxReclaim.ok) {
+      // The server IS gone (the expensive part stopped), but something smaller
+      // is still on the meter. Never report "stopped" — that word means "costs
+      // you nothing now". Name the exact resource and its id so the remedy is
+      // an action, not a scavenger hunt. destroy is idempotent (server delete
+      // tolerates 404), so Decommission again is a safe, real retry.
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId,
+        status: "error",
+        errorMessage:
+          `${warn}Server deleted, but these resources are STILL BILLING: ${auxReclaim.leaked.join("; ")}. Retry Decommission to reclaim them.`,
+      });
+      return;
     }
 
     if (CF_API_TOKEN && CF_ZONE_ID && machine.hostname) {

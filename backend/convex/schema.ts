@@ -1122,6 +1122,22 @@ export default defineSchema({
   managedRelays: defineTable({
     userId: v.id("users"),
     subscriptionId: v.id("subscriptions"),
+    // ─── Shared relay pool ──────────────────────────────────────────────
+    // Relay Pro rides a SHARED multi-tenant host by default. A dedicated box
+    // (cax11, €6.99/mo, necessarily always-on) against $9/mo revenue is 16%
+    // gross — and a relay cannot scale to zero, so that margin is structural.
+    // Shared across ~20 tenants it is €0.35 and 96%.
+    //
+    // Sharing costs NO security here, and that is why it is safe: the relay is
+    // pass-through, authorizes nothing, cross-tenant bridging is blocked in
+    // Convex (devices.ts / userSettings.ts), and free-vs-Pro is explicitly not
+    // a security boundary — Pro buys capacity only.
+    //
+    // `sharedHostKey` groups rows onto one physical box. Absent ⇒ dedicated
+    // (legacy rows, and the paid "Private Relay" SKU which is sold separately
+    // at a price that actually covers an always-on machine).
+    sharedHostKey: v.optional(v.string()),
+    isDedicated: v.optional(v.boolean()),
     status: v.string(), // "provisioning" | "active" | "stopping" | "stopped" | "error"
     // Underlying IaaS (provider-agnostic above the facade). Absent ⇒
     // "hetzner". See cloudMachines.provider for the rationale.
@@ -1341,6 +1357,12 @@ export default defineSchema({
     // data lives in the Convex on their own dedicated box; central
     // Convex still sees only identity. Flag/URL only — never secrets.
     tier: v.optional(v.union(v.literal("byok"), v.literal("hosted"))),
+    // Shared serverless host slot. A backend cannot park (it must serve
+    // requests), so it can never be dedicated at $29 — 14% gross. Pooled
+    // ~10 tenants per box it is 86%. Absent ⇒ dedicated/legacy.
+    // ⚠️ Placement readiness is NOT runtime readiness: co-tenanting executing
+    // tenant functions needs microVM-grade isolation. See serverlessPool.ts.
+    serverlessHostKey: v.optional(v.string()),
     // Self-hosted Convex public API origin on this box (e.g.
     // https://<id>.cloud.yaver.io/_convex-api). Set once the hosted
     // backend is up. Plain URL — privacy-safe (no key, no path).
@@ -1352,12 +1374,35 @@ export default defineSchema({
     // resubscribe). byok boxes are disposable → none of this applies.
     deprovisionAt: v.optional(v.number()),
     scheduledDestroyId: v.optional(v.id("_scheduled_functions")),
+    // ─── Park mode ──────────────────────────────────────────────────────
+    // HOW this box parks, which is really a question about what we can
+    // PROMISE. Hetzner has no capacity reservation and bills a STOPPED server
+    // exactly like a running one — only DELETE stops the meter. So there is no
+    // "cheap but guaranteed" state to buy, and on 2026-07-21 every SKU Yaver
+    // uses was sold out in all three EU datacenters, i.e. a deep-parked EU box
+    // genuinely could not have been woken.
+    //
+    //   "deep"     (default) delete the server, keep the volume. ~90% cheaper,
+    //              wake is BEST-EFFORT and may fail when a region is full.
+    //   "standby"  keep the SMALLEST server alive with the volume attached and
+    //              resize up on use. Costs a few € more than the volume alone,
+    //              and the workspace is never UNREACHABLE — only slower. This
+    //              is the honest way to sell availability: degraded, not gone.
+    //   "reserved" never park. Full price, full guarantee.
+    //
+    // Absent ⇒ "deep" (every existing row predates this field and is deleted
+    // on park today).
+    parkMode: v.optional(v.string()),
     // Auto-park (auto-close) is OPT-OUT: undefined === enabled, so an idle box
     // still stops its own meter by default. Only an explicit `false` keeps a
     // box running while idle (the owner accepts the bill). Surfaced as a toggle
     // in mobile + web; enforced in cloudLifecycle.listIdleCandidates.
     autoParkEnabled: v.optional(v.boolean()),
-    // Minutes of idleness before auto-park fires (default 45 when unset).
+    // Minutes of idleness before auto-park fires (default 20 when unset).
+    // 20, not 45: scattered sessions keep a box alive through every gap shorter
+    // than the timer, so a 45-min timer turns "4 h/day of work" into 6-8 h/day
+    // of billed uptime — 180-240 h/month against a 120 h allowance. See
+    // cloudLifecycle.idleSweep and docs/architecture/yaver-four-tier-deep-analysis.md §6.3.
     autoParkMinutes: v.optional(v.number()),
     // Persistent Hetzner Volume holding the workspace/Docker/model data. It
     // SURVIVES the server delete and re-attaches in seconds, so a park does not
@@ -1365,6 +1410,36 @@ export default defineSchema({
     // difference between a ~10 min wake and a ~60-90s one.
     volumeId: v.optional(v.string()),
     volumeSizeGb: v.optional(v.number()),
+    // ─── Stable egress identity ─────────────────────────────────────────
+    // Park is delete-not-stop, so every wake used to mint a BRAND NEW public
+    // IP. One subscription credential (the user's own Claude/Codex login,
+    // mirrored onto the box) then reaches the vendor from a different
+    // datacenter IP every single wake — indistinguishable, to an abuse
+    // heuristic, from credential sharing or resale. A reserved IP that
+    // survives the server delete keeps one workspace = one egress address.
+    //
+    // Provider-NEUTRAL names on purpose: `hetznerServerId` taught us that
+    // baking the provider into the field name costs a migration later. The
+    // concrete primitive differs per provider (Hetzner Primary IP with
+    // auto_delete:false, AWS Elastic IP, GCP static external IP, Azure
+    // Standard static Public IP) but the contract is identical: reserve
+    // once, re-attach on every wake, release ONLY on decommission.
+    //
+    // ⚠️ COST: a reserved IP bills while the box is parked (~€0.50-1.20/mo
+    // Hetzner, ~$3-7/mo on the hyperscalers) — it partially offsets
+    // scale-to-zero, so it is for PAID workspaces only, never trials, and
+    // is auto-released after a long park (egressIpReservedAt is the clock).
+    // ⚠️ It is also a DETACHABLE PAID RESOURCE that outlives its server —
+    // exactly the shape that already leaks via volumeId. It MUST be
+    // reclaimed in the same path. See cloudLifecycle.reclaimAuxResources.
+    egressIpId: v.optional(v.string()),
+    egressIpAddress: v.optional(v.string()),
+    // Provider placement scope the reserved IP is pinned to (Hetzner
+    // Primary IPs are datacenter-bound, AWS EIPs region-bound, GCP static
+    // IPs region-bound). A wake MUST recreate inside this scope or the IP
+    // cannot be re-attached.
+    egressIpScope: v.optional(v.string()),
+    egressIpReservedAt: v.optional(v.number()),
     // Resize request state. The current first pass records that the existing
     // persisted workspace must be recreated on a larger profile; the provider
     // worker consumes this later. Labels only — no paths, prompts, logs, IPs,
@@ -1607,6 +1682,10 @@ export default defineSchema({
     expiresAt: v.number(),           // pending invitations expire after 2 days
     acceptedAt: v.optional(v.number()),
     revokedAt: v.optional(v.number()),
+    // Host-side UI tombstone. Delete/hide is distinct from revoke: revoke
+    // removes access, hostHiddenAt removes old pending/revoked/expired rows
+    // from normal guest lists while preserving audit history.
+    hostHiddenAt: v.optional(v.number()),
   })
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestEmail", ["guestEmail"])

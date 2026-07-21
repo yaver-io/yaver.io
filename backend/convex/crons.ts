@@ -15,6 +15,15 @@ import { cronJobs } from "convex/server";
 //       rows past the 1-year refresh grace. ADD the systemd timer on the
 //       Hetzner cron box alongside the others; until then trigger once
 //       manually to clear the historical backlog.)
+//   - internal.cloudLifecycle.reconcileProviderResources
+//       (Hetzner: daily — POST /crons/run {name:"cloudOrphanSweep"};
+//       provider→Convex reconciliation. REPORT-ONLY. This is the only thing
+//       that can find a resource we are billed for but Convex forgot; without
+//       it, a leak is permanent AND invisible. 2026-07-21 audit.)
+//   - internal.cloudLifecycle.releaseStaleEgressIps
+//       (Hetzner: daily — POST /crons/run {name:"cloudEgressIpSweep"};
+//       releases reserved egress IPs held by long-parked boxes. Live only when
+//       YAVER_EGRESS_IP_SWEEP_LIVE=true.)
 //   - internal.cloudLifecycle.meterTick        (Hetzner: hourly — POST
 //       /crons/run {name:"cloudMeter"}; managed-cloud prepaid meter,
 //       dryRun:true until the prepaid product launches)

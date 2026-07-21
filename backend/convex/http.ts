@@ -856,7 +856,7 @@ for (const path of [
   "/gateway/policy", "/gateway/policy/set",
   "/gateway/token/mint", "/gateway/token/revoke", "/gateway/token/rotate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
-  "/guests/find-by-code", "/guests/revoke", "/guests/leave", "/guests/list", "/guests/hosts",
+  "/guests/find-by-code", "/guests/revoke", "/guests/delete", "/guests/leave", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage", "/guests/conversion",
   "/connections/request", "/connections/accept", "/connections/remove",
   "/connections/block", "/connections/unblock", "/connections/nickname",
@@ -5736,6 +5736,37 @@ http.route({
           status: "past_due",
           currentPeriodEnd: Date.now(),
         });
+        // ─── Stop the meter on a failing card ──────────────────────────────
+        // Until 2026-07-21 this branch set the status and RETURNED: the box
+        // kept running, the gateway kept serving, and /billing/status even
+        // counted past_due as "subscribed". A failing card therefore bought
+        // indefinite free compute until LemonSqueezy eventually emitted
+        // `cancelled` — days or weeks later, at our expense.
+        //
+        // DEMOTE, don't destroy. Parking preserves the volume (their work is
+        // untouched) while dropping the cost floor from a running box to a few
+        // cents of storage. The customer loses convenience, never data — so a
+        // card that fails for an innocent reason is fully recoverable by
+        // paying, and a card that fails forever stops costing us on day one.
+        try {
+          await ctx.runMutation(internal.gatewayPolicy.setPolicyInternal, {
+            userId: user._id,
+            enabled: false,
+            note: "auto-disabled: subscription_payment_failed",
+            setBy: "billing-webhook",
+          });
+        } catch {
+          // Best-effort — parking the compute below is the expensive half.
+        }
+        for (const machine of await ctx.runQuery(internal.cloudMachines.listForUser, {
+          userId: user._id,
+        })) {
+          if (machine.status !== "active") continue;
+          await ctx.scheduler.runAfter(0, internal.cloudLifecycle.pauseMachine, {
+            machineId: machine._id,
+            dryRun: false,
+          });
+        }
         break;
       }
 
@@ -7862,6 +7893,40 @@ http.route({
   }),
 });
 
+/** POST /guests/delete — Revoke if live, then hide the guest row from host lists. */
+http.route({
+  path: "/guests/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    const inviteId = typeof body.inviteId === "string" ? body.inviteId : undefined;
+    const email = typeof body.email === "string" ? body.email : undefined;
+    const userId = typeof body.userId === "string" ? body.userId : undefined;
+    if (!inviteId && !email && !userId) {
+      return errorResponse("inviteId, email, or userId is required");
+    }
+
+    try {
+      const result = await ctx.runMutation(api.guests.deleteGuest, {
+        tokenHash,
+        inviteId,
+        guestEmail: email,
+        guestUserId: userId,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to delete guest", 400);
+    }
+  }),
+});
+
 /**
  * POST /guests/leave — Guest drops their OWN access to a host's shared infra.
  * Guest only; the session user is always the guest, so this can never remove
@@ -9546,8 +9611,29 @@ const runCron = httpAction(async (ctx, req) => {
       // Hetzner cron timers like the others (every 10–15 min is plenty).
       await ctx.scheduler.runAfter(0, internal.cloudLifecycle.idleSweep, {
         enabled: managedCloudIdleAutoOffEnabled(),
-        idleMinutes: Number(process.env.YAVER_CLOUD_IDLE_MINUTES) || 45,
+        // 20 min default — see cloudLifecycle.idleSweep for why this constant
+        // is load-bearing rather than a tuning knob.
+        idleMinutes: Number(process.env.YAVER_CLOUD_IDLE_MINUTES) || 20,
         dryRun: false,
+      });
+      break;
+    case "cloudOrphanSweep":
+      // Provider → Convex reconciliation. The ONLY thing that can discover a
+      // resource the provider is billing us for but Convex has forgotten
+      // (failed provision, cleared pointer, half-finished decommission).
+      // REPORT-ONLY on purpose: this token can also see boxes that are not
+      // Yaver workspaces, so deletion stays a human decision. Daily is plenty.
+      await ctx.scheduler.runAfter(0, internal.cloudLifecycle.reconcileProviderResources, {
+        dryRun: true,
+      });
+      break;
+    case "cloudEgressIpSweep":
+      // Give back reserved egress addresses held by long-parked boxes. A
+      // reserved IP bills while unassigned, so this is a real cost stop.
+      // Not tied to the wallet meter's dry-run: a simulated ledger must never
+      // keep paying for a forgotten address (same reasoning as cloudIdleSweep).
+      await ctx.scheduler.runAfter(0, internal.cloudLifecycle.releaseStaleEgressIps, {
+        dryRun: !parseBooleanEnv(process.env.YAVER_EGRESS_IP_SWEEP_LIVE, false),
       });
       break;
     case "reconcileManagedSubscriptions":
@@ -9559,6 +9645,13 @@ const runCron = httpAction(async (ctx, req) => {
     default:
       return new Response(`Unknown cron: ${name}`, { status: 404 });
   }
+  // Record the tick AFTER dispatch so cronHealth reflects jobs that actually
+  // ran. This is what makes "the timer host died" detectable at all — without
+  // it, auto-park and metering can stop silently and the only symptom is the
+  // Hetzner invoice weeks later.
+  await ctx.runMutation(internal.cloudLifecycle.recordCronTick, { name }).catch(() => {
+    // Never fail a cron because bookkeeping failed — the job already ran.
+  });
   return new Response(JSON.stringify({ ok: true, scheduled: name }), {
     status: 200,
     headers: { "Content-Type": "application/json" },

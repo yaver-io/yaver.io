@@ -85,6 +85,26 @@ export const updateProvisioned = internalMutation({
 });
 
 // Mark relay as stopping/stopped
+/**
+ * Record the grace snapshot taken at deprovision.
+ *
+ * Without this the snapshot is billed forever AND unrestorable — the relay
+ * teardown created one and discarded the id, so the "a resubscribe can be
+ * restored from it" promise was not achievable, and the orphan sweep could not
+ * tell the snapshot apart from junk. 2026-07-21 audit.
+ */
+export const setSnapshot = internalMutation({
+  args: { relayId: v.id("managedRelays"), lastSnapshotId: v.string() },
+  handler: async (ctx, { relayId, lastSnapshotId }) => {
+    await ctx.db.patch(relayId, {
+      lastSnapshotId,
+      lastSnapshotAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
 export const setStatus = internalMutation({
   args: {
     relayId: v.id("managedRelays"),

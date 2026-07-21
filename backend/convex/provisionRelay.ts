@@ -70,8 +70,25 @@ export const provision = internalAction({
       return;
     }
 
+    // ─── Shared pool assignment (before ANY provider spend) ──────────────
+    // Relay Pro rides a shared multi-tenant host. A dedicated box per
+    // subscriber is 16% gross against $9/mo and cannot scale to zero (a relay
+    // is useless when off), so the box is created ONCE per ~20 tenants and
+    // reused thereafter. Safe because the relay is pass-through: it authorizes
+    // nothing, executes no tenant code, and cross-tenant bridging is refused in
+    // Convex before any forwarding. See relayPool.ts.
+    const slot = await ctx.runMutation(internal.relayPool.assignToPool, {
+      relayId: args.relayId,
+      region: args.region,
+    });
+    const existingHost = await ctx.runQuery(internal.relayPool.hostEndpoint, {
+      hostKey: slot.hostKey,
+    });
     const shortId = args.userId.substring(0, 8);
-    const serverName = `relay-${shortId}`;
+    // Host boxes are named per POOL SLOT, not per user — the box serves many
+    // tenants, so naming it after the first one would be a lie that outlives
+    // that tenant's subscription.
+    const serverName = slot.hostKey;
     const subdomain = `${shortId}.relay`;
     const domain = `${shortId}.relay.yaver.io`;
 
@@ -169,6 +186,37 @@ runcmd:
   - ufw allow 4433/udp || true
 `;
 
+      // REUSE: another tenant already provisioned this host. This is the whole
+      // saving — every tenant after the first costs nothing but its share, and
+      // creating a second box here would silently restore the 16% margin.
+      if (existingHost?.serverId && existingHost.serverIp) {
+        await ctx.runMutation(internal.managedRelays.updateProvisioned, {
+          relayId: args.relayId,
+          hetznerServerId: existingHost.serverId,
+          serverIp: existingHost.serverIp,
+          domain,
+        });
+        // The tenant still gets its OWN canonical hostname pointing at the
+        // shared host, so its relay URL is stable and independent of which box
+        // it happens to sit on today.
+        await fetch(
+          `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${CF_API_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "A", name: subdomain, content: existingHost.serverIp,
+              proxied: false, ttl: 60,
+            }),
+          },
+        ).catch(() => { /* DNS is best-effort; IP-direct still works */ });
+        console.log(`[provision] Relay ${domain} joined shared host ${slot.hostKey} (${slot.reason})`);
+        await ctx.scheduler.runAfter(60_000, internal.provisionRelay.healthCheck, {
+          relayId: args.relayId, domain,
+        });
+        return;
+      }
+
       const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
         method: "POST",
         headers: {
@@ -177,10 +225,25 @@ runcmd:
         },
         body: JSON.stringify({
           name: serverName,
-          server_type: "cax11",
+          // ⚠️ VERIFIED AGAINST THE LIVE CATALOG 2026-07-21.
+          // This was "cax11" (ARM, €6.99/mo) — which is SOLD OUT in every EU
+          // datacenter, so provisioning a new pool host would have failed at
+          // create. It also could never be resized: change-type cannot cross
+          // architectures, and ZERO ARM types are currently orderable.
+          //
+          // cpx12 (1c/2GB, €13.49/mo) is the cheapest EU-available x86 type. It
+          // is dearer per box, but the pool amortises it across ~20 tenants:
+          // €0.67/user → 92% margin on Relay Pro, versus 16% dedicated. A relay
+          // is pass-through, so 1 core and 2 GB is ample — the scarce resource
+          // is BANDWIDTH, not CPU.
+          //
+          // Re-check before trusting this: `hcloud server-type list`.
+          server_type: process.env.YAVER_RELAY_SERVER_TYPE || "cpx12",
           image: "ubuntu-24.04",
           location,
-          labels: { service: "yaver-relay", user: shortId, managed: "true" },
+          // Labelled by POOL SLOT so the orphan sweep and cleanup can reason
+          // about it; `user` is the tenant who happened to create it first.
+          labels: { service: "yaver-relay", pool: slot.hostKey, user: shortId, managed: "true" },
           user_data: cloudConfig,
         }),
       });
@@ -348,11 +411,25 @@ export const deprovision = internalAction({
       // so we log and still delete. Cost-safety wins for managed
       // teardown (opposite tradeoff from the disposable dev box).
       try {
-        await fetch(`https://api.hetzner.cloud/v1/servers/${args.hetznerServerId}/actions/create_image`, {
+        const snapResp = await fetch(`https://api.hetzner.cloud/v1/servers/${args.hetznerServerId}/actions/create_image`, {
           method: "POST",
           headers: { "Authorization": `Bearer ${HCLOUD_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ type: "snapshot", description: `yaver-predelete-relay-${args.relayId}-${Date.now()}` }),
         });
+        // RECORD THE ID. Until 2026-07-21 this response was discarded, which
+        // made the snapshot simultaneously (a) permanently billed and (b)
+        // impossible to restore from — defeating the entire stated purpose of
+        // taking it, and invisible to the orphan sweep because no row referenced
+        // it. An unrecorded snapshot is pure cost with zero recovery value.
+        if (snapResp.ok) {
+          const sj = (await snapResp.json()) as { image?: { id?: number } };
+          if (sj.image?.id) {
+            await ctx.runMutation(internal.managedRelays.setSnapshot, {
+              relayId: args.relayId,
+              lastSnapshotId: String(sj.image.id),
+            });
+          }
+        }
       } catch (snapErr) {
         console.error("[deprovision] grace snapshot failed (continuing with delete):", snapErr);
       }

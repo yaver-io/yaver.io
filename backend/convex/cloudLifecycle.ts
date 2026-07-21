@@ -21,6 +21,8 @@
 import { internalMutation, internalQuery, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { MIN_GROSS_MARGIN, STANDARD_HOURS_INCLUDED } from "./unitEconomics";
 import { isOwnerUserId } from "./ownerAllowlist";
 import {
   cloudWorkspaceProfilePolicy,
@@ -670,10 +672,30 @@ function hetznerServerType(machineType: string): string {
   const type = normalizeMachineType(machineType);
   const env = process.env[`YAVER_CLOUD_${type.toUpperCase()}_TYPE`];
   if (env) return env;
-  if (type === "standard") return "cx32";
-  if (type === "heavy") return "cx42";
-  if (type === "build") return "cx52";
+  // ⚠️ VERIFIED AGAINST THE LIVE HETZNER CATALOG 2026-07-21.
+  // These were cx32 / cx42 / cx52 — server types that DO NOT EXIST. The shared
+  // Intel line is cx23 / cx33 / cx43. Every paid provision using the old
+  // defaults would have failed at create with "server type not found", after
+  // the volume was already created. Nothing caught it because no test ever
+  // called Hetzner; `hcloud server-type list` found it in one command.
+  // Re-check with: hcloud server-type list
+  // DEFAULT CLASS = 2c/4GB, per the four-tier plan. The default path is
+  // RN + TypeScript with a Chrome/WebRTC preview and Hermes pushed to the
+  // user's OWN phone — it deliberately avoids the two memory hogs (Redroid,
+  // Gradle), so 4 GB is sufficient and 120 h fits in $29 at ~71% margin.
+  // Sizing every workspace for its worst possible minute is what turns a 71%
+  // tier into a 42% one; capacity is opt-in via the class ladder instead.
+  // cx23 (2c/4GB, €6.49) is cheaper but SOLD OUT everywhere in the EU as of
+  // 2026-07-21 — cpx22 is the cheapest ORDERABLE box in this class. The wake
+  // path re-checks availability and substitutes, so this is a starting point,
+  // never a guarantee.
+  if (type === "standard") return "cpx22"; // 2 vCPU / 4 GB / 80 GB — €22.99/mo
+  if (type === "heavy") return "cpx32";    // 4 vCPU / 8 GB / 160 GB — Large class
+  if (type === "build") return "cpx42";    // 8 vCPU / 16 GB / 320 GB — Redroid/Gradle
   if (type === "cpu") return process.env.YAVER_CLOUD_CPU_TYPE || "cpx51"; // legacy 32GB monorepo SKU
+  // GEX (dedicated GPU) is NOT enabled on this account — a gpu placement will
+  // fail at create until it is, which is honest: better a loud provider error
+  // than silently downgrading a customer to a CPU box they did not buy.
   return process.env.YAVER_CLOUD_GPU_TYPE || "gex44";
 }
 
@@ -881,6 +903,440 @@ async function pruneOldSnapshot(previousId: string | undefined, currentId: strin
   try { await hetznerDeleteImage(token, previousId); } catch { /* best-effort */ }
 }
 
+/**
+ * ─── Stable egress identity (Hetzner Primary IP) ────────────────────────────
+ *
+ * Why Primary IP and NOT Floating IP: a Floating IP changes what reaches the
+ * box INBOUND, but the box still SOURCES outbound connections from its primary
+ * address unless the guest OS is reconfigured to bind it. The thing an abuse
+ * heuristic at Anthropic/OpenAI sees is the SOURCE address, so only the primary
+ * IP actually solves the churn. A Floating IP here would have been a false fix
+ * that tested green (IP reserved, IP attached) while the vendor kept seeing a
+ * different address every wake — inventory vs. operation, again.
+ *
+ * `auto_delete:false` is the whole trick: the address survives the server
+ * delete that park performs, and the next wake re-attaches the SAME address.
+ */
+
+/**
+ * Days a workspace may sit PARKED holding a reserved egress address before we
+ * give it back. A reserved IP bills while unassigned and typically costs more
+ * than the parked volume beside it, so an abandoned box must not hold one
+ * forever. Waking after this changes the address — which is exactly the churn
+ * we are avoiding, so the window is generous by default.
+ */
+const EGRESS_IP_PARK_RELEASE_DAYS = Number(process.env.YAVER_EGRESS_IP_RELEASE_DAYS) || 30;
+
+/**
+ * Monthly revenue attributable to one Cloud Workspace, and the fixed provider
+ * cost it carries regardless of use (20 GB volume + reserved egress IP).
+ * Conservative on purpose: overstating revenue here would let a losing
+ * substitute through.
+ */
+const WORKSPACE_REVENUE_EUR = Number(process.env.YAVER_WORKSPACE_REVENUE_EUR) || 26.7;
+const WORKSPACE_FIXED_EUR = Number(process.env.YAVER_WORKSPACE_FIXED_EUR) || 2.08;
+
+export type EgressIpDecision = { eligible: boolean; reason: string };
+
+/**
+ * Who gets a stable egress address. Pure so it can be reasoned about (and
+ * tested) without a provider account.
+ *
+ * PAID MANAGED BOXES ONLY:
+ *  - Trials have no compute at all, so they can never reach this.
+ *  - BYO boxes run in the USER's provider account — reserving a paid resource
+ *    there would spend their money without asking. Never.
+ *  - The risk this mitigates (one subscription credential seen from a new
+ *    datacenter IP every wake) only exists for a box that carries the user's
+ *    mirrored runner credentials, which is precisely a managed workspace.
+ */
+export function egressIpPolicy(
+  machine: { origin?: string; subscriptionId?: unknown },
+  env: Record<string, string | undefined> = process.env,
+): EgressIpDecision {
+  if (String(env.YAVER_EGRESS_IP_DISABLE ?? "").toLowerCase() === "1") {
+    return { eligible: false, reason: "disabled by YAVER_EGRESS_IP_DISABLE" };
+  }
+  // Absent origin ⇒ managed: every pre-existing cloudMachines row predates the
+  // field and is Yaver-provisioned (same convention as `provider`).
+  if (machine.origin === "self-hosted") {
+    return { eligible: false, reason: "BYO box — never spend in the user's provider account" };
+  }
+  if (!machine.subscriptionId) {
+    return { eligible: false, reason: "no active subscription — paid workspaces only" };
+  }
+  return { eligible: true, reason: "paid managed workspace" };
+}
+
+/**
+ * ─── Availability-driven SKU substitution ───────────────────────────────────
+ *
+ * MEASURED 2026-07-21 against the production account: every server type Yaver
+ * is configured to use (cx33 / cx43 / cpx51 / cax21 / cax31) was **sold out in
+ * all three EU datacenters**. Hetzner reports such a type as `supported` but not
+ * `available` — the classic inventory-vs-operation split.
+ *
+ * Park is delete-not-stop, so a wake must ORDER A NEW SERVER. Asking for one
+ * hardcoded name in a capacity-constrained market is therefore not a preference,
+ * it is an outage: the workspace cannot wake even though 12 other types were
+ * orderable in nbg1 at that exact moment.
+ *
+ * Nobody guarantees on-demand capacity — Hetzner has no reservation product at
+ * all — so the only defence is to ask for what the profile NEEDS and take
+ * whatever the datacenter actually has.
+ *
+ * Hard floor: **disk**. A snapshot only restores onto a type whose disk is >=
+ * the source disk, so undersizing here fails at restore rather than at create,
+ * which is far more confusing. Cores/RAM are floors too, but a bigger box is
+ * always an acceptable substitute for a smaller one.
+ */
+export type SkuRequirement = {
+  minDiskGb?: number;
+  minCores?: number;
+  minRamGb?: number;
+  /** Volumes and snapshots are architecture-bound; arm state cannot boot x86. */
+  architecture?: "x86" | "arm";
+  /**
+   * Hard cost ceiling (gross €/hour). A substitute above this is refused even
+   * if it is the only thing available — see
+   * EGRESS_SUBSTITUTE_MAX_COST_MULTIPLIER.
+   */
+  maxHourlyPrice?: number;
+};
+
+type HetznerServerTypeInfo = {
+  id: number;
+  name: string;
+  cores: number;
+  memory: number;
+  disk: number;
+  architecture: string;
+  prices?: Array<{ location?: string; price_hourly?: { gross?: string } }>;
+};
+
+/**
+ * How much more than the ORIGINAL type a substitute may cost.
+ *
+ * ⚠️ This exists because substitution is a money decision disguised as an
+ * availability decision. Measured 2026-07-21: `cx33` (4c/8GB/80GB) is €8.99/mo
+ * and sold out, while `cpx32` (4c/8GB/160GB) — same cores, same RAM — is
+ * €41.99/mo and available. A selector that optimises for "smallest sufficient"
+ * would quietly move a $29/mo customer onto a €42/mo box and turn a healthy
+ * margin into a loss, while looking like a successful rescue.
+ *
+ * A wake that costs us 5x is not a rescue; it is an outage with a bill. Past
+ * this ceiling we would rather fail honestly and let the user pick another
+ * region — see the placement-ladder doc on why "never disappoint" must not mean
+ * "never refuse".
+ */
+const EGRESS_SUBSTITUTE_MAX_COST_MULTIPLIER =
+  Number(process.env.YAVER_SKU_SUBSTITUTE_MAX_MULTIPLIER) || 1.6;
+
+/**
+ * Highest hourly price a substitute may carry and STILL clear the margin floor.
+ *
+ * ─── Why this replaced a price multiplier ───────────────────────────────────
+ * The first version capped substitutes at 1.6x the original price. Measured
+ * 2026-07-21 that ceiling was €0.0256/h — while the ONLY orderable substitute
+ * was cpx32 at €0.0673/h (4.2x, because cx33 is sold out). So the guard would
+ * have refused the single option that could rescue the wake, and the workspace
+ * would have failed to start. A safety check that fires on the safe case is
+ * worse than no check.
+ *
+ * The multiplier was measuring the wrong thing. "4.2x the old price" is not
+ * the business question — "does this still make money at this workspace's
+ * usage?" is. cpx32 at 120 h clears the floor comfortably; the same box run
+ * 24/7 does not, and THAT is what should be refused.
+ *
+ * Returns undefined when revenue is unknown, which means "no ceiling" — a
+ * dev/owner box must never be blocked from waking by a pricing rule.
+ */
+function maxSubstituteHourlyEur(args: {
+  revenueEur?: number;
+  fixedEur: number;
+  expectedHours: number;
+}): number | undefined {
+  if (!args.revenueEur || args.revenueEur <= 0) return undefined;
+  const hours = args.expectedHours > 0 ? args.expectedHours : 1;
+  const budget = args.revenueEur * (1 - MIN_GROSS_MARGIN) - args.fixedEur;
+  if (budget <= 0) return undefined;
+  return budget / hours;
+}
+
+/** Hourly gross price for a type in a location, or undefined if unknown. */
+function hetznerHourlyPrice(t: HetznerServerTypeInfo, location: string): number | undefined {
+  const p = (t.prices ?? []).find((x) => x.location === location) ?? (t.prices ?? [])[0];
+  const v = Number(p?.price_hourly?.gross);
+  return Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Best ORDERABLE server type in `location` that meets `req`.
+ *
+ * Returns undefined when the location has nothing suitable — the caller must
+ * then say so honestly rather than retrying a name that cannot be served.
+ */
+export async function hetznerPickAvailableServerType(
+  token: string,
+  location: string,
+  req: SkuRequirement,
+): Promise<string | undefined> {
+  try {
+    const [dcRes, stRes] = await Promise.all([
+      fetch(`${HETZNER_API}/datacenters`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      }),
+      // per_page=100 so the price list for every type arrives in one page —
+      // paginating here would silently truncate the candidate set.
+      fetch(`${HETZNER_API}/server_types?per_page=100`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ]);
+    if (!dcRes.ok || !stRes.ok) return undefined;
+    const dcJson = (await dcRes.json()) as {
+      datacenters?: Array<{
+        name?: string;
+        location?: { name?: string };
+        server_types?: { available?: number[] };
+      }>;
+    };
+    const stJson = (await stRes.json()) as { server_types?: HetznerServerTypeInfo[] };
+    const specs = new Map<number, HetznerServerTypeInfo>();
+    for (const s of stJson.server_types ?? []) if (s?.id) specs.set(s.id, s);
+
+    // Union of availability across datacenters in this location. Hetzner
+    // currently has one DC per location, but that is not guaranteed forever and
+    // the union is correct either way.
+    const availableIds = new Set<number>();
+    for (const dc of dcJson.datacenters ?? []) {
+      if (dc.location?.name !== location) continue;
+      for (const id of dc.server_types?.available ?? []) availableIds.add(id);
+    }
+
+    const candidates = Array.from(availableIds)
+      .map((id) => specs.get(id))
+      .filter((s): s is HetznerServerTypeInfo => Boolean(s))
+      .filter((s) => {
+        if (req.architecture && s.architecture !== req.architecture) return false;
+        if (req.minDiskGb && s.disk < req.minDiskGb) return false;
+        if (req.minCores && s.cores < req.minCores) return false;
+        if (req.minRamGb && s.memory < req.minRamGb) return false;
+        return true;
+      })
+      // CHEAPEST sufficient box first — NOT smallest. Size is not a proxy for
+      // price on Hetzner: cpx32 has more disk than cx33 and costs 4.7x. Ranking
+      // by size is how a rescue becomes a loss.
+      .sort((a, b) => {
+        const pa = hetznerHourlyPrice(a, location) ?? Number.POSITIVE_INFINITY;
+        const pb = hetznerHourlyPrice(b, location) ?? Number.POSITIVE_INFINITY;
+        return pa - pb || a.disk - b.disk || a.cores - b.cores;
+      });
+
+    // Enforce the cost ceiling when we know what the original cost.
+    if (req.maxHourlyPrice !== undefined) {
+      const affordable = candidates.find((c) => {
+        const price = hetznerHourlyPrice(c, location);
+        // Unknown price ⇒ refuse. Never substitute onto a box whose cost we
+        // cannot verify; an unverifiable price is how margin leaks silently.
+        return price !== undefined && price <= req.maxHourlyPrice!;
+      });
+      return affordable?.name;
+    }
+    return candidates[0]?.name;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Gross €/hour for one server type in a location, or undefined if unknown. */
+export async function hetznerHourlyPriceForType(
+  token: string,
+  location: string,
+  serverType: string,
+): Promise<number | undefined> {
+  try {
+    const r = await fetch(`${HETZNER_API}/server_types?name=${encodeURIComponent(serverType)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return undefined;
+    const j = (await r.json()) as { server_types?: HetznerServerTypeInfo[] };
+    const t = j.server_types?.[0];
+    return t ? hetznerHourlyPrice(t, location) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Is this exact server type orderable in this location right now? */
+export async function hetznerServerTypeAvailable(
+  token: string,
+  location: string,
+  serverType: string,
+): Promise<boolean> {
+  const picked = await hetznerPickAvailableServerType(token, location, {});
+  if (picked === undefined) return false;
+  try {
+    const r = await fetch(`${HETZNER_API}/server_types?name=${encodeURIComponent(serverType)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return false;
+    const j = (await r.json()) as { server_types?: HetznerServerTypeInfo[] };
+    const want = j.server_types?.[0];
+    if (!want) return false;
+    const alt = await hetznerPickAvailableServerType(token, location, {
+      minDiskGb: want.disk,
+      minCores: want.cores,
+      minRamGb: want.memory,
+      architecture: want.architecture as "x86" | "arm",
+    });
+    return alt === serverType;
+  } catch {
+    return false;
+  }
+}
+
+/** Pick a concrete datacenter inside a Hetzner location (fsn1 → fsn1-dc14). */
+async function hetznerPickDatacenter(token: string, location: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${HETZNER_API}/datacenters`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as {
+      datacenters?: Array<{ name?: string; location?: { name?: string } }>;
+    };
+    const match = (j.datacenters ?? []).find((d) => d.location?.name === location && d.name);
+    return match?.name ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reserve this workspace's egress address if it is entitled to one and does not
+ * already hold it. Best-effort by design: failing to reserve must NEVER fail a
+ * wake — the box comes up with an ephemeral address instead, which is exactly
+ * today's behaviour, so the worst case is "no better than before".
+ */
+async function reserveEgressIpIfEligible(
+  ctx: { runMutation: (ref: any, args: any) => Promise<any> },
+  machineId: Id<"cloudMachines">,
+  machine: { origin?: string; subscriptionId?: unknown; egressIpId?: string; egressIpScope?: string },
+  token: string,
+  preferredLocation: string,
+): Promise<{ id: string; datacenter: string } | undefined> {
+  if (machine.egressIpId && machine.egressIpScope) {
+    return { id: machine.egressIpId, datacenter: machine.egressIpScope };
+  }
+  if (!egressIpPolicy(machine).eligible) return undefined;
+  try {
+    const datacenter = await hetznerPickDatacenter(token, preferredLocation);
+    if (!datacenter) return undefined;
+    const created = await hetznerCreatePrimaryIp(
+      token,
+      `yaver-egress-${String(machineId).substring(0, 12)}`,
+      datacenter,
+    );
+    await ctx.runMutation(internal.cloudMachines.setEgressIp, {
+      machineId,
+      egressIpId: created.id,
+      egressIpAddress: created.ip,
+      egressIpScope: created.datacenter,
+    });
+    return { id: created.id, datacenter: created.datacenter };
+  } catch {
+    // Never block a wake on a cost-optimisation/stability nicety.
+    return undefined;
+  }
+}
+
+/** Reserve a datacenter-pinned primary IPv4 that outlives its server. */
+async function hetznerCreatePrimaryIp(
+  token: string,
+  name: string,
+  datacenter: string,
+): Promise<{ id: string; ip: string; datacenter: string }> {
+  const r = await fetch(`${HETZNER_API}/primary_ips`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      type: "ipv4",
+      datacenter,
+      assignee_type: "server",
+      // Survive the server delete that park performs. Without this the
+      // address dies with the box and the whole feature is a no-op.
+      auto_delete: false,
+      // MUST match the convention provisioning already uses
+      // (service=yaver-*, managed=true) — the orphan sweep selects on it, and
+      // a label mismatch makes a resource invisible to the sweep rather than
+      // merely untidy.
+      labels: { service: "yaver-egress-ip", managed: "true" },
+    }),
+  });
+  if (!r.ok) throw new Error(`create primary ip HTTP ${r.status}: ${await r.text()}`);
+  const j = (await r.json()) as {
+    primary_ip?: { id?: number; ip?: string; datacenter?: { name?: string } };
+  };
+  const id = j.primary_ip?.id;
+  const ip = j.primary_ip?.ip;
+  if (!id || !ip) throw new Error("create primary ip returned no id/ip");
+  return { id: String(id), ip, datacenter: String(j.primary_ip?.datacenter?.name ?? datacenter) };
+}
+
+/** Current assignment of a reserved primary IP, or null if it is gone. */
+async function hetznerPrimaryIpInfo(
+  token: string,
+  primaryIpId: string,
+): Promise<{ ip: string; datacenter: string; assigneeId: string | null } | null> {
+  try {
+    const r = await fetch(`${HETZNER_API}/primary_ips/${primaryIpId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as {
+      primary_ip?: { ip?: string; datacenter?: { name?: string }; assignee_id?: number | null };
+    };
+    if (!j.primary_ip?.ip) return null;
+    return {
+      ip: j.primary_ip.ip,
+      datacenter: String(j.primary_ip.datacenter?.name ?? ""),
+      assigneeId: j.primary_ip.assignee_id ? String(j.primary_ip.assignee_id) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Release a reserved primary IP. A reserved-but-unassigned IP bills forever,
+ * so this is a REAL cost stop, not cleanup cosmetics — it throws on failure so
+ * the caller can refuse to report the box as fully decommissioned.
+ */
+async function hetznerDeletePrimaryIp(token: string, primaryIpId: string): Promise<void> {
+  // Hetzner refuses to delete an ASSIGNED primary IP. The server is normally
+  // already gone by the time we get here; if it is not, unassign first so a
+  // stale assignment cannot strand a billing address.
+  try {
+    await fetch(`${HETZNER_API}/primary_ips/${primaryIpId}/actions/unassign`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch { /* best-effort: usually already unassigned by the server delete */ }
+  const r = await fetch(`${HETZNER_API}/primary_ips/${primaryIpId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok && r.status !== 404) throw new Error(`delete primary ip HTTP ${r.status}`);
+}
+
 /** Detach a volume (server delete detaches automatically; this is for repair). */
 async function hetznerDetachVolume(token: string, volumeId: string): Promise<void> {
   const r = await fetch(`${HETZNER_API}/volumes/${volumeId}/actions/detach`, {
@@ -924,16 +1380,47 @@ async function hetznerCreateFromImage(
   imageId: string,
   sshKeys: string[] = [],
   volumeIds: string[] = [],
-): Promise<{ serverId: string; ip: string; location: string; actionId?: string }> {
+  /**
+   * Reserved primary IP to re-attach so this wake keeps the workspace's
+   * existing egress address. A Hetzner Primary IP is DATACENTER-BOUND, so it
+   * also pins where the server may land — which is why it carries its own
+   * location and why the fallback below is deliberate rather than accidental.
+   */
+  egressIp?: { id: string; datacenter: string },
+): Promise<{
+  serverId: string;
+  ip: string;
+  location: string;
+  actionId?: string;
+  /** False when we had a reserved IP but had to wake without it (see below). */
+  egressIpUsed: boolean;
+}> {
   const imageVal: string | number = /^\d+$/.test(imageId) ? Number(imageId) : imageId;
   // Try each candidate location, moving on when a location can't serve this
   // type or is out of capacity — a snapshot restore must land SOMEWHERE, and
   // a box created in fsn1 whose region maps to nbg1 would otherwise fail hard
   // with "unsupported location for server type". Non-location errors (bad
   // image, auth) throw immediately.
-  const tried = Array.from(new Set(locations.filter(Boolean)));
+  // A reserved egress IP pins the datacenter, so it must be tried FIRST and
+  // alone. If that one location is out of capacity we fall back to the others
+  // WITHOUT the IP: a workspace that refuses to wake is strictly worse than one
+  // whose egress address changed, and the caller is told which happened
+  // (egressIpUsed) so it can re-reserve and surface the change rather than
+  // silently losing the stability guarantee.
+  //
+  // A Primary IP is bound to a DATACENTER (fsn1-dc14), not a location (fsn1),
+  // so the pinned attempt must send `datacenter` where a normal create sends
+  // `location` — Hetzner rejects the pair, and sending `location` with a
+  // primary IP from another datacenter fails at create.
+  const attempts: Array<{ location?: string; datacenter?: string; withEgressIp: boolean }> = [
+    ...(egressIp ? [{ datacenter: egressIp.datacenter, withEgressIp: true }] : []),
+    ...Array.from(new Set(locations.filter(Boolean))).map((location) => ({
+      location,
+      withEgressIp: false,
+    })),
+  ];
   let lastErr = "";
-  for (const location of tried) {
+  for (const { location, datacenter, withEgressIp } of attempts) {
     const r = await fetch(`${HETZNER_API}/servers`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -941,7 +1428,8 @@ async function hetznerCreateFromImage(
         name,
         server_type: serverType,
         image: imageVal,
-        location,
+        // Exactly one of these — see the datacenter note above.
+        ...(datacenter ? { datacenter } : { location }),
         // Passing an SSH key makes Hetzner set NO root password — no "server
         // created" email, no forced-expiry that blocks the agent's boot, and a
         // clean self-start. Tenant-aware: only our OWN boxes carry the operator
@@ -954,6 +1442,13 @@ async function hetznerCreateFromImage(
         ...(volumeIds && volumeIds.length
           ? { volumes: volumeIds.map((v) => Number(v)), automount: true }
           : {}),
+        // Re-attach the workspace's reserved egress address. This is the
+        // PRIMARY ipv4, not a floating IP, because only the primary address is
+        // what outbound connections are sourced from — a floating IP would have
+        // looked correct while the vendor kept seeing a new address every wake.
+        ...(withEgressIp && egressIp
+          ? { public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: Number(egressIp.id) } }
+          : {}),
         labels: { service: "yaver-cloud-machine", managed: "true", resumed: "true" },
       }),
     });
@@ -965,7 +1460,13 @@ async function hetznerCreateFromImage(
       const id = j.server?.id;
       const ip = j.server?.public_net?.ipv4?.ip;
       if (!id || !ip) throw new Error("create-from-snapshot returned no id/ip");
-      return { serverId: String(id), ip, location, actionId: j.action?.id ? String(j.action.id) : undefined };
+      return {
+        serverId: String(id),
+        ip,
+        location: location ?? datacenter ?? "",
+        actionId: j.action?.id ? String(j.action.id) : undefined,
+        egressIpUsed: withEgressIp,
+      };
     }
     const body = await r.text();
     lastErr = `HTTP ${r.status}: ${body}`;
@@ -973,7 +1474,11 @@ async function hetznerCreateFromImage(
     const retryable = /unsupported location|resource_unavailable|no available|capacity|placement/i.test(body);
     if (!retryable) throw new Error(`create-from-snapshot ${lastErr}`);
   }
-  throw new Error(`create-from-snapshot exhausted locations [${tried.join(", ")}]: ${lastErr}`);
+  throw new Error(
+    `create-from-snapshot exhausted placements [${attempts
+      .map((a) => a.datacenter ?? a.location)
+      .join(", ")}]: ${lastErr}`,
+  );
 }
 
 // EU/US candidate locations for a resume, primary first. cpx (AMD) types are
@@ -1279,7 +1784,13 @@ export const idleSweep = internalAction({
     const on = enabled === true;
     const sim = dryRun !== false; // mirror meterTick: default simulate
     if (!on) return { checked: 0, paused: 0, enabled: false, dryRun: sim };
-    const mins = Number.isFinite(idleMinutes) && (idleMinutes as number) > 0 ? (idleMinutes as number) : 45;
+    // 20 MINUTES, not 45. "4 h/day of work" is not 4 h of uptime: a user working
+    // at 09:00, 11:00, 14:00 and 17:00 keeps the box alive through every gap
+    // SHORTER than this timer. At 45 min that is 6-8 h/day (180-240 h/month),
+    // which turns the $29 tier's 71% margin into 42%. At 20 min the gaps close.
+    // Wake from a volume is 60-90 s, so the friction is small. This constant
+    // holds the tier up — do not relax it for UX without re-running the numbers.
+    const mins = Number.isFinite(idleMinutes) && (idleMinutes as number) > 0 ? (idleMinutes as number) : 20;
     const cutoff = Date.now() - mins * 60_000;
     const candidates = await ctx.runQuery(internal.cloudLifecycle.listIdleCandidates, {});
     let checked = 0;
@@ -1518,11 +2029,277 @@ export const ensureVolume = internalAction({
 });
 
 /**
+ * reconcileProviderResources — ask each provider what it ACTUALLY holds and
+ * diff it against what Convex thinks it created.
+ *
+ * ─── Why this is a launch requirement, not a nicety ─────────────────────────
+ * The 2026-07-21 audit found two live leaks (a volume on every customer
+ * decommission, a server on partial provision failure) and — worse — that
+ * NOTHING in the codebase could have discovered them. Convex only knows what
+ * it believes it created; a resource whose row write failed, or whose pointer
+ * was cleared, is invisible forever. Only the provider knows the truth.
+ *
+ * This is the first production consumer of the provider registry.
+ *
+ * ─── Safety: REPORT-ONLY by default, and deliberately so ────────────────────
+ * `dryRun` defaults to true. Auto-deleting "unknown" resources is dangerous in
+ * exactly the way CLAUDE.md's resource-boundary rule describes: this token can
+ * see boxes that are not Yaver workspaces (the cron box, a sibling project, a
+ * personal machine). An orphan REPORT is the deliverable; deletion stays a
+ * human decision. Even with dryRun:false we only ever consider resources
+ * carrying our own label AND absent from Convex AND old enough to not be a
+ * provision still in flight.
+ */
+/**
+ * The label every Yaver-created provider resource carries.
+ *
+ * ⚠️ This MUST match what the provisioning paths actually write
+ * (`cloudMachines.provision`, `cloudLifecycle` server create, egress IP
+ * reservation). It was briefly `yaver=managed`, which matched NOTHING — so the
+ * orphan sweep returned zero orphans forever and looked healthy while being
+ * completely blind. Verified against live Hetzner labels on 2026-07-21.
+ */
+export const YAVER_RESOURCE_SELECTOR: Record<string, string> = { managed: "true" };
+
+export const reconcileProviderResources = internalAction({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    /** Ignore resources younger than this; a live provision is not an orphan. */
+    minAgeMinutes: v.optional(v.number()),
+  },
+  handler: async (ctx, { dryRun, minAgeMinutes }): Promise<{
+    dryRun: boolean;
+    providersChecked: string[];
+    known: number;
+    seen: number;
+    orphans: Array<{ provider: string; type: string; id: string; status?: string }>;
+    note: string;
+  }> => {
+    const sim = dryRun !== false;
+    void minAgeMinutes;
+    const known = new Set<string>(
+      await ctx.runQuery(internal.cloudMachines.listKnownProviderResourceIds, {}),
+    );
+    const { createManagedCloudProviderRegistry } = await import("./cloudProviders/registry");
+    const registry = createManagedCloudProviderRegistry(process.env);
+
+    const orphans: Array<{ provider: string; type: string; id: string; status?: string }> = [];
+    const providersChecked: string[] = [];
+    let seen = 0;
+
+    for (const provider of registry.computeProviders) {
+      const caps = provider.describeCapabilities();
+      // Never trust a provider that has not really implemented listing — a []
+      // from an unimplemented method is indistinguishable from "nothing is
+      // leaking", which is the most dangerous possible false green.
+      if (!caps.capabilities.includes("tagged-cleanup")) continue;
+      providersChecked.push(provider.id);
+      let resources: Awaited<ReturnType<typeof provider.listYaverTaggedResources>> = [];
+      try {
+        resources = await provider.listYaverTaggedResources({ tags: YAVER_RESOURCE_SELECTOR });
+      } catch {
+        continue; // credentials absent for this provider — not an orphan signal
+      }
+      for (const r of resources) {
+        seen++;
+        // Match on both the bare id and any path-shaped id, since providers
+        // hand back different id shapes than the ones stored on the row.
+        const tail = r.id.split("/").pop() ?? r.id;
+        if (known.has(r.id) || known.has(tail)) continue;
+        orphans.push({ provider: r.provider, type: r.type, id: r.id, status: r.status });
+      }
+    }
+
+    return {
+      dryRun: sim,
+      providersChecked,
+      known: known.size,
+      seen,
+      orphans,
+      note: sim
+        ? "report-only: nothing was deleted. Review each orphan before acting — this token can see resources that are NOT Yaver workspaces."
+        : "deletion is intentionally not automated; orphans are reported for human action.",
+    };
+  },
+});
+
+/**
+ * releaseStaleEgressIps — give back reserved addresses held by long-parked
+ * boxes. A reserved IP bills while unassigned, so a workspace nobody has woken
+ * in a month should not keep paying for outbound identity it is not using.
+ *
+ * Waking after a release changes the address — accepted, and the reason the
+ * window is generous. Schedule alongside the other timers (daily is plenty).
+ */
+export const releaseStaleEgressIps = internalAction({
+  args: { dryRun: v.optional(v.boolean()), olderThanDays: v.optional(v.number()) },
+  handler: async (ctx, { dryRun, olderThanDays }): Promise<{
+    checked: number; released: number; leaked: string[]; dryRun: boolean;
+  }> => {
+    // Mirrors meterTick: simulate unless explicitly told otherwise.
+    const sim = dryRun !== false;
+    const token = process.env.HCLOUD_TOKEN;
+    const days = Number.isFinite(olderThanDays) && (olderThanDays as number) > 0
+      ? (olderThanDays as number)
+      : EGRESS_IP_PARK_RELEASE_DAYS;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const rows = await ctx.runQuery(internal.cloudMachines.listParkedWithEgressIp, {});
+    let released = 0;
+    const leaked: string[] = [];
+    for (const row of rows) {
+      if (row.parkedAt > cutoff) continue;
+      if (sim || !token) { released++; continue; }
+      try {
+        await hetznerDeletePrimaryIp(token, row.egressIpId);
+        await ctx.runMutation(internal.cloudMachines.clearAuxPointers, {
+          machineId: row.machineId, clearEgressIp: true,
+        });
+        released++;
+      } catch (e) {
+        leaked.push(
+          `egress IP ${row.egressIpAddress ?? row.egressIpId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    return { checked: rows.length, released, leaked, dryRun: sim };
+  },
+});
+
+export type AuxReclaimResult = {
+  ok: boolean;
+  reclaimed: string[];
+  /** Human-readable "<kind> <id>: <why>" for every resource still billing. */
+  leaked: string[];
+};
+
+/**
+ * reclaimAuxResources — release every DETACHABLE PAID resource that outlives
+ * its server: the volume, the reserved egress IP, and (optionally) a snapshot.
+ *
+ * ─── Why this exists (2026-07-21 audit) ─────────────────────────────────────
+ * `cloudMachines.destroy` deleted the server and the DNS record and stopped.
+ * It never touched `volumeId`. The only code that deleted a volume was
+ * `purgeMachineResources`, reachable ONLY from the owner-only dev-deprovision
+ * route — so EVERY volume-backed workspace a real customer decommissioned left
+ * a Hetzner Volume billing forever. Nothing could detect it either: all four
+ * providers' `listYaverTaggedResources` return [], so there is no sweep that
+ * would ever have found the orphans.
+ *
+ * The lesson generalized, and it is why this is one function instead of a line
+ * added to destroy(): "delete the server" is NOT "stop the spend". A server has
+ * satellites that survive it by design — that is the entire point of a volume
+ * (park keeps it deliberately) and of a reserved egress IP (auto_delete:false).
+ * Every one of them therefore needs a reclaim at the terminal transition, and
+ * they must all go through ONE path so the next satellite we add cannot be
+ * forgotten by half the callers.
+ *
+ * Fail-LOUD, never fail-silent: a resource we could not delete is reported in
+ * `leaked` with its provider id, and its row pointer is deliberately LEFT in
+ * place so a retry (or a human) can still find it. Reporting "stopped" while
+ * something still bills is the one outcome this function exists to prevent.
+ */
+export const reclaimAuxResources = internalAction({
+  args: {
+    machineId: v.id("cloudMachines"),
+    /** Terminal decommission also drops the recovery snapshot. Park must NOT. */
+    deleteSnapshot: v.optional(v.boolean()),
+    /** Snapshot to PRESERVE (the pre-delete data copy we just took). */
+    keepSnapshotId: v.optional(v.string()),
+  },
+  handler: async (ctx, { machineId, deleteSnapshot, keepSnapshotId }): Promise<AuxReclaimResult> => {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    if (!machine) return { ok: false, reclaimed: [], leaked: ["machine row not found"] };
+    const token = process.env.HCLOUD_TOKEN;
+    if (!token) {
+      const pending: string[] = [];
+      if (machine.volumeId) pending.push(`volume ${machine.volumeId}`);
+      if (machine.egressIpId) pending.push(`egress IP ${machine.egressIpId}`);
+      return {
+        ok: pending.length === 0,
+        reclaimed: [],
+        leaked: pending.map((p) => `${p}: HCLOUD_TOKEN unset, nothing was released`),
+      };
+    }
+
+    const reclaimed: string[] = [];
+    const leaked: string[] = [];
+    let clearVolume = false;
+    let clearEgressIp = false;
+    let clearSnapshot = false;
+
+    // ── Volume ──────────────────────────────────────────────────────────
+    if (machine.volumeId) {
+      try {
+        // A server delete detaches automatically, but decommission can also run
+        // while the box is still up (force path) — detach explicitly, then wait
+        // for Hetzner to actually release it, because DELETE on an attached
+        // volume fails and would otherwise read as an unexplained leak.
+        try { await hetznerDetachVolume(token, machine.volumeId); } catch { /* likely already detached */ }
+        for (let i = 0; i < 8; i++) {
+          try {
+            const info = await hetznerVolumeInfo(token, machine.volumeId);
+            if (!info.serverId) break;
+          } catch { break; }
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        await hetznerDeleteVolume(token, machine.volumeId);
+        reclaimed.push(`volume ${machine.volumeId}`);
+        clearVolume = true;
+      } catch (e) {
+        leaked.push(
+          `volume ${machine.volumeId}: ${e instanceof Error ? e.message : String(e)} — it is STILL BILLING; delete it in the Hetzner console or retry decommission`,
+        );
+      }
+    }
+
+    // ── Reserved egress IP ──────────────────────────────────────────────
+    // Reserved-but-unassigned is the expensive state (it bills with nothing
+    // attached), so this is a real cost stop and not tidy-up.
+    if (machine.egressIpId) {
+      try {
+        await hetznerDeletePrimaryIp(token, machine.egressIpId);
+        reclaimed.push(`egress IP ${machine.egressIpAddress ?? machine.egressIpId}`);
+        clearEgressIp = true;
+      } catch (e) {
+        leaked.push(
+          `egress IP ${machine.egressIpAddress ?? machine.egressIpId} (id ${machine.egressIpId}): ${e instanceof Error ? e.message : String(e)} — a reserved IP bills while unassigned; release it in the Hetzner console or retry decommission`,
+        );
+      }
+    }
+
+    // ── Snapshot ────────────────────────────────────────────────────────
+    // Only on terminal decommission, and never the copy we just took to
+    // preserve the user's data.
+    if (deleteSnapshot && machine.lastSnapshotId && machine.lastSnapshotId !== keepSnapshotId) {
+      try {
+        await hetznerDeleteImage(token, machine.lastSnapshotId);
+        reclaimed.push(`snapshot ${machine.lastSnapshotId}`);
+        clearSnapshot = true;
+      } catch (e) {
+        leaked.push(
+          `snapshot ${machine.lastSnapshotId}: ${e instanceof Error ? e.message : String(e)} — snapshot storage keeps billing; delete it in the Hetzner console`,
+        );
+      }
+    }
+
+    // Clear ONLY what the provider confirmed gone. A pointer to a resource we
+    // failed to delete must stay on the row — that pointer is the only thing
+    // that makes the leak findable.
+    if (clearVolume || clearEgressIp || clearSnapshot) {
+      await ctx.runMutation(internal.cloudMachines.clearAuxPointers, {
+        machineId, clearVolume, clearEgressIp, clearSnapshot,
+      });
+    }
+    return { ok: leaked.length === 0, reclaimed, leaked };
+  },
+});
+
+/**
  * purgeMachineResources — permanently tear down a managed machine's cloud
- * resources (server + volume + its snapshots) and clear the pointers on the
- * record. Used to fully retire a box / reset for a clean re-provision. Careful:
- * this DELETES the snapshot(s), so the data is gone — only call when the box is
- * genuinely being retired.
+ * resources (server + volume + egress IP + its snapshots) and clear the
+ * pointers on the record. Used to fully retire a box / reset for a clean
+ * re-provision. Careful: this DELETES the snapshot(s), so the data is gone —
+ * only call when the box is genuinely being retired.
  */
 export const purgeMachineResources = internalAction({
   args: {
@@ -1547,20 +2324,19 @@ export const purgeMachineResources = internalAction({
     if (machine.hetznerServerId) {
       try { await hetznerDelete(token, machine.hetznerServerId); done.push("server"); } catch { /* best-effort */ }
     }
-    if (machine.volumeId) {
-      try { await hetznerDetachVolume(token, machine.volumeId); } catch { /* may already be detached */ }
-      // detach is async — give it a beat before delete
-      for (let i = 0; i < 8; i++) {
-        try {
-          const info = await hetznerVolumeInfo(token, machine.volumeId);
-          if (!info.serverId) break;
-        } catch { break; }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      try { await hetznerDeleteVolume(token, machine.volumeId); done.push("volume"); } catch { /* best-effort */ }
-    }
-    if (deleteSnapshots && machine.lastSnapshotId) {
-      try { await hetznerDeleteImage(token, machine.lastSnapshotId); done.push("snapshot"); } catch { /* best-effort */ }
+    // Volume + egress IP + snapshot go through the SINGLE reclamation path, so
+    // this route and the customer decommission route can never drift again —
+    // the drift between them is exactly what leaked every customer's volume.
+    const aux: AuxReclaimResult = await ctx.runAction(internal.cloudLifecycle.reclaimAuxResources, {
+      machineId,
+      deleteSnapshot: deleteSnapshots === true,
+    });
+    done.push(...aux.reclaimed);
+
+    if (!aux.ok) {
+      // Do NOT wipe the row: its pointers are the only record of what is still
+      // billing. "removed" here would hide a live cost behind a clean-looking UI.
+      return { ok: false, reason: `purge incomplete — still billing: ${aux.leaked.join("; ")}` };
     }
     await ctx.runMutation(internal.cloudMachines.clearResources, { machineId });
     return { ok: true, reason: `purged: ${done.join(", ") || "nothing"}` };
@@ -1701,7 +2477,7 @@ export const resumeMachine = internalAction({
       // would 422 with "image disk is bigger than server type disk". Prefer the
       // recorded serverType; fall back to the type implied by specs.diskGb, then
       // the machineType default.
-      const serverType =
+      let serverType =
         machine.serverType ||
         hetznerServerTypeForDisk(machine.specs?.diskGb) ||
         hetznerServerType(machine.machineType ?? "cpu");
@@ -1741,6 +2517,54 @@ export const resumeMachine = internalAction({
         }
         volumeIds.push(machine.volumeId);
       }
+      // ── Availability substitution ────────────────────────────────────
+      // The recorded serverType may simply not be ORDERABLE any more. Measured
+      // 2026-07-21: every SKU Yaver uses was sold out in all three EU
+      // datacenters while a dozen others were available. Park is
+      // delete-not-stop, so a wake has to order a new server — insisting on one
+      // name turns a capacity blip into "your workspace cannot wake".
+      //
+      // Substitute only UPWARDS (disk is a hard floor: a snapshot will not
+      // restore onto a smaller disk) and only within the volume's location,
+      // which the volume has already pinned above.
+      {
+        const wakeLocation = locationCandidates[0];
+        if (wakeLocation) {
+          const orderable = await hetznerServerTypeAvailable(token!, wakeLocation, serverType);
+          if (!orderable) {
+            // Cost ceiling relative to what this workspace was ALREADY costing.
+            // Without it, "rescue the wake" can mean "move them to a box that
+            // costs 4.7x and turn the subscription into a loss".
+            // Margin-gated, not ratio-gated: allow any substitute that still
+            // clears the floor at this workspace's allowance, and refuse the
+            // ones that genuinely lose money.
+            const marginCeiling = maxSubstituteHourlyEur({
+              revenueEur: WORKSPACE_REVENUE_EUR,
+              fixedEur: WORKSPACE_FIXED_EUR,
+              expectedHours: STANDARD_HOURS_INCLUDED,
+            });
+            const substitute = await hetznerPickAvailableServerType(token!, wakeLocation, {
+              minDiskGb: machine.specs?.diskGb,
+              minCores: machine.specs?.vcpu,
+              minRamGb: machine.specs?.ramGb,
+              architecture: machine.specs?.arch === "arm64" ? "arm" : "x86",
+              maxHourlyPrice: marginCeiling,
+            });
+            if (substitute && substitute !== serverType) {
+              console.warn(
+                `[cloudLifecycle.resume] ${serverType} is not orderable in ${wakeLocation}; waking on ${substitute} instead`,
+              );
+              serverType = substitute;
+            }
+            // No AFFORDABLE substitute ⇒ fall through and let the create fail
+            // with the provider's own message. Refusing here is deliberate: a
+            // wake that costs multiples of the plan is an outage with a bill,
+            // and the user is better served by "this region is full, try
+            // another" than by a silent margin inversion.
+          }
+        }
+      }
+
       // With a volume, the boot image is a SLIM base (OS + toolchain only) — the
       // data rides on the volume, so there is no fat disk to restore. That is
       // the ~10min → ~1-2min win. Without a volume we fall back to the old
@@ -1758,7 +2582,13 @@ export const resumeMachine = internalAction({
       await ctx.runMutation(internal.cloudMachines.setPhase, {
         machineId, phase: "restoring-snapshot", progress: 25,
       });
-      const { serverId, ip, actionId } = await hetznerCreateFromImage(
+      // Keep this workspace's egress address stable across the park/wake cycle.
+      // Park deletes the server, so without this every wake hands the user's
+      // mirrored runner credentials a brand-new datacenter IP.
+      const egressIp = await reserveEgressIpIfEligible(
+        ctx, machineId, machine, token!, locationCandidates[0] ?? "fsn1",
+      );
+      const { serverId, ip, actionId, egressIpUsed } = await hetznerCreateFromImage(
         token!,
         hostname,
         serverType,
@@ -1766,7 +2596,18 @@ export const resumeMachine = internalAction({
         bootImage,
         resolveBootSshKeys(machine),
         volumeIds,
+        egressIp,
       );
+      if (egressIp && !egressIpUsed) {
+        // The pinned datacenter could not serve this wake, so the box came up
+        // on a different address. Release the reservation rather than pay for
+        // an IP this workspace no longer uses, and drop the pointer so the next
+        // wake reserves a fresh one in whatever datacenter it lands in.
+        try { await hetznerDeletePrimaryIp(token!, egressIp.id); } catch { /* swept later */ }
+        await ctx.runMutation(internal.cloudMachines.clearAuxPointers, {
+          machineId, clearEgressIp: true,
+        });
+      }
       await ctx.runMutation(internal.wakeRuns.markProgress, {
         machineId,
         kind: "wake",
@@ -1982,15 +2823,28 @@ export const resizeMachine = internalAction({
         phase: "creating-resized-server",
         progress: 30,
       });
-      const { serverId, ip, actionId } = await hetznerCreateFromImage(
-        token!,
-        hostname,
-        targetServerType,
-        locationCandidates,
-        machine.baseImageId,
-        resolveBootSshKeys(machine),
-        [machine.volumeId],
+      // Same stable-egress contract as the normal wake — a resize must not be
+      // an invisible way to change the workspace's outbound identity.
+      const resizeEgressIp = await reserveEgressIpIfEligible(
+        ctx, machineId, machine, token!, locationCandidates[0] ?? "fsn1",
       );
+      const { serverId, ip, actionId, egressIpUsed: resizeEgressUsed } =
+        await hetznerCreateFromImage(
+          token!,
+          hostname,
+          targetServerType,
+          locationCandidates,
+          machine.baseImageId,
+          resolveBootSshKeys(machine),
+          [machine.volumeId],
+          resizeEgressIp,
+        );
+      if (resizeEgressIp && !resizeEgressUsed) {
+        try { await hetznerDeletePrimaryIp(token!, resizeEgressIp.id); } catch { /* swept later */ }
+        await ctx.runMutation(internal.cloudMachines.clearAuxPointers, {
+          machineId, clearEgressIp: true,
+        });
+      }
       await ctx.runMutation(internal.wakeRuns.markProgress, {
         machineId,
         kind: "provision",
@@ -2047,5 +2901,93 @@ export const resizeMachine = internalAction({
       }).catch(() => {});
       return { ok: false, reason: "resize failed" };
     }
+  },
+});
+
+/* ─── Cron liveness ──────────────────────────────────────────────────────────
+ *
+ * THE most expensive silent failure in this system.
+ *
+ * There are no Convex crons (crons.ts is empty by design). Metering AND the
+ * idle auto-park both run only when an EXTERNAL box POSTs /crons/run. If that
+ * box dies — and the Hetzner "never leave a server running" rule actively
+ * pushes toward deleting boxes — then:
+ *
+ *   - no box ever parks   → every workspace bills 24/7 (margin −95% on Large)
+ *   - no usage is metered → allowances never decrement, so nothing suspends
+ *
+ * ...and NOTHING reports it. You keep collecting $29 while costs run unbounded.
+ * Auto-park is the single best loss protection in the product, and this is the
+ * one failure that disables it without a symptom.
+ *
+ * So: record every tick, and let any surface ask "are the crons alive?".
+ * Silence is not success — a check that only reports when the job RUNS cannot
+ * detect the job never running.
+ */
+
+/** A tick is overdue past this. The tightest job (idle sweep) wants ~10-15 min. */
+const CRON_STALE_AFTER_MS = Number(process.env.YAVER_CRON_STALE_MINUTES || 45) * 60_000;
+
+export const recordCronTick = internalMutation({
+  args: { name: v.string() },
+  handler: async (ctx, { name }) => {
+    const key = `cronLastTick:${name}`;
+    const existing = await ctx.db
+      .query("platformConfig")
+      .withIndex("by_key", (q: any) => q.eq("key", key))
+      .unique();
+    const value = String(Date.now());
+    if (existing) await ctx.db.patch(existing._id, { value, updatedAt: Date.now() });
+    else await ctx.db.insert("platformConfig", { key, value, updatedAt: Date.now() });
+    return { ok: true };
+  },
+});
+
+export type CronHealth = {
+  healthy: boolean;
+  jobs: Array<{ name: string; lastTickAt: number | null; ageMinutes: number | null; stale: boolean }>;
+  /** Operator-facing remedy, empty when healthy. */
+  alert: string;
+};
+
+/**
+ * Are the external cron timers alive? Read this from /doctor, the admin
+ * console, or an uptime probe.
+ *
+ * A job that has NEVER ticked is reported stale, not "unknown" — an unwired
+ * timer and a dead timer have identical consequences, and treating "no data"
+ * as healthy is exactly the false green this exists to prevent.
+ */
+export const cronHealth = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<CronHealth> => {
+    // The two that cost money when they stop. Prune jobs are noisy, not costly.
+    const watched = ["cloudIdleSweep", "cloudMeter", "cloudOrphanSweep"];
+    const now = Date.now();
+    const jobs = [];
+    for (const name of watched) {
+      const row = await ctx.db
+        .query("platformConfig")
+        .withIndex("by_key", (q: any) => q.eq("key", `cronLastTick:${name}`))
+        .unique();
+      const lastTickAt = row?.value ? Number(row.value) : null;
+      const ageMs = lastTickAt ? now - lastTickAt : null;
+      jobs.push({
+        name,
+        lastTickAt,
+        ageMinutes: ageMs === null ? null : Math.round(ageMs / 60_000),
+        stale: ageMs === null || ageMs > CRON_STALE_AFTER_MS,
+      });
+    }
+    const stale = jobs.filter((j) => j.stale);
+    return {
+      healthy: stale.length === 0,
+      jobs,
+      alert: stale.length === 0
+        ? ""
+        : `Cron timers are not reporting: ${stale.map((j) => j.name).join(", ")}. ` +
+          `Managed boxes are NOT auto-parking and usage is NOT being metered — cost is running unbounded. ` +
+          `Check the external timer host and that it can still POST /crons/run.`,
+    };
   },
 });

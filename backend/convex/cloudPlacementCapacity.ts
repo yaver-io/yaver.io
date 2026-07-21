@@ -10,28 +10,45 @@ export type CloudWorkspaceProfilePolicy = {
   minimumNetMargin: number;
 };
 
+// 120 standard-credit hours per period — $29 (≈€26.7) buys 120 h on the
+// DEFAULT class. See docs/architecture/yaver-four-tier-deep-analysis.md §6.
 const CLOUD_WORKSPACE_INCLUDED_STANDARD_CREDITS = 120;
 
 const PROFILE_POLICY: Record<CloudWorkspaceProfile, Omit<CloudWorkspaceProfilePolicy, "defaultIncludedStandardCredits" | "minimumNetMargin">> = {
+  // ─── Class ladder ────────────────────────────────────────────────────────
+  // Specs match the four-tier plan: the DEFAULT is 2c/4GB, because the default
+  // path (RN + TypeScript, Chrome/WebRTC preview, Hermes pushed to the user's
+  // OWN phone) deliberately avoids Redroid and Gradle — the only two workloads
+  // that genuinely need more memory. Capacity is opt-in.
+  //
+  // standardCreditWeight is VALIDATED against measured Hetzner prices
+  // (2026-07-21, gross €/h at fsn1):
+  //     standard cpx22 €0.0368  →  measured 1.0x, charged 1x
+  //     heavy    cpx32 €0.0673  →  measured 1.8x, charged 2x
+  //     build    cpx42 €0.1314  →  measured 3.6x, charged 4x
+  // Charged weights are deliberately ROUNDED UP. A weight below the true cost
+  // ratio lets a user convert cheap credits into expensive compute and invert
+  // the margin; rounding up errs toward us and keeps the numbers memorable.
+  // Re-validate whenever the default SKUs change — `hcloud server-type list`.
   standard: {
     profile: "standard",
     resourceClass: "standard",
-    ramGb: 8,
-    vcpu: 4,
+    ramGb: 4,
+    vcpu: 2,
     standardCreditWeight: 1,
   },
   heavy: {
     profile: "heavy",
     resourceClass: "heavy",
-    ramGb: 16,
-    vcpu: 8,
+    ramGb: 8,
+    vcpu: 4,
     standardCreditWeight: 2,
   },
   build: {
     profile: "build",
     resourceClass: "build",
-    ramGb: 32,
-    vcpu: 16,
+    ramGb: 16,
+    vcpu: 8,
     standardCreditWeight: 4,
   },
 };
@@ -73,8 +90,11 @@ export function cloudMachineMeetsPlacement(machine: any, resourceClass: unknown)
   const ramGb = Number(machine?.specs?.ramGb ?? 0);
   const type = String(machine?.machineType || "").trim();
   const resource = String(resourceClass || "").trim();
-  if (resource === "build") return type === "build" || type === "cpu" || type === "gpu" || ramGb >= 24;
-  if (resource === "heavy") return type === "heavy" || type === "build" || type === "cpu" || type === "gpu" || ramGb >= 16;
+  // Thresholds track the ladder above (build 16 GB, heavy 8 GB). They were
+  // 24/16 when standard was 8 GB; leaving them there after the ladder moved
+  // would have made every heavy/build box fail its own placement check.
+  if (resource === "build") return type === "build" || type === "cpu" || type === "gpu" || ramGb >= 16;
+  if (resource === "heavy") return type === "heavy" || type === "build" || type === "cpu" || type === "gpu" || ramGb >= 8;
   return true;
 }
 
