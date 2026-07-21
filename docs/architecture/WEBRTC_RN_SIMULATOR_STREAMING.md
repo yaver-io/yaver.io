@@ -177,6 +177,60 @@ are exactly what the "Try to Fix" AI-runner loop resolves. Setup friction also
 seen and handled: fresh clones need `npm install` before `pod install`, and a
 stale `Podfile.lock` needs a reset — the Yaver flow should run these preflights.
 
+## FULL LOOP PROVEN WORKING (2026-07-21)
+
+Validated visually end-to-end on the mac mini with yaver-todo-rn: the **live Todo
+app renders in the simulator and streams its real UI** — the "What needs doing?"
+composer, All/Active/Completed filters, empty state, and the RN dev-mode
+"Open debugger to view warnings" banner confirming **Metro Fast Refresh is
+connected**. The one gap the first capture exposed — the RN red screen "No script
+URL provided" — was Metro not running; wiring `ensureDevServerForProject` before
+launch fixed it, and a fresh `simctl terminate` + `launch` loaded the bundle. So:
+
+    build (xcodebuild generic dest + arm64, Debug)
+      → ensure Metro (Fast Refresh)
+      → simctl install + launch
+      → simctl io screenshot  →  the live app, streamed
+
+Every stage is proven on real hardware. Gotcha to encode: `simctl launch` on an
+already-running instance returns the old PID and does NOT reconnect to Metro —
+terminate first, then launch, so the app picks Metro up.
+
+## Input / gesture control — wrap first-party + permissive OSS
+
+The web viewer already forwards pointer input over the control DataChannel (the
+signaling layer exists). Simulator-side injection: `simctl` only does a basic
+tap, so richer gestures (swipe, pinch-zoom, multi-finger) wrap existing tools:
+
+- **facebook/idb** — HID tap/swipe on iOS sims (`idb ui tap/swipe`). **MIT.**
+- **tddworks/baguette** — headless iOS-26 sim farm + host-side input injection
+  (taps, swipes, **multi-finger gestures**) + **60 fps streaming**. Closest fit
+  to this whole feature; verify its license before bundling.
+- **Genymobile/scrcpy** — Android mirror + control (tap/swipe/pinch). **Apache-2.0.**
+- **whitesmith/ios-simulator-mcp** — MCP wrapping simctl+idb (tap/type/swipe/
+  a11y tree). **MIT.**
+
+## Licensing — clean to wrap
+
+Everything in this pipeline is either a first-party Apple/Google tool we merely
+INVOKE (no redistribution) or permissive OSS:
+
+| Component | License | How we use it |
+|---|---|---|
+| xcodebuild / simctl | Apple (Xcode) | Invoke on the user's own Mac to build the user's own app |
+| Metro | MIT | Orchestrated from the **user's** node_modules — not bundled by Yaver |
+| Expo / React Native | MIT | The guest's own dependency |
+| gradle | Apache-2.0 | Invoke |
+| adb / Android SDK | Apache-2.0 | Invoke |
+| redroid | Apache-2.0 | Container image, run as-is |
+| idb | MIT | Wrap for iOS gesture injection (preserve notice) |
+| scrcpy | Apache-2.0 | Wrap for Android control (preserve NOTICE) |
+
+Key point: Yaver does not REDISTRIBUTE Metro/Expo/RN — they run from the guest
+project's own install; Yaver is the conductor. Apple tools are only invoked, never
+shipped. MIT/Apache wraps just need their notices preserved. No copyleft in the
+path. `baguette` is the one to license-check before vendoring.
+
 ## What is landed (this change)
 
 - **Agent capabilities** (`remote_runtime.go`): RN/Expo is now
