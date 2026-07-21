@@ -776,10 +776,21 @@ func (s *HTTPServer) buildAndLaunchRNiOS(ctx context.Context, session RemoteRunt
 	if err != nil {
 		return fmt.Errorf("read bundle id: %w", err)
 	}
+
+	// Metro MUST be running before we launch, or a Debug build shows the RN red
+	// screen "No script URL provided … unsanitizedScriptURLString = (null)" — it
+	// has no JS bundle to load. This is the dev server that also gives Fast
+	// Refresh, so start it here (idempotent; reuses a running one for this
+	// workDir). Observed exactly this red screen on the mini before wiring it.
+	emit("starting Metro so the app can load its JS bundle (and Fast-Refresh)…")
+	if err := s.ensureDevServerForProject(workDir, session.Framework, "ios"); err != nil {
+		emit("warning: Metro did not start (" + err.Error() + ") — the app will show the RN 'No script URL' screen until it does")
+	}
+
 	if out, err := exec.CommandContext(ctx, "xcrun", "simctl", "launch", udid, bundleID).CombinedOutput(); err != nil {
 		return fmt.Errorf("simctl launch %s failed: %s", bundleID, strings.TrimSpace(string(out)))
 	}
-	emit("launched " + bundleID + " — running in the simulator, streaming; edit code and Metro Fast Refresh applies it live")
+	emit("launched " + bundleID + " — running against Metro in the simulator, streaming; edit code and Fast Refresh applies it live")
 	return nil
 }
 
