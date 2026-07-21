@@ -346,6 +346,35 @@ mobile `MachineTransport` selector yet — those are the new work.
 6. **Doctor** `yaver doctor ssh-control`: proves the key can SIGN + the forced
    command answers `health` (real capability, not "key exists").
 
+## 4c. Cross-surface parity (all surfaces, per CLAUDE.md)
+
+The transport is **one behavior, propagated by two families** (same rule as the
+rest of Yaver):
+
+- **RN surfaces share the JS transport** — **mobile, tablet, car
+  (`app/car-voice-coding.tsx`), glass/AR-VR (`app/glass-*.tsx`)** all consume the
+  same `quic.ts` + `DeviceContext`. The connectivity fixes (follow-up timeout,
+  conn-gate, tap timeouts) and the future `MachineTransport` selector +
+  `ssh-control`/`ssh-task` kinds reach **all of them for free** — verify nothing
+  is gated to one screen. **Android RN** is in this family too (shares the JS).
+- **Native surfaces port explicitly** — **tvOS** (`tvos/YaverTV/AgentClient.swift`),
+  **watchOS** (`watch/…/SessionClient.swift`), **Wear OS** (`wear/…/*.kt`). They
+  do NOT inherit RN transport code; the same connection semantics + status
+  vocabulary must be ported. For the *native SSH control channel* specifically:
+  the **native iOS module** is the reference; **Android** gets a Kotlin
+  equivalent; **watchOS/tvOS** are companion-first (rely on the paired phone's
+  channel and the relay) rather than each embedding libssh2 — an SSH stack on a
+  watch is not worth it, so those surfaces get the **hardened-relay + selector
+  status**, and reach the box via the phone/companion when needed.
+- **Web UI is relay-only** — the browser cannot open raw sockets/SSH (`web/lib/`).
+  It benefits from the **server-side relay hardening** (the `already registered`
+  eviction) automatically and shows the same transport status vocabulary, but has
+  **no** out-of-band SSH channel by design; its resilience *is* the hardened relay.
+
+So: one hardened-relay + one selector contract + one status vocabulary across
+every surface; the native SSH out-of-band channel is phone/desktop-first (+ Wear
+OS/Android native later), with watch/tv/web riding the companion + hardened relay.
+
 ## 5. Recommendation
 
 1. **Now (fixes the reported pain):** Road A — harden the QUIC relay to

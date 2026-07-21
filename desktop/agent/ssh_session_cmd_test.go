@@ -43,7 +43,7 @@ func TestSSHSessionRoute_RefusesEverythingElse(t *testing.T) {
 	for _, verb := range []string{
 		"", "  ", "bash", "sh", "/bin/sh", "exec", "shell",
 		"GET /etc/passwd", "run-task; rm -rf /", "../../secret",
-		"tasks", "task", "health ", "HEALTH", "delete-task", "vault",
+		"tasks", "task", "health;rm", "HEALTH", "delete-task", "vault",
 		"open-port", "attach-tmux", // not yet whitelisted → must be refused, not silently allowed
 	} {
 		if _, _, _, ok := sshSessionRoute(verb); ok {
