@@ -715,6 +715,14 @@ func (s *HTTPServer) buildAndLaunchRNInSimulator(ctx context.Context, session Re
 	if workDir == "" {
 		return fmt.Errorf("RN simulator run needs a workDir")
 	}
+	// Self-heal breadcrumb: emit the WebRTC toolchain gaps up front so even a
+	// weak model driving this sees exactly what to fix (or calls webrtc_doctor
+	// heal). Fast inventory only (no simctl timing on the hot path).
+	if s != nil && s.devServerMgr != nil {
+		for _, line := range remediationSummary(probeWebRTCDeps(ctx, true)) {
+			s.devServerMgr.EmitLog("[webrtc-doctor] " + line)
+		}
+	}
 	switch session.TargetID {
 	case "android-emulator", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
 		return s.buildAndLaunchRNAndroid(ctx, session, workDir)
