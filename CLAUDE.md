@@ -201,6 +201,25 @@ changing those.
   relay passwords, Tailscale IPs — all gitignored / GH secrets only. If a
   secret was ever committed: rotate it AND `git filter-repo --replace-text`
   before pushing.
+- **The relay is MULTI-TENANT — a hostile relay user must NEVER reach another
+  user's box or phone.** The Yaver free relay (and Relay Pro) are shared by many
+  unrelated users, and the code is open source, so an attacker reads everything.
+  **Security therefore rests on KEYS, not on secret request shapes — never add a
+  "security" that a source reader defeats.** Non-negotiable invariants (see
+  `docs/architecture/ROBUST_TRANSPORT_SSH_QUIC.md` §4d +
+  `SECURE_FRICTIONLESS_TRANSPORT_SETUP.md`): (1) the relay is **pass-through +
+  access-graph-scoped** — it forwards ciphertext, authorizes nothing, holds no
+  device keys, and bridges only within the **same owner/access-graph** (the same
+  userID check as the `already registered` eviction in `relay/server.go`); (2) a
+  box authenticates the **client's device key, public-key ONLY**, against its own
+  `# yaver-managed` set — a stranger's key isn't there, so the handshake fails,
+  and a *fully compromised relay still can't get in* (it has no key; the phone key
+  lives in the Secure Enclave); (3) SSH / reverse-SSH channels are **forced-command
+  cages** (no shell/pty/forward/subsystem — `ssh_control_server.go`,
+  `ssh_session_cmd.go`); (4) **Free vs Pro is NOT a security boundary** — identical
+  auth, Pro only buys capacity. Any new transport/relay/mesh code must preserve all
+  four; a change that lets tenant A's traffic reach tenant B's agent, or that
+  trusts the relay/tier to authorize, is a security bug even if it "works".
 - **Public docs use machine aliases**, not real infra labels. Prefer
   `primary`, `selected-machine`, `your-box`, `example-host` in examples.
 - **Hetzner test box (`yaver-test-ephemeral`)** is disposable. Its IP, SSH

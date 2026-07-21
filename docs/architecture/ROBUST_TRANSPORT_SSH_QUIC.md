@@ -387,6 +387,30 @@ So: one hardened-relay + one selector contract + one status vocabulary across
 every surface; the native SSH out-of-band channel is phone/desktop-first (+ Wear
 OS/Android native later), with watch/tv/web riding the companion + hardened relay.
 
+## 4c-2. Two planes: Mesh-VPN (data) + SSH (control) — harden both
+Yaver Mesh also has its **own VPN-like WireGuard overlay** — that is the **DATA
+plane**: WebRTC media, Hermes bundle push, dev-server preview, bulk transfer ride
+it (or direct/relay) when peers can join the overlay. The **SSH / reverse-SSH
+channel is the CONTROL plane**: liveness, status, tasks, and self-heal. They are
+complementary — the Mesh-VPN moves bulk/real-time data (never tunnel media over
+TCP SSH, §C), the SSH channel is the out-of-band redundant control/recovery link
+that survives when the data plane is down. **Harden both**: the overlay with ACLs
+(same-user default, guest only for shared targets, no open subnet routing, route-
+conflict doctor before bring-up), the SSH channel with §4d. Same multi-tenant
+security bar applies to both — a tenant's overlay/tunnel never reaches another
+tenant's peer.
+
+### MCP self-heal over the redundant SSH channel
+Yaver MCP connectivity problems are fixed *using the SSH channel itself*: when the
+data plane (QUIC relay / Mesh-VPN) is down, MCP verbs route over the surviving SSH
+control channel to run the **remote runner's diagnostics + repair** —
+`doctor-transport`, `repair-relay`, re-register/restart tunnel — agentically,
+bounded (no tight loops), then restore the data plane. So an MCP call that would
+otherwise fail "can't reach the box" instead reaches it out-of-band and self-heals.
+This is why `doctor-transport` + `repair-relay` are in the forced-command
+whitelist (`sshSessionRoute`): the recovery verbs must be reachable precisely when
+everything else isn't.
+
 ## 4d. Threat: a hostile relay user must NOT reach another user's box/phone
 
 This is the paramount property, and it must hold **even though the code is open
