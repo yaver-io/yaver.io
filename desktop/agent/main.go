@@ -11751,22 +11751,9 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	// relaySSHControlSentinelPath, so existing traffic is untouched. Mirrors the
 	// WebSocket raw-splice below, including draining the JSON decoder's overflow.
 	if req.Path == relaySSHControlSentinelPath {
-		backendConn, err := net.Dial("tcp", localSSHControlAddr())
-		if err != nil {
-			relaySendError(stream, req.ID, 502, fmt.Sprintf("ssh control server unavailable: %v", err))
-			return
+		if err := spliceStreamToSSH(context.Background(), stream, envelopeOverflow, localSSHControlAddr()); err != nil {
+			log.Printf("[RELAY] ssh-control splice: %v", err)
 		}
-		defer backendConn.Close()
-		done := make(chan struct{}, 2)
-		go func() {
-			if envelopeOverflow != nil {
-				io.Copy(backendConn, envelopeOverflow)
-			}
-			io.Copy(backendConn, stream)
-			done <- struct{}{}
-		}()
-		go func() { io.Copy(stream, backendConn); done <- struct{}{} }()
-		<-done
 		return
 	}
 

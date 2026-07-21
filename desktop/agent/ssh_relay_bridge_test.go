@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,6 +68,60 @@ func TestBridgeToLocalSSH_SplicesBothWays(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("bridge did not tear down after the client closed")
 	}
+}
+
+// The agent's relay-stream glue: over-read bytes (envelope overflow) must reach
+// the SSH server BEFORE the rest of the stream, in order — else the first SSH
+// handshake bytes the relay flushed with the envelope get lost and the handshake
+// fails. This tests the exact path relayHandleProxiedRequest now calls.
+func TestSpliceStreamToSSH_OverflowFirstThenStream(t *testing.T) {
+	// Fake SSH server: read up to 16 bytes, echo them back so we can verify order.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 16)
+		// Read until we have "OVER" + "LAND" (8 bytes).
+		got := make([]byte, 0, 16)
+		for len(got) < 8 {
+			n, e := c.Read(buf)
+			if n > 0 {
+				got = append(got, buf[:n]...)
+			}
+			if e != nil {
+				break
+			}
+		}
+		c.Write(got)
+	}()
+
+	clientSide, streamSide := net.Pipe()
+	overflow := strings.NewReader("OVER") // over-read past the envelope
+	done := make(chan error, 1)
+	go func() {
+		done <- spliceStreamToSSH(context.Background(), streamSide, overflow, ln.Addr().String())
+	}()
+	// The rest of the "SSH bytes" arrive on the stream after the overflow.
+	go func() { clientSide.Write([]byte("LAND")) }()
+
+	clientSide.SetReadDeadline(time.Now().Add(3 * time.Second))
+	got := make([]byte, 16)
+	n, err := clientSide.Read(got)
+	if err != nil {
+		t.Fatalf("reading echo: %v", err)
+	}
+	if string(got[:n]) != "OVERLAND" {
+		t.Fatalf("overflow must precede stream: SSH server saw %q, want %q", string(got[:n]), "OVERLAND")
+	}
+	clientSide.Close()
+	<-done
 }
 
 // Dialing a dead SSH addr returns an error (the box's server isn't up) — the

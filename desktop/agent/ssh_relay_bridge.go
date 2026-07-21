@@ -50,12 +50,31 @@ func localSSHControlAddr() string {
 // closes. Returns when the bridge tears down. The box's SSH server authenticates
 // the client on this pipe — the bridge itself grants nothing.
 func bridgeToLocalSSH(ctx context.Context, client io.ReadWriteCloser, sshAddr string) error {
+	return spliceStreamToSSH(ctx, client, nil, sshAddr)
+}
+
+// spliceStreamToSSH is what the agent's relay-stream handler calls for an SSH
+// sentinel stream: dial the local SSH control server, first flush any bytes the
+// JSON decoder over-read past the envelope (`overflow` — the start of the SSH
+// handshake the relay flushed together with the envelope), then splice the
+// stream both ways. Testable in isolation so the agent-side glue (not just the
+// primitives) is covered.
+func spliceStreamToSSH(ctx context.Context, stream io.ReadWriteCloser, overflow io.Reader, sshAddr string) error {
 	d := net.Dialer{Timeout: 5 * time.Second}
 	srv, err := d.DialContext(ctx, "tcp", sshAddr)
 	if err != nil {
 		return err
 	}
-	return spliceBidirectional(client, srv)
+	if overflow != nil {
+		// Push the over-read bytes to the SSH server before splicing, so the first
+		// SSH bytes the client already sent aren't dropped.
+		if _, err := io.Copy(srv, overflow); err != nil && err != io.EOF {
+			srv.Close()
+			stream.Close()
+			return err
+		}
+	}
+	return spliceBidirectional(stream, srv)
 }
 
 // spliceBidirectional copies a↔b until one side ends, then closes both. Returns
