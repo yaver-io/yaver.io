@@ -454,6 +454,42 @@ Pro buys reliability/capacity, never a weaker auth path — a Pro relay is treat
 as exactly as hostile as the free one. The box trusts **its owner's device keys**,
 full stop — not the relay, not the tier, not Convex alone.
 
+## 4e. Cloud Workspace VM compatibility (the normie path)
+
+The dominant normie shape is **phone + a Yaver Cloud Workspace VM** (BYO
+claude/codex or Yaver inference) — no Mac, no LAN. The transport must be
+first-class for that, and it maps cleanly onto the same design:
+
+- **Reachability:** a cloud VM and a phone share **no overlay** and the VM is
+  behind the provider's NAT/firewall → `chooseSSHTransport(false)` →
+  **reverse-SSH via relay** is the default path (the VM dials out, holds the
+  tunnel; the phone reaches the forced-command endpoint through it). No inbound
+  ports, no security-group holes to open.
+- **Frictionless keys, provisioning-time:** the VM's device key + its
+  `# yaver-managed` forced-command entry are **injected at provision** (Yaver-
+  managed, scoped to the workspace's user, revocable without touching anything
+  personal — the VM has no personal keys). Zero user action. Private material is
+  injected from the control plane's secret store, **never baked into an image**
+  (open-source images must be clean — §"No private data").
+- **Scale-to-zero honored (Hetzner = metered).** The reverse tunnel must NOT be a
+  reason to keep the VM alive: when the workspace has no active session it
+  **sleeps/deletes** per provider semantics (state on a volume/snapshot), which
+  closes the tunnel; on **wake** the VM re-establishes it via the bounded
+  supervisor (`superviseReverseTunnel`) and Convex re-signals presence. A tunnel
+  is not a heartbeat that burns compute — idle → tunnel down → VM parked.
+- **Same security bar.** Multi-tenant isolation (§4d) applies identically: many
+  users' workspaces share the relay; each VM authenticates only its owner's
+  device keys; the relay bridges only within the workspace's access graph. A
+  compromised relay cannot enter a stranger's workspace VM.
+- **MCP self-heal fits the VM too:** when a workspace's data path flaps, the
+  redundant SSH control channel runs the VM's runner diagnostics
+  (`doctor-transport`, `repair-relay`) to recover — the same out-of-band self-heal,
+  now on rented compute.
+
+So the Cloud Workspace VM is just "the box behind NAT" case of the general design:
+reverse-SSH-via-relay by default, provisioning-time managed keys, scale-to-zero
+respected, identical multi-tenant security.
+
 ## 5. Recommendation
 
 1. **Now (fixes the reported pain):** Road A — harden the QUIC relay to

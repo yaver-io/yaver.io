@@ -220,6 +220,24 @@ changing those.
   auth, Pro only buys capacity. Any new transport/relay/mesh code must preserve all
   four; a change that lets tenant A's traffic reach tenant B's agent, or that
   trusts the relay/tier to authorize, is a security bug even if it "works".
+- **No PRIVATE data in the codebase — ever. PUBLIC key material may live in code;
+  private material may not.** Yaver is public open source: a hacker reads every
+  tracked file. So the split is cryptographic, not vibes-based:
+  - **Private → secret store, never tracked.** Private keys, certificates *with*
+    their private key, session/auth tokens, passwords, provider API credentials,
+    relay passwords, signing keys → **GitHub Actions secrets**, **Convex env**,
+    or the **local encrypted `yaver vault` / `~/.yaver` 0600 store** (or the
+    device **Secure Enclave / Keychain**). If leaking it lets someone
+    impersonate, decrypt, or sign, it is private.
+  - **Public → codebase is fine.** *Public* keys, *public* certificates, relay/
+    mesh **public** identities, host-key **fingerprints to pin** — these are
+    verifiers, safe to ship in the repo (that is the whole point of public-key
+    crypto). Shipping a public key is not a leak.
+  - The test before committing any key/cert/credential: *"if an attacker reads
+    this exact bytes from the public repo, can they get in or forge?"* Yes →
+    secret store. No (it only lets them *verify*) → code is acceptable.
+  This generalizes the "never commit credentials" rule to the open-source reality
+  and to the new SSH/mesh key material.
 - **Public docs use machine aliases**, not real infra labels. Prefer
   `primary`, `selected-machine`, `your-box`, `example-host` in examples.
 - **Hetzner test box (`yaver-test-ephemeral`)** is disposable. Its IP, SSH
