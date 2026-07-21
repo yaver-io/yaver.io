@@ -44,3 +44,39 @@ func TestStreamingSurfaceOptionsDefaultFirst(t *testing.T) {
 		t.Errorf("swift options = %v, want [simulator]", got)
 	}
 }
+
+// The browser streaming surface builds each framework's WEB dev server with HMR —
+// the fast RN/Flutter default. Contract pinned so the surface can't silently
+// build the wrong thing.
+func TestWebDevServerCommand(t *testing.T) {
+	cases := map[string]string{
+		"expo":         "npx expo start --web --port 8090",
+		"react-native": "npx expo start --web --port 8090",
+		"flutter":      "flutter run -d web-server --web-port 8090 --web-hostname 127.0.0.1",
+		"nextjs":       "npx next dev -p 8090",
+	}
+	for fw, want := range cases {
+		cmd, err := webDevServerCommand(fw, 8090)
+		if err != nil {
+			t.Errorf("%s: %v", fw, err)
+			continue
+		}
+		if got := joinStr(cmd); got != want {
+			t.Errorf("webDevServerCommand(%q) = %q, want %q", fw, got, want)
+		}
+	}
+	if _, err := webDevServerCommand("kotlin", 8090); err == nil {
+		t.Error("kotlin has no web dev server — must error, not build the wrong thing")
+	}
+}
+
+func joinStr(s []string) string {
+	out := ""
+	for i, x := range s {
+		if i > 0 {
+			out += " "
+		}
+		out += x
+	}
+	return out
+}

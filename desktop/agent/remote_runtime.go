@@ -135,7 +135,7 @@ func executionModeForFramework(framework string) ProjectExecutionMode {
 		// bundles into the Yaver mobile super-host. See
 		// docs/native-webrtc-web-streaming.md §13.
 		return ExecutionModeRNHermes
-	case "next", "nextjs", "vite", "react":
+	case "next", "nextjs", "vite", "react", "firebase", "supabase", "convex", "yaver-serverless":
 		return ExecutionModeWebWebview
 	case "swift", "kotlin", "flutter":
 		// Flutter joins Swift + Kotlin in the WebRTC family because
@@ -264,6 +264,26 @@ func resolveStreamingSurface(framework, override string) StreamingSurface {
 		}
 	}
 	return defaultStreamingSurface(framework)
+}
+
+// webDevServerCommand returns the command to start a framework's WEB build dev
+// server, for the browser streaming surface (the pragmatic RN/Flutter default).
+// The agent starts this, points a headless-Chrome browser session at
+// http://127.0.0.1:<port>, and streams the tab via CDP screencast — sub-second
+// HMR, no emulator, no Xcode. Testable contract; the shell-out is trivial.
+func webDevServerCommand(framework string, port int) ([]string, error) {
+	p := fmt.Sprintf("%d", port)
+	switch strings.ToLower(strings.TrimSpace(framework)) {
+	case "expo", "react-native":
+		return []string{"npx", "expo", "start", "--web", "--port", p}, nil
+	case "flutter":
+		return []string{"flutter", "run", "-d", "web-server", "--web-port", p, "--web-hostname", "127.0.0.1"}, nil
+	case "next", "nextjs":
+		return []string{"npx", "next", "dev", "-p", p}, nil
+	case "vite", "react":
+		return []string{"npx", "vite", "--port", p, "--host", "127.0.0.1"}, nil
+	}
+	return nil, fmt.Errorf("no web dev server command for framework %q", framework)
 }
 
 func frameworkStreamsRNViaSimulator(framework string) bool {
