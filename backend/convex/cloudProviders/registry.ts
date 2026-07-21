@@ -2,6 +2,7 @@ import { AzureProvider } from "./azure";
 import { AwsProvider } from "./aws";
 import { GcpProvider } from "./gcp";
 import { HetznerProvider, createHetznerProvider } from "./hetzner";
+import { gcpProjectIdFromEnv } from "./credentials";
 import type { ProviderCapabilities } from "./types";
 
 export type ManagedCloudProviderRegistry = {
@@ -15,8 +16,10 @@ export function createManagedCloudProviderRegistry(env: Record<string, string | 
     computeProviders.push(createHetznerProvider(env.HCLOUD_TOKEN));
   }
   computeProviders.push(new GcpProvider({
+    // accessToken is the manual-probing override only; production authenticates
+    // through GCP_SERVICE_ACCOUNT_JSON inside the provider (see credentials.ts).
     accessToken: env.GCP_ACCESS_TOKEN,
-    projectId: env.GCP_PROJECT_ID,
+    projectId: env.GCP_PROJECT_ID || gcpProjectIdFromEnv(env),
     zone: env.GCP_ZONE,
   }));
   computeProviders.push(new AwsProvider({

@@ -1,6 +1,10 @@
 import { AbstractCloudProvider, ProviderOperationError } from "./abstract";
 import type {
+  AttachEgressIpRequest,
   BudgetStatus,
+  EgressIpReservation,
+  ReleaseEgressIpRequest,
+  ReserveEgressIpRequest,
   CostEstimate,
   CostEstimateRequest,
   CreateMachineRequest,
@@ -69,6 +73,8 @@ export class AwsProvider extends AbstractCloudProvider {
         "snapshot-fallback",
         "image-boot",
         "provider-status",
+        "tagged-cleanup",
+        "stable-egress-ip",
         "outbound-relay",
         "stable-endpoint",
         "budget-telemetry",
@@ -149,10 +155,23 @@ export class AwsProvider extends AbstractCloudProvider {
     this.requireConfig("createMachine");
     const imageId = String(req.image || this.stringEnv("AWS_DEFAULT_AMI_ID") || "");
     if (!imageId) throw this.error("createMachine", "missing_image", "AWS createMachine requires AMI id");
-    const subnetId = this.stringOption(req.providerOptions, "subnetId") || this.stringEnv("AWS_SUBNET_ID");
-    const securityGroupId = this.stringOption(req.providerOptions, "securityGroupId") || this.stringEnv("AWS_SECURITY_GROUP_ID");
+    // Network bootstrap: use what the operator pinned, else discover the
+    // account's default VPC. Requiring pre-created infrastructure made this
+    // adapter unusable for real placement — and a half-configured network is
+    // how a create fails AFTER the volume exists.
+    let subnetId = this.stringOption(req.providerOptions, "subnetId") || this.stringEnv("AWS_SUBNET_ID");
+    let securityGroupId = this.stringOption(req.providerOptions, "securityGroupId") || this.stringEnv("AWS_SECURITY_GROUP_ID");
     if (!subnetId || !securityGroupId) {
-      throw this.error("createMachine", "missing_network", "AWS createMachine requires subnetId/securityGroupId or AWS_SUBNET_ID/AWS_SECURITY_GROUP_ID");
+      const net = await this.discoverNetwork();
+      subnetId = subnetId || net.subnetId;
+      securityGroupId = securityGroupId || net.securityGroupId;
+    }
+    if (!subnetId || !securityGroupId) {
+      throw this.error(
+        "createMachine",
+        "missing_network",
+        "AWS createMachine found no usable subnet/security group. Set AWS_SUBNET_ID and AWS_SECURITY_GROUP_ID, or ensure the account has a default VPC in this region.",
+      );
     }
     const params: Record<string, string> = {
       Action: "RunInstances",
@@ -164,6 +183,11 @@ export class AwsProvider extends AbstractCloudProvider {
       "NetworkInterface.1.DeviceIndex": "0",
       "NetworkInterface.1.SubnetId": subnetId,
       "NetworkInterface.1.Groups.1": securityGroupId,
+      // Without this the instance gets NO public IPv4 and RunInstances returns
+      // no address — which the caller treats as a hard failure AFTER the
+      // instance already exists, i.e. a guaranteed billing orphan. A workspace
+      // must be reachable, so a public address is part of the contract.
+      "NetworkInterface.1.AssociatePublicIpAddress": "true",
       UserData: this.base64Utf8(req.userData),
     };
     const keyName = req.sshKeyNames?.[0] || this.stringEnv("AWS_KEY_NAME");
@@ -172,9 +196,27 @@ export class AwsProvider extends AbstractCloudProvider {
     const xml = await this.ec2(params);
     const instanceId = this.xmlValue(xml, "instanceId");
     if (!instanceId) throw this.error("createMachine", "bad_response", "AWS RunInstances returned no instanceId");
+
+    // RunInstances answers before the public address is assigned, so the
+    // create response frequently carries no ipAddress at all. Resolve it with
+    // a bounded DescribeInstances poll instead of returning undefined — the
+    // caller hard-throws on a missing IP and would strand this instance.
+    let serverIp = this.xmlValue(xml, "ipAddress") || undefined;
+    for (let i = 0; !serverIp && i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const desc = await this.ec2({
+          Action: "DescribeInstances",
+          Version: "2016-11-15",
+          "InstanceId.1": instanceId,
+        });
+        serverIp = this.xmlValue(desc, "ipAddress") || undefined;
+      } catch { /* transient — keep polling within the bound */ }
+    }
     return {
       cloudResourceId: instanceId,
-      providerStatus: this.xmlValue(xml, "name") || "pending",
+      serverIp,
+      providerStatus: this.instanceStateName(xml) || "pending",
       serverType: req.sku,
     };
   }
@@ -183,17 +225,42 @@ export class AwsProvider extends AbstractCloudProvider {
     return this.createMachine(req);
   }
 
-  async createMachineFromSnapshot(_req: WakeFromSnapshotRequest): Promise<CreateMachineResult> {
-    this.unsupported("createMachineFromSnapshot", "AWS snapshot wake needs EBS-volume-from-snapshot orchestration before placement eligibility");
+  /**
+   * Wake from a snapshot == launch from the AMI that `snapshotMachine` created.
+   * AWS models "a whole machine's disk state" as an AMI, so the snapshot id we
+   * hand back IS an image id and the wake is just a create with that image.
+   */
+  async createMachineFromSnapshot(req: WakeFromSnapshotRequest): Promise<CreateMachineResult> {
+    return this.createMachine({ ...req, image: req.snapshotId });
   }
 
+  /**
+   * CreateImage produces an AMI (plus backing EBS snapshots) from an instance.
+   * `NoReboot=true` keeps the workspace usable while it is captured; the
+   * tradeoff is a crash-consistent rather than quiesced image, which is the
+   * right call for a dev box — a forced reboot mid-park is far more disruptive
+   * than a journal replay on restore.
+   *
+   * ⚠️ COST: an AMI keeps its EBS snapshots alive and billing until the image is
+   * deregistered AND those snapshots are deleted. Deregistering alone leaves the
+   * snapshots behind — the classic AWS orphan, and exactly the satellite-outlives-
+   * its-parent shape that leaked volumes on Hetzner. listYaverTaggedResources
+   * reports snapshots separately so reclamation can see both.
+   */
   async snapshotMachine(req: SnapshotMachineRequest): Promise<SnapshotResult> {
     this.requireConfig("snapshotMachine");
-    throw this.error(
-      "snapshotMachine",
-      "not_wired",
-      `AWS snapshotMachine is not wired yet for ${req.cloudResourceId}; use durable EBS path first`,
-    );
+    const params: Record<string, string> = {
+      Action: "CreateImage",
+      Version: "2016-11-15",
+      InstanceId: req.cloudResourceId,
+      Name: `yaver-${req.label}-${Date.now()}`.slice(0, 127),
+      NoReboot: "true",
+    };
+    this.applyTags(params, { managed: "true", service: "yaver-snapshot" }, ["image", "snapshot"]);
+    const xml = await this.ec2(params);
+    const imageId = this.xmlValue(xml, "imageId");
+    if (!imageId) throw this.error("snapshotMachine", "bad_response", "AWS CreateImage returned no imageId");
+    return { snapshotId: imageId };
   }
 
   async deleteMachine(req: DeleteMachineRequest): Promise<void> {
@@ -212,7 +279,7 @@ export class AwsProvider extends AbstractCloudProvider {
       Version: "2016-11-15",
       "InstanceId.1": req.cloudResourceId,
     });
-    const raw = this.xmlValue(xml, "name") || "unknown";
+    const raw = this.instanceStateName(xml) || "unknown";
     return { status: raw, rawStatus: raw };
   }
 
@@ -233,8 +300,140 @@ export class AwsProvider extends AbstractCloudProvider {
     }
   }
 
-  async listYaverTaggedResources(_req?: ListTaggedResourcesRequest): Promise<TaggedResource[]> {
-    return [];
+  /**
+   * Instances, EBS volumes, snapshots and Elastic IPs carrying our tag.
+   * Reconciliation reads this; without it a leak is undetectable forever.
+   * Terminated instances are skipped — they no longer bill and would otherwise
+   * drown the sweep in noise.
+   */
+  async listYaverTaggedResources(req?: ListTaggedResourcesRequest): Promise<TaggedResource[]> {
+    this.requireConfig("listYaverTaggedResources");
+    const tags = req?.tags ?? { yaver: "managed" };
+    const filters: Record<string, string> = {};
+    let n = 1;
+    for (const [k, val] of Object.entries(tags)) {
+      filters[`Filter.${n}.Name`] = `tag:${k}`;
+      filters[`Filter.${n}.Value.1`] = val;
+      n++;
+    }
+    const out: TaggedResource[] = [];
+
+    const scan = async (
+      action: string,
+      idTag: string,
+      type: TaggedResource["type"],
+      statusTag?: string,
+    ): Promise<void> => {
+      try {
+        const xml = await this.ec2({ Action: action, Version: "2016-11-15", ...filters });
+        for (const id of this.xmlValues(xml, idTag)) {
+          const status = type === "machine"
+            ? this.instanceStateName(xml)
+            : (statusTag ? this.xmlValues(xml, statusTag)[0] : undefined);
+          if (type === "machine" && status === "terminated") continue;
+          out.push({ id, type, provider: this.id, tags, status });
+        }
+      } catch { /* partial inventory still finds leaks */ }
+    };
+
+    await scan("DescribeInstances", "instanceId", "machine", "name");
+    await scan("DescribeVolumes", "volumeId", "volume", "status");
+    await scan("DescribeSnapshots", "snapshotId", "snapshot", "status");
+    await scan("DescribeAddresses", "allocationId", "ip");
+    return out;
+  }
+
+  // ─── Stable egress identity (Elastic IP) ────────────────────────────────
+  // An EIP is the address outbound traffic is sourced from once associated,
+  // and it survives instance termination (it merely disassociates) — which is
+  // exactly what park needs. It also bills while unassociated, so releasing it
+  // on decommission is a real cost stop, not tidy-up.
+
+  async reserveEgressIp(req: ReserveEgressIpRequest): Promise<EgressIpReservation> {
+    this.requireConfig("reserveEgressIp");
+    const params: Record<string, string> = {
+      Action: "AllocateAddress",
+      Version: "2016-11-15",
+      Domain: "vpc",
+    };
+    this.applyTags(params, { ...req.tags, "yaver-role": "egress" }, ["elastic-ip"]);
+    const xml = await this.ec2(params);
+    const allocationId = this.xmlValue(xml, "allocationId");
+    const address = this.xmlValue(xml, "publicIp");
+    if (!allocationId || !address) {
+      throw this.error("reserveEgressIp", "bad_response", "AWS AllocateAddress returned no allocationId/publicIp");
+    }
+    return {
+      egressIpId: allocationId,
+      address,
+      scope: this.region,
+      // AWS bills all public IPv4 hourly (~$0.005/h) whether or not it is in use.
+      idleCostUsdPerMonth: 3.6,
+    };
+  }
+
+  async attachEgressIp(req: AttachEgressIpRequest): Promise<void> {
+    this.requireConfig("attachEgressIp");
+    await this.ec2({
+      Action: "AssociateAddress",
+      Version: "2016-11-15",
+      AllocationId: req.egressIpId,
+      InstanceId: req.cloudResourceId,
+      AllowReassociation: "true",
+    });
+  }
+
+  async releaseEgressIp(req: ReleaseEgressIpRequest): Promise<void> {
+    this.requireConfig("releaseEgressIp");
+    await this.ec2({
+      Action: "ReleaseAddress",
+      Version: "2016-11-15",
+      AllocationId: req.egressIpId,
+    }, [200, 400]);
+  }
+
+  /**
+   * Find a usable subnet + security group without requiring the operator to
+   * pre-create anything.
+   *
+   * Deliberately DISCOVERS rather than CREATES a VPC. Creating VPCs, gateways
+   * and route tables from a provisioning path means a failure halfway through
+   * leaves networking debris that the orphan sweep cannot reason about, and it
+   * mutates account-wide infrastructure that may not belong to Yaver — the
+   * resource-boundary rule. Discovery is reversible; creation is not.
+   */
+  private async discoverNetwork(): Promise<{ subnetId?: string; securityGroupId?: string }> {
+    try {
+      const vpcXml = await this.ec2({
+        Action: "DescribeVpcs",
+        Version: "2016-11-15",
+        "Filter.1.Name": "isDefault",
+        "Filter.1.Value.1": "true",
+      });
+      const vpcId = this.xmlValue(vpcXml, "vpcId");
+      if (!vpcId) return {};
+
+      const subnetXml = await this.ec2({
+        Action: "DescribeSubnets",
+        Version: "2016-11-15",
+        "Filter.1.Name": "vpc-id",
+        "Filter.1.Value.1": vpcId,
+      });
+      const subnetId = this.xmlValues(subnetXml, "subnetId")[0];
+
+      const sgXml = await this.ec2({
+        Action: "DescribeSecurityGroups",
+        Version: "2016-11-15",
+        "Filter.1.Name": "vpc-id",
+        "Filter.1.Value.1": vpcId,
+        "Filter.2.Name": "group-name",
+        "Filter.2.Value.1": "default",
+      });
+      const securityGroupId = this.xmlValues(sgXml, "groupId")[0];
+      return { subnetId, securityGroupId };
+    } catch {
+      return {};
+    }
   }
 
   private requireConfig(operation: string): void {
@@ -369,6 +568,28 @@ export class AwsProvider extends AbstractCloudProvider {
   private xmlValue(xml: string, tag: string): string | undefined {
     const match = xml.match(new RegExp(`<${tag}>([^<]+)</${tag}>`));
     return match?.[1];
+  }
+
+  /** Every occurrence of a tag, in document order. */
+  private xmlValues(xml: string, tag: string): string[] {
+    const out: string[] = [];
+    const re = new RegExp(`<${tag}>([^<]+)</${tag}>`, "g");
+    for (const m of xml.matchAll(re)) if (m[1]) out.push(m[1]);
+    return out;
+  }
+
+  /**
+   * The EC2 instance STATE, not merely the first `<name>` in the document.
+   *
+   * DescribeInstances XML contains many `<name>` elements (group names,
+   * placement, tenancy, instance state, …) so a first-match regex reads
+   * whichever happens to come first — a status that is wrong in a way that
+   * looks plausible. `<instanceState>` wraps the one we want.
+   */
+  private instanceStateName(xml: string): string | undefined {
+    const block = xml.match(/<instanceState>([\s\S]*?)<\/instanceState>/);
+    if (!block?.[1]) return undefined;
+    return this.xmlValue(block[1], "name");
   }
 
   private error(operation: string, code: string, message: string): ProviderOperationError {

@@ -19,6 +19,12 @@ export type RequiredCapability =
   | "provider-status"
   | "tagged-cleanup"
   | "budget-telemetry"
+  // A reservable public address that SURVIVES the server delete performed by
+  // park, so one workspace keeps one outbound identity across wakes. Declare
+  // this ONLY if reserve/attach/release are all really implemented — the
+  // capability list is a placement gate, and a false declaration here is the
+  // same class of bug as claiming "tagged-cleanup" while returning [].
+  | "stable-egress-ip"
   | "outbound-relay"
   | "udp-ingress"
   | "stable-endpoint"
@@ -168,6 +174,57 @@ export type TaggedResource = {
 
 export type ListTaggedResourcesRequest = {
   tags?: Record<string, string>;
+};
+
+/**
+ * ─── Stable egress identity ─────────────────────────────────────────────────
+ *
+ * Park is delete-not-stop, so without a reserved address every wake gives the
+ * workspace a brand-new datacenter IP — and the user's mirrored runner
+ * credentials therefore reach the vendor from a different address every time.
+ *
+ * The primitive differs per provider (Hetzner Primary IP with
+ * auto_delete:false, AWS Elastic IP, GCP static external IP, Azure Standard
+ * static Public IP) but the contract is identical: reserve once, attach on
+ * every create, release ONLY on decommission.
+ *
+ * ⚠️ It must be the address outbound traffic is SOURCED from. An inbound-only
+ * primitive (a Hetzner Floating IP, an Azure Load Balancer frontend) does not
+ * satisfy this contract even though it looks attached.
+ *
+ * ⚠️ A reserved address is a DETACHABLE PAID RESOURCE that outlives its server.
+ * It must be reclaimed on decommission and listed by listYaverTaggedResources,
+ * or it becomes the next silent leak.
+ */
+export type ReserveEgressIpRequest = {
+  name: string;
+  region: string;
+  tags: Record<string, string>;
+  /** Pin into the exact placement scope a machine will be created in. */
+  scope?: string;
+};
+
+export type EgressIpReservation = {
+  egressIpId: string;
+  address: string;
+  /**
+   * Placement scope the address is bound to (Hetzner datacenter, AWS/GCP
+   * region, Azure region). A create MUST land inside this scope or the address
+   * cannot be attached.
+   */
+  scope: string;
+  /** Ongoing cost while held but NOT attached — the parked-box cost. */
+  idleCostUsdPerMonth?: number;
+};
+
+export type AttachEgressIpRequest = {
+  egressIpId: string;
+  cloudResourceId: string;
+  providerOptions?: Record<string, unknown>;
+};
+
+export type ReleaseEgressIpRequest = {
+  egressIpId: string;
 };
 
 export type ModelCapability = {

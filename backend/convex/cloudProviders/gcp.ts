@@ -1,6 +1,11 @@
 import { AbstractCloudProvider, ProviderOperationError } from "./abstract";
+import { getGcpAccessToken, gcpProjectIdFromEnv, hasRefreshableCredentials } from "./credentials";
 import type {
+  AttachEgressIpRequest,
   BudgetStatus,
+  EgressIpReservation,
+  ReleaseEgressIpRequest,
+  ReserveEgressIpRequest,
   CostEstimate,
   CostEstimateRequest,
   CreateMachineRequest,
@@ -47,6 +52,7 @@ type GcpResource = {
 // - Compute Engine disks.insert/delete
 export class GcpProvider extends AbstractCloudProvider {
   readonly id = "gcp" as const;
+  /** Static token: manual probing only. Production uses the SA flow. */
   private readonly accessToken?: string;
   private readonly projectId?: string;
   private readonly zone: string;
@@ -72,6 +78,8 @@ export class GcpProvider extends AbstractCloudProvider {
         "snapshot-fallback",
         "image-boot",
         "provider-status",
+        "tagged-cleanup",
+        "stable-egress-ip",
         "outbound-relay",
         "stable-endpoint",
         "budget-telemetry",
@@ -113,7 +121,7 @@ export class GcpProvider extends AbstractCloudProvider {
   }
 
   async readBudgetStatus(): Promise<BudgetStatus> {
-    const configured = Boolean(this.accessToken && this.projectId);
+    const configured = Boolean((this.accessToken || hasRefreshableCredentials("gcp")) && this.projectId);
     return {
       provider: this.id,
       ok: configured,
@@ -136,7 +144,12 @@ export class GcpProvider extends AbstractCloudProvider {
         },
       },
     );
-    return { volumeId: disk.selfLink || `projects/${this.projectId}/zones/${this.zone}/disks/${req.name}` };
+    // `disks.insert` returns an OPERATION, not a Disk. Reading `selfLink` off
+    // it yields the OPERATION's link, so every later toGcpPath() delete would
+    // target a resource that does not exist — a silent orphan generator. The
+    // deterministic resource path is the only trustworthy id here.
+    void disk;
+    return { volumeId: `projects/${this.projectId}/zones/${this.zone}/disks/${req.name}` };
   }
 
   async deleteVolume(req: DeleteVolumeRequest): Promise<void> {
@@ -193,10 +206,33 @@ export class GcpProvider extends AbstractCloudProvider {
         },
       },
     );
+    // ⚠️ `instances.insert` returns an OPERATION, never an Instance.
+    //   - `selfLink` is the operation's link, not the instance's.
+    //   - `status` is the OPERATION's status (PENDING/RUNNING/DONE), which
+    //     reads exactly like an instance status and is not one.
+    //   - `natIP` is ALWAYS undefined, and the caller hard-throws on a missing
+    //     IP *after* the instance exists ⇒ guaranteed billing orphan.
+    // Use the deterministic resource path and then GET the real instance.
+    void instance;
+    const resourcePath = `projects/${this.projectId}/zones/${this.zone}/instances/${req.name}`;
+    let serverIp: string | undefined;
+    let providerStatus: string | undefined;
+    for (let i = 0; i < 15; i++) {
+      try {
+        const live = await this.request<GcpResource>(
+          `/projects/${this.projectId}/zones/${this.zone}/instances/${req.name}`,
+          { method: "GET" },
+        );
+        providerStatus = live.status;
+        serverIp = live.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+        if (serverIp) break;
+      } catch { /* instance not visible yet — keep polling within the bound */ }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
     return {
-      cloudResourceId: instance.selfLink || `projects/${this.projectId}/zones/${this.zone}/instances/${req.name}`,
-      serverIp: instance.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP,
-      providerStatus: instance.status,
+      cloudResourceId: resourcePath,
+      serverIp,
+      providerStatus: providerStatus || "PROVISIONING",
       serverType: req.sku,
     };
   }
@@ -205,17 +241,55 @@ export class GcpProvider extends AbstractCloudProvider {
     return this.createMachine(req);
   }
 
-  async createMachineFromSnapshot(_req: WakeFromSnapshotRequest): Promise<CreateMachineResult> {
-    this.unsupported("createMachineFromSnapshot", "GCP snapshot wake needs disk-from-snapshot orchestration before placement eligibility");
+  /**
+   * Wake from a snapshot == create with that custom IMAGE as the boot source.
+   * `snapshotMachine` deliberately produces an image (not a raw disk snapshot)
+   * so the wake is an ordinary create — a disk-snapshot would force a
+   * create-disk-then-attach dance and a second failure window in which a disk
+   * exists that nothing references.
+   */
+  async createMachineFromSnapshot(req: WakeFromSnapshotRequest): Promise<CreateMachineResult> {
+    return this.createMachine({ ...req, image: req.snapshotId });
   }
 
+  /**
+   * Capture the instance's BOOT disk as a custom image.
+   *
+   * `forceCreate` is required because the source disk is still attached to a
+   * running instance; without it GCP refuses. As with AWS this yields a
+   * crash-consistent image rather than a quiesced one, which is the right
+   * tradeoff for a dev box.
+   *
+   * ⚠️ COST: custom images bill for stored bytes until deleted. The image id is
+   * returned so the caller records it — an unrecorded image is simultaneously
+   * permanently billed and unusable for restore, which is precisely the bug the
+   * Relay Pro grace snapshot had.
+   */
   async snapshotMachine(req: SnapshotMachineRequest): Promise<SnapshotResult> {
     this.requireConfig("snapshotMachine");
-    throw this.error(
-      "snapshotMachine",
-      "not_wired",
-      `GCP snapshotMachine is not wired yet for ${req.cloudResourceId}; use durable disk path first`,
-    );
+    const instance = await this.request<GcpResource & {
+      disks?: Array<{ boot?: boolean; source?: string }>;
+    }>(this.toGcpPath(req.cloudResourceId, "instances"), { method: "GET" });
+    const bootDisk = (instance.disks ?? []).find((d) => d.boot)?.source
+      ?? (instance.disks ?? [])[0]?.source;
+    if (!bootDisk) {
+      throw this.error("snapshotMachine", "bad_response", "GCP instance reported no boot disk to capture");
+    }
+    const name = `yaver-${req.label}-${Date.now()}`
+      .toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 62);
+    await this.request<GcpResource>(`/projects/${this.projectId}/global/images`, {
+      method: "POST",
+      okStatuses: [200, 201, 202],
+      body: {
+        name,
+        sourceDisk: bootDisk,
+        forceCreate: true,
+        labels: this.gcpLabels({ managed: "true", service: "yaver-snapshot" }),
+      },
+    });
+    // images.insert returns an Operation — the deterministic resource path is
+    // the only id we can trust here (same trap as instances.insert).
+    return { snapshotId: `projects/${this.projectId}/global/images/${name}` };
   }
 
   async deleteMachine(req: DeleteMachineRequest): Promise<void> {
@@ -257,13 +331,142 @@ export class GcpProvider extends AbstractCloudProvider {
     }
   }
 
-  async listYaverTaggedResources(_req?: ListTaggedResourcesRequest): Promise<TaggedResource[]> {
-    return [];
+  /**
+   * Instances, persistent disks, snapshots and reserved static addresses
+   * carrying our label. Reconciliation reads this; without it a leak can never
+   * be detected. Partial results are deliberate — one resource type failing
+   * must not blind the sweep to the rest.
+   */
+  async listYaverTaggedResources(req?: ListTaggedResourcesRequest): Promise<TaggedResource[]> {
+    this.requireConfig("listYaverTaggedResources");
+    const tags = this.gcpLabels(req?.tags ?? { yaver: "managed" });
+    const filter = Object.entries(tags).map(([k, v]) => `labels.${k}=${v}`).join(" AND ");
+    const q = filter ? `?filter=${encodeURIComponent(filter)}` : "";
+    const out: TaggedResource[] = [];
+
+    const collect = async (path: string, type: TaggedResource["type"]): Promise<void> => {
+      try {
+        const j = await this.request<{ items?: Array<Record<string, unknown>> }>(`${path}${q}`, {
+          method: "GET",
+        });
+        for (const row of j.items ?? []) {
+          const name = typeof row.name === "string" ? row.name : undefined;
+          if (!name) continue;
+          out.push({
+            id: typeof row.selfLink === "string" ? row.selfLink : name,
+            type,
+            provider: this.id,
+            tags: (row.labels as Record<string, string> | undefined) ?? {},
+            status: typeof row.status === "string" ? row.status : undefined,
+          });
+        }
+      } catch { /* partial inventory still finds leaks */ }
+    };
+
+    await collect(`/projects/${this.projectId}/zones/${this.zone}/instances`, "machine");
+    await collect(`/projects/${this.projectId}/zones/${this.zone}/disks`, "volume");
+    await collect(`/projects/${this.projectId}/global/snapshots`, "snapshot");
+    await collect(`/projects/${this.projectId}/regions/${this.regionOfZone()}/addresses`, "ip");
+    return out;
+  }
+
+  // ─── Stable egress identity (static external IP) ────────────────────────
+  // A regional static address attached via accessConfigs is what outbound
+  // traffic is sourced from, and it survives instance deletion. It bills while
+  // reserved-and-unused, so releasing it on decommission is a real cost stop.
+
+  async reserveEgressIp(req: ReserveEgressIpRequest): Promise<EgressIpReservation> {
+    this.requireConfig("reserveEgressIp");
+    const region = this.regionOfZone();
+    await this.request<GcpResource>(`/projects/${this.projectId}/regions/${region}/addresses`, {
+      method: "POST",
+      okStatuses: [200, 201, 202, 409],
+      body: {
+        name: req.name,
+        addressType: "EXTERNAL",
+        networkTier: "PREMIUM",
+        description: "Yaver stable egress address",
+        labels: this.gcpLabels({ ...req.tags, "yaver-role": "egress" }),
+      },
+    });
+    // addresses.insert also returns an Operation — read the real address back.
+    let address = "";
+    for (let i = 0; i < 10 && !address; i++) {
+      try {
+        const live = await this.request<{ address?: string }>(
+          `/projects/${this.projectId}/regions/${region}/addresses/${req.name}`,
+          { method: "GET" },
+        );
+        address = String(live.address ?? "");
+      } catch { /* not visible yet */ }
+      if (!address) await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (!address) {
+      throw this.error("reserveEgressIp", "bad_response", "GCP address did not become readable");
+    }
+    return {
+      egressIpId: `projects/${this.projectId}/regions/${region}/addresses/${req.name}`,
+      address,
+      scope: region,
+      // GCP bills external IPv4 hourly whether attached or idle.
+      idleCostUsdPerMonth: 7.2,
+    };
+  }
+
+  async attachEgressIp(req: AttachEgressIpRequest): Promise<void> {
+    this.requireConfig("attachEgressIp");
+    // GCP has no "associate address" verb: the address is set in the
+    // instance's accessConfig, so re-pointing means delete + add.
+    const instancePath = this.toGcpPath(req.cloudResourceId, "instances");
+    const address = this.stringOption(req.providerOptions, "address");
+    if (!address) {
+      throw this.error("attachEgressIp", "missing_address", "GCP attachEgressIp requires providerOptions.address");
+    }
+    await this.request<void>(
+      `${instancePath}/deleteAccessConfig?accessConfig=External%20NAT&networkInterface=nic0`,
+      { method: "POST", okStatuses: [200, 202, 400, 404] },
+    );
+    await this.request<void>(`${instancePath}/addAccessConfig?networkInterface=nic0`, {
+      method: "POST",
+      okStatuses: [200, 201, 202],
+      body: { name: "External NAT", type: "ONE_TO_ONE_NAT", natIP: address },
+    });
+  }
+
+  async releaseEgressIp(req: ReleaseEgressIpRequest): Promise<void> {
+    this.requireConfig("releaseEgressIp");
+    await this.request<void>(`/${req.egressIpId.replace(/^\/+/, "")}`, {
+      method: "DELETE",
+      okStatuses: [200, 202, 204, 404],
+    });
+  }
+
+  /** us-central1-a → us-central1 */
+  private regionOfZone(): string {
+    return this.zone.replace(/-[a-z]$/, "");
+  }
+
+  /**
+   * A FRESH access token for every request.
+   *
+   * Deliberately not cached on the instance: a provider object can outlive the
+   * ~1h token lifetime, and a stale token turns into a 401 in the middle of a
+   * provision — the worst possible moment, because the VM may already exist.
+   * The credentials module owns the (short) cache.
+   */
+  private async token(): Promise<string> {
+    if (this.accessToken) return this.accessToken; // manual probing override
+    return getGcpAccessToken();
   }
 
   private requireConfig(operation: string): void {
-    if (!this.accessToken || !this.projectId) {
-      throw this.error(operation, "missing_config", "GCP provider credentials/config are not configured");
+    const canAuth = this.accessToken || hasRefreshableCredentials("gcp");
+    if (!canAuth || !this.projectId) {
+      throw this.error(
+        operation,
+        "missing_config",
+        "GCP provider is not configured: set GCP_SERVICE_ACCOUNT_JSON and GCP_PROJECT_ID in Convex env",
+      );
     }
   }
 
@@ -274,7 +477,7 @@ export class GcpProvider extends AbstractCloudProvider {
     const res = await fetch(`${this.computeBase}${path}`, {
       method: options.method,
       headers: {
-        Authorization: `Bearer ${this.accessToken}`,
+        Authorization: `Bearer ${await this.token()}`,
         ...(options.body ? { "Content-Type": "application/json" } : {}),
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
@@ -325,7 +528,8 @@ export class GcpProvider extends AbstractCloudProvider {
 export function createGcpProviderFromEnv(): GcpProvider {
   return new GcpProvider({
     accessToken: process.env.GCP_ACCESS_TOKEN,
-    projectId: process.env.GCP_PROJECT_ID,
+    // Falls back to the project embedded in the service-account key.
+    projectId: gcpProjectIdFromEnv(),
     zone: process.env.GCP_ZONE,
   });
 }

@@ -1,7 +1,11 @@
 import type {
+  AttachEgressIpRequest,
   BudgetStatus,
   CostEstimate,
   CostEstimateRequest,
+  EgressIpReservation,
+  ReleaseEgressIpRequest,
+  ReserveEgressIpRequest,
   CreateMachineRequest,
   CreateMachineResult,
   CreateVolumeRequest,
@@ -71,6 +75,25 @@ export abstract class AbstractCloudProvider {
 
   abstract openFirewall(req: FirewallRequest): Promise<void>;
   abstract listYaverTaggedResources(req?: ListTaggedResourcesRequest): Promise<TaggedResource[]>;
+
+  /**
+   * Stable egress identity. Default = unsupported, so a provider that has not
+   * implemented it fails LOUDLY at the call instead of silently handing back a
+   * churning address. A provider overriding these MUST also declare
+   * "stable-egress-ip" in describeCapabilities — and must not declare it
+   * otherwise.
+   */
+  async reserveEgressIp(_req: ReserveEgressIpRequest): Promise<EgressIpReservation> {
+    return this.unsupported("reserveEgressIp");
+  }
+
+  async attachEgressIp(_req: AttachEgressIpRequest): Promise<void> {
+    return this.unsupported("attachEgressIp");
+  }
+
+  async releaseEgressIp(_req: ReleaseEgressIpRequest): Promise<void> {
+    return this.unsupported("releaseEgressIp");
+  }
 
   protected unsupported(operation: string, message?: string): never {
     throw new ProviderOperationError({
