@@ -144,9 +144,25 @@ properties, each because the corresponding control was found missing:
 | One per verified identity | Otherwise it is a faucet — audit `mergeUserInto` for farming |
 | Framed as a **loan** | So conversion does not read as a takeaway |
 
-**Trials get no VM.** A free VM with a public IP is the classic abuse vector, and
+**Trials get a tightly-constrained VM.**
+
+> ⚠️ **SUPERSEDED 2026-07-21** — see `yaver-activation-trial-analysis.md`.
+> This paragraph originally read "trials get no VM". That was correct for an
+> OPEN-ENDED trial box and does not hold for the constrained one: 60-minute
+> hard TTL, **no inbound ports** (Yaver's transport is already
+> outbound-registered, so nothing needs to listen), ephemeral (no volume, no
+> reserved IP, no snapshot — hence no satellites to leak), egress-policed, and
+> one per verified identity. Measured cost €0.037 per trial; CAC €0.37–1.84
+> against €26.7/mo recurring.
+>
+> The warning below still stands and is why the trial is monitored rather than
+> assumed safe.
+
+A free VM with a public IP is the classic abuse vector, and
 the consequence is not a lost trial — a datacenter IP hammering third parties
 gets **the entire provider account suspended**, paying customers included.
+That is why the trial has no inbound ports, blocks SMTP and RFC1918, rate-limits
+egress, and ships with a kill switch and an egress-anomaly alert from day one.
 
 ---
 
