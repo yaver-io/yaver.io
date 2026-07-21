@@ -109,24 +109,38 @@ func runSSHSession(args []string) int {
 		fmt.Fprintln(os.Stderr, "ssh-session: no command (this endpoint is forced-command only)")
 		return 2
 	}
-	var req sshSessionRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
-		fmt.Fprintln(os.Stderr, "ssh-session: command must be a JSON {verb,...} object")
+	method, path, body, errMsg := parseAndRouteSSHCommand(raw)
+	if errMsg != "" {
+		fmt.Fprintln(os.Stderr, "ssh-session: "+errMsg)
 		return 2
 	}
-	method, path, taskScoped, ok := sshSessionRoute(req.Verb)
+	out, exit := dispatchLocalAgent(method, path, body)
+	os.Stdout.Write(out)
+	return exit
+}
+
+// parseAndRouteSSHCommand is the shared parse+whitelist+validate step used by
+// BOTH the forced-command CLI (runSSHSession) and the embedded SSH control server
+// (ssh_control_server.go). It turns the client's $SSH_ORIGINAL_COMMAND / exec
+// payload into the single loopback call it is allowed to make, or a non-empty
+// errMsg to refuse. Keeping it in one place means the security whitelist can
+// never drift between the two entry points.
+func parseAndRouteSSHCommand(raw string) (method, path string, body []byte, errMsg string) {
+	var req sshSessionRequest
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &req); err != nil {
+		return "", "", nil, "command must be a JSON {verb,...} object"
+	}
+	m, p, taskScoped, ok := sshSessionRoute(req.Verb)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "ssh-session: verb %q is not permitted on the out-of-band channel\n", req.Verb)
-		return 2
+		return "", "", nil, fmt.Sprintf("verb %q is not permitted on the out-of-band channel", req.Verb)
 	}
 	if taskScoped {
 		if !isSafeTaskID(req.TaskID) {
-			fmt.Fprintln(os.Stderr, "ssh-session: this verb requires a valid taskId")
-			return 2
+			return "", "", nil, "this verb requires a valid taskId"
 		}
-		path = strings.Replace(path, "{id}", req.TaskID, 1)
+		p = strings.Replace(p, "{id}", req.TaskID, 1)
 	}
-	return proxySSHSessionToLocalAgent(method, path, req.Body)
+	return m, p, req.Body, ""
 }
 
 // proxySSHSessionToLocalAgent performs the single whitelisted loopback call. It
@@ -134,7 +148,13 @@ func runSSHSession(args []string) int {
 // trust path is created — the SSH channel authenticated the DEVICE; the loopback
 // call authenticates as this box's own agent, and the handler does its normal
 // validation.
-func proxySSHSessionToLocalAgent(method, path string, body []byte) int {
+// dispatchLocalAgent performs the single whitelisted loopback call and returns
+// its body + an exit code. Used by BOTH the forced-command CLI and the embedded
+// SSH control server. It reuses the agent's own HTTP auth (Bearer of the local
+// auth token) so no new trust path is created — the SSH channel authenticated the
+// DEVICE; the loopback call authenticates as this box's own agent, and the
+// handler does its normal validation.
+func dispatchLocalAgent(method, path string, body []byte) (out []byte, exit int) {
 	token := ""
 	if cfg, err := LoadConfig(); err == nil && cfg != nil {
 		token = strings.TrimSpace(cfg.AuthToken)
@@ -146,8 +166,7 @@ func proxySSHSessionToLocalAgent(method, path string, body []byte) int {
 	}
 	httpReq, err := http.NewRequest(method, base+path, rdr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ssh-session: bad request:", err)
-		return 1
+		return []byte("ssh-session: bad request: " + err.Error() + "\n"), 1
 	}
 	if token != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+token)
@@ -161,13 +180,12 @@ func proxySSHSessionToLocalAgent(method, path string, body []byte) int {
 		// The out-of-band channel reached us, but our own daemon didn't answer —
 		// name it so the agentic self-heal on the other end knows the AGENT is
 		// down, not the transport.
-		fmt.Fprintln(os.Stderr, "ssh-session: local agent did not answer (is `yaver serve` running?):", err)
-		return 1
+		return []byte("ssh-session: local agent did not answer (is `yaver serve` running?): " + err.Error() + "\n"), 1
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(os.Stdout, resp.Body)
+	payload, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return 1
+		return payload, 1
 	}
-	return 0
+	return payload, 0
 }
