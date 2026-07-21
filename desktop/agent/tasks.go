@@ -931,9 +931,14 @@ type Task struct {
 	StartedAt    *time.Time         `json:"started_at,omitempty"`
 	FinishedAt   *time.Time         `json:"finished_at,omitempty"`
 
-	WorkDir     string `json:"workDir,omitempty"`     // per-task workDir (auto-detected from prompt)
-	TmuxSession string `json:"tmuxSession,omitempty"` // tmux session name (for adopted sessions)
-	IsAdopted   bool   `json:"isAdopted,omitempty"`   // true if adopted from an existing tmux session
+	WorkDir         string `json:"workDir,omitempty"`       // per-task workDir (auto-detected from prompt)
+	TmuxSession     string `json:"tmuxSession,omitempty"`   // tmux session name (for adopted sessions)
+	TmuxSessionID   string `json:"tmuxSessionId,omitempty"` // tmux session_id, e.g. "$1"
+	TmuxWindowIndex string `json:"tmuxWindowIndex,omitempty"`
+	TmuxWindowName  string `json:"tmuxWindowName,omitempty"`
+	TmuxPaneIndex   string `json:"tmuxPaneIndex,omitempty"`
+	TmuxPaneID      string `json:"tmuxPaneId,omitempty"` // tmux pane_id, e.g. "%17"
+	IsAdopted       bool   `json:"isAdopted,omitempty"`  // true if adopted from an existing tmux session
 
 	// Chained tasks: execute in order, next starts when previous completes
 	ChainID    string `json:"chainId,omitempty"`    // shared ID linking tasks in a chain
@@ -1147,26 +1152,31 @@ type TaskInfo struct {
 	// TurnCount lets a list view show "12 turns" without shipping the
 	// transcript to render a number. The list handler nils Turns and sets this;
 	// the detail endpoint leaves Turns intact and this stays 0.
-	TurnCount      int                    `json:"turnCount,omitempty"`
-	Source         string                 `json:"source,omitempty"`
-	TmuxSession    string                 `json:"tmuxSession,omitempty"`
-	IsAdopted      bool                   `json:"isAdopted,omitempty"`
-	CreatedAt      time.Time              `json:"createdAt"`
-	StartedAt      *time.Time             `json:"startedAt,omitempty"`
-	FinishedAt     *time.Time             `json:"finishedAt,omitempty"`
-	ChainID        string                 `json:"chainId,omitempty"`
-	ChainOrder     int                    `json:"chainOrder,omitempty"`
-	AutoRetry      bool                   `json:"autoRetry,omitempty"`
-	AutoRetryCount int                    `json:"autoRetryCount,omitempty"`
-	AutoRetryMax   int                    `json:"autoRetryMax,omitempty"`
-	VideoEnabled   bool                   `json:"videoEnabled,omitempty"`
-	VideoSource    string                 `json:"videoSource,omitempty"`
-	VideoClipID    string                 `json:"videoClipId,omitempty"`
-	VideoStatus    string                 `json:"videoStatus,omitempty"`
-	VideoClipURL   string                 `json:"videoClipUrl,omitempty"`
-	VideoPosterURL string                 `json:"videoPosterUrl,omitempty"`
-	AskFreely      bool                   `json:"askFreely,omitempty"`
-	Placement      *TaskPlacementMetadata `json:"placement,omitempty"`
+	TurnCount       int                    `json:"turnCount,omitempty"`
+	Source          string                 `json:"source,omitempty"`
+	TmuxSession     string                 `json:"tmuxSession,omitempty"`
+	TmuxSessionID   string                 `json:"tmuxSessionId,omitempty"`
+	TmuxWindowIndex string                 `json:"tmuxWindowIndex,omitempty"`
+	TmuxWindowName  string                 `json:"tmuxWindowName,omitempty"`
+	TmuxPaneIndex   string                 `json:"tmuxPaneIndex,omitempty"`
+	TmuxPaneID      string                 `json:"tmuxPaneId,omitempty"`
+	IsAdopted       bool                   `json:"isAdopted,omitempty"`
+	CreatedAt       time.Time              `json:"createdAt"`
+	StartedAt       *time.Time             `json:"startedAt,omitempty"`
+	FinishedAt      *time.Time             `json:"finishedAt,omitempty"`
+	ChainID         string                 `json:"chainId,omitempty"`
+	ChainOrder      int                    `json:"chainOrder,omitempty"`
+	AutoRetry       bool                   `json:"autoRetry,omitempty"`
+	AutoRetryCount  int                    `json:"autoRetryCount,omitempty"`
+	AutoRetryMax    int                    `json:"autoRetryMax,omitempty"`
+	VideoEnabled    bool                   `json:"videoEnabled,omitempty"`
+	VideoSource     string                 `json:"videoSource,omitempty"`
+	VideoClipID     string                 `json:"videoClipId,omitempty"`
+	VideoStatus     string                 `json:"videoStatus,omitempty"`
+	VideoClipURL    string                 `json:"videoClipUrl,omitempty"`
+	VideoPosterURL  string                 `json:"videoPosterUrl,omitempty"`
+	AskFreely       bool                   `json:"askFreely,omitempty"`
+	Placement       *TaskPlacementMetadata `json:"placement,omitempty"`
 }
 
 type taskStore interface {
@@ -4059,35 +4069,40 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			output = output[len(output)-2000:]
 		}
 		result = append(result, TaskInfo{
-			ID:             t.ID,
-			Title:          t.Title,
-			Description:    t.Description,
-			Status:         t.Status,
-			RunnerID:       t.RunnerID,
-			SessionID:      t.SessionID,
-			Output:         output,
-			ResultText:     t.ResultText,
-			CostUSD:        t.CostUSD,
-			InputTokens:    t.InputTokens,
-			OutputTokens:   t.OutputTokens,
-			Turns:          t.Turns,
-			Source:         t.Source,
-			TmuxSession:    t.TmuxSession,
-			IsAdopted:      t.IsAdopted,
-			CreatedAt:      t.CreatedAt,
-			StartedAt:      t.StartedAt,
-			FinishedAt:     t.FinishedAt,
-			ChainID:        t.ChainID,
-			ChainOrder:     t.ChainOrder,
-			AutoRetry:      t.AutoRetry,
-			AutoRetryCount: t.AutoRetryCount,
-			AutoRetryMax:   t.AutoRetryMax,
-			VideoEnabled:   t.VideoEnabled,
-			VideoSource:    t.VideoSource,
-			VideoClipID:    t.VideoClipID,
-			VideoStatus:    t.VideoStatus,
-			AskFreely:      t.AskFreely,
-			Placement:      t.Placement,
+			ID:              t.ID,
+			Title:           t.Title,
+			Description:     t.Description,
+			Status:          t.Status,
+			RunnerID:        t.RunnerID,
+			SessionID:       t.SessionID,
+			Output:          output,
+			ResultText:      t.ResultText,
+			CostUSD:         t.CostUSD,
+			InputTokens:     t.InputTokens,
+			OutputTokens:    t.OutputTokens,
+			Turns:           t.Turns,
+			Source:          t.Source,
+			TmuxSession:     t.TmuxSession,
+			TmuxSessionID:   t.TmuxSessionID,
+			TmuxWindowIndex: t.TmuxWindowIndex,
+			TmuxWindowName:  t.TmuxWindowName,
+			TmuxPaneIndex:   t.TmuxPaneIndex,
+			TmuxPaneID:      t.TmuxPaneID,
+			IsAdopted:       t.IsAdopted,
+			CreatedAt:       t.CreatedAt,
+			StartedAt:       t.StartedAt,
+			FinishedAt:      t.FinishedAt,
+			ChainID:         t.ChainID,
+			ChainOrder:      t.ChainOrder,
+			AutoRetry:       t.AutoRetry,
+			AutoRetryCount:  t.AutoRetryCount,
+			AutoRetryMax:    t.AutoRetryMax,
+			VideoEnabled:    t.VideoEnabled,
+			VideoSource:     t.VideoSource,
+			VideoClipID:     t.VideoClipID,
+			VideoStatus:     t.VideoStatus,
+			AskFreely:       t.AskFreely,
+			Placement:       t.Placement,
 		})
 	}
 	return result

@@ -108,18 +108,22 @@ func TestParseTmuxSessionLine(t *testing.T) {
 	tests := []struct {
 		line     string
 		name     string
+		id       string
 		windows  int
 		attached bool
 	}{
-		{"my-session|3|1710000000|0", "my-session", 3, false},
-		{"dev|1|1710000000|1", "dev", 1, true},
-		{"solo|2||0", "solo", 2, false},
+		{"my-session|$1|3|1710000000|0", "my-session", "$1", 3, false},
+		{"dev|$2|1|1710000000|1", "dev", "$2", 1, true},
+		{"solo|$3|2||0", "solo", "$3", 2, false},
 	}
 
 	for _, tt := range tests {
 		s := parseTmuxSessionLine(tt.line)
 		if s.Name != tt.name {
 			t.Errorf("parseTmuxSessionLine(%q): name=%q, want %q", tt.line, s.Name, tt.name)
+		}
+		if s.ID != tt.id {
+			t.Errorf("parseTmuxSessionLine(%q): id=%q, want %q", tt.line, s.ID, tt.id)
 		}
 		if s.Windows != tt.windows {
 			t.Errorf("parseTmuxSessionLine(%q): windows=%d, want %d", tt.line, s.Windows, tt.windows)

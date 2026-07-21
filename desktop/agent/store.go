@@ -12,21 +12,26 @@ import (
 
 // persistedTask is the JSON-serializable subset of Task that gets written to disk.
 type persistedTask struct {
-	ID          string             `json:"id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Status      TaskStatus         `json:"status"`
-	Source      string             `json:"source,omitempty"`
-	SessionID   string             `json:"session_id,omitempty"`
-	TmuxSession string             `json:"tmux_session,omitempty"`
-	IsAdopted   bool               `json:"is_adopted,omitempty"`
-	Output      string             `json:"output,omitempty"`
-	ResultText  string             `json:"result_text,omitempty"`
-	CostUSD     float64            `json:"cost_usd,omitempty"`
-	Turns       []ConversationTurn `json:"turns,omitempty"`
-	CreatedAt   time.Time          `json:"created_at"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
+	ID              string             `json:"id"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          TaskStatus         `json:"status"`
+	Source          string             `json:"source,omitempty"`
+	SessionID       string             `json:"session_id,omitempty"`
+	TmuxSession     string             `json:"tmux_session,omitempty"`
+	TmuxSessionID   string             `json:"tmux_session_id,omitempty"`
+	TmuxWindowIndex string             `json:"tmux_window_index,omitempty"`
+	TmuxWindowName  string             `json:"tmux_window_name,omitempty"`
+	TmuxPaneIndex   string             `json:"tmux_pane_index,omitempty"`
+	TmuxPaneID      string             `json:"tmux_pane_id,omitempty"`
+	IsAdopted       bool               `json:"is_adopted,omitempty"`
+	Output          string             `json:"output,omitempty"`
+	ResultText      string             `json:"result_text,omitempty"`
+	CostUSD         float64            `json:"cost_usd,omitempty"`
+	Turns           []ConversationTurn `json:"turns,omitempty"`
+	CreatedAt       time.Time          `json:"created_at"`
+	StartedAt       *time.Time         `json:"started_at,omitempty"`
+	FinishedAt      *time.Time         `json:"finished_at,omitempty"`
 }
 
 // TaskStore persists task metadata to a JSON file under ~/.yaver/.
@@ -60,21 +65,26 @@ func snapshotPersistedTasks(tasks map[string]*Task) []persistedTask {
 			output = output[len(output)-2000:]
 		}
 		records = append(records, persistedTask{
-			ID:          t.ID,
-			Title:       t.Title,
-			Description: t.Description,
-			Status:      t.Status,
-			Source:      t.Source,
-			SessionID:   t.SessionID,
-			TmuxSession: t.TmuxSession,
-			IsAdopted:   t.IsAdopted,
-			Output:      output,
-			ResultText:  t.ResultText,
-			CostUSD:     t.CostUSD,
-			Turns:       append([]ConversationTurn(nil), t.Turns...),
-			CreatedAt:   t.CreatedAt,
-			StartedAt:   t.StartedAt,
-			FinishedAt:  t.FinishedAt,
+			ID:              t.ID,
+			Title:           t.Title,
+			Description:     t.Description,
+			Status:          t.Status,
+			Source:          t.Source,
+			SessionID:       t.SessionID,
+			TmuxSession:     t.TmuxSession,
+			TmuxSessionID:   t.TmuxSessionID,
+			TmuxWindowIndex: t.TmuxWindowIndex,
+			TmuxWindowName:  t.TmuxWindowName,
+			TmuxPaneIndex:   t.TmuxPaneIndex,
+			TmuxPaneID:      t.TmuxPaneID,
+			IsAdopted:       t.IsAdopted,
+			Output:          output,
+			ResultText:      t.ResultText,
+			CostUSD:         t.CostUSD,
+			Turns:           append([]ConversationTurn(nil), t.Turns...),
+			CreatedAt:       t.CreatedAt,
+			StartedAt:       t.StartedAt,
+			FinishedAt:      t.FinishedAt,
 		})
 	}
 	return records
@@ -131,21 +141,26 @@ func (s *TaskStore) Load() map[string]*Task {
 			}
 		}
 		tasks[r.ID] = &Task{
-			ID:          r.ID,
-			Title:       r.Title,
-			Description: r.Description,
-			Status:      status,
-			Source:      r.Source,
-			SessionID:   r.SessionID,
-			TmuxSession: r.TmuxSession,
-			IsAdopted:   r.IsAdopted,
-			Output:      r.Output,
-			ResultText:  r.ResultText,
-			CostUSD:     r.CostUSD,
-			Turns:       r.Turns,
-			CreatedAt:   r.CreatedAt,
-			StartedAt:   r.StartedAt,
-			FinishedAt:  finishedAt,
+			ID:              r.ID,
+			Title:           r.Title,
+			Description:     r.Description,
+			Status:          status,
+			Source:          r.Source,
+			SessionID:       r.SessionID,
+			TmuxSession:     r.TmuxSession,
+			TmuxSessionID:   r.TmuxSessionID,
+			TmuxWindowIndex: r.TmuxWindowIndex,
+			TmuxWindowName:  r.TmuxWindowName,
+			TmuxPaneIndex:   r.TmuxPaneIndex,
+			TmuxPaneID:      r.TmuxPaneID,
+			IsAdopted:       r.IsAdopted,
+			Output:          r.Output,
+			ResultText:      r.ResultText,
+			CostUSD:         r.CostUSD,
+			Turns:           r.Turns,
+			CreatedAt:       r.CreatedAt,
+			StartedAt:       r.StartedAt,
+			FinishedAt:      finishedAt,
 			// doneCh is left nil — these are historical records with no process.
 		}
 	}

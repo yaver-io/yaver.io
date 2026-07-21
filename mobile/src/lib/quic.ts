@@ -424,6 +424,12 @@ export interface Task {
   deviceName?: string;
   /** Tmux session name (only set for adopted sessions). */
   tmuxSession?: string;
+  /** Tmux session_id/window/pane identity for adopted or monitored sessions. */
+  tmuxSessionId?: string;
+  tmuxWindowIndex?: string;
+  tmuxWindowName?: string;
+  tmuxPaneIndex?: string;
+  tmuxPaneId?: string;
   /** True if this task was adopted from an existing tmux session. */
   isAdopted?: boolean;
   /** Chain ID if this task is part of a sequential chain. */
@@ -859,12 +865,17 @@ export interface RemoteRuntimeSession {
 
 export interface TmuxSession {
   name: string;
+  id?: string;
   windows: number;
   created: string;
   attached: boolean;
   relationship: "adopted" | "forked-by-yaver" | "unrelated";
   agentType?: string;
   mainPid?: number;
+  windowIndex?: string;
+  windowName?: string;
+  paneIndex?: string;
+  paneId?: string;
   panePreview?: string;
   taskId?: string;
 }
@@ -2276,6 +2287,11 @@ export class QuicClient {
         outputTokens: typeof t.outputTokens === "number" ? t.outputTokens : undefined,
         turns: t.turns || undefined,
         tmuxSession: t.tmuxSession || undefined,
+        tmuxSessionId: t.tmuxSessionId || undefined,
+        tmuxWindowIndex: t.tmuxWindowIndex || undefined,
+        tmuxWindowName: t.tmuxWindowName || undefined,
+        tmuxPaneIndex: t.tmuxPaneIndex || undefined,
+        tmuxPaneId: t.tmuxPaneId || undefined,
         isAdopted: t.isAdopted || false,
         chainId: t.chainId || undefined,
         chainOrder: t.chainOrder ?? undefined,
@@ -2325,6 +2341,11 @@ export class QuicClient {
       outputTokens: typeof t.outputTokens === "number" ? t.outputTokens : undefined,
       turns: t.turns || undefined,
       tmuxSession: t.tmuxSession || undefined,
+      tmuxSessionId: t.tmuxSessionId || undefined,
+      tmuxWindowIndex: t.tmuxWindowIndex || undefined,
+      tmuxWindowName: t.tmuxWindowName || undefined,
+      tmuxPaneIndex: t.tmuxPaneIndex || undefined,
+      tmuxPaneId: t.tmuxPaneId || undefined,
       isAdopted: t.isAdopted || false,
     };
   }

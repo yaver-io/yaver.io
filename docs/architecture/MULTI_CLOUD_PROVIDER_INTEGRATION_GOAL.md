@@ -22,6 +22,19 @@ internal. The UI may show a compact status label:
 Do not build a provider picker for normies. Placement policy decides provider by
 capability, credits, cost, wake latency, budget, and fleet health.
 
+Keep the Yaver desktop app for macOS, Windows, and Linux, but do not make it a
+simulator-management console for normies. Its default jobs are:
+
+- sign in/pair this computer as a trusted Yaver device;
+- expose local folders, git credentials, and optional BYO runner subscriptions;
+- run a local agent when the user wants self-hosted/local execution;
+- show a minimal connection/health state;
+- provide advanced simulator/runtime controls only behind developer tools.
+
+Cloud Workspace owns managed simulator/WebRTC/Redroid/serverless execution by
+default. A normal user should not need to install Xcode, Android Studio, Redroid,
+tmux, or provider CLIs to start vibing.
+
 ## Hard Rules
 
 - Public repo: never commit cloud tokens, billing ids, account ids, private IPs,
@@ -95,9 +108,15 @@ Already implemented:
 12. Update web/mobile surfaces to show only compact labels:
     provider label, region label if useful, machine state, inference label, and
     quota state. No provider SKU picker for normies.
-13. Add cleanup/doctor/admin probes that list only Yaver-tagged resources and
+13. Make autorun/tmux sessions first-class task rows in mobile:
+    list remote tmux sessions through the Go agent, adopt a session as a task,
+    show session name/id plus active window/pane id, stream bounded pane output,
+    send follow-up input through `/tmux/input`, detach without killing the tmux
+    session, and preserve the dispatch-intent/task id binding so Cloud
+    Workspace wake flows still show as a mobile task.
+14. Add cleanup/doctor/admin probes that list only Yaver-tagged resources and
     refuse ambiguous resources.
-14. Add tests for each provider adapter with mocked HTTP, placement behavior,
+15. Add tests for each provider adapter with mocked HTTP, placement behavior,
     seed defaults, no-secret catalogs, and fail-closed gating.
 
 ## Provider Enablement Order

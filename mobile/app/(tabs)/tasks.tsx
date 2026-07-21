@@ -1156,7 +1156,9 @@ function TaskCardInner({
             </View>
             {item.isAdopted && (
               <View style={[s.metaPill, { backgroundColor: "#8b5cf614", borderColor: "#8b5cf633" }]}>
-                <Text style={[s.metaPillText, { color: "#8b5cf6" }]}>tmux</Text>
+                <Text style={[s.metaPillText, { color: "#8b5cf6" }]} numberOfLines={1}>
+                  {`tmux ${item.tmuxSessionId || item.tmuxSession || ""}`.trim()}
+                </Text>
               </View>
             )}
             {item.chainId && (
@@ -6164,6 +6166,12 @@ export default function TasksScreen() {
                                 {session.attached ? " · attached" : ""}
                               </Text>
                             </View>
+                            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }} numberOfLines={1}>
+                              {[session.id, session.windowIndex !== undefined ? `w${session.windowIndex}` : "", session.paneId || (session.paneIndex !== undefined ? `p${session.paneIndex}` : "")]
+                                .filter(Boolean)
+                                .join(" · ")}
+                              {session.windowName ? ` · ${session.windowName}` : ""}
+                            </Text>
                           </View>
                           {alreadyAdopted ? (
                             <View style={[s.statusBadge, { backgroundColor: "#8b5cf622" }]}>

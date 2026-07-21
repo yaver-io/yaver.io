@@ -22,14 +22,28 @@ var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1
 // TmuxSession represents a discovered tmux session with its relationship to Yaver.
 type TmuxSession struct {
 	Name         string `json:"name"`
+	ID           string `json:"id,omitempty"` // tmux session_id, e.g. "$1"
 	Windows      int    `json:"windows"`
 	Created      string `json:"created"`
 	Attached     bool   `json:"attached"`
 	Relationship string `json:"relationship"`          // "adopted", "forked-by-yaver", "unrelated"
 	AgentType    string `json:"agentType,omitempty"`   // "claude", "codex", "opencode"
 	MainPID      int    `json:"mainPid,omitempty"`     // PID of the main process in the active pane
+	WindowIndex  string `json:"windowIndex,omitempty"` // active window index
+	WindowName   string `json:"windowName,omitempty"`  // active window name
+	PaneIndex    string `json:"paneIndex,omitempty"`   // active pane index
+	PaneID       string `json:"paneId,omitempty"`      // tmux pane_id, e.g. "%17"
 	PanePreview  string `json:"panePreview,omitempty"` // last ~20 lines of pane output
 	TaskID       string `json:"taskId,omitempty"`      // set if adopted as a Yaver task
+}
+
+type tmuxPaneIdentity struct {
+	SessionID   string
+	WindowIndex string
+	WindowName  string
+	PaneIndex   string
+	PaneID      string
+	PanePID     int
 }
 
 // TmuxManager manages tmux session adoption and I/O bridging.
@@ -261,7 +275,7 @@ func (m *TmuxManager) BootstrapDefaultSession() error {
 // relationship to Yaver (adopted, forked-by-yaver, or unrelated).
 func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
 	out, err := exec.Command(tmuxCmdName(), "list-sessions", "-F",
-		"#{session_name}|#{session_windows}|#{session_created}|#{session_attached}").CombinedOutput()
+		"#{session_name}|#{session_id}|#{session_windows}|#{session_created}|#{session_attached}").CombinedOutput()
 	if err != nil {
 		// tmux returns error if no server is running (no sessions)
 		if strings.Contains(string(out), "no server running") || strings.Contains(string(out), "no sessions") {
@@ -293,7 +307,9 @@ func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
 		}
 
 		// Get pane PID and detect agent type
-		s.MainPID = getPanePID(s.Name)
+		pane := getActivePaneIdentity(s.Name)
+		applyTmuxPaneIdentity(&s, pane)
+		s.MainPID = pane.PanePID
 		if s.MainPID > 0 {
 			s.AgentType = detectAgentType(s.MainPID)
 		}
@@ -322,7 +338,8 @@ func (m *TmuxManager) AdoptSession(sessionName string) (*Task, error) {
 	m.mu.Unlock()
 
 	// Detect what's running in the session
-	pid := getPanePID(sessionName)
+	pane := getActivePaneIdentity(sessionName)
+	pid := pane.PanePID
 	agentType := ""
 	if pid > 0 {
 		agentType = detectAgentType(pid)
@@ -337,18 +354,23 @@ func (m *TmuxManager) AdoptSession(sessionName string) (*Task, error) {
 	id := uuid.New().String()[:8]
 	now := time.Now()
 	task := &Task{
-		ID:          id,
-		Title:       fmt.Sprintf("tmux: %s", sessionName),
-		Description: fmt.Sprintf("Adopted tmux session %q", sessionName),
-		Status:      TaskStatusRunning,
-		Source:      "tmux-adopted",
-		RunnerID:    runnerID,
-		TmuxSession: sessionName,
-		IsAdopted:   true,
-		CreatedAt:   now,
-		StartedAt:   &now,
-		outputCh:    make(chan string, 512),
-		doneCh:      make(chan struct{}),
+		ID:              id,
+		Title:           fmt.Sprintf("tmux: %s", sessionName),
+		Description:     fmt.Sprintf("Adopted tmux session %q", sessionName),
+		Status:          TaskStatusRunning,
+		Source:          "tmux-adopted",
+		RunnerID:        runnerID,
+		TmuxSession:     sessionName,
+		TmuxSessionID:   pane.SessionID,
+		TmuxWindowIndex: pane.WindowIndex,
+		TmuxWindowName:  pane.WindowName,
+		TmuxPaneIndex:   pane.PaneIndex,
+		TmuxPaneID:      pane.PaneID,
+		IsAdopted:       true,
+		CreatedAt:       now,
+		StartedAt:       &now,
+		outputCh:        make(chan string, 512),
+		doneCh:          make(chan struct{}),
 	}
 
 	m.taskMgr.mu.Lock()
@@ -657,6 +679,12 @@ func (m *TmuxManager) ReAdoptOnStartup() {
 		}
 
 		if tmuxSessionExists(task.TmuxSession) {
+			pane := getActivePaneIdentity(task.TmuxSession)
+			task.TmuxSessionID = pane.SessionID
+			task.TmuxWindowIndex = pane.WindowIndex
+			task.TmuxWindowName = pane.WindowName
+			task.TmuxPaneIndex = pane.PaneIndex
+			task.TmuxPaneID = pane.PaneID
 			// Re-create channels and restart polling
 			task.outputCh = make(chan string, 512)
 			task.doneCh = make(chan struct{})
@@ -706,24 +734,27 @@ func (m *TmuxManager) isForkedByYaver(sessionName string) bool {
 // parseTmuxSessionLine parses a single line from `tmux list-sessions -F`.
 // Format: "name|windows|created|attached"
 func parseTmuxSessionLine(line string) TmuxSession {
-	parts := strings.SplitN(line, "|", 4)
+	parts := strings.SplitN(line, "|", 5)
 	s := TmuxSession{
 		Name: parts[0],
 	}
 	if len(parts) > 1 {
-		s.Windows, _ = strconv.Atoi(parts[1])
+		s.ID = parts[1]
 	}
 	if len(parts) > 2 {
+		s.Windows, _ = strconv.Atoi(parts[2])
+	}
+	if len(parts) > 3 {
 		// Convert epoch to human-readable
-		epoch, err := strconv.ParseInt(parts[2], 10, 64)
+		epoch, err := strconv.ParseInt(parts[3], 10, 64)
 		if err == nil {
 			s.Created = time.Unix(epoch, 0).Format("2006-01-02 15:04")
 		} else {
-			s.Created = parts[2]
+			s.Created = parts[3]
 		}
 	}
-	if len(parts) > 3 {
-		s.Attached = parts[3] == "1"
+	if len(parts) > 4 {
+		s.Attached = parts[4] == "1"
 	}
 	return s
 }
@@ -736,18 +767,51 @@ func tmuxSessionExists(name string) bool {
 
 // getPanePID returns the PID of the active pane's process in a tmux session.
 func getPanePID(sessionName string) int {
+	return getActivePaneIdentity(sessionName).PanePID
+}
+
+func applyTmuxPaneIdentity(s *TmuxSession, pane tmuxPaneIdentity) {
+	if pane.SessionID != "" {
+		s.ID = pane.SessionID
+	}
+	s.WindowIndex = pane.WindowIndex
+	s.WindowName = pane.WindowName
+	s.PaneIndex = pane.PaneIndex
+	s.PaneID = pane.PaneID
+}
+
+func getActivePaneIdentity(sessionName string) tmuxPaneIdentity {
 	out, err := exec.Command(tmuxCmdName(), "list-panes", "-t", sessionName,
-		"-F", "#{pane_pid}").CombinedOutput()
+		"-F", "#{pane_active}|#{session_id}|#{window_index}|#{window_name}|#{pane_index}|#{pane_id}|#{pane_pid}").CombinedOutput()
 	if err != nil {
-		return 0
+		return tmuxPaneIdentity{}
 	}
-	// Take the first pane's PID
-	line := strings.TrimSpace(strings.Split(string(out), "\n")[0])
-	pid, err := strconv.Atoi(line)
-	if err != nil {
-		return 0
+	var fallback tmuxPaneIdentity
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 7)
+		if len(parts) < 7 {
+			continue
+		}
+		pid, _ := strconv.Atoi(parts[6])
+		pane := tmuxPaneIdentity{
+			SessionID:   parts[1],
+			WindowIndex: parts[2],
+			WindowName:  parts[3],
+			PaneIndex:   parts[4],
+			PaneID:      parts[5],
+			PanePID:     pid,
+		}
+		if fallback == (tmuxPaneIdentity{}) {
+			fallback = pane
+		}
+		if parts[0] == "1" {
+			return pane
+		}
 	}
-	return pid
+	return fallback
 }
 
 // detectAgentType inspects the process tree starting from a PID to identify
