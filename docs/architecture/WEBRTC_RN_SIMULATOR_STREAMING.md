@@ -252,6 +252,62 @@ Native surfaces (Swift/Kotlin/Flutter) run in the SAME sim/emulator and stream
 the SAME way — they need a real simulator/emulator on the remote (macOS for iOS),
 which is exactly what the sim-management layer + Cloud Workspace provide.
 
+## Deep analysis — streaming EACH platform, including the Apple sims we can't avoid
+
+Two facts force the design:
+1. **Xcode 26 removed `simctl io recordVideo` to stdout** ("rendering to standard
+   out is no longer supported") — so the stdout→NAL→RTP pump is dead for iOS
+   (`iosSimulatorTarget.CanEncodeRTPH264()` returns false).
+2. **This mini's `simctl io screenshot` is degraded (~17s/frame)** — so the JPEG
+   data-channel fallback is unusable here too.
+3. But **we cannot avoid Xcode/Apple sims** for watchOS, CarPlay, tvOS, visionOS,
+   and iOS-specific testing — those only exist as Apple simulators on macOS.
+
+So Apple-platform streaming must be solved, not sidestepped. Three capture
+sources, in preference order:
+
+**A. ScreenCaptureKit — capture the Simulator.app WINDOW (best, universal).**
+Every Apple sim (iPhone/watch/tv/vision/CarPlay) renders into a Simulator.app
+window. macOS **ScreenCaptureKit** (`SCStream`) captures that window as a
+hardware-encoded video feed at up to 60 fps, independent of `simctl` — so it
+sidesteps BOTH the recordVideo-stdout removal AND the degraded-screenshot bug.
+This is the robust path for all Apple platforms. Wrap it via a tiny Swift helper
+(`SCStream` → H.264 → stdout → our existing `AnnexBReader`/RTP track) or
+`ScreenCaptureKit`-based `ffmpeg`. It also gives CarPlay/tvOS/watch, which have no
+`simctl screenshot` story at all.
+
+**B. recordVideo-to-FILE + fragment tailer (fallback where SCK is unavailable).**
+`simctl io recordVideo` to a FILE still works on Xcode 26 (only stdout was
+removed); it writes a FRAGMENTED MP4, which is readable WHILE growing. Tail the
+file, feed each new `moof`/`mdat` fragment to `MP4ToAnnexB` (already in
+`h264_extract.go`) → NAL → RTP. The code comment at
+`remote_runtime_target.go:207` explicitly names this as the planned replacement.
+
+**C. JPEG data-channel screenshot (last resort).** Only where A and B fail AND
+the box's `simctl screenshot` is healthy (<1s). Never on this degraded mini.
+
+**Android/redroid needs NONE of this** — `adb exec-out screenrecord
+--output-format=h264 -` streams H.264 to stdout directly into the existing RTP
+track (`androidTarget.CanEncodeRTPH264()` = true), plus `adb` gives tap/swipe/
+text/key for free. So:
+
+**Platform routing (speed + lightweight first):**
+
+| Guest | Preferred host | Capture | Why |
+|---|---|---|---|
+| RN / Expo | **Android emulator / redroid** | adb screenrecord H.264 | cross-platform; Linux; fast; no Xcode |
+| Flutter | **Android emulator / redroid** | adb screenrecord H.264 | cross-platform; Linux; fast |
+| Kotlin | Android emulator / redroid | adb screenrecord H.264 | Android-native |
+| Swift | iOS sim (required) | **ScreenCaptureKit window** → RTP | iOS-native, Xcode mandatory |
+| watchOS/tvOS/CarPlay/visionOS | Apple sim (required) | **ScreenCaptureKit window** → RTP | Apple-only, Xcode mandatory |
+
+The lesson the user pushed to: **default cross-platform guests to Android/redroid
+(lightweight, Linux, works today), and reserve the heavier Apple-sim path — with
+ScreenCaptureKit as the capture that makes it actually stream — for what genuinely
+requires Xcode.** iOS being un-streamable on THIS mini is not a wall for the
+product: the Android path ships now, and ScreenCaptureKit unblocks the Apple
+sims on a healthy Mac.
+
 ## Input / gesture control — wrap first-party + permissive OSS
 
 The web viewer already forwards pointer input over the control DataChannel (the
