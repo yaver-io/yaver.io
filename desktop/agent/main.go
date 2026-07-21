@@ -504,6 +504,11 @@ func main() {
 		runAlias(os.Args[2:])
 	case "ssh":
 		runSSHWrap(os.Args[2:])
+	case "ssh-session":
+		// Forced-command endpoint for the out-of-band SSH control/task channel.
+		// Never a shell: it reads $SSH_ORIGINAL_COMMAND, enforces a verb whitelist,
+		// and proxies one call to the local agent. See ssh_session_cmd.go.
+		os.Exit(runSSHSession(os.Args[2:]))
 	case "config":
 		runConfig(os.Args[2:])
 	case "set":
@@ -3037,6 +3042,7 @@ func runServe(args []string) {
 
 	// Scan mobile projects + pre-build dev clients for Expo/RN (background)
 	go PrewarmMobileProjects()
+	StartMobileProjectPeriodicRefresh()
 
 	// Clean old session files (>7 days)
 	go cleanOldSessions()

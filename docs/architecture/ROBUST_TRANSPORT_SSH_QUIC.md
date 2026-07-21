@@ -181,6 +181,171 @@ in exactly the way we're already being bitten.**
   For the shared `public-free` relay, **Road A (hardened QUIC relay) is strictly
   better** and reverse-SSH would be a multi-tenancy regression.
 
+## 4b. Native iOS SSH — a persistent background CONTROL channel
+
+User intent (2026-07-21): **keep the existing QUIC relay (and keep hardening it),
+and ADD a native-SSH / reverse-SSH channel as a *redundant, out-of-band control
+channel*** — always-available, secure, alive in the background. It is the
+datacenter "out-of-band management" pattern: when the primary data path (QUIC
+relay) breaks, the SSH channel is *still up*, so Yaver can **agentically
+self-heal connectivity** — run the **remote runner / Yaver MCP over the SSH
+channel to diagnose and fix the transport problem itself** — instead of the user
+staring at "can't connect". It also carries **tasks** (multiplexed control), and
+is the resilient liveness/eventing plane the way Yaver Mesh would be (Mesh is off
+here because Tailscale occupies `100.64/10`). Strictly **additive**: the data
+plane still rides the best transport; SSH is the redundant control/recovery plane.
+
+**The headline use case — agentic connectivity self-heal:** primary path drops →
+SSH control channel is still alive → Yaver runs `runner`/MCP verbs *over SSH* on
+the box (`doctor transport`, `doctor relay`, re-register relay, restart tunnel,
+inspect the agent) → fixes the data path → user's session resumes. The box is
+never truly unreachable as long as ONE channel survives.
+
+**Scope + coordination (least privilege):** the SSH self-heal loop may touch
+**only** (a) the **remote box** (its own agent: restart tunnel, re-register,
+`doctor`, pick another relay candidate) and (b) the **mobile app** (re-arm its
+transport, refresh creds). It must **never** touch third-party infra. For fixes
+the box *cannot* make itself, it reports **agentically to Convex** ("relay X looks
+wedged / I re-registered / switch me to relay Y"), and **Convex** — the control
+plane — is what talks to the **free relay / Relay Pro** to force-evict a stale
+registration, rotate a relay credential, or move the device to another relay/tier.
+This preserves the split: **agent = machine authority, Convex = control plane,
+relay = data path**; the out-of-band channel just lets the agent *reason and act*
+on connectivity even while the data path is down, and lets Convex broker the
+relay-side half.
+
+### Why a dedicated control channel earns its keep
+- The HTTP-over-QUIC data path is request/response; on a flap it dies *silently*
+  (the exact bug in §0/mobile). A persistent SSH channel with `ServerAliveInterval`
+  gives **sub-10s liveness truth** and a **warm path** — so recovery is "the data
+  path re-attaches to a box we already know is up," not a cold rediscovery race.
+- It carries **control only**: `health`, status summary, task-done events,
+  path-recovery signaling — tiny, latency-tolerant. **No bulk data, no media**
+  over it (see §C: never tunnel WebRTC media through TCP SSH).
+
+### iOS background reality (the honest constraint)
+iOS suspends apps; a raw SSH socket will **not** stay open 24/7. So "background
+persistent" is achieved as **logical** persistence, not a literally-open socket:
+- **Foreground + short background grace:** the SSH channel is live with keepalive.
+- **Suspended:** rely on **APNs silent/background push to wake** the app and
+  re-establish the channel when there's something to deliver (task finished, box
+  state changed) or when the user returns. The device registers for push at pair
+  time; the agent (via control plane) sends a silent push to trigger reconnect.
+- Net UX: to the user it feels always-connected (open app → already warm; event
+  happens → push wakes it), within Apple's rules — no misleading "always-on"
+  claim, no battery-hostile socket-thrash.
+
+### Security model (purely secure — non-negotiable)
+- **Key in the Secure Enclave.** The iOS device SSH private key is generated in
+  and **never leaves** the Secure Enclave (P-256; or an Ed25519 key sealed in the
+  Keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` where SE curve
+  limits apply). No key material in JS, in a backup, or on the relay.
+- **Forced-command on the agent, no shell.** The phone's public key is installed
+  as a `# yaver-managed` entry:
+  `command="yaver ssh-session --session <id>",no-pty,no-agent-forwarding,`
+  `no-user-rc,permitopen="127.0.0.1:18080"`. The channel can invoke **only** the
+  Yaver control verbs — never a shell, never arbitrary forwarding. Raw shell stays
+  an explicit owner-only debug escape hatch with an audit event.
+- **Bound to Yaver identity.** SSH auth is gated by the device certificate +
+  account session; the signed request envelope (§ canonical doc) still wraps every
+  verb *inside* the channel — SSH is the pipe, Yaver identity is the authority.
+- **E2E, relay/mesh pass-through.** The channel is end-to-end phone↔agent; the
+  relay/bastion forwards ciphertext only, authorizes nothing, logs metadata only.
+- **Per-device, instantly revocable.** Revoke device → remove its `yaver-managed`
+  key + close its live channel + invalidate its session capability. Never touch
+  non-Yaver keys.
+- **Least privilege + limits.** Idle timeout, max lifetime, byte caps; control
+  lane is priority but bounded so it can't be abused as a data tunnel.
+
+### Completely invisible to the user
+The user **feels and knows nothing about SSH** — no keys to manage, no config, no
+`authorized_keys`, no "SSH" in the normal UI. It is auto-provisioned at pair time
+(agent mints its own `# yaver-managed` key, installs its own forced-command entry),
+runs silently as the out-of-band channel, and self-heals in the background. The
+only place SSH is ever named is the **advanced/debug** transport panel
+(`Path: … / out-of-band: healthy`) — never the normie flow. "It just works, and
+it's secure" is the entire user-facing contract.
+
+### Which SSH: native-direct vs reverse — decided by signaling
+At init, **Convex signaling** determines reachability, then picks the SSH flavor:
+- **Both sides on a shared overlay (Tailscale/VPN/Mesh) → native direct SSH** to
+  the box's overlay address (`:22` or the agent's SSH port). Lowest latency, E2E,
+  no bastion. This is the "both have Tailscale → go direct" case.
+- **Not on a shared overlay → reverse SSH via the relay/bastion.** The box holds
+  an outbound reverse tunnel (autossh-grade keepalive, generation-replacement);
+  the phone reaches the forced-command endpoint through it. Works through NAT/CGNAT
+  with no inbound ports.
+The channel identity, forced-command, and Secure-Enclave key are **identical**
+across both flavors — only the reachability leg differs, chosen by the signaled
+path decision (same selector that picks LAN/VPN/relay for the data plane).
+
+### Convex cost — cheap by construction (do not inflate the bill)
+The SSH out-of-band channel is **P2P (phone↔box)**; its bytes never traverse
+Convex, so it adds **no** Convex function load. Convex is touched only at:
+- **pair/setup** — issue device cert + tunnel intent (one-time, per pairing),
+- **rare self-heal events** — the box reports "relay wedged / re-registered /
+  switch relay" only when a real fault is detected+acted on, **debounced** (one
+  summary per fault, not per retry). No per-heartbeat writes, no polling loops.
+Keepalive/liveness lives in the SSH channel (`ServerAliveInterval`), **not** in
+Convex. This keeps the resilience layer off the metered plane — consistent with
+the existing Convex-cost discipline.
+
+**No high-frequency loops — even during troubleshooting.** The agentic self-heal
+is **single-shot with bounded exponential backoff and a hard attempt cap**, and is
+**event-driven** (triggered by an actual detected fault, not a timer). A relay
+re-register is tried once, then backed off (seconds → tens of seconds → give up +
+surface to the user), never a tight retry loop hammering Convex/relay/the box.
+This is both a cost rule (metered Convex/relay) and an anti-abuse rule (never let
+a datacenter box hammer infra). Troubleshooting that can't converge in a few
+bounded attempts escalates to the user, it does not spin.
+
+### Native module shape (build)
+- `YaverSSHControl` TurboModule wrapping **libssh2** (or SwiftNIO SSH): generate/
+  load SE key, connect (over the selected reachability leg — mesh/relay/direct),
+  keepalive, `exec` forced-command verbs, one multiplexed channel for
+  status+events. Exposed to RN as `sshControl.connect()/health()/onEvent()`.
+- **Selector integration:** add `kind: "ssh-control"` to `MachineTransport`. It is
+  a *liveness + eventing + recovery-trigger* transport, not the data path. When
+  the data path errors, the selector checks the SSH channel: **alive → box is up,
+  re-attach the data path immediately**; **also dead → full rediscovery**. This is
+  what makes loss recovery *seamless*.
+- **Mesh relation:** this control channel works **even when Yaver Mesh is off**
+  (as it is here). When Mesh IS up, the SSH channel can ride the mesh overlay; when
+  it isn't, it rides relay/direct. Same secure control plane, transport-agnostic.
+
+### Task model it plugs into (existing)
+A task runs in its own **tmux** session (`yaver-<task>`); a **yaver session**
+wraps the remote **runner** (claude/codex/opencode). The SSH channel's `run-task`/
+`attach-tmux`/`stop-task` verbs drive exactly these — SSH is another way to reach
+the *same* tmux/runner, not a parallel task system. So "tasks over SSH" = the
+forced-command verbs attaching to the existing tmux/runner session.
+
+### Build order — grounded in existing code (after connectivity+UI perfected, before deploy)
+Existing to build ON (do not duplicate): SSH resolution LAN→Tailscale→mesh→device
+lives in `desktop/agent/ssh_resolve_lan.go` / `ssh_resolve_mesh_test.go` /
+`ssh_targets.go`; bootstrap in `ssh_bootstrap.go`; `yaver ssh` in `launch_ssh.go`.
+There is **no** forced-command verb server, no reverse-SSH-via-relay tunnel, no
+mobile `MachineTransport` selector yet — those are the new work.
+
+1. **Agent forced-command server** (`yaver ssh-session --session <id>`): a Go verb
+   dispatcher exposing ONLY `health/run-task/attach-tmux/stop-task/list-projects/
+   open-port/status` over the SSH channel's stdio, wrapping the same TaskManager +
+   tmux the HTTP path uses. Owner-only raw shell behind an explicit flag + audit.
+   Testable in Go without iOS.
+2. **`# yaver-managed` key lifecycle** (Go): generate/install/rotate/revoke the
+   device forced-command key in `authorized_keys`, never touching unknown keys
+   (mirror the SSH-key-safety tests the canonical doc calls for).
+3. **Reverse-SSH-via-relay backend** (agent dials relay/bastion, autossh-grade
+   keepalive + generation-replacement) for the not-on-tailnet case; native-direct
+   SSH over the resolved overlay for the on-tailnet case (reuse `ssh_resolve_*`).
+4. **iOS `YaverSSHControl` TurboModule** (SE key, libssh2/SwiftNIO-SSH, keepalive,
+   exec) — the native client. + APNs silent-push wake for background reconnect.
+5. **Mobile `MachineTransport` selector**: add `ssh-control`/`ssh-task` kinds; use
+   the channel for liveness truth + seamless data-path re-attach + agentic
+   self-heal trigger (bounded, event-driven — never a loop).
+6. **Doctor** `yaver doctor ssh-control`: proves the key can SIGN + the forced
+   command answers `health` (real capability, not "key exists").
+
 ## 5. Recommendation
 
 1. **Now (fixes the reported pain):** Road A — harden the QUIC relay to
