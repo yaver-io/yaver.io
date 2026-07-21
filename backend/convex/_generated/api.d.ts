@@ -100,6 +100,7 @@ import type * as taskPlacement from "../taskPlacement.js";
 import type * as taskPlacementClassifier from "../taskPlacementClassifier.js";
 import type * as teams from "../teams.js";
 import type * as totp from "../totp.js";
+import type * as trials from "../trials.js";
 import type * as unitEconomics from "../unitEconomics.js";
 import type * as userDomains from "../userDomains.js";
 import type * as userSettings from "../userSettings.js";
@@ -205,6 +206,7 @@ declare const fullApi: ApiFromModules<{
   taskPlacementClassifier: typeof taskPlacementClassifier;
   teams: typeof teams;
   totp: typeof totp;
+  trials: typeof trials;
   unitEconomics: typeof unitEconomics;
   userDomains: typeof userDomains;
   userSettings: typeof userSettings;

@@ -9617,6 +9617,15 @@ const runCron = httpAction(async (ctx, req) => {
         dryRun: false,
       });
       break;
+    case "trialReaper":
+      // Delete trial boxes past their wall-clock window. Runs LIVE, unlike the
+      // wallet meter: a simulated reaper reports success while boxes keep
+      // billing, and the trial's entire cost model rests on the box actually
+      // going away. Every ~5 min is right for a 60-min window.
+      await ctx.scheduler.runAfter(0, internal.trials.reapExpiredTrials, {
+        dryRun: false,
+      });
+      break;
     case "cloudOrphanSweep":
       // Provider → Convex reconciliation. The ONLY thing that can discover a
       // resource the provider is billing us for but Convex has forgotten

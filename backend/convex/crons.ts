@@ -15,6 +15,10 @@ import { cronJobs } from "convex/server";
 //       rows past the 1-year refresh grace. ADD the systemd timer on the
 //       Hetzner cron box alongside the others; until then trigger once
 //       manually to clear the historical backlog.)
+//   - internal.trials.reapExpiredTrials
+//       (Hetzner: every 5 min — POST /crons/run {name:"trialReaper"};
+//       deletes trial boxes past their 60-min wall clock. LIVE, not dry-run:
+//       an un-reaped trial bills indefinitely and breaks the whole cost model.)
 //   - internal.cloudLifecycle.reconcileProviderResources
 //       (Hetzner: daily — POST /crons/run {name:"cloudOrphanSweep"};
 //       provider→Convex reconciliation. REPORT-ONLY. This is the only thing

@@ -1393,6 +1393,18 @@ export default defineSchema({
     // Absent ⇒ "deep" (every existing row predates this field and is deleted
     // on park today).
     parkMode: v.optional(v.string()),
+    // ─── Zero-friction trial ────────────────────────────────────────────
+    // A trial box is EPHEMERAL and deliberately unlike a paid workspace: no
+    // volume, no reserved egress IP, no snapshot — so it has no satellites
+    // that can outlive it and leak. It never parks; it is deleted.
+    //
+    // trialExpiresAt is WALL-CLOCK, not idle-based. An idle timer can be
+    // defeated by a keepalive, which turns a bounded cost into an unbounded
+    // one; wall-clock is a promise we can keep and a cost we can compute in
+    // advance (€0.037 for 60 min on cpx22).
+    // See docs/architecture/yaver-activation-trial-analysis.md.
+    isTrial: v.optional(v.boolean()),
+    trialExpiresAt: v.optional(v.number()),
     // Auto-park (auto-close) is OPT-OUT: undefined === enabled, so an idle box
     // still stops its own meter by default. Only an explicit `false` keeps a
     // box running while idle (the owner accepts the bill). Surfaced as a toggle
