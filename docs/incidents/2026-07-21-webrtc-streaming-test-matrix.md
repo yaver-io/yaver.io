@@ -9,8 +9,8 @@ Goal: background-color-change edit → visible in stream, ≤3s target.
 |---|---|---|---|
 | **RN → browser (RN-Web)** | ✅ | **0.27s** ⚡ | Fastest. The recommended default for RN. Metro Fast Refresh + instant DOM capture. |
 | **RN → iOS simulator** | ✅ | **0.47s** | Metro Fast Refresh, simctl capture (0.34s/frame after reboot). |
-| Flutter → browser (Flutter-Web) | ⚠️ box-limited | build+serve ✓ | Debug DDC won't mount canvas in headless on 8GB; real path = GPU browser window / ≥16GB. |
-| Flutter → iOS simulator | ⚠️ toolchain | build ✓, attach ✗ | Flutter 3.44 + Xcode 26 debug VM-attach hangs (upstream bug, not Yaver). |
+| Flutter → browser (Flutter-Web) | ❌ 8GB RAM-blocked (both modes) | — | Debug DDC won't mount in headless; **release dart2js OOM-died silently** (same -9 pattern as impellerc). Needs ≥16GB or the Linux path. |
+| Flutter → iOS simulator | ❌ toolchain-blocked | hangs | Flutter 3.44 + Xcode 26: **both `flutter run` AND `flutter build ios` hang at "Running Xcode build…"** — verified the xcodebuild/dart procs sit at **0% CPU for 12+ min** (deadlocked, not slow). Upstream bug, not Yaver. |
 | Swift → iOS simulator | ✅ builds/runs | ~2–3s rebuild | Native = no hot reload; incremental xcodebuild 2–3s (expected native contrast). |
 | Kotlin → Android emulator | ⏸ Linux path | — | 8GB Mac can't host the emulator; belongs on Linux+redroid (by design). |
 
@@ -72,7 +72,7 @@ working GUI session. Now the native paths are testable with real latency.
 | todo-rn | **browser (RN-Web)** | ✅ PASS | **0.27s** ⚡ | The recommended default path. Expo web served (200), Playwright chromium loaded the app, edit `safe.backgroundColor #0f172a→#22c55e` → **DOM reflected green in 0.27s** via Metro Fast Refresh. Fastest of all — no simulator, instant DOM-level capture (no degraded-simctl risk). Harness: Node **CommonJS `require`** (ESM `import` ignores `NODE_PATH`), persistent chromium, `getComputedStyle` poll. Playwright chromium installed once (93MB) for reliable capture — standalone `chrome --headless` was flaky on this box. |
 | todo-flutter | iOS simulator | ⚠️ toolchain-blocked | build ✓; attach ✗ | **Incident 1 (fixed):** no `ios/` folder → auto-scaffolded (`ensureIOSScaffold`). **Incident 2 (toolchain):** `flutter run -d ios-sim` **builds `Runner.app` successfully but its debug VM-service attach hangs forever** at "Running Xcode build…" — reproduced on BOTH a loaded box AND an idle one (load 2.3), so it's **not resource-related**. Root cause is **Flutter 3.44 + Xcode 26 / iOS 26 simulator** debug-attach incompatibility (the "UIScene lifecycle support will soon be required" warning is the tell). Flutter's hot-reload *speed* is well-characterized elsewhere (~200–800ms, comparable to RN); the blocker here is the toolchain attach, not Yaver. **Flutter's fast path is browser anyway** (per the product direction), and the iOS-sim Flutter attach is a Flutter/Xcode bug to track upstream. |
 | todo-swift | iOS simulator | ✅ builds/launches; native rebuild **2–3s** | 2–3s rebuild (no hot reload) | **Incident 1 (fixed):** ships only `project.yml` (XcodeGen), no `.xcodeproj` → `xcodegen generate` (covered by `ensureIOSScaffold`). **Incident 2 (fixed):** `NavigationStack` needs iOS 16+ but `project.yml` targeted iOS 15 → bumped to 17. Then: **builds ✓, installs ✓, launches ✓, displays ✓** — baseline dark bg confirmed at the exact injected RGB (15,23,41). **Incremental xcodebuild after a one-line change = 2–3s.** Native SwiftUI has **no hot reload**, so a full edit→visible = rebuild(2–3s)+reinstall+relaunch ≈ several seconds — the expected native contrast to sub-second RN/Flutter hot reload. (The automated pixel-flip after reinstall was unreliable on the iOS-26 sim — binary hot-swap/render caching — but the rebuild time and the no-hot-reload nature are the real, useful findings.) |
-| todo-kt | Android emulator | ⏸ deferred to Linux/redroid | — | Android emulator (arm64 `Pixel_4_API_32`) on an **8GB Mac** is impractical: it needs ~2–3GB RAM on top of the build, and this box already runs at ~78MB free during a single build (shader compiler was OOM-killed earlier). Per the product design (and the user's own note "android may be slow at mac mini, faster in linux"), **Android streaming's home is Linux + redroid/KVM**, streamed to an Apple client — not a Mac host. Not run here to avoid thrashing/crashing the box; belongs on the Linux Cloud-Workspace path where `buildAndLaunchRNAndroid` (gradle+adb) already runs. |
+| todo-kt / RN / Flutter | Android emulator | ❌ empirically blocked (2 hard faults) | — | **Actually attempted** (not assumed): booted `Pixel_4_API_32` → two independent hard blocks. (1) **System image absent** — the AVD references `system-images/android-32/google_apis_playstore/arm64-v8a` which is **not installed** (zero system images on the box); would need a ~1.5GB `sdkmanager` download. (2) **No RAM** — box is at **86MB free / 2.3GB compressed**; an emulator needs ~1.5–2GB, so it would OOM on boot even if the image were downloaded. Downloading 1.5GB to then fail isn't resource-aware. Confirms the design: **Android's home is Linux + redroid/KVM** (streamed to an Apple client), where `buildAndLaunchRNAndroid` (gradle+adb) already runs. This blocks the Android column for RN, Flutter, AND Kotlin on this Mac. |
 
 | todo-flutter | **browser (Flutter-Web)** | ⚠️ box-limited | build+serve ✓; capture ✗ | Web platform auto-scaffolded (`flutter create . --platforms=web`). First build initially **SIGKILL'd the shader compiler** (`impellerc ... exit code -9`) — an **8GB-RAM OOM** compounded by zombie iOS-build processes + Spotlight reindex. After killing the zombie build tree and **disabling Spotlight** (`mdutil -a -i off`), it built and **served (HTTP 200)**. But the app never painted in capture: Flutter web **debug (DDC)** bootstrap won't mount its `<canvas>` in Playwright's headless-shell on this 8GB box even after 60s (WebGL confirmed OK via swiftshader — it's the DDC bootstrap that's too heavy here, not WebGL). Not an architecture limit: Yaver's real Flutter streaming opens a **GPU-backed browser window** (chromedp/CDP), and a *release* web build mounts instantly (but has no hot reload). **Takeaway for Cloud Workspace sizing: heavy Flutter/Xcode debug builds want ≥16GB; the 8GB mini is fine for RN/Metro + iOS-sim RN but tight for Flutter-web-debug.** |
 
@@ -87,3 +87,30 @@ All in `desktop/agent/remote_runtime.go`, compile-clean (`go build ./...`, `go v
 - **`ensureWebPlatformScaffold()`** — Flutter guests missing `web/` are auto-scaffolded (`flutter create . --platforms=web`) for the browser streaming surface. Fixes the "no web/" dead-end.
 - **`excludeFromSpotlight()`** — drops `.metadata_never_index` into DerivedData so macOS Spotlight never indexes the churning build tree. Fixes the `mds_stores`-pins-a-core resource drain observed on the mini.
 - **`hardenBuildProcessGroup()`** — xcodebuild/gradle/flutter/expo-prebuild now run in their own process group with a cancel hook that SIGKILLs the **whole descendant tree** (clang, swift-frontend, impellerc, dart2js, node). Fixes tonight's root incident: an abandoned build's orphaned children starved the 8GB box and OOM-killed a later shader compile. (The dev-server path already group-killed via `setProcGroup`; the *build* path did not — now it does.)
+
+## FINAL CONCLUSION (2026-07-21, all feasible paths exhausted)
+
+**Every combination this 8GB Mac mini can physically run has been measured.** The
+WebRTC vibe loop is proven fast on the paths that matter:
+
+| ✅ Measured & passing | Edit→visible |
+|---|---|
+| RN → browser (RN-Web) | **0.27s** ⚡ |
+| RN → iOS simulator | **0.47s** |
+| Swift → iOS simulator (native) | ~2–3s rebuild (no hot reload, as expected) |
+
+**Blocked cells are blocked by external constraints, not by Yaver:**
+- **Flutter → iOS sim** — Flutter 3.44 + Xcode 26 deadlock: both `flutter run` and
+  `flutter build ios` hang at "Running Xcode build…" with the procs at **0% CPU**
+  (verified idle, reproducible). Upstream toolchain bug.
+- **Flutter → browser** — dart2js *and* DDC both exhaust the 8GB box (OOM `-9`).
+  Needs ≥16GB or the Linux path. Architecture is fine (GPU browser window streams
+  it in prod).
+- **Android (RN/Flutter/Kotlin)** — no system image installed + no RAM headroom.
+  Belongs on Linux + redroid/KVM by design.
+
+**Net:** the product code is solid and now *self-heals* the friction hit during
+this bring-up (4 encoded fixes above). The remaining gaps are a 16GB Cloud-
+Workspace tier for heavy Flutter, the Linux/redroid lane for Android, and an
+upstream Flutter/Xcode-26 fix to track. Shipped: go agent with the four
+self-heals (committed + pushed to `main`).
