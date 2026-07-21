@@ -40,6 +40,23 @@ refused end-to-end.
 
 ## Phase B — closed-loop test through the mac mini (real network)
 
+**✅ REGULAR-SSH PATH VALIDATED (2026-07-21) on `Mobiles-Mac-mini` via Tailscale.**
+Built the darwin-arm64 agent, staged it on the mini, installed a `# yaver-managed`
+forced-command entry for a throwaway ed25519 client key (NEW key — the operator's
+real SSH access untouched), then over regular SSH:
+- `{"verb":"health"}` → **returned the mini's real `/health` JSON** (v1.99.335) —
+  the full chain works: SSH → forced-command `yaver ssh-session` → whitelist →
+  local-agent dispatch → JSON back.
+- `{"verb":"vault"}` → **refused** ("not permitted on the out-of-band channel").
+- shell attempt → **blocked** ("forced-command only", no pty).
+- `{"verb":"doctor-transport"}` → 404 **only because the mini's *running* daemon is
+  1.99.335** (pre-`/doctor/transport`); dispatch reached it, proving routing.
+Cleanup verified: test entry removed (leaving the real key), binary + local keys
+deleted, normal shell access confirmed intact. **The cage holds on a real box.**
+Remaining for full Phase B: the reverse (relay) leg (needs Phase A) + rotate/revoke
+assertions + a scripted, metered-aware harness under `scripts/`.
+
+
 With Phase A + `YAVER_SSH_CONTROL=1` on the mini:
 1. `writeDeviceKeyPair` on this Mac → `applyManagedKey(mini)` installs the pubkey.
 2. Over the relay `_ssh` path (off-tailnet) AND over Tailscale direct (on-tailnet),
