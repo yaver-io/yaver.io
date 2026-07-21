@@ -1044,14 +1044,44 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		// Check if the existing tunnel's QUIC connection is actually
 		// still alive. A dead conn whose <-Done() goroutine just hasn't
 		// finished cleanup yet should not block a legitimate reconnect.
-		select {
-		case <-existing.conn.Context().Done():
+		deadNow := false
+		if existing.conn != nil {
+			select {
+			case <-existing.conn.Context().Done():
+				deadNow = true
+			default:
+			}
+		}
+		switch {
+		case deadNow:
 			// Previous tunnel is dead but cleanup hasn't run yet —
 			// remove it now so this registration can take its place.
 			delete(s.tunnels, reg.DeviceID)
+		case regUserID != "" && existing.userID == regUserID:
+			// SAME authenticated user reconnecting → last-writer-wins.
+			//
+			// C-1 (2026-05-02) refuses collisions to stop a DIFFERENT peer who
+			// merely holds the shared password from hijacking a tunnel. But when
+			// the NEW registration is validated to the SAME userID as the tunnel
+			// it's colliding with, this is that user's own device reconnecting
+			// after an unclean drop — and refusing it created an up-to-120s black
+			// hole: the relay kept the (already dead) tunnel "alive" until QUIC's
+			// MaxIdleTimeout fired, so the agent's fast redial was rejected and
+			// the phone got "online but no transport answered" for a full minute
+			// (2026-07-21 incident). Evict the stale tunnel and accept the new
+			// one. This is NOT a hijack (same owner, and the owner can always
+			// disconnect their own device); anti-hijack still holds because a
+			// different userID — or an unauthenticated/self-hosted shared-password
+			// relay where userID=="" — falls through to the refuse below.
+			log.Printf("[RELAY] Same-user reconnect for device %s (user %s) — evicting stale tunnel from %s, accepting %s",
+				reg.DeviceID[:min(8, len(reg.DeviceID))], regUserID[:min(8, len(regUserID))], existing.peerAddr, remoteAddr)
+			if existing.conn != nil {
+				_ = existing.conn.CloseWithError(0, "superseded by same-user reconnect")
+			}
+			delete(s.tunnels, reg.DeviceID)
 		default:
 			s.mu.Unlock()
-			log.Printf("[RELAY] Refusing duplicate registration for device %s (existing tunnel from %s, new from %s)",
+			log.Printf("[RELAY] Refusing duplicate registration for device %s (existing tunnel from %s, new from %s — different/unauthenticated owner)",
 				reg.DeviceID[:min(8, len(reg.DeviceID))], existing.peerAddr, remoteAddr)
 			rejectRegistration("deviceId already registered", "deviceId already registered")
 			return

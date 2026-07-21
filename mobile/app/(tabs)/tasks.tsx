@@ -3253,6 +3253,18 @@ export default function TasksScreen() {
 
   const handleFollowUp = async () => {
     if (!selectedTask || (!followUpText.trim() && followUpImages.length === 0)) return;
+    // Gate on a LIVE connection before firing. On a flap the socket is gone but
+    // host/port/token linger, so the send would silently hit a dead URL and the
+    // message would vanish with zero feedback (the 2026-07-21 "second follow-up
+    // never submitted" report). The main composer already guards this way; the
+    // follow-up path did not. Return BEFORE clearing the input so the text is kept.
+    if (connectionStatus !== "connected") {
+      Alert.alert(
+        "Not connected",
+        `Can't reach ${activeDevice?.name ?? "your machine"} right now — wait for the status dot to turn green, then tap Send again. Your message is kept.`,
+      );
+      return;
+    }
     // Remember how this went out so the NEXT follow-up defaults to the same mode.
     lastSubmitModeRef.current = inputFromSpeech ? "voice" : "text";
     // Stop any active recording before sending
@@ -3522,6 +3534,17 @@ export default function TasksScreen() {
       // The send failed, so the message never reached the runner. Take the
       // optimistic turn back out rather than leaving a phantom message.
       rollbackOptimisticTurn();
+      // SURFACE it. A silent rollback is exactly why the second follow-up
+      // "vanished" with no explanation (2026-07-21): the user saw the message
+      // disappear and had no idea it hadn't sent. The typed text is preserved
+      // (only cleared on the success path), so re-opening the composer shows it
+      // again — the alert tells them to retry.
+      Alert.alert(
+        "Couldn't send",
+        err instanceof Error && err.message
+          ? err.message
+          : `The message didn't reach ${activeDevice?.name ?? "the machine"}. It's still in the box — tap Send to try again.`,
+      );
       // Best-effort analytics for runtime-switch failures. Other
       // continue-task failures don't have analytics yet; if we add
       // them later, gate this on an explicit "was a switch" flag.

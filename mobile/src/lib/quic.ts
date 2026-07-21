@@ -2383,11 +2383,29 @@ export class QuicClient {
   /** Resume a task with a follow-up prompt. */
   async continueTask(taskId: string, input: string, images?: ImageAttachment[]): Promise<void> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/tasks/${taskId}/continue`, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ input, ...(images?.length ? { images } : {}) }),
-    });
+    // Guarantee headroom under the iOS ~6-connections-per-host ceiling AND give
+    // this POST a hard timeout — without BOTH, a SECOND follow-up starves behind
+    // the live task-output SSE stream (that stream opens once the first follow-up
+    // puts the task into `running` and holds a per-host slot), so the plain
+    // untimed fetch never settles: the Send button stays stuck on "Sending…" and
+    // the message never leaves the phone. This is the 2026-07-21 "vanished second
+    // follow-up" bug. Mirror sendTask's protection exactly.
+    this.freeStreamSlotForRequest();
+    let res: Response;
+    try {
+      res = await this.fetchWithTimeout(`${this.baseUrl}/tasks/${taskId}/continue`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ input, ...(images?.length ? { images } : {}) }),
+      }, 30000);
+    } catch (e) {
+      if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
+        throw new Error(
+          "Timed out after 30s — the machine accepted the connection but never answered (stale relay path, or the phone's connection pool was full). Check it's reachable, then send again.",
+        );
+      }
+      throw e;
+    }
     if (!res.ok) throw new Error(`Failed to continue task: ${res.status}`);
   }
 
@@ -2404,17 +2422,30 @@ export class QuicClient {
     args: { runner: string; model?: string; mode?: string; input: string; contextWords?: number },
   ): Promise<{ taskId: string; runnerId: string; parentTaskId: string; contextWordsUsed: number }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/tasks/${taskId}/fork`, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runner: args.runner,
-        model: args.model ?? "",
-        mode: args.mode ?? "",
-        input: args.input,
-        contextWords: args.contextWords,
-      }),
-    });
+    // Same iOS conn-pool headroom + hard timeout as continueTask/sendTask: a fork
+    // triggered by a follow-up must not starve behind the live output stream.
+    this.freeStreamSlotForRequest();
+    let res: Response;
+    try {
+      res = await this.fetchWithTimeout(`${this.baseUrl}/tasks/${taskId}/fork`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runner: args.runner,
+          model: args.model ?? "",
+          mode: args.mode ?? "",
+          input: args.input,
+          contextWords: args.contextWords,
+        }),
+      }, 30000);
+    } catch (e) {
+      if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
+        throw new Error(
+          "Timed out after 30s — the machine accepted the connection but never answered (stale relay path, or the phone's connection pool was full). Check it's reachable, then send again.",
+        );
+      }
+      throw e;
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Failed to fork task: ${res.status} ${text}`);
@@ -3076,11 +3107,13 @@ export class QuicClient {
     devServer?: { running: boolean; framework?: string };
   }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/projects/switch`, {
+    // Timeout so a project tap fails fast instead of hanging forever on a dead
+    // relay path (the "dead tap" symptom: spinner stuck, box never loads).
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/projects/switch`, {
       method: 'POST',
       headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, startDev }),
-    });
+    }, 25000);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`Failed to switch project: ${text}`);
@@ -3095,9 +3128,9 @@ export class QuicClient {
     actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
   }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, {
       headers: this.authHeaders,
-    });
+    }, 25000);
     if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);
     return res.json();
   }
@@ -3108,9 +3141,9 @@ export class QuicClient {
     actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
   }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/projects/actions?path=${encodeURIComponent(path)}`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/projects/actions?path=${encodeURIComponent(path)}`, {
       headers: this.authHeaders,
-    });
+    }, 25000);
     if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);
     return res.json();
   }
