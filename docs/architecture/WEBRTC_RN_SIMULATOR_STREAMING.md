@@ -196,6 +196,62 @@ Every stage is proven on real hardware. Gotcha to encode: `simctl launch` on an
 already-running instance returns the old PID and does NOT reconnect to Metro —
 terminate first, then launch, so the app picks Metro up.
 
+## Fast vibing — PROVEN (2026-07-21)
+
+The landing-demo loop works. Edited one line in the running todo app
+(`backgroundColor: "#0f172a"` → `"#6E56F6"`); the streamed sim repainted **purple
+with app state preserved** (still "All clear" / "Nothing here" / "All" selected)
+— no rebuild, no restart. That is React Fast Refresh over Metro HMR.
+
+**Latency breakdown (why it's instant):**
+
+    save → Metro file-watch (<50ms)
+         → HMR delta, changed modules only (~50–200ms for a style edit)
+         → push over HMR WebSocket to the app (localhost, <10ms)
+         → React Fast Refresh re-render, state kept (~16–50ms)
+         → sim repaints (1 frame)
+         → WebRTC stream delivers the new frame (network RTT + frame interval)
+
+Code→sim-update is **~100–300ms (sub-second)** — the Flutter-hot-reload class.
+The ONLY viewer-added latency is frame delivery (RTT + the JPEG-DC rate today,
+60 fps with a baguette-style encoder). Contrast Hermes: every edit rebundles the
+whole HBC (seconds) and full-reloads (state lost). This is the entire reason to
+offer the WebRTC surface for the iterate-on-UI loop.
+
+## CRITICAL: capture method, not Fast Refresh, is the latency — use H.264 video
+
+Measured on the mini, and it reframes the streaming architecture:
+
+| Stage | Time | Note |
+|---|---|---|
+| Metro HMR (edit → bundle ready) | **~764 ms** | Fast Refresh is FAST — the vibe loop itself is fine |
+| `simctl io screenshot` (one frame) | **~18 s** | pathologically slow on Xcode 26.4, headless OR with Simulator.app open |
+| `simctl io recordVideo --codec=h264` | **real-time** | continuous hardware-encoded H.264, no per-frame penalty |
+| ffmpeg extract 1 frame from the H.264 | **0.03 s** | decoding is trivial |
+
+So the 18 s "vibe latency" was **entirely the frame-pump using `simctl io
+screenshot`** — a broken capture path. Fast Refresh is sub-second. The fix, which
+is also the premium **Relay Pro** feature, is a real **H.264 video stream**:
+
+- **iOS sim:** `simctl io recordVideo --codec=h264` → pipe the H.264 elementary
+  stream into the Pion WebRTC video track (`webrtc-rtp-h264-v1`, which the
+  RemoteRuntimeViewer ALREADY negotiates). Never screenshot-poll iOS.
+- **Android emulator / redroid:** `scrcpy` (or the emulator's `-gpu`/`adb`
+  H.264) → same RTP track. redroid on Linux is a strong fit here — cheap,
+  containerized, and streams fast.
+
+**Backend capture-tool selection (speed-first):** the agent should choose the
+capture per target — H.264 recordVideo (iOS sim), scrcpy/H.264 (Android/redroid),
+and fall back to JPEG-DC screenshot ONLY where neither exists. The frame-pump's
+current unconditional `Screenshot()` path is the thing to replace; the H.264
+track turns the ~18 s screenshot loop into a live 30–60 fps stream and is what
+makes end-to-end edit→see land in the ~1–2 s range (Fast Refresh 764 ms + a
+video frame), hitting the ≤3 s target. This is the seam that sells Relay Pro.
+
+Native surfaces (Swift/Kotlin/Flutter) run in the SAME sim/emulator and stream
+the SAME way — they need a real simulator/emulator on the remote (macOS for iOS),
+which is exactly what the sim-management layer + Cloud Workspace provide.
+
 ## Input / gesture control — wrap first-party + permissive OSS
 
 The web viewer already forwards pointer input over the control DataChannel (the
