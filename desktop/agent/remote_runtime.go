@@ -196,6 +196,76 @@ func runtimeHostClassForAndroid() string {
 // host lacks (the expo-gl class), or to test the app's OWN Yaver Feedback SDK
 // (react-native), which the Hermes container deliberately suppresses. In a real
 // simulator that SDK is live, so shake-to-feedback works natively.
+// StreamingSurface is how a guest app is run+streamed for the WebRTC vibe loop.
+type StreamingSurface string
+
+const (
+	// SurfaceBrowser — RN-Web / Flutter-Web in a headless Chrome tab, streamed via
+	// CDP screencast. Fastest + lightest (sub-second HMR, no emulator, no Xcode,
+	// runs on any Linux). Loses native modules; perfect for UI vibing.
+	SurfaceBrowser StreamingSurface = "browser"
+	// SurfaceEmulator — Android emulator (KVM on Linux) / redroid container. Full
+	// native Android; adb screenrecord H.264. Cross-platform + Kotlin.
+	SurfaceEmulator StreamingSurface = "emulator"
+	// SurfaceSimulator — Apple sim (iOS/watch/tv/vision/CarPlay) captured via
+	// ScreenCaptureKit. Heaviest; needs a healthy Mac. Apple-native only.
+	SurfaceSimulator StreamingSurface = "simulator"
+)
+
+// defaultStreamingSurface is Yaver's PRAGMATIC default per framework — fastest
+// path that still shows the real app. The user can override it in settings
+// (streamingSurfaceOverride), but these are what Yaver picks unasked:
+//
+//	RN / Flutter → browser   (fastest; RN-Web / Flutter-Web)
+//	Kotlin       → emulator  (native Android, no browser option)
+//	Swift/Apple  → simulator (native Apple, Xcode required)
+//	web frameworks → browser (they ARE web)
+func defaultStreamingSurface(framework string) StreamingSurface {
+	switch strings.ToLower(strings.TrimSpace(framework)) {
+	case "expo", "react-native", "flutter", "next", "nextjs", "vite", "react", "browser":
+		return SurfaceBrowser
+	case "kotlin":
+		return SurfaceEmulator
+	case "swift":
+		return SurfaceSimulator
+	}
+	return SurfaceBrowser
+}
+
+// streamingSurfaceOptions lists every surface a framework CAN use, default first,
+// so the UI shows the Yaver default prominently and the alternatives in settings.
+func streamingSurfaceOptions(framework string) []StreamingSurface {
+	fw := strings.ToLower(strings.TrimSpace(framework))
+	switch fw {
+	case "expo", "react-native":
+		// browser (fast) → Android emulator (native) → iOS sim (native Apple)
+		return []StreamingSurface{SurfaceBrowser, SurfaceEmulator, SurfaceSimulator}
+	case "flutter":
+		return []StreamingSurface{SurfaceBrowser, SurfaceEmulator, SurfaceSimulator}
+	case "kotlin":
+		return []StreamingSurface{SurfaceEmulator}
+	case "swift":
+		return []StreamingSurface{SurfaceSimulator}
+	case "next", "nextjs", "vite", "react", "browser":
+		return []StreamingSurface{SurfaceBrowser}
+	}
+	return []StreamingSurface{SurfaceBrowser}
+}
+
+// resolveStreamingSurface applies a user override if it's valid for the
+// framework, else falls back to the Yaver default. Empty override → default.
+func resolveStreamingSurface(framework, override string) StreamingSurface {
+	want := StreamingSurface(strings.ToLower(strings.TrimSpace(override)))
+	if want != "" {
+		for _, opt := range streamingSurfaceOptions(framework) {
+			if opt == want {
+				return want
+			}
+		}
+	}
+	return defaultStreamingSurface(framework)
+}
+
 func frameworkStreamsRNViaSimulator(framework string) bool {
 	switch strings.ToLower(strings.TrimSpace(framework)) {
 	case "expo", "react-native":
