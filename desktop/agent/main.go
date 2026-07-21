@@ -3821,6 +3821,12 @@ func runServe(args []string) {
 	// Start LAN discovery beacon (UDP broadcast for same-network mobile discovery)
 	go startBeacon(ctx, cfg.DeviceID, *httpPort, hostname, ownerUserID)
 
+	// Out-of-band SSH control channel (dormant unless YAVER_SSH_CONTROL is set).
+	// The redundant, always-available control/task/self-heal channel — see
+	// docs/architecture/ROBUST_TRANSPORT_SSH_QUIC.md. Gated OFF by default so
+	// existing installs are unaffected until the full feature is deployed.
+	startSSHControlServerIfEnabled()
+
 	// Disk health + SMART monitor — solo-dev headless hardware
 	// guard. Every 10 minutes the scanner refreshes the
 	// MachineHealth snapshot and fires notifications for fresh

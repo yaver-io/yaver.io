@@ -266,6 +266,18 @@ only place SSH is ever named is the **advanced/debug** transport panel
 (`Path: … / out-of-band: healthy`) — never the normie flow. "It just works, and
 it's secure" is the entire user-facing contract.
 
+### "Yaver Mesh" is the SSH-wrapping abstraction
+Framing (2026-07-21): **Yaver Mesh = the layer that wraps well-known SSH**. It is
+not a bespoke protocol — it is the wrapper that, from a **Convex "hello" signaling
+handshake** (who am I, what overlays do I have, is the peer reachable), picks:
+- **shared overlay present** (Tailscale / VPN / Yaver's own WireGuard overlay) →
+  **wrap native direct SSH** to the peer's overlay address, and
+- **behind NAT / no shared infra on one or both sides** → **reverse SSH** (box
+  dials out, held open at relay/Relay-Pro).
+So the whole out-of-band channel *is* "Yaver Mesh wrapping SSH": one abstraction,
+two flavors, chosen by signaling — the user never picks. (This unifies the older
+WireGuard-overlay "Mesh" and the SSH transport under one selection rule.)
+
 ### Which SSH: native-direct vs reverse — decided by signaling
 At init, **Convex signaling** determines reachability, then picks the SSH flavor:
 - **Both sides on a shared overlay (Tailscale/VPN/Mesh) → native direct SSH** to
@@ -374,6 +386,49 @@ rest of Yaver):
 So: one hardened-relay + one selector contract + one status vocabulary across
 every surface; the native SSH out-of-band channel is phone/desktop-first (+ Wear
 OS/Android native later), with watch/tv/web riding the companion + hardened relay.
+
+## 4d. Threat: a hostile relay user must NOT reach another user's box/phone
+
+This is the paramount property, and it must hold **even though the code is open
+source** (an attacker reads everything — security rests on **keys, not secret
+request shapes**). Concretely, a free- or Pro-relay user (who therefore has relay
+access and the source) must never get into anyone else's box or phone. Layered
+defense, each layer sufficient on its own:
+
+1. **Box authenticates the CLIENT's device key — public-key ONLY.** The embedded
+   SSH server (`ssh_control_server.go`) has **no password / no keyboard-
+   interactive** auth and accepts a connection **only** if the presented key is in
+   that box's own `# yaver-managed` set (`authorizedManagedKeysChecker`, re-read
+   per connection). An attacker can send bytes to the box's SSH port but **cannot
+   authenticate** without the owner's device private key — which lives in the
+   phone's **Secure Enclave** (never extractable) or 0600 local storage, and which
+   the **relay never sees**. Reading the source does not yield a key.
+2. **The relay is pass-through and access-graph-scoped.** It forwards **ciphertext**
+   only, authorizes nothing, holds no device keys. It bridges a connection **only
+   between the same owner/access-graph** (Convex says who may reach whom — same
+   rule as the `already registered` eviction that validates userID). So a hostile
+   tenant's bytes are not even routed to a stranger's box. A *fully compromised*
+   relay still can't get in — layer 1 stops it (it has no key).
+3. **Forced-command cage.** Even a valid device key can ONLY run the whitelisted
+   verbs (`sshSessionRoute`) — **never a shell, pty, port-forward, or subsystem**
+   (all refused in `handleSession`). Worst case for a stolen *owner* key is
+   running Yaver verbs on that owner's OWN box, not a foothold on the OS.
+4. **Host-key pinning (client side).** The client pins the box's persistent host
+   key (`ensureSSHControlHostKey`), so a malicious relay can't MITM by swapping in
+   its own box. (Test uses InsecureIgnoreHostKey; the native client MUST pin.)
+5. **Instant revocation.** Revoke a device → its `# yaver-managed` key is removed
+   and the per-connection check refuses it on the next handshake; live channel
+   closed. A lost phone loses access immediately.
+6. **Least privilege + no lateral movement.** No agent-forwarding (`no-agent-
+   forwarding`) so a foothold can't hop onward; RFC1918-blocked anti-pivot on the
+   relay stays in force; the channel touches only the box + the app, never third-
+   party infra.
+
+**Free vs Pro is NOT a security boundary** (per the canonical doc): both tiers use
+the identical key/signature protocol and the identical box-side public-key auth.
+Pro buys reliability/capacity, never a weaker auth path — a Pro relay is treated
+as exactly as hostile as the free one. The box trusts **its owner's device keys**,
+full stop — not the relay, not the tier, not Convex alone.
 
 ## 5. Recommendation
 

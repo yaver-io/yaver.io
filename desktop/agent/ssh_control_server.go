@@ -142,6 +142,41 @@ func sendExitStatus(ch ssh.Channel, code int) {
 	ch.SendRequest("exit-status", false, payload)
 }
 
+// startSSHControlServerIfEnabled starts the embedded out-of-band SSH control
+// server when it is turned on. It is GATED and dormant by default: existing
+// installs are unaffected until the whole feature (reverse tunnel + native
+// client) is complete and deployed. Enable for closed-loop testing / bring-up
+// with YAVER_SSH_CONTROL=1 (bind addr via YAVER_SSH_CONTROL_ADDR, default
+// 127.0.0.1:2222). Binds locally by default so the direct/native path is reached
+// over the overlay and the off-tailnet path via the (future) reverse tunnel.
+func startSSHControlServerIfEnabled() {
+	if os.Getenv("YAVER_SSH_CONTROL") == "" {
+		return // dormant by default
+	}
+	addr := os.Getenv("YAVER_SSH_CONTROL_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:2222"
+	}
+	privPEM, err := ensureSSHControlHostKey()
+	if err != nil {
+		fmt.Println("[ssh-control] host key error:", err)
+		return
+	}
+	hostSigner, err := ssh.ParsePrivateKey([]byte(privPEM))
+	if err != nil {
+		fmt.Println("[ssh-control] host key parse error:", err)
+		return
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Println("[ssh-control] listen error:", err)
+		return
+	}
+	fmt.Printf("[ssh-control] out-of-band SSH control channel listening on %s\n", addr)
+	srv := newSSHControlServer(hostSigner, authorizedManagedKeysChecker(), dispatchLocalAgent)
+	go func() { _ = srv.Serve(ln) }()
+}
+
 // authorizedManagedKeysChecker returns an isAuthorized func that accepts exactly
 // the public keys currently present as `# yaver-managed` entries in the box's
 // authorized_keys. Reads on each connection so a revoke takes effect immediately.

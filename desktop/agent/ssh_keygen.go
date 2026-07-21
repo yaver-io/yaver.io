@@ -98,3 +98,30 @@ func ensureLocalDeviceSSHKey(comment string) (pubLine string, err error) {
 func rotateLocalDeviceSSHKey(comment string) (pubLine string, err error) {
 	return writeDeviceKeyPair(comment)
 }
+
+// ensureSSHControlHostKey returns the box's persistent SSH host key for the
+// out-of-band control server, generating it (ed25519, 0600) under ~/.yaver/ssh
+// on first use. A stable host key means clients can pin it — the channel is not
+// vulnerable to a MITM swapping the box out.
+func ensureSSHControlHostKey() (privPEM string, err error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".yaver", "ssh")
+	path := filepath.Join(dir, "host_ed25519")
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		return string(b), nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	privPEM, _, err = generateEd25519SSHKey("yaver-ssh-control-host")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(privPEM), 0o600); err != nil {
+		return "", err
+	}
+	return privPEM, nil
+}
