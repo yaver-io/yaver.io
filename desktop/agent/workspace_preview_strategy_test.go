@@ -11,7 +11,7 @@ func TestResolveWorkspacePreview(t *testing.T) {
 	}
 	// RN WITH a paired device -> real hardware beats a browser render.
 	p = ResolveWorkspacePreview("expo", true)
-	if p.Primary != PreviewHermesPush || p.Feedback != FeedbackDeviceSDK {
+	if p.Primary != PreviewHermesBundle || p.Feedback != FeedbackDeviceSDK {
 		t.Fatalf("rn/device: %+v", p)
 	}
 	// Flutter is a web dev server on the box.

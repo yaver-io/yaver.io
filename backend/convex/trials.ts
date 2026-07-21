@@ -181,3 +181,126 @@ export const TRIAL_PROFILE = {
   // No volume, no reserved IP, no snapshot — nothing that can outlive the box.
   ephemeral: true,
 } as const;
+
+/**
+ * ─── Trial runtime bootstrap ────────────────────────────────────────────────
+ *
+ * What the box does on first boot so the user sees a running app in ~90s.
+ *
+ * The sample is BAKED INTO THE IMAGE, never cloned at boot. A `git clone`
+ * during the most fragile 90 seconds of the funnel makes GitHub a hard
+ * dependency of the demo — if it is slow or rate-limited, the trial opens on a
+ * spinner, which demonstrates the opposite of the claim being made. Baking it
+ * also removes the only outbound call the trial would otherwise need before the
+ * user has done anything.
+ */
+export type TrialBootstrap = {
+  sampleProject: string;
+  /** Absolute path the sample is baked to inside the image. */
+  workDir: string;
+  /** Ordered steps the agent runs unattended. */
+  steps: string[];
+  /** Preview strategy — must match the workspace resolver's default. */
+  preview: string;
+  feedbackSdk: string;
+  /** Suggested first prompt. A blank box is its own kind of friction. */
+  starterPrompt: string;
+};
+
+export function trialBootstrap(): TrialBootstrap {
+  return {
+    sampleProject: TRIAL_PROFILE.sampleProject,
+    // Fixed path inside the trial image. Safe to hardcode ONLY because this is
+    // an image we build, not a user machine — the never-hardcode-a-path rule
+    // is about other people's boxes.
+    workDir: "/home/yaver/todo-rn",
+    steps: [
+      // Deps are pre-installed in the image for the same reason the repo is
+      // baked: npm at boot is a third-party dependency in the critical path.
+      "dev-server:start",   // Metro / Expo web target
+      "chrome:headless",    // render the web target
+      "webrtc:stream",      // stream it to the browser
+      "feedback:verify",    // assert the SDK overlay is wired before we claim it
+    ],
+    preview: TRIAL_PROFILE.preview,
+    feedbackSdk: TRIAL_PROFILE.feedbackSdk,
+    starterPrompt: "Make completed todos strike through and turn grey.",
+  };
+}
+
+/**
+ * Egress policy for a trial box.
+ *
+ * Tighter than a paid workspace, because a trial is unattended, anonymous-ish,
+ * and the one thing that could cost far more than every trial combined is a
+ * datacenter IP abusing a third party — CLAUDE.md is explicit that this
+ * suspends the WHOLE provider account, paying customers included.
+ *
+ * Blocks private ranges (no pivot to host/bridge/metadata) and SMTP (spam is
+ * the cheapest abuse to attempt and the most damaging to IP reputation).
+ */
+export function trialEgressPolicy(): { blockedCidrs: string[]; blockedPorts: number[] } {
+  return {
+    blockedCidrs: [
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "169.254.0.0/16", // cloud metadata
+      "127.0.0.0/8",
+    ],
+    blockedPorts: [25, 465, 587], // SMTP
+  };
+}
+
+/**
+ * Funnel stages. Instrumenting these is not analytics polish — WITHOUT them a
+ * failed trial is indistinguishable from an uninterested visitor, which is
+ * exactly the blindness that produced this whole design (someone registered,
+ * did nothing, and we could not tell why).
+ */
+export const TRIAL_FUNNEL_STAGES = [
+  "requested",   // user asked for a trial
+  "provisioned", // box exists
+  "rendered",    // app visible in the browser — the first honest success signal
+  "prompted",    // user gave the agent an instruction
+  "edited",      // agent changed the code and the preview updated
+  "converted",   // kept the workspace, or installed self-hosted
+] as const;
+
+export const recordFunnelStage = internalMutation({
+  args: {
+    userId: v.id("users"),
+    stage: v.string(),
+    machineId: v.optional(v.id("cloudMachines")),
+  },
+  handler: async (ctx, { userId, stage, machineId }) => {
+    // platformConfig keyed rows — counters only, no prompts, no output, no
+    // paths. Same privacy class as the existing activity summaries.
+    const key = `trialFunnel:${stage}`;
+    const existing = await ctx.db
+      .query("platformConfig")
+      .withIndex("by_key", (q: any) => q.eq("key", key))
+      .unique();
+    const next = String(Number(existing?.value ?? "0") + 1);
+    if (existing) await ctx.db.patch(existing._id, { value: next, updatedAt: Date.now() });
+    else await ctx.db.insert("platformConfig", { key, value: next, updatedAt: Date.now() });
+    void userId; void machineId;
+    return { ok: true, stage, total: Number(next) };
+  },
+});
+
+/** Funnel counts, so drop-off is visible rather than inferred. */
+export const funnelSnapshot = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const out: Record<string, number> = {};
+    for (const stage of TRIAL_FUNNEL_STAGES) {
+      const row = await ctx.db
+        .query("platformConfig")
+        .withIndex("by_key", (q: any) => q.eq("key", `trialFunnel:${stage}`))
+        .unique();
+      out[stage] = Number(row?.value ?? "0");
+    }
+    return out;
+  },
+});

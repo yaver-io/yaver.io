@@ -17,10 +17,14 @@ import "strings"
 //                        Runs on the 2c/4GB default — this is WHY the default
 //                        class can be 2c/4GB and the $29 tier holds ~71%.
 //
-//   2. hermes-push     — build a Hermes bundle on the box and push it to the
-//                        user's OWN phone. RN/Expo only. Costs us nothing on the
-//                        device side and is a more honest test than any
-//                        emulator, because it is real hardware.
+//   2. hermes-bundle   — the box BUILDS a Hermes bundle (POST /dev/build-native)
+//                        and the user's OWN phone pulls and loads it into the
+//                        Yaver container. RN/Expo only (gated in the mobile Hot
+//                        Reload tab). Costs us nothing on the device side and is
+//                        a more honest test than any emulator, because it is
+//                        real hardware.
+//                        ⚠️ Agent-PULL, not push: the legacy `yaver push` to
+//                        device port 8347 is dead on both platforms.
 //
 //   3. redroid-webrtc  — Android-in-a-container on the box, streamed over
 //                        WebRTC. The fallback for Kotlin/native Android when the
@@ -41,8 +45,12 @@ import "strings"
 type PreviewStrategy string
 
 const (
-	PreviewChromeWebRTC  PreviewStrategy = "chrome-webrtc"
-	PreviewHermesPush    PreviewStrategy = "hermes-push"
+	PreviewChromeWebRTC PreviewStrategy = "chrome-webrtc"
+	// NOT a push. The agent BUILDS the Hermes bundle (POST /dev/build-native)
+	// and the mobile container PULLS it. The old `yaver push` → device port
+	// 8347 path is dead on both platforms; naming this "push" would send a
+	// reader hunting for a transport that no longer exists.
+	PreviewHermesBundle  PreviewStrategy = "hermes-bundle"
 	PreviewRedroidWebRTC PreviewStrategy = "redroid-webrtc"
 	PreviewIOSSimulator  PreviewStrategy = "ios-simulator"
 	PreviewUnsupported   PreviewStrategy = "unsupported"
@@ -64,8 +72,9 @@ const (
 	FeedbackInAppSDK FeedbackTransport = "in-app-sdk"
 	// No in-app SDK: the viewer triggers over the WebRTC events channel.
 	FeedbackViewerTriggered FeedbackTransport = "viewer-triggered"
-	// Hermes push to a real device — the guest app's own RN SDK fires, and the
-	// Yaver container suppresses its own shake handling so they do not collide.
+	// Hermes bundle loaded on a real device — the guest app's own RN SDK fires,
+	// and the Yaver container suppresses its own shake/feedback handling so the
+	// two overlays do not collide (RN SDK 0.5.5+, via the YaverInfo module).
 	FeedbackDeviceSDK FeedbackTransport = "device-sdk"
 )
 
@@ -86,9 +95,9 @@ type WorkspacePreviewPlan struct {
 // ResolveWorkspacePreview picks the strategy ladder for a stack on a LINUX
 // Cloud Workspace.
 //
-// `hasPairedDevice` matters because hermes-push needs the user's real phone. If
-// they have one, it outranks an emulator: real hardware, zero server cost, and
-// no extra machine class.
+// `hasPairedDevice` matters because the Hermes path needs the user's real
+// phone. If they have one it outranks an emulator: real hardware, zero server
+// cost, and no extra machine class.
 func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePreviewPlan {
 	s := strings.ToLower(strings.TrimSpace(stack))
 
@@ -104,13 +113,13 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 		}
 		if hasPairedDevice {
 			// A real phone beats a browser render of the web target: it is the
-			// actual runtime, and Hermes push is what Yaver is best at.
-			plan.Primary = PreviewHermesPush
+			// actual runtime, and the Hermes bundle path is what Yaver is best at.
+			plan.Primary = PreviewHermesBundle
 			plan.Feedback = FeedbackDeviceSDK
 			plan.Fallbacks = []PreviewStrategy{PreviewChromeWebRTC, PreviewRedroidWebRTC}
-			plan.Reason = "paired device present — Hermes bundle pushed to real hardware; Chrome/WebRTC as fallback"
+			plan.Reason = "paired device present — agent builds a Hermes bundle (/dev/build-native) and the phone pulls it; Chrome/WebRTC as fallback"
 		} else {
-			plan.Fallbacks = []PreviewStrategy{PreviewHermesPush, PreviewRedroidWebRTC}
+			plan.Fallbacks = []PreviewStrategy{PreviewHermesBundle, PreviewRedroidWebRTC}
 		}
 		return plan
 
@@ -183,8 +192,11 @@ func PreviewStrategyMachineClass(p PreviewStrategy) string {
 	switch p {
 	case PreviewRedroidWebRTC:
 		return "build" // 8c/16GB — Android runtime plus the app under test
-	case PreviewChromeWebRTC, PreviewHermesPush:
-		return "standard" // 2c/4GB — headless Chrome and Metro both fit
+	case PreviewChromeWebRTC, PreviewHermesBundle:
+		// 2c/4GB — headless Chrome and Metro both fit for a normal project.
+		// Metro on a large MONOREPO is the known ceiling; that is handled by
+		// detecting it and offering the upgrade, not by pre-provisioning.
+		return "standard"
 	default:
 		return "standard"
 	}
