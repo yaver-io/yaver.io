@@ -229,6 +229,32 @@ export default function ProjectsView({
     }
   }
 
+  // Shake from the web viewer — no phone needed. Sends the `shake` command so
+  // the agent injects a hardware shake into the remote sim and the guest app's
+  // own feedback SDK fires, streaming its overlay back over the video.
+  async function shakeRemoteRuntime() {
+    if (!remoteSession) return;
+    try {
+      const result = await agentClient.sendRemoteRuntimeCommand(remoteSession.id, "shake", "web-shake-button");
+      setRemoteSession((prev) => prev ? { ...prev, status: "feedback-pending", lastCommand: "shake", note: result.note || prev.note } : prev);
+      setRemoteSessionNote(result.note || (result.injected ? "Shake injected into the simulator." : "Shake sent."));
+    } catch (error) {
+      setRemoteSessionNote(error instanceof Error ? error.message : "Could not shake the simulator.");
+    }
+  }
+
+  // Build+launch the RN guest app into the booted sim (dev mode, Fast Refresh).
+  async function runGuestInSimulator() {
+    if (!remoteSession) return;
+    try {
+      const result = await agentClient.sendRemoteRuntimeCommand(remoteSession.id, "run-guest", "web", remoteSession.workDir);
+      setRemoteSession((prev) => prev ? { ...prev, status: result.status || "building", lastCommand: "run-guest", note: result.note || prev.note } : prev);
+      setRemoteSessionNote(result.note || "Building the app into the simulator — Metro Fast Refresh once running.");
+    } catch (error) {
+      setRemoteSessionNote(error instanceof Error ? error.message : "Could not run the app.");
+    }
+  }
+
   async function closeRemoteRuntimeSession() {
     if (!remoteSession) return;
     try {
@@ -468,12 +494,27 @@ export default function ProjectsView({
                     Remote Runtime
                   </button>
                 ) : p.executionMode === "rn-hermes" ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); startProject(p); }}
-                    className="px-3 py-1 text-xs font-medium rounded-md bg-brand text-brand-fg hover:bg-brand/90 active:scale-[0.97] transition-all"
-                  >
-                    Start Hermes
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* Hermes is the default (fast bytecode reload into the phone
+                        container, real device). */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); startProject(p); }}
+                      className="px-3 py-1 text-xs font-medium rounded-md bg-brand text-brand-fg hover:bg-brand/90 active:scale-[0.97] transition-all"
+                      title="Hermes push — real device, camera & sensors, slower reload"
+                    >
+                      ⚡ Hermes
+                    </button>
+                    {/* WebRTC alternative: run the app in a remote simulator,
+                        streamed here. Metro Fast Refresh = instant iteration;
+                        hardware is simulated. */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void openRemoteRuntime(p); }}
+                      className="px-3 py-1 text-xs rounded-md bg-warning-soft text-warning-softFg hover:bg-warning/15 transition-colors"
+                      title="WebRTC — run in a remote simulator, instant Fast Refresh, simulated hardware"
+                    >
+                      Simulator (WebRTC)
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={(e) => { e.stopPropagation(); startProject(p); }}
@@ -558,7 +599,17 @@ export default function ProjectsView({
                       {remoteSession.transportMode ? ` · ${remoteSession.transportMode}` : ""}
                     </div>
                     {remoteSession.note ? <div className="text-sky-700 dark:text-sky-200/80">{remoteSession.note}</div> : null}
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Run the RN guest app into the sim (Metro Fast Refresh). */}
+                      {remoteCaps?.feedbackSurface === "client-shake-remote-sim" ? (
+                        <button onClick={() => void runGuestInSimulator()} className="px-3 py-1 text-xs rounded-md bg-brand-soft text-brand-softFg hover:bg-brand/15">
+                          Run app in simulator
+                        </button>
+                      ) : null}
+                      {/* Shake from the browser — injects into the remote sim. */}
+                      <button onClick={() => void shakeRemoteRuntime()} className="px-3 py-1 text-xs rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-200 hover:bg-amber-500/25" title="Inject a shake into the simulator to open the app's feedback">
+                        🫨 Shake
+                      </button>
                       <button onClick={() => void triggerRemoteRuntimeFeedback()} className="px-3 py-1 text-xs rounded-md bg-sky-500/15 text-sky-700 dark:text-sky-200 hover:bg-sky-500/25">
                         Trigger Feedback
                       </button>

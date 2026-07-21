@@ -628,6 +628,9 @@ export interface RemoteRuntimeCapabilities {
   remoteRuntimeEligible: boolean;
   feedbackSdkCompatible: boolean;
   feedbackSdkNote?: string;
+  // "client-shake-remote-sim" (RN sim stream: phone/web shake → remote sim
+  // injection → app's own SDK overlay → streams back) | "in-app-sdk" (native).
+  feedbackSurface?: string;
   feedbackControlProtocol?: string;
   supportedTransports?: string[];
   currentHostClass?: string;
@@ -4264,12 +4267,20 @@ export class AgentClient {
     return data as RemoteRuntimeSession;
   }
 
-  async sendRemoteRuntimeCommand(sessionId: string, command: "launch-feedback", source: string = "web"): Promise<{ ok: boolean; note?: string; protocol?: string }> {
+  async sendRemoteRuntimeCommand(
+    sessionId: string,
+    // "shake" injects a hardware shake into the remote sim so the guest app's own
+    // feedback SDK fires — the web "Shake" button path (no phone needed).
+    // "run-guest" builds+launches the RN app into the booted sim.
+    command: "launch-feedback" | "shake" | "run-guest" | "boot",
+    source: string = "web",
+    workDir?: string,
+  ): Promise<{ ok: boolean; note?: string; protocol?: string; injected?: boolean; status?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/command`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ command, source }),
+      body: JSON.stringify({ command, source, ...(workDir ? { workDir } : {}) }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Failed to send remote runtime command: HTTP ${res.status}`);
