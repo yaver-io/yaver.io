@@ -29,8 +29,13 @@ func launchAWS(ctx context.Context, opts *launchOptions) error {
 	}
 
 	amiID, err := readAWSAMI(opts.Manifest, region, opts.Arch)
+	usingFallback := false
 	if err != nil {
-		return err
+		amiID, err = resolveAWSUbuntuAMI(ctx, region, opts.Arch)
+		if err != nil {
+			return err
+		}
+		usingFallback = true
 	}
 	instanceType := readAWSInstanceType(opts.Manifest, opts.Arch)
 
@@ -43,6 +48,9 @@ func launchAWS(ctx context.Context, opts *launchOptions) error {
 	}
 
 	userData := buildCloudInitUserData(dc, opts.SourceConfig)
+	if usingFallback {
+		userData = buildCloudInitUserDataWithInstall(dc, opts.SourceConfig)
+	}
 	udFile, err := os.CreateTemp("", "yaver-launch-aws-*.yaml")
 	if err != nil {
 		return err
@@ -58,7 +66,12 @@ func launchAWS(ctx context.Context, opts *launchOptions) error {
 		name = fmt.Sprintf("yaver-%s", time.Now().Format("20060102-150405"))
 	}
 
-	fmt.Printf("Provisioning AWS instance %q (region=%s, type=%s, ami=%s)...\n", name, region, instanceType, amiID)
+	if usingFallback {
+		fmt.Printf("Provisioning AWS instance %q (region=%s, type=%s, ubuntu-24.04-ami=%s + cloud-init install)...\n", name, region, instanceType, amiID)
+		fmt.Println("  No published Yaver AMI for this region/arch — first boot installs yaver-cli from npm.")
+	} else {
+		fmt.Printf("Provisioning AWS instance %q (region=%s, type=%s, ami=%s)...\n", name, region, instanceType, amiID)
+	}
 
 	runArgs := []string{
 		"ec2", "run-instances",
@@ -175,4 +188,29 @@ func readAWSInstanceType(m *cloudImagesManifest, arch string) string {
 		return "t4g.small"
 	}
 	return "t3.small"
+}
+
+func resolveAWSUbuntuAMI(ctx context.Context, region, arch string) (string, error) {
+	ssmArch := "amd64"
+	if arch == "arm64" {
+		ssmArch = "arm64"
+	}
+	param := fmt.Sprintf("/aws/service/canonical/ubuntu/server/24.04/stable/current/%s/hvm/ebs-gp3/ami-id", ssmArch)
+	out, err := exec.CommandContext(ctx, "aws", "ssm", "get-parameter",
+		"--region", region,
+		"--name", param,
+		"--query", "Parameter.Value",
+		"--output", "text",
+	).Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("resolve Ubuntu 24.04 AMI via SSM failed: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("resolve Ubuntu 24.04 AMI via SSM failed: %w", err)
+	}
+	ami := strings.TrimSpace(string(out))
+	if ami == "" || ami == "None" {
+		return "", fmt.Errorf("AWS SSM parameter %s returned no AMI id", param)
+	}
+	return ami, nil
 }

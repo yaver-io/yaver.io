@@ -520,6 +520,41 @@ func RevokeGuestWith(baseURL, token, email, userID string) error {
 	return nil
 }
 
+// DeleteGuest hides a guest row from host-facing lists after revoking any live access.
+func DeleteGuest(baseURL, token, inviteID, email, userID string) error {
+	payload := map[string]string{}
+	if id := strings.TrimSpace(inviteID); id != "" {
+		payload["inviteId"] = id
+	}
+	if e := strings.TrimSpace(email); e != "" {
+		payload["email"] = e
+	}
+	if u := strings.TrimSpace(userID); u != "" {
+		payload["userId"] = u
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal delete guest: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/guests/delete", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create delete guest request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete guest request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
 // LeaveSharedAccessResult is returned from the guest-side leave endpoint.
 type LeaveSharedAccessResult struct {
 	OK          bool   `json:"ok"`
@@ -712,6 +747,7 @@ func RemoveDevice(baseURL, token, deviceID string) error {
 
 // GuestInfo describes a guest from the Convex /guests/list endpoint.
 type GuestInfo struct {
+	InviteID   string `json:"inviteId,omitempty"`
 	Email      string `json:"email"`
 	Status     string `json:"status"`
 	FullName   string `json:"fullName,omitempty"`

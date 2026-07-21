@@ -232,6 +232,10 @@ type taskPlacementRecordRequest struct {
 	FileCount        int    `json:"fileCount,omitempty"`
 	HasNativeMobile  bool   `json:"hasNativeMobile,omitempty"`
 	HasDocker        bool   `json:"hasDocker,omitempty"`
+	// Agent's recommended machine class ("standard" | "heavy" | "build") from
+	// the detected stack. Advisory: the backend owns the final decision, which
+	// must stay true — a client can never be trusted to size its own box.
+	ResourceClass string `json:"resourceClass,omitempty"`
 }
 
 type taskPlacementBackendClient struct {
@@ -291,7 +295,10 @@ func isScannableProjectDir(dir string) bool {
 	for _, marker := range []string{
 		".git", "package.json", "go.mod", "pubspec.yaml", "Cargo.toml",
 		"pyproject.toml", "requirements.txt", "Gemfile", "pom.xml",
-		"build.gradle", "build.gradle.kts", "yaver.workspace.yaml",
+		"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+		"firebase.json", ".firebaserc", "convex.json", "supabase.toml",
+		filepath.Join("supabase", "config.toml"),
+		"yaver.workspace.yaml", "yaver.serverless.yaml", "yaver.serverless.yml",
 	} {
 		if _, err := os.Stat(filepath.Join(abs, marker)); err == nil {
 			return true
@@ -326,6 +333,22 @@ func taskPlacementRequestFromTaskBody(in taskPlacementRequestInput) taskPlacemen
 		stackLabel = taskPlacementStackLabel(project, workDir)
 		appCount, fileCount, repoSizeMb = boundedRepoMetrics(workDir)
 	}
+	// Resolve the default machine class from what we actually detected. The
+	// backend still owns the final placement decision (entitlement, capacity,
+	// quota) — this is the AGENT's honest recommendation, so a workspace that
+	// needs a bigger box asks for one up front rather than OOMing on first run.
+	//
+	// Deliberately derived from `project`/`workDir` rather than assumed: the
+	// default class is 2c/4GB and only Redroid/Gradle or a monorepo justify
+	// more. Guessing high here would silently halve the tier's margin; guessing
+	// low would OOM Metro on a monorepo. See
+	// docs/architecture/yaver-four-tier-deep-analysis.md §9.
+	resourceClass := ""
+	if isScannableProjectDir(workDir) {
+		if detected := stackDetect(workDir); detected != nil {
+			resourceClass = DefaultWorkspacePlacement(detected).MachineClass
+		}
+	}
 	return taskPlacementRecordRequest{
 		Kind:             inferPlacementTaskKind(in.KindHint, in.Title, in.Description, in.CustomCommand, in.Source),
 		SourceSurface:    strings.TrimSpace(in.Source),
@@ -339,6 +362,7 @@ func taskPlacementRequestFromTaskBody(in taskPlacementRequestInput) taskPlacemen
 		FileCount:        fileCount,
 		HasNativeMobile:  hasNativeMobileProjectSignal(workDir, stackLabel),
 		HasDocker:        hasDockerProjectSignal(workDir, stackLabel),
+		ResourceClass:    resourceClass,
 	}
 }
 

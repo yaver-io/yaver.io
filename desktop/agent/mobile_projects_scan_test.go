@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -123,6 +124,80 @@ func TestRunMobileScanAlwaysClearsScanning(t *testing.T) {
 	}
 }
 
+func TestScanProjectMarkersAndGitMetadata(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "Workspace")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	mustProject := func(rel string) string {
+		t.Helper()
+		dir := filepath.Join(root, rel)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		runGitCmd(t, dir, "init")
+		runGitCmd(t, dir, "checkout", "-b", "feature/cache")
+		runGitCmd(t, dir, "remote", "add", "origin", "https://token@example.com/acme/"+rel+".git")
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# "+rel+"\n"), 0o644); err != nil {
+			t.Fatalf("write readme %s: %v", rel, err)
+		}
+		runGitCmd(t, dir, "add", "README.md")
+		runGitCmd(t, dir, "-c", "user.email=test@yaver.local", "-c", "user.name=Yaver Test", "commit", "-m", "init")
+		return dir
+	}
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	firebase := mustProject("firebase-app")
+	write(filepath.Join(firebase, "firebase.json"), `{"hosting":{"public":"dist"}}`)
+	supabase := mustProject("supabase-app")
+	write(filepath.Join(supabase, "supabase", "config.toml"), "project_id = \"demo\"\n")
+	convex := mustProject("convex-app")
+	write(filepath.Join(convex, "convex.json"), `{"functions":"convex"}`)
+	swift := mustProject("swift-app")
+	write(filepath.Join(swift, "ios", "SwiftApp", "Info.plist"), `<plist><dict><key>CFBundleName</key><string>SwiftApp</string></dict></plist>`)
+	flutter := mustProject("flutter-app")
+	write(filepath.Join(flutter, "pubspec.yaml"), "name: flutter_app\n")
+
+	projects, stats := scanMobileProjectsWithDeadline(time.Now().Add(mobileScanTimeout))
+	if stats.TimedOut {
+		t.Fatal("scan timed out unexpectedly")
+	}
+
+	want := map[string]string{
+		firebase: "firebase",
+		supabase: "supabase",
+		convex:   "convex",
+		swift:    "swift",
+		flutter:  "flutter",
+	}
+	for path, framework := range want {
+		p := findProjectByPath(projects, path)
+		if p == nil {
+			t.Fatalf("project %s not discovered; got %+v", path, projects)
+		}
+		if p.Framework != framework {
+			t.Fatalf("%s framework = %q, want %q", path, p.Framework, framework)
+		}
+		if p.Branch != "feature/cache" {
+			t.Fatalf("%s branch = %q, want feature/cache", path, p.Branch)
+		}
+		if strings.Contains(p.Remote, "token@") {
+			t.Fatalf("%s remote leaked credentials: %q", path, p.Remote)
+		}
+	}
+}
+
 func TestRunMobileScanCoalescesConcurrent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -144,4 +219,14 @@ func TestRunMobileScanCoalescesConcurrent(t *testing.T) {
 		t.Fatalf("guard should leave the in-flight scan flag set")
 	}
 	resetMobileCache()
+}
+
+func findProjectByPath(projects []MobileProject, path string) *MobileProject {
+	clean := filepath.Clean(path)
+	for i := range projects {
+		if filepath.Clean(projects[i].Path) == clean {
+			return &projects[i]
+		}
+	}
+	return nil
 }

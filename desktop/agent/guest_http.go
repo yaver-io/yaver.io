@@ -292,3 +292,51 @@ func (s *HTTPServer) handleGuestRevoke(w http.ResponseWriter, r *http.Request) {
 		"message": "Guest access revoked for " + body.Email,
 	})
 }
+
+// handleGuestDelete revokes if live, then hides the guest row (POST /guests/delete).
+func (s *HTTPServer) handleGuestDelete(w http.ResponseWriter, r *http.Request) {
+	if rejectGuestManagementCall(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+
+	var body struct {
+		InviteID string `json:"inviteId"`
+		Email    string `json:"email"`
+		UserID   string `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if strings.TrimSpace(body.InviteID) == "" && strings.TrimSpace(body.Email) == "" && strings.TrimSpace(body.UserID) == "" {
+		jsonError(w, http.StatusBadRequest, "inviteId, email, or userId is required")
+		return
+	}
+
+	if err := DeleteGuest(s.convexURL, s.token, body.InviteID, body.Email, body.UserID); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
+		s.guestUserIDsMu.Lock()
+		s.guestUserIDs = ids
+		s.guestUserIDsMu.Unlock()
+	}
+	s.tokenCache.Range(func(key, value interface{}) bool {
+		info := value.(*cachedTokenInfo)
+		if info.userID != s.ownerUserID && !info.isSdk {
+			s.tokenCache.Delete(key)
+		}
+		return true
+	})
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"message": "Guest deleted from host list",
+	})
+}

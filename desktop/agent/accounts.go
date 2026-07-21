@@ -32,6 +32,7 @@ const (
 	ProviderRender       AccountProvider = "render"
 	ProviderAWS          AccountProvider = "aws"
 	ProviderGCP          AccountProvider = "gcp"
+	ProviderAzure        AccountProvider = "azure"
 	ProviderDigitalOcean AccountProvider = "digitalocean"
 	ProviderYaver        AccountProvider = "yaver"
 	// GPU / inference providers. These are NOT general VPS hosts — they
@@ -53,10 +54,10 @@ const (
 type AccountProviderMeta struct {
 	ID        AccountProvider `json:"id"`
 	Label     string          `json:"label"`
-	AuthType  string          `json:"authType"`          // "token" | "browser" | "key+secret" | "json"
-	Fields    []string        `json:"fields"`             // e.g. ["token"], ["accessKey","secretKey"]
+	AuthType  string          `json:"authType"` // "token" | "browser" | "key+secret" | "json"
+	Fields    []string        `json:"fields"`   // e.g. ["token"], ["accessKey","secretKey"]
 	SignupURL string          `json:"signupURL"`
-	TokenURL  string          `json:"tokenURL"`           // link to create the token
+	TokenURL  string          `json:"tokenURL"` // link to create the token
 	Notes     string          `json:"notes,omitempty"`
 }
 
@@ -74,6 +75,7 @@ func AccountProviders() []AccountProviderMeta {
 		{ID: ProviderRender, Label: "Render", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://render.com", TokenURL: "https://dashboard.render.com/u/settings#api-keys"},
 		{ID: ProviderAWS, Label: "AWS", AuthType: "key+secret", Fields: []string{"accessKey", "secretKey", "region"}, SignupURL: "https://aws.amazon.com", TokenURL: "https://console.aws.amazon.com/iam/home#/users"},
 		{ID: ProviderGCP, Label: "Google Cloud", AuthType: "browser", Fields: []string{}, SignupURL: "https://cloud.google.com", Notes: "Run `gcloud auth login` — Yaver reads token from gcloud CLI"},
+		{ID: ProviderAzure, Label: "Azure", AuthType: "browser", Fields: []string{}, SignupURL: "https://azure.microsoft.com", Notes: "Run `az login` — Yaver reads token/subscription/resource group from Azure CLI"},
 		{ID: ProviderDigitalOcean, Label: "DigitalOcean", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://digitalocean.com", TokenURL: "https://cloud.digitalocean.com/account/api/tokens"},
 		{ID: ProviderYaver, Label: "Yaver Cloud", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://yaver.io", TokenURL: "Yaver Cloud onboarding flow"},
 		// --- GPU / inference (BYO key; user pays the provider directly) ---

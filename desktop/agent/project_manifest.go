@@ -1137,7 +1137,7 @@ func projectRuntimeProviderStatus(provider string) (bool, string) {
 		return true, ""
 	case string(ProviderCloudflare), string(ProviderSupabase), string(ProviderNeon), string(ProviderVercel),
 		string(ProviderHetzner), string(ProviderRailway), string(ProviderFly), string(ProviderRender),
-		string(ProviderAWS), string(ProviderGCP), string(ProviderDigitalOcean), string(ProviderTurso):
+		string(ProviderAWS), string(ProviderGCP), string(ProviderAzure), string(ProviderDigitalOcean), string(ProviderTurso):
 		rec, err := globalAccountsManager.Get(AccountProvider(provider))
 		if err != nil || rec == nil {
 			return false, ""

@@ -2893,6 +2893,27 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "guest_delete",
+			"description": "Delete a guest row from YOUR host guest list. This first revokes/cancels any live access, then hides the old invite/access row from normal lists. It is not a block: you can invite the same person again later. Prefer inviteId for exact duplicate-row deletion; email or userId are accepted as fallback.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"inviteId": map[string]interface{}{
+						"type":        "string",
+						"description": "Exact guest invitation id to hide. Best option when duplicate rows exist.",
+					},
+					"email": map[string]interface{}{
+						"type":        "string",
+						"description": "Email address of the guest row(s) to delete when inviteId is not known.",
+					},
+					"userId": map[string]interface{}{
+						"type":        "string",
+						"description": "Public Yaver user id of the guest to delete when inviteId is not known.",
+					},
+				},
+			},
+		},
+		{
 			"name":        "guest_leave",
 			"description": "Remove YOUR OWN access to SOMEONE ELSE'S machines. You are the guest here: this walks you out of a host's shared infra, so you can no longer use their machines. It does not touch your own machines and does not remove anyone else. Reversible — the host can share again and you can accept again with guest_accept. Do NOT use this to kick a guest off your own machines — that is guest_revoke. Identify the host by their Yaver user id or their email; at least one is required.",
 			"inputSchema": map[string]interface{}{

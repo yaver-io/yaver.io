@@ -38,6 +38,65 @@ func (*FlutterDevServer) Kind() DevServerKind     { return DevServerKindWeb }
 func (*ViteDevServer) Kind() DevServerKind        { return DevServerKindWeb }
 func (*NextDevServer) Kind() DevServerKind        { return DevServerKindWeb }
 
+// ─── Default preview surface ────────────────────────────────────────────────
+//
+// PreviewMode says HOW a workspace should be previewed when the user has not
+// chosen. The default is the browser (web dev server, streamed to the client),
+// never an emulator.
+//
+// This is the decision that lets the default machine be 2c/4GB and the $29 tier
+// hold ~71% margin. Redroid needs ~6.5 GB before the app under test loads, so
+// defaulting to it would force 8-16 GB on EVERY workspace to serve a case most
+// users never hit. Browser preview costs ~nothing, and for the flagship
+// React Native path the real device target is the user's OWN phone via Hermes
+// push — which is both free to us and a more honest test than an emulator.
+//
+// See docs/architecture/yaver-four-tier-deep-analysis.md §9.
+type PreviewMode string
+
+const (
+	// PreviewBrowser — web dev server surfaced in a browser/WebView, streamed
+	// over WebRTC. Passthrough, not encoding, so 2 cores is enough.
+	PreviewBrowser PreviewMode = "browser"
+	// PreviewDevicePush — Hermes bundle pushed to the user's own phone. The
+	// flagship RN loop. Zero server cost.
+	PreviewDevicePush PreviewMode = "device-push"
+	// PreviewRedroid — Android in a container, ON THE SERVER. Opt-in only:
+	// it is the single workload that forces a bigger machine class.
+	PreviewRedroid PreviewMode = "redroid"
+)
+
+// DefaultPreviewModeForStack picks the preview surface for a stack when the
+// user has expressed no preference.
+//
+// Never returns PreviewRedroid. Redroid is a deliberate opt-in for "I need an
+// Android device and do not have one" — it must never be reached by default,
+// because the machine class follows the preview mode and a silent upgrade to
+// 8 GB is a silent halving of the margin.
+func DefaultPreviewModeForStack(stack string) PreviewMode {
+	switch StackToDevServerKind(stack) {
+	case DevServerKindMobile:
+		// Metro alone has no browser surface, so the real device is the target.
+		return PreviewDevicePush
+	case DevServerKindHybrid:
+		// Expo can do both; the browser is the lightweight half and needs no
+		// device paired, so it is the better default for a first run.
+		return PreviewBrowser
+	case DevServerKindWeb:
+		return PreviewBrowser
+	default:
+		// Unknown or non-UI stacks (go, rust, python, …) still get a browser
+		// surface if they serve anything; nothing here justifies an emulator.
+		return PreviewBrowser
+	}
+}
+
+// PreviewModeNeedsHeavyMachine reports whether a preview mode forces a machine
+// class above the 2c/4GB default. Only server-side Android does.
+func PreviewModeNeedsHeavyMachine(mode PreviewMode) bool {
+	return mode == PreviewRedroid
+}
+
 // StackToDevServerKind maps a workspace manifest `stack` value to the
 // kind of dev server it would produce. Returns empty string when the
 // stack has no dev-server representation (go, rust, python, convex,

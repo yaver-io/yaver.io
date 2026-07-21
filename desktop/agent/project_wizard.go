@@ -76,8 +76,9 @@ type WizardSession struct {
 // name. Keep this close to what a non-developer needs to
 // answer — no dotfile paths, no internal jargon.
 // wizardQuestions drives a monorepo-first scaffold. Defaults are
-// the stack the dev already ships every day: Yaver backend,
-// Next.js on Cloudflare, Expo RN for iOS + Android. Each surface
+// the stack a normie should get unless they explicitly ask otherwise:
+// React Native + TypeScript, Yaver Serverless, Yaver Git, and
+// optional Next.js/Cloudflare surfaces. Each surface
 // is opt-in so a "landing page only" project skips mobile, and a
 // pure mobile project skips web. The layout is always a monorepo
 // so later additions (an admin dashboard, a second app) fit
@@ -136,16 +137,16 @@ var wizardQuestions = []WizardQuestion{
 
 	// Which surfaces to scaffold — defaults = everything the dev's own stack needs.
 	{ID: "include_web", Kind: QBool, Prompt: "Include a web app (Next.js on Cloudflare)?", Default: "true"},
-	{ID: "include_mobile", Kind: QBool, Prompt: "Include a mobile app (Expo RN for iOS + Android)?", Default: "true"},
-	{ID: "include_backend", Kind: QBool, Prompt: "Include a Yaver backend?", Default: "true"},
+	{ID: "include_mobile", Kind: QBool, Prompt: "Include a React Native + TypeScript app for iOS + Android?", Default: "true"},
+	{ID: "include_backend", Kind: QBool, Prompt: "Include Yaver Serverless backend?", Default: "true"},
 	{ID: "include_landing", Kind: QBool, Prompt: "Include a marketing landing page?", Default: "true"},
 
 	// Stack — only asked when the surface is on. Conditional
 	// skipping happens in nextQuestion().
 	{ID: "web_framework", Kind: QChoice, Prompt: "Web framework", Choices: []string{"nextjs", "remix", "astro"}, Default: "nextjs"},
 	{ID: "web_host", Kind: QChoice, Prompt: "Host the web app on?", Choices: []string{"cloudflare", "vercel", "netlify", "self-host"}, Default: "cloudflare"},
-	{ID: "backend", Kind: QChoice, Prompt: "Backend platform", Choices: []string{"sqlite", "postgres", "supabase", "convex", "pocketbase", "appwrite", "none"}, Default: "sqlite"},
-	{ID: "mobile_stack", Kind: QChoice, Prompt: "Mobile stack", Choices: []string{"expo-rn", "native"}, Default: "expo-rn"},
+	{ID: "backend", Kind: QChoice, Prompt: "Backend platform", Help: "Default is Yaver Serverless (portable SQLite under the hood), not Convex.", Choices: []string{"sqlite", "postgres", "supabase", "convex", "pocketbase", "appwrite", "none"}, Default: "sqlite"},
+	{ID: "mobile_stack", Kind: QChoice, Prompt: "Mobile stack", Help: "Default is React Native with TypeScript via Expo.", Choices: []string{"expo-rn", "native"}, Default: "expo-rn"},
 	{ID: "mobile_nav_style", Kind: QChoice, Prompt: "Primary mobile navigation", Help: "Bottom tabs are the default because they work well for thumb-first product flows.", Choices: []string{"bottom-tabs", "top-tabs", "drawer", "stack-only"}, Default: "bottom-tabs"},
 	{ID: "mobile_nav_count", Kind: QChoice, Prompt: "How many primary nav items?", Help: "3 to 5 is the comfortable range for bottom navigation.", Choices: []string{"3", "4", "5"}, Default: "4"},
 	{ID: "mobile_nav_labels", Kind: QText, Prompt: "Navigation labels", Help: "Comma-separated labels. Leave blank and the starter uses template-aware defaults.", Default: ""},
@@ -205,7 +206,7 @@ var wizardQuestions = []WizardQuestion{
 	{ID: "legal_privacy_notes", Kind: QText, Prompt: "Extra privacy / compliance notes", Help: "Optional short notes like local-only processing, no third-party ads, or export-delete support.", Default: ""},
 
 	// Git remote — create + push the fresh monorepo.
-	{ID: "git_provider", Kind: QChoice, Prompt: "Push to which git host?", Choices: []string{"gitlab", "github", "none"}, Default: "gitlab"},
+	{ID: "git_provider", Kind: QChoice, Prompt: "Yaver Git remote mirror", Help: "Yaver creates the local monorepo first. Pick GitHub/GitLab as the remote mirror, or none to keep it local.", Choices: []string{"github", "gitlab", "none"}, Default: "github"},
 	{ID: "git_visibility", Kind: QChoice, Prompt: "Repo visibility", Choices: []string{"private", "public"}, Default: "private"},
 	{ID: "git_org", Kind: QText, Prompt: "GitHub org / GitLab group (blank = your personal account)", Default: ""},
 	{ID: "git_repo_name", Kind: QText, Prompt: "Repo name", Help: "Defaults to the slug you picked above.", Default: ""},
@@ -1125,16 +1126,18 @@ func rootReadme(a map[string]string) string {
 		stack = append(stack, "- **Landing** (`apps/landing`) — static marketing page")
 	}
 	if a["include_mobile"] == "true" {
-		stack = append(stack, "- **Mobile** (`apps/mobile`) — Expo RN (iOS + Android)")
+		stack = append(stack, "- **Mobile** (`apps/mobile`) — React Native + TypeScript via Expo (iOS + Android)")
 	}
 	if a["include_backend"] == "true" {
 		if a["backend"] == "sqlite" {
-			stack = append(stack, "- **Backend** (`backend/`) — Yaver portable backend (SQLite first, promotable to your hardware or Yaver Cloud)")
+			stack = append(stack, "- **Backend** (`backend/`) — Yaver Serverless (portable SQLite first, promotable to your hardware or Yaver Cloud)")
 		} else {
 			stack = append(stack, fmt.Sprintf("- **Backend** (`backend/`) — %s", a["backend"]))
 		}
 	}
 	stack = append(stack, "- **Shared** (`packages/shared`) — cross-surface TS types + utils")
+	stack = append(stack, "- **Yaver Git** — local monorepo first, optional GitHub/GitLab mirror from the wizard")
+	stack = append(stack, "- **Yaver MCP / runner loop** — keep feature work in Yaver tasks so the coding runner has the product brief, repo, backend manifest, and mobile target in context")
 	productNotes := []string{
 		"Template: " + a["app_template"],
 		"Audience: " + nonEmpty(a["audience_type"], "consumers"),

@@ -1,6 +1,6 @@
 package main
 
-// launch_cmd.go — `yaver launch <hetzner|aws|gcp|ssh>` top-level verb.
+// launch_cmd.go — `yaver launch <cloud|ssh>` top-level verb.
 //
 // The launch verb is a thin conductor on top of existing primitives:
 //
@@ -16,7 +16,8 @@ package main
 //      device_id) pair under the SAME user_id as the launching device.
 //      Zero re-OAuth for the user.
 //
-//   3. Provision the box (provider-specific; see launch_*.go).
+//   3. Provision the box (automatic provider selection; see launch_auto.go
+//      and provider-specific launch_*.go implementations).
 //
 //   4. Poll Convex for the new device row to appear online.
 //
@@ -27,7 +28,8 @@ package main
 //      runner_auth_mirror flow already shipped for the glass-OAuth path.
 //
 // Provider files (launch_hetzner.go, launch_aws.go, launch_gcp.go,
-// launch_ssh.go) implement step 3 only. Everything else is shared here.
+// launch_azure.go, launch_ssh.go) implement step 3 only. Everything else is
+// shared here.
 
 import (
 	"context"
@@ -43,11 +45,11 @@ import (
 const cloudImagesManifestURL = "https://raw.githubusercontent.com/kivanccakmak/yaver.io/main/cloud-images.json"
 
 type cloudImagesManifest struct {
-	SchemaVersion int                              `json:"schemaVersion"`
-	UpdatedAt     *string                          `json:"updatedAt"`
-	YaverVersion  *string                          `json:"yaverVersion"`
-	Providers     map[string]map[string]any        `json:"providers"`
-	Artifacts     map[string]map[string]*string    `json:"artifacts"`
+	SchemaVersion int                           `json:"schemaVersion"`
+	UpdatedAt     *string                       `json:"updatedAt"`
+	YaverVersion  *string                       `json:"yaverVersion"`
+	Providers     map[string]map[string]any     `json:"providers"`
+	Artifacts     map[string]map[string]*string `json:"artifacts"`
 }
 
 // launchOptions are the per-invocation knobs every provider takes.
@@ -75,7 +77,7 @@ func runLaunch(args []string) {
 	case "help", "--help", "-h":
 		printLaunchUsage()
 		return
-	case "hetzner", "aws", "gcp", "ssh":
+	case "cloud", "hetzner", "aws", "gcp", "azure", "ssh":
 		// fall through to provider dispatch
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown launch provider: %s\n\n", args[0])
@@ -84,6 +86,10 @@ func runLaunch(args []string) {
 	}
 
 	opts := parseLaunchArgs(args)
+	if isExplicitCloudProvider(opts.Provider) && !operatorProviderOverrideEnabled() {
+		fmt.Fprintf(os.Stderr, "launch: provider selection is Yaver-managed. Use `yaver launch cloud`.\n")
+		os.Exit(1)
+	}
 	if err := prepareLaunch(&opts); err != nil {
 		fmt.Fprintf(os.Stderr, "launch: %v\n", err)
 		os.Exit(1)
@@ -94,12 +100,16 @@ func runLaunch(args []string) {
 
 	var err error
 	switch opts.Provider {
+	case "cloud":
+		err = launchCloudAuto(ctx, &opts)
 	case "hetzner":
 		err = launchHetzner(ctx, &opts)
 	case "aws":
 		err = launchAWS(ctx, &opts)
 	case "gcp":
 		err = launchGCP(ctx, &opts)
+	case "azure":
+		err = launchAzure(ctx, &opts)
 	case "ssh":
 		err = launchSSH(ctx, &opts)
 	}
@@ -151,6 +161,20 @@ func parseLaunchArgs(args []string) launchOptions {
 		}
 	}
 	return opts
+}
+
+func isExplicitCloudProvider(provider string) bool {
+	switch provider {
+	case "hetzner", "aws", "gcp", "azure":
+		return true
+	default:
+		return false
+	}
+}
+
+func operatorProviderOverrideEnabled() bool {
+	return envTruthy(os.Getenv("YAVER_OPERATOR_PROVIDER_OVERRIDE")) ||
+		envTruthy(os.Getenv("YAVER_LAUNCH_PROVIDER_OVERRIDE"))
 }
 
 func prepareLaunch(opts *launchOptions) error {
@@ -407,17 +431,17 @@ func mirrorRunnersToBox(ctx context.Context, opts *launchOptions, boxBaseURL str
 }
 
 func printLaunchUsage() {
-	fmt.Println(`Usage: yaver launch <hetzner|aws|gcp|ssh> [options]
+	fmt.Println(`Usage: yaver launch <cloud|ssh> [options]
 
-Provisions or adopts a Yaver-ready box on the chosen target. Auth + the
+Provisions or adopts a Yaver-ready box. For cloud workspaces, provider
+selection is automatic: Yaver chooses backing capacity from policy, credits,
+region health, and availability. Auth + the
 three coding runners (claude-code, codex, opencode) are mirrored from
 THIS device automatically — the new box comes up signed in to your
 subscriptions without any re-OAuth.
 
 Providers:
-  hetzner            Hetzner Cloud  — uses $HCLOUD_TOKEN, public snapshot
-  aws                AWS EC2        — uses default AWS CLI creds, public AMI
-  gcp                Google Cloud   — uses default gcloud creds, public image
+  cloud              Yaver-managed automatic cloud selection
   ssh user@host      Adopt an existing Linux box you can SSH to (NAS,
                      VPS, homelab, on-prem). No cloud image — installs the
                      agent in-place and registers it as your device.
@@ -425,22 +449,23 @@ Providers:
 Options:
   --arch <amd64|arm64>    Target architecture (default: arm64; cheaper +
                           available on every provider tier we use)
-  --region <region>       Cloud region. AWS-only; Hetzner+GCP have defaults
-                          in cloud-images.json
+  --region <region>       Optional location hint for automatic cloud selection
   --name <label>          Friendly label for the box (default: auto)
   --no-mirror             Skip runner-credential mirror (debug)
   --timeout <duration>    Overall launch timeout (default: 10m)
 
 Examples:
-  yaver launch hetzner
-  yaver launch hetzner --arch amd64
-  yaver launch aws --region us-east-1
-  yaver launch gcp
+  yaver launch cloud
+  yaver launch cloud --region eu
   yaver launch ssh kivanc@homelab.lan
 
 Image discovery:
   Public image IDs live in cloud-images.json at the repo root and are
   fetched at launch time. If the manifest has no image for your provider
   + arch yet (early in the rollout, or a new region), build one with
-  scripts/build-cloud-image.sh.`)
+  scripts/build-cloud-image.sh.
+
+Operator/dev-only: concrete provider adapters can be exercised with
+YAVER_OPERATOR_PROVIDER_OVERRIDE=1 yaver launch <hetzner|aws|gcp|azure>. The
+end-user Cloud Workspace product does not expose provider selection.`)
 }

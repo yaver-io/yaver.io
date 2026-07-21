@@ -2732,6 +2732,12 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			} else {
 				log.Printf("[task %s] tmux mode: dispatching %s into session %q",
 					task.ID, runner.Command, session)
+				if task.TmuxSession == "" {
+					task.TmuxSession = session
+				}
+				if task.TmuxSessionID == "" {
+					task.TmuxSessionID = getActivePaneIdentity(session).SessionID
+				}
 				cmd, tmuxEnvAdditions = buildTmuxRunnerCommand(ctx, session, task.ID, runner.Command, args)
 			}
 		} else {

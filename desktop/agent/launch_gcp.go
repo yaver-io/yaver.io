@@ -27,8 +27,10 @@ func launchGCP(ctx context.Context, opts *launchOptions) error {
 	machineType := readGCPMachineType(opts.Manifest, opts.Arch)
 
 	imageRef, err := readGCPImage(opts.Manifest, opts.Arch)
+	usingFallback := false
 	if err != nil {
-		return err
+		imageRef = readGCPUbuntuImageFamily(opts.Arch)
+		usingFallback = true
 	}
 
 	dc, err := requestLaunchDeviceCode(opts.SourceConfig)
@@ -40,6 +42,9 @@ func launchGCP(ctx context.Context, opts *launchOptions) error {
 	}
 
 	userData := buildCloudInitUserData(dc, opts.SourceConfig)
+	if usingFallback {
+		userData = buildCloudInitUserDataWithInstall(dc, opts.SourceConfig)
+	}
 	udFile, err := os.CreateTemp("", "yaver-launch-gcp-*.yaml")
 	if err != nil {
 		return err
@@ -58,17 +63,26 @@ func launchGCP(ctx context.Context, opts *launchOptions) error {
 	// timestamp form is already fine, but a user --name might not be.
 	name = strings.ToLower(name)
 
-	fmt.Printf("Provisioning GCP instance %q (project=%s, zone=%s, type=%s)...\n", name, project, zone, machineType)
+	if usingFallback {
+		fmt.Printf("Provisioning GCP instance %q (project=%s, zone=%s, type=%s, image-family=%s + cloud-init install)...\n", name, project, zone, machineType, imageRef)
+		fmt.Println("  No published Yaver image for this arch — first boot installs yaver-cli from npm.")
+	} else {
+		fmt.Printf("Provisioning GCP instance %q (project=%s, zone=%s, type=%s)...\n", name, project, zone, machineType)
+	}
 
-	createOut, err := exec.CommandContext(ctx, "gcloud", "compute", "instances", "create", name,
-		"--project="+project,
-		"--zone="+zone,
-		"--machine-type="+machineType,
-		"--image="+imageRef,
-		"--metadata-from-file=user-data="+udFile.Name(),
+	createArgs := []string{"compute", "instances", "create", name,
+		"--project=" + project,
+		"--zone=" + zone,
+		"--machine-type=" + machineType,
+		"--metadata-from-file=user-data=" + udFile.Name(),
 		"--labels=managed-by=yaver-launch",
-		"--format=json",
-	).Output()
+		"--format=json"}
+	if usingFallback {
+		createArgs = append(createArgs, "--image-family="+imageRef, "--image-project=ubuntu-os-cloud")
+	} else {
+		createArgs = append(createArgs, "--image="+imageRef)
+	}
+	createOut, err := exec.CommandContext(ctx, "gcloud", createArgs...).Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return fmt.Errorf("gcloud compute instances create failed: %s", strings.TrimSpace(string(ee.Stderr)))
@@ -179,4 +193,11 @@ func readGCPMachineType(m *cloudImagesManifest, arch string) string {
 		return "t2a-standard-1"
 	}
 	return "e2-small"
+}
+
+func readGCPUbuntuImageFamily(arch string) string {
+	if arch == "arm64" {
+		return "ubuntu-2404-lts-arm64"
+	}
+	return "ubuntu-2404-lts-amd64"
 }

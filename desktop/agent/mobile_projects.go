@@ -128,6 +128,10 @@ func projectKindLabel(framework string, mobileCapable, webCapable bool) string {
 	switch fw {
 	case "next", "vite":
 		return "web"
+	case "firebase", "supabase", "convex", "yaver-serverless":
+		return "backend"
+	case "node", "go", "rust", "python", "ruby", "java", "container":
+		return "backend"
 	case "expo", "react-native", "flutter", "swift", "kotlin":
 		return "mobile"
 	}
@@ -370,9 +374,145 @@ const mobileScanTimeout = 45 * time.Second
 var errStopMobileScan = errors.New("mobile project scan cancelled")
 var errMobileScanDeadline = errors.New("mobile project scan deadline exceeded")
 
+type projectMarkerDetection struct {
+	Dir           string
+	Framework     string
+	WebCapable    bool
+	MobileCapable bool
+}
+
+func classifyProjectMarker(path, name, dir string) projectMarkerDetection {
+	var out projectMarkerDetection
+	set := func(root, framework string, mobile, web bool) projectMarkerDetection {
+		out.Dir = root
+		out.Framework = framework
+		out.MobileCapable = mobile
+		out.WebCapable = web
+		return out
+	}
+	switch name {
+	case "pubspec.yaml":
+		return set(dir, "flutter", true, false)
+	case "firebase.json", ".firebaserc":
+		return set(dir, "firebase", false, true)
+	case "convex.json":
+		return set(dir, "convex", false, true)
+	case "yaver.serverless.yaml", "yaver.serverless.yml":
+		return set(dir, "yaver-serverless", false, true)
+	case "config.toml":
+		if filepath.Base(dir) == "supabase" {
+			return set(filepath.Dir(dir), "supabase", false, true)
+		}
+	case "supabase.toml":
+		return set(dir, "supabase", false, true)
+	case "go.mod":
+		return set(dir, "go", false, false)
+	case "Cargo.toml":
+		return set(dir, "rust", false, false)
+	case "pyproject.toml", "requirements.txt":
+		return set(dir, "python", false, false)
+	case "Gemfile":
+		return set(dir, "ruby", false, false)
+	case "pom.xml":
+		return set(dir, "java", false, false)
+	case "Dockerfile", "docker-compose.yml", "compose.yml":
+		return set(dir, "container", false, false)
+	case "package.json":
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return out
+		}
+		content := string(data)
+		switch {
+		case strings.Contains(content, `"expo"`):
+			return set(dir, "expo", true, strings.Contains(content, `"react-native-web"`))
+		case strings.Contains(content, `"dependencies"`) &&
+			(strings.Contains(content, `"react-native":`) || strings.Contains(content, `"react-native" :`)):
+			return set(dir, "react-native", true, strings.Contains(content, `"react-native-web"`))
+		case strings.Contains(content, `"next":`) || strings.Contains(content, `"next" :`):
+			return set(dir, "next", false, true)
+		case strings.Contains(content, `"vite":`) || strings.Contains(content, `"vite" :`):
+			return set(dir, "vite", false, true)
+		case strings.Contains(content, `"firebase"`) || strings.Contains(content, `"firebase-admin"`):
+			return set(dir, "firebase", false, true)
+		case strings.Contains(content, `"@supabase/supabase-js"`) || strings.Contains(content, `"supabase"`):
+			return set(dir, "supabase", false, true)
+		case strings.Contains(content, `"convex"`):
+			return set(dir, "convex", false, true)
+		default:
+			return set(dir, "node", false, false)
+		}
+	case "ProjectVersion.txt":
+		if filepath.Base(dir) == "ProjectSettings" &&
+			projectFileExists(filepath.Join(dir, "ProjectSettings.asset")) &&
+			projectFileExists(filepath.Join(filepath.Dir(dir), "Packages", "manifest.json")) {
+			return set(filepath.Dir(dir), "unity", true, false)
+		}
+	case "Info.plist":
+		if root := projectRootFromInfoPlist(path); root != "" {
+			return set(root, "swift", true, false)
+		}
+	case "Package.swift":
+		return set(dir, "swift", true, false)
+	case "project.yml":
+		if isXcodegenIOSProject(dir) {
+			return set(dir, "swift", true, false)
+		}
+	case "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle":
+		if isKotlinAndroidProject(dir) {
+			if isKotlinSubmoduleOfParent(dir) {
+				return out
+			}
+			return set(dir, "kotlin", true, false)
+		}
+	}
+	return out
+}
+
+func projectRootFromInfoPlist(path string) string {
+	dir := filepath.Dir(path)
+	cur := dir
+	for i := 0; i < 5; i++ {
+		if hasXcodeProj(cur) || projectFileExists(filepath.Join(cur, "project.yml")) || projectFileExists(filepath.Join(cur, "Project.swift")) {
+			return cur
+		}
+		if filepath.Base(filepath.Dir(cur)) == "ios" {
+			return filepath.Dir(filepath.Dir(cur))
+		}
+		if filepath.Base(cur) == "ios" {
+			return filepath.Dir(cur)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur || parent == string(filepath.Separator) {
+			break
+		}
+		cur = parent
+	}
+	if strings.Contains(filepath.ToSlash(path), "/ios/") {
+		parts := strings.Split(filepath.ToSlash(path), "/ios/")
+		if len(parts) > 0 && parts[0] != "" {
+			return filepath.Clean(parts[0])
+		}
+	}
+	return dir
+}
+
+func strongProjectMarker(framework string) bool {
+	switch strings.ToLower(strings.TrimSpace(framework)) {
+	case "expo", "react-native", "flutter", "swift", "kotlin", "unity",
+		"next", "vite", "firebase", "supabase", "convex", "yaver-serverless",
+		"go", "rust", "python", "ruby", "java":
+		return true
+	default:
+		return false
+	}
+}
+
 // scanMobileProjects walks workspace roots looking for mobile projects.
-// Detects: pubspec.yaml (Flutter), package.json with expo/react-native,
-// and Unity projects via ProjectSettings/ProjectVersion.txt.
+// Detects project roots from bounded marker-file inventory: Flutter,
+// Expo/RN, native iOS/Android, Unity, Next/Vite, Firebase, Supabase, and
+// Yaver Serverless manifests/configs. This is a cache/indexing pass, not
+// a runner task; it must never block task creation.
 // Skips: node_modules, .git, build artifacts, system dirs, caches.
 // scanMobileProjects runs a scan with the default timeout, discarding
 // stats. Kept as the back-compat entry point for the many callers
@@ -401,8 +541,8 @@ func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobile
 		"Pictures": true, "Documents": true, "Public": true, "Downloads": true,
 		"Desktop": true, ".Trash": true, "Pods": true, ".cocoapods": true,
 		".gradle": true, ".android": true, ".pub-cache": true,
-		"android": true, "ios": true, ".dart_tool": true,
-		".expo": true, ".next": true, "vendor": true,
+		".dart_tool": true,
+		".expo":      true, ".next": true, "vendor": true,
 		"homebrew": true, "Cellar": true, "Caskroom": true,
 	}
 
@@ -480,90 +620,16 @@ func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobile
 				return nil
 			}
 
-			var framework string
-			// Capability flags computed on detection so the dashboard
-			// can route Web App tab vs Mobile App tab without a second
-			// pass over the project's package.json.
-			webCapable := false
-			mobileCapable := false
-
-			switch name {
-			case "pubspec.yaml":
-				framework = "flutter"
-				mobileCapable = true
-			case "package.json":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return nil
-				}
-				content := string(data)
-				switch {
-				case strings.Contains(content, `"expo"`):
-					framework = "expo"
-					mobileCapable = true
-					// Expo with react-native-web → also web-capable
-					// (`expo --web` / `expo export -p web` work).
-					if strings.Contains(content, `"react-native-web"`) {
-						webCapable = true
-					}
-				case strings.Contains(content, `"react-native"`):
-					// Verify it's an actual RN app (has dependencies, not just a keyword match)
-					if strings.Contains(content, `"dependencies"`) &&
-						(strings.Contains(content, `"react-native":`) || strings.Contains(content, `"react-native" :`)) {
-						framework = "react-native"
-						mobileCapable = true
-						if strings.Contains(content, `"react-native-web"`) {
-							webCapable = true
-						}
-					}
-				case strings.Contains(content, `"next":`) || strings.Contains(content, `"next" :`):
-					framework = "next"
-					webCapable = true
-				case strings.Contains(content, `"vite":`) || strings.Contains(content, `"vite" :`):
-					framework = "vite"
-					webCapable = true
-				}
-			case "ProjectVersion.txt":
-				if filepath.Base(dir) == "ProjectSettings" &&
-					projectFileExists(filepath.Join(dir, "ProjectSettings.asset")) &&
-					projectFileExists(filepath.Join(filepath.Dir(dir), "Packages", "manifest.json")) {
-					dir = filepath.Dir(dir)
-					framework = "unity"
-					mobileCapable = true
-				}
-			case "Package.swift":
-				framework = "swift"
-				mobileCapable = true
-			case "project.yml":
-				// xcodegen project descriptor. Treat as Swift only when
-				// it explicitly declares an iOS platform — otherwise
-				// project.yml could be a Linux Swift package or any
-				// other xcodegen target type.
-				if isXcodegenIOSProject(dir) {
-					framework = "swift"
-					mobileCapable = true
-				}
-			case "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle":
-				if isKotlinAndroidProject(dir) {
-					framework = "kotlin"
-					mobileCapable = true
-					// Walk visits children alphabetically, so
-					// `todo-kt/app/build.gradle.kts` fires before
-					// `todo-kt/settings.gradle.kts`. Peek at the
-					// parent now: if it carries a Gradle root that
-					// includes the current dir as a sub-module, the
-					// real project is the parent — return nil here
-					// and let the parent's settings file register
-					// when the walker reaches it.
-					if isKotlinSubmoduleOfParent(dir) {
-						return nil
-					}
-				}
-			default:
-				return nil
-			}
+			detected := classifyProjectMarker(path, name, dir)
+			dir = detected.Dir
+			framework := detected.Framework
+			webCapable := detected.WebCapable
+			mobileCapable := detected.MobileCapable
 
 			if framework == "" {
+				return nil
+			}
+			if seen[dir] {
 				return nil
 			}
 
@@ -601,7 +667,7 @@ func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobile
 			// nearby git context. Walk more than two ancestors so fixture apps
 			// under tests/fixtures/ inside a larger repo still show up in Hot
 			// Reload and remote-runtime testing.
-			if !hasProjectGitContext(dir) {
+			if !hasProjectGitContext(dir) && !strongProjectMarker(framework) {
 				return nil
 			}
 
@@ -1063,23 +1129,16 @@ func expoConfigHasBundleID(projectPath, bundleID string) bool {
 	return false
 }
 
+const mobileProjectPeriodicRefresh = 15 * time.Minute
+
 // Scans all mobile projects, checks dev builds, and pre-builds missing ones in background.
 func PrewarmMobileProjects() {
-	log.Println("[mobile-scan] Scanning for mobile projects...")
-	projects := scanMobileProjects()
-	stats := mobileScanStats{}
+	runMobileScan("serve-start")
 
-	mobileProjectCache.mu.Lock()
-	mobileProjectCache.projects = projects
-	scannedAt := time.Now()
-	mobileProjectCache.scannedAt = scannedAt
-	mobileProjectCache.stats = stats
-	mobileProjectCache.mu.Unlock()
-	savePersistedMobileProjectsCache(projects, scannedAt, stats)
-
-	log.Printf("[mobile-scan] Found %d mobile projects", len(projects))
-
-	// Log summary
+	mobileProjectCache.mu.RLock()
+	projects := append([]MobileProject(nil), mobileProjectCache.projects...)
+	mobileProjectCache.mu.RUnlock()
+	log.Printf("[mobile-scan] Found %d cached projects", len(projects))
 	for _, p := range projects {
 		status := "ready"
 		if !p.HasDevBuild {
@@ -1099,6 +1158,16 @@ func PrewarmMobileProjects() {
 			go prebuildExpoProject(p)
 		}
 	}
+}
+
+func StartMobileProjectPeriodicRefresh() {
+	go func() {
+		ticker := time.NewTicker(mobileProjectPeriodicRefresh)
+		defer ticker.Stop()
+		for range ticker.C {
+			runMobileScan("periodic-refresh")
+		}
+	}()
 }
 
 // prebuildExpoProject runs `npx expo prebuild` + `pod install` for a project.

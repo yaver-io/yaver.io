@@ -476,6 +476,112 @@ func (p pkgJSON) hasDep(name string) bool {
 // stackDetect is the canonical uncached entry point. It scans one
 // directory and, when that directory is a monorepo root, each of its
 // workspace packages. Use stackDetectCached on hot HTTP paths.
+// ─── Default stack for a NEW project ────────────────────────────────────────
+//
+// When a user asks for a workspace without saying what they are building, this
+// is what they get: React Native + TypeScript, previewed through the web dev
+// server in Chrome (WebRTC), with Hermes pushed to their OWN phone.
+//
+// Why this specific default, from docs/architecture/yaver-four-tier-deep-analysis.md §9:
+//   - RN + Hermes-push-to-a-real-phone is Yaver's differentiator, so the
+//     opinionated path should be the one the product is best at.
+//   - It is LIGHTWEIGHT: browser preview means no emulator, no Redroid, no GPU.
+//     That is precisely what lets the default machine be 2c/4GB and the $29
+//     tier hold ~71% margin. Defaulting to a native-Android loop would force
+//     8-16 GB on every workspace to serve a case most users never hit.
+//   - The phone is the user's own hardware, so the device side costs us nothing
+//     and is a more honest test than an emulator anyway.
+//
+// ⚠️ This is a CREATION default, never a detection default. stackDetect() must
+// keep reporting "unknown" for a directory it cannot identify — inventing a
+// stack for existing code would make every downstream decision (build command,
+// deploy target, machine class) confidently wrong. Truth for what exists;
+// opinion only for what does not exist yet.
+func defaultStackForNewProject() *StackDetection {
+	return &StackDetection{
+		Role:       "app",
+		Frameworks: []string{"react-native", "expo"},
+		Tags:       []string{"react-native", "expo", "typescript"},
+		DetectedAt: time.Now().UTC(),
+	}
+}
+
+// defaultMachineClassForStack maps a detected/defaulted stack to the machine
+// class the workspace should be placed on.
+//
+// "standard" is 2c/4GB and covers the default path: Metro/Expo dev server, the
+// TypeScript language server, Chrome headless and WebRTC passthrough. The
+// heavier classes are OPT-IN, because sizing every workspace for its worst
+// possible minute is what turns a 71% tier into a 42% one.
+//
+// Known ceiling: Metro on a large monorepo will exhaust 4 GB. The intended
+// response is to DETECT that and offer the upgrade, not to pre-provision for
+// it — see the class ladder in the deep analysis §6.4.
+func defaultMachineClassForStack(d *StackDetection) string {
+	if d == nil {
+		return "standard"
+	}
+	for _, tag := range d.Tags {
+		switch tag {
+		// Android-in-a-container and native Gradle builds genuinely need the
+		// memory; nothing else in the default loop does.
+		case "redroid", "android-native", "kotlin", "gradle":
+			return "build"
+		}
+	}
+	// A monorepo is the known Metro ceiling — start one class up rather than
+	// letting the first bundle build OOM.
+	if d.IsMonorepo {
+		return "heavy"
+	}
+	return "standard"
+}
+
+// WorkspacePlacementDefaults is the complete "user said nothing" answer:
+// which stack, how it is previewed, and what machine that implies.
+//
+// Kept as ONE function because the three decisions are coupled — the preview
+// mode drives the machine class, and choosing them independently is how a
+// browser-previewed RN project ends up on an 8 GB box (or, worse, a Redroid
+// project ends up on 4 GB and OOMs on first run).
+type WorkspacePlacementDefaults struct {
+	Stack        string      `json:"stack"`
+	Preview      PreviewMode `json:"preview"`
+	MachineClass string      `json:"machineClass"`
+	Reason       string      `json:"reason"`
+}
+
+// DefaultWorkspacePlacement resolves defaults for a workspace.
+//
+// `detected` may be nil (a brand-new project with nothing on disk), in which
+// case the creation default applies: React Native + TypeScript, browser
+// preview, 2c/4GB. For an EXISTING directory the detected stack wins — we never
+// invent a stack for code that is already there, because every downstream
+// decision (build command, deploy target, machine class) would inherit the lie.
+func DefaultWorkspacePlacement(detected *StackDetection) WorkspacePlacementDefaults {
+	if detected == nil || len(detected.Frameworks) == 0 {
+		return WorkspacePlacementDefaults{
+			Stack:        "react-native-expo",
+			Preview:      PreviewBrowser,
+			MachineClass: "standard",
+			Reason:       "no stack specified — defaulting to React Native + TypeScript with browser preview",
+		}
+	}
+	stack := primaryFramework(detected.Frameworks)
+	preview := DefaultPreviewModeForStack(stack)
+	class := defaultMachineClassForStack(detected)
+	// The preview mode can force a bigger box even when the stack would not.
+	if PreviewModeNeedsHeavyMachine(preview) && class == "standard" {
+		class = "build"
+	}
+	return WorkspacePlacementDefaults{
+		Stack:        stack,
+		Preview:      preview,
+		MachineClass: class,
+		Reason:       "detected " + stack,
+	}
+}
+
 func stackDetect(root string) *StackDetection {
 	d := detectOneDir(root, root)
 	d.Packages = discoverPackages(root)
@@ -1050,6 +1156,9 @@ func stackFingerprintMarkerPaths() []string {
 		"package.json",
 		"pnpm-workspace.yaml",
 		"pubspec.yaml",
+		"firebase.json", ".firebaserc", "convex.json",
+		"supabase/config.toml", "supabase.toml",
+		"yaver.serverless.yaml", "yaver.serverless.yml",
 		"next.config.ts", "next.config.js", "next.config.mjs",
 		"vite.config.ts", "vite.config.js", "vite.config.mts",
 		"Package.swift", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py", "requirements.txt",
