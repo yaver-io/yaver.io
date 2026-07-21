@@ -81,6 +81,12 @@ export interface Task {
   placementLane?: string;
   placementReason?: string;
   placementCreditLabel?: string;
+  /** tmux session driving this task (`tmux attach -t <tmuxSession>`). Surfaced
+   *  in the task UI on every surface (mobile/web/tvOS/car/AR-VR) so the running
+   *  session is always identifiable. tmuxSessionId is tmux's internal id ("$1");
+   *  tmuxSession is the human name ("yaver-<task>"). */
+  tmuxSessionId?: string;
+  tmuxSession?: string;
 }
 
 export interface FeedbackWorkAgentConfig {
@@ -1877,6 +1883,8 @@ export class AgentClient {
             ? new Date(t.startedAt).getTime()
             : t.createdAt ? new Date(t.createdAt).getTime() : Date.now(),
         deviceName: this.host ?? undefined,
+        tmuxSessionId: t.tmuxSessionId || undefined,
+        tmuxSession: t.tmuxSession || undefined,
       }));
       this.cacheTasks(tasks);
       return tasks;
@@ -1912,6 +1920,8 @@ export class AgentClient {
           ? new Date(t.startedAt).getTime()
           : t.createdAt ? new Date(t.createdAt).getTime() : Date.now(),
       deviceName: this.host ?? undefined,
+      tmuxSessionId: t.tmuxSessionId || undefined,
+      tmuxSession: t.tmuxSession || undefined,
     };
   }
 

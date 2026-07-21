@@ -2306,6 +2306,14 @@ export default function VibeCodingView({
                   {activeGraphRunId
                     ? "Deep ask · investigate → answer → verify"
                     : activeTask?.title || "New coding session"}
+                  {!activeGraphRunId && activeTask && (activeTask.tmuxSession || activeTask.tmuxSessionId) ? (
+                    <div
+                      className="mt-0.5 font-mono text-[10px] font-normal text-surface-400 select-all"
+                      title="Attach on the box with: tmux attach -t <session>"
+                    >
+                      tmux: {activeTask.tmuxSession || activeTask.tmuxSessionId}
+                    </div>
+                  ) : null}
                 </div>
                 {!activeGraphRunId ? (
                   <div
