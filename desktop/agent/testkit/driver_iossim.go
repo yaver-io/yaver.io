@@ -206,10 +206,30 @@ func (d *IOSSimDriver) SendText(ctx context.Context, udid, text string) error {
 // Tap dispatches a tap at (x, y) on the booted simulator via
 // `xcrun simctl io ... tap` (Xcode 15+) with an AppleScript fallback.
 func (d *IOSSimDriver) Tap(ctx context.Context, udid string, x, y int) error {
+	// `simctl io … tap` does not exist on modern Xcode (there is no simctl tap
+	// verb), so this always fell through to the error and iOS-sim finger taps
+	// never worked. idb (facebook/idb, MIT) is the working HID-injection path:
+	// `idb ui tap --udid <udid> <x> <y>` synthesises a real touch the guest app
+	// receives. Prefer it; keep the legacy simctl attempt only as a courtesy for
+	// any Xcode that ever adds the verb.
+	if _, err := runCtx(ctx, "idb", "ui", "tap", "--udid", udid, fmt.Sprintf("%d", x), fmt.Sprintf("%d", y)); err == nil {
+		return nil
+	}
 	if _, err := runCtx(ctx, "xcrun", "simctl", "io", udid, "tap", fmt.Sprintf("%d", x), fmt.Sprintf("%d", y)); err == nil {
 		return nil
 	}
-	return fmt.Errorf("simctl tap is unavailable on this Xcode; install a simulator control bridge (WDA/XCUITest) before using interactive iOS simulator taps")
+	return fmt.Errorf("iOS simulator tap needs idb — install it (brew install idb-companion && pip install fb-idb) so finger taps reach the guest app")
+}
+
+// Swipe drags from (x1,y1) to (x2,y2) over durationMs via idb — the gesture path
+// for scroll/pinch building blocks. Same idb dependency as Tap.
+func (d *IOSSimDriver) Swipe(ctx context.Context, udid string, x1, y1, x2, y2, durationMs int) error {
+	dur := fmt.Sprintf("%.2f", float64(durationMs)/1000.0)
+	if _, err := runCtx(ctx, "idb", "ui", "swipe", "--udid", udid,
+		fmt.Sprintf("%d", x1), fmt.Sprintf("%d", y1), fmt.Sprintf("%d", x2), fmt.Sprintf("%d", y2), "--duration", dur); err == nil {
+		return nil
+	}
+	return fmt.Errorf("iOS simulator swipe needs idb (brew install idb-companion && pip install fb-idb)")
 }
 
 // ParseInstalledRuntimeFamilies parses `xcrun simctl list runtimes` output and
