@@ -378,8 +378,15 @@ export default function HotReloadScreen() {
         if (mounted) setAgentInfo(info);
         if (mounted) {
           const target = snapshot?.targets?.["mobile-hermes"];
+          // Hermes is an RN/Expo-only surface. If a dev server is running for a
+          // NON-RN project (Flutter, Swift, Kotlin, Next/web), never show the
+          // "Hermes reload ready" badge — those stream via WebRTC (native) or a
+          // WebView (web), not Hermes push. When no server is running, the badge
+          // reflects general agent capability. (User request 2026-07-21.)
+          const runningFw = String(status?.framework || "").trim().toLowerCase();
+          const runningNonRN = runningFw !== "" && runningFw !== "expo" && runningFw !== "react-native";
           setRemoteHermesReady(
-            target
+            target && !runningNonRN
               ? {
                   enabled: !!target.enabled,
                   reason: target.reason,
