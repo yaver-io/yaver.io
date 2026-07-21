@@ -308,6 +308,37 @@ requires Xcode.** iOS being un-streamable on THIS mini is not a wall for the
 product: the Android path ships now, and ScreenCaptureKit unblocks the Apple
 sims on a healthy Mac.
 
+## Definitive host routing — the mini is the wrong host; Linux + browser win
+
+Bring-up on the mac mini surfaced that it is a POOR host for this: `simctl`
+screenshot degraded to ~17s, `recordVideo`-to-stdout removed in Xcode 26, and the
+macOS arm64 Android emulator failed to connect to adb under resource pressure
+(tight RAM/SSD). None of that is the product's fault — it's the box. The routing
+that follows:
+
+**Speed/fidelity ladder × where each tier belongs:**
+
+| Tier | Path | Host | For |
+|---|---|---|---|
+| 1 (fastest, lightest) | **Browser** — RN-Web / Flutter-Web, headless Chrome, instant HMR | **any Linux** (Cloud Workspace) | RN, Flutter UI vibing |
+| 2 | **Android emulator (KVM) / redroid** — adb screenrecord H.264 | **Linux** (fast, cheap, containerized) — NOT macOS | RN, Flutter, Kotlin |
+| 3 (heaviest) | **Apple sim + ScreenCaptureKit window capture** | a **healthy Mac** with a virtual display | Swift, watchOS, tvOS, CarPlay, visionOS |
+
+**Conclusions:**
+- **Default cross-platform (RN/Flutter) to Tier 1 (browser) on Linux** — sub-second
+  HMR, trivially under the ≤3s target, no emulator, no Xcode, host-agnostic.
+- **Kotlin and native-fidelity RN/Flutter → Tier 2 (Android on LINUX)** — the
+  emulator wants KVM (Linux) or redroid; macOS arm64 emulation is the slow path
+  the mini just demonstrated.
+- **Apple-only → Tier 3 on a HEALTHY Mac** (this mini needs a reboot to clear its
+  degraded CoreSimulator before it can even do this).
+- **The Cloud Workspace is Linux**, which is exactly right for Tiers 1–2 — the
+  normie's common case (RN/Flutter) never needs a Mac at all.
+
+Resource discipline on any build box (learned on the mini): one build/emulator at
+a time, watch SSD (a DerivedData dir is ~5GB; `go-build` cache grew to ~10GB;
+flutter cask + emulator eat GBs), and scale-to-zero idle sims/emulators.
+
 ## Input / gesture control — wrap first-party + permissive OSS
 
 The web viewer already forwards pointer input over the control DataChannel (the
