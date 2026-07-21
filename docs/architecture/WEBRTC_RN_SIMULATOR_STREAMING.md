@@ -152,6 +152,31 @@ exist in `testkit/`: `Boot`, `Install`, `Launch`, `Shutdown`, `list devices`,
 - Expose it as `ops` verbs + MCP so every surface (CLI/web/mobile) can manage
   the pool.
 
+## PROVEN end-to-end on a real app (2026-07-21)
+
+The full native flow was validated on the mac mini against **yaver-todo-rn**
+(Expo 54 / RN 0.81.5):
+
+```
+** BUILD SUCCEEDED **        # xcodebuild, generic iOS Simulator dest, ARCHS=arm64, Debug
+LAUNCHED io.yaver.todorn     # simctl install + launch onto the booted device
+in sim (1=yes): 2            # app confirmed running in the simulator
+```
+
+So the expo-free pipeline — `xcodebuild` (generic destination + host arch, Debug)
+→ `simctl install` → `simctl launch` — works on a real RN app, and the existing
+frame-pump (`startFramePump`/`captureJPEGFrame`) streams whatever is on that
+booted device. The architecture is confirmed; what remains is per-app build
+robustness and the client UIs.
+
+**Per-app build reality (confirmed across apps):** a MINIMAL app (yaver-todo-rn,
+clean pods) builds through; heavier apps hit their OWN native-module snags under
+Xcode 26.4 — talos = `fmt` 11 consteval (Podfile patched), Yaver mobile =
+`NitroIap` arm64-sim linker. These are guest-project/toolchain issues, and they
+are exactly what the "Try to Fix" AI-runner loop resolves. Setup friction also
+seen and handled: fresh clones need `npm install` before `pod install`, and a
+stale `Podfile.lock` needs a reset — the Yaver flow should run these preflights.
+
 ## What is landed (this change)
 
 - **Agent capabilities** (`remote_runtime.go`): RN/Expo is now
