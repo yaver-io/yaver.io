@@ -57,6 +57,31 @@ export const PREDEFINED_MODELS = [
     description: "Fastest — quick edits and simple tasks",
     sortOrder: 3,
   },
+  // OpenCode can sit on top of OpenAI-compatible managed gateways or
+  // user-provided keys. Keep these labels short because the product should
+  // show only the inference source, not cloud-internal routing detail.
+  {
+    modelId: "byo/openai-compatible",
+    runnerId: "opencode",
+    name: "BYO OpenAI-compatible",
+    description: "Use the user's own inference key",
+    isDefault: true,
+    sortOrder: 1,
+  },
+  {
+    modelId: "bedrock/deepseek.r1-v1:0",
+    runnerId: "opencode",
+    name: "Bedrock DeepSeek R1",
+    description: "Managed DeepSeek through Amazon Bedrock",
+    sortOrder: 2,
+  },
+  {
+    modelId: "bedrock/deepseek.v3-1-v1:0",
+    runnerId: "opencode",
+    name: "Bedrock DeepSeek V3.1",
+    description: "Managed DeepSeek through Amazon Bedrock",
+    sortOrder: 3,
+  },
 ];
 
 export const list = query({

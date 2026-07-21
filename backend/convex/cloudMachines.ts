@@ -4,6 +4,7 @@ import { api, internal } from "./_generated/api";
 import { listGrantedMachineIdsForGrant, listVisibleInfraGrantsForGuest } from "./access";
 import { isOwnerUserId } from "./ownerAllowlist";
 import { randomHex, sha256Hex } from "./auth";
+import { createHetznerProvider } from "./cloudProviders/hetzner";
 
 // Machine specs by type. The Hetzner server_type strings are what you pass
 // to POST https://api.hetzner.cloud/v1/servers.
@@ -97,33 +98,6 @@ export function reusableSubscriptionMachineStatus(status: unknown): boolean {
 function envServerTypeFor(machineType: string): string | undefined {
   const key = `YAVER_CLOUD_${String(machineType || "standard").toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TYPE`;
   return process.env[key] || undefined;
-}
-
-const HETZNER_API = "https://api.hetzner.cloud/v1";
-
-async function hetznerCreateVolume(
-  token: string,
-  name: string,
-  sizeGb: number,
-  location: string,
-): Promise<string> {
-  const r = await fetch(`${HETZNER_API}/volumes`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name, size: sizeGb, location, format: "ext4" }),
-  });
-  if (!r.ok) throw new Error(`Hetzner volume API ${r.status}: ${await r.text()}`);
-  const j = (await r.json()) as { volume?: { id?: number } };
-  if (!j.volume?.id) throw new Error("Hetzner volume API returned no id");
-  return String(j.volume.id);
-}
-
-async function hetznerDeleteVolume(token: string, volumeId: string): Promise<void> {
-  const r = await fetch(`${HETZNER_API}/volumes/${volumeId}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!r.ok && r.status !== 404) throw new Error(`Hetzner delete volume API ${r.status}: ${await r.text()}`);
 }
 
 /**
@@ -2103,6 +2077,7 @@ export const provision = internalAction({
       });
       return;
     }
+    const cloudProvider = createHetznerProvider(HCLOUD_TOKEN);
 
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, {
       machineId: args.machineId,
@@ -2180,7 +2155,6 @@ export const provision = internalAction({
     const serverName = `yaver-${machineType}-${shortId}`;
     const subdomain = `${shortId}.cloud`;
     const autoDomain = `${shortId}.cloud.yaver.io`;
-    const location = (machine.region ?? "eu").startsWith("us") ? "ash" : "fsn1";
     const isGpu = machineType === "gpu";
 
     const yaverArch = specDef.arch === "amd64" ? "amd64" : "arm64";
@@ -2308,12 +2282,20 @@ export const provision = internalAction({
           progress: 12,
         });
         persistentVolumeSizeGb = Math.max(10, Math.round(specDef.diskGb));
-        persistentVolumeId = await hetznerCreateVolume(
-          HCLOUD_TOKEN,
-          `yaver-data-${machineIdStr}`.slice(0, 60),
-          persistentVolumeSizeGb,
-          location,
-        );
+        persistentVolumeId = (
+          await cloudProvider.createVolume({
+            name: `yaver-data-${machineIdStr}`.slice(0, 60),
+            sizeGb: persistentVolumeSizeGb,
+            region: machine.region ?? "eu",
+            tags: {
+              service: "yaver-cloud-machine",
+              machine_type: machineType,
+              user: machine.userId.toString().substring(0, 10),
+              managed: "true",
+              resource: "state-volume",
+            },
+          })
+        ).volumeId;
         bootstrapSpec.volumeId = persistentVolumeId;
       }
 
@@ -2325,39 +2307,26 @@ export const provision = internalAction({
       const finalCloudInit = cloudImage
         ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
         : cloudInit;
-      const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${HCLOUD_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const created = await cloudProvider.createMachine({
           name: serverName,
-          server_type: createdServerType,
+          sku: createdServerType,
           image: bootImage,
-          location,
-          ...(persistentVolumeId
-            ? { volumes: [Number(persistentVolumeId)], automount: false }
-            : {}),
-          ...(bootSshKeyNames.length ? { ssh_keys: bootSshKeyNames } : {}),
-          labels: {
+          region: machine.region ?? "eu",
+          volumeIds: persistentVolumeId ? [persistentVolumeId] : undefined,
+          sshKeyNames: bootSshKeyNames.length ? bootSshKeyNames : undefined,
+          tags: {
             service: "yaver-cloud-machine",
             machine_type: machineType,
             user: machine.userId.toString().substring(0, 10),
             managed: "true",
           },
-          user_data: finalCloudInit,
-        }),
+          userData: finalCloudInit,
       });
-      if (!hetznerResp.ok) {
-        const errText = await hetznerResp.text();
-        throw new Error(`Hetzner API ${hetznerResp.status}: ${errText}`);
+      const hetznerServerId = created.cloudResourceId;
+      const serverIp = created.serverIp;
+      if (!serverIp) {
+        throw new Error("Hetzner provider returned no public IPv4 address");
       }
-      const hetznerData = (await hetznerResp.json()) as {
-        server: { id: number; public_net: { ipv4: { ip: string } } };
-      };
-      const hetznerServerId = String(hetznerData.server.id);
-      const serverIp = hetznerData.server.public_net.ipv4.ip;
 
       // ── 2. Cloudflare DNS for the auto subdomain ───────────────
       const cfResp = await fetch(
@@ -2490,7 +2459,7 @@ export const provision = internalAction({
       console.error("[cloudMachines.provision] failed:", msg);
       if (persistentVolumeId) {
         try {
-          await hetznerDeleteVolume(HCLOUD_TOKEN, persistentVolumeId);
+          await cloudProvider.deleteVolume({ volumeId: persistentVolumeId });
         } catch (deleteErr) {
           console.error(
             "[cloudMachines.provision] cleanup volume failed:",
