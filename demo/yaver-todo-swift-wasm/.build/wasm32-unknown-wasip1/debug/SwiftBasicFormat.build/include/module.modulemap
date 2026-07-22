@@ -1,3 +1,0 @@
-module SwiftBasicFormat {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftBasicFormat.build/include/SwiftBasicFormat-Swift.h"
-}

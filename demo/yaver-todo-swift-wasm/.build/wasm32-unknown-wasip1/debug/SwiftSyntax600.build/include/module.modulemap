@@ -1,3 +1,0 @@
-module SwiftSyntax600 {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax600.build/include/SwiftSyntax600-Swift.h"
-}

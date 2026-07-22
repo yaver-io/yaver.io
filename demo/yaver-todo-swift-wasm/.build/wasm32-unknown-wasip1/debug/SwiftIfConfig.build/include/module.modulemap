@@ -1,3 +1,0 @@
-module SwiftIfConfig {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftIfConfig.build/include/SwiftIfConfig-Swift.h"
-}

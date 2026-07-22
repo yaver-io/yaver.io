@@ -1,3 +1,0 @@
-module SwiftParserDiagnostics {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftParserDiagnostics.build/include/SwiftParserDiagnostics-Swift.h"
-}

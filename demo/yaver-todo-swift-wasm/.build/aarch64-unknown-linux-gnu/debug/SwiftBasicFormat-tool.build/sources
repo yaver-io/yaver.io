@@ -1,6 +1,0 @@
-/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/BasicFormat.swift
-/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/Indenter.swift
-/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/InferIndentation.swift
-/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/Syntax+Extensions.swift
-/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/SyntaxProtocol+Formatted.swift
-/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/Trivia+FormatExtensions.swift

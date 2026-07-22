@@ -1,3 +1,0 @@
-module JavaScriptKit {
-    header "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/include/JavaScriptKit-Swift.h"
-}

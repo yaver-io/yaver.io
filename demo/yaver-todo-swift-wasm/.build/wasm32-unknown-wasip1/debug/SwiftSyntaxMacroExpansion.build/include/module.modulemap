@@ -1,3 +1,0 @@
-module SwiftSyntaxMacroExpansion {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacroExpansion.build/include/SwiftSyntaxMacroExpansion-Swift.h"
-}

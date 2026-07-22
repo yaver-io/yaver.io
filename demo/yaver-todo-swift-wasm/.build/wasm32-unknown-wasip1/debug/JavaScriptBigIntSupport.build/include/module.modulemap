@@ -1,3 +1,0 @@
-module JavaScriptBigIntSupport {
-    header "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/include/JavaScriptBigIntSupport-Swift.h"
-}

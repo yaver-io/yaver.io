@@ -1,3 +1,0 @@
-module SwiftCompilerPluginMessageHandling {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftCompilerPluginMessageHandling.build/include/SwiftCompilerPluginMessageHandling-Swift.h"
-}

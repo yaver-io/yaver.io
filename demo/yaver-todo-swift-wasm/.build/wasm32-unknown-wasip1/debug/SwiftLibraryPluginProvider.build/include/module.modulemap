@@ -1,3 +1,0 @@
-module SwiftLibraryPluginProvider {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftLibraryPluginProvider.build/include/SwiftLibraryPluginProvider-Swift.h"
-}

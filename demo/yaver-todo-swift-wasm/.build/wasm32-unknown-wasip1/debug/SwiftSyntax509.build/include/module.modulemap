@@ -1,3 +1,0 @@
-module SwiftSyntax509 {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax509.build/include/SwiftSyntax509-Swift.h"
-}

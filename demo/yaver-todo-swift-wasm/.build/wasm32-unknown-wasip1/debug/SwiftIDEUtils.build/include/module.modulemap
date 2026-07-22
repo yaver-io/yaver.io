@@ -1,3 +1,0 @@
-module SwiftIDEUtils {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftIDEUtils.build/include/SwiftIDEUtils-Swift.h"
-}

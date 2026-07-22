@@ -1,0 +1,5 @@
+# SwiftPM build output. NEVER commit this: it contains vendored dependency
+# checkouts (which git treats as embedded repositories) and a ~10 MB .wasm
+# binary. Build artifacts belong in CI or a container, not in a repo whose
+# clone size everyone pays for.
+.build/

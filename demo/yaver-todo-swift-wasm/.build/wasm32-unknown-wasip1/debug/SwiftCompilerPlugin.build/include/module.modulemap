@@ -1,3 +1,0 @@
-module SwiftCompilerPlugin {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftCompilerPlugin.build/include/SwiftCompilerPlugin-Swift.h"
-}

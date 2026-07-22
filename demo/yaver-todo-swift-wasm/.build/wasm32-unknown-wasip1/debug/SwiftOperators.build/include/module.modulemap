@@ -1,3 +1,0 @@
-module SwiftOperators {
-    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftOperators.build/include/SwiftOperators-Swift.h"
-}

@@ -1,3 +1,0 @@
-module JavaScriptEventLoop {
-    header "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoop.build/include/JavaScriptEventLoop-Swift.h"
-}
