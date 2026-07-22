@@ -155,3 +155,46 @@ func TestFlutterIsOfferedTheBrowserTargetFirst(t *testing.T) {
 		t.Errorf("browser-window must lead for flutter; got %v", ids)
 	}
 }
+
+// Closed loop for the browser lane, against REAL project directories.
+//
+// Scope is deliberate. Web stacks (next/vite/astro) are NOT here: they resolve
+// to ExecutionModeWebWebview (executionModeForFramework, remote_runtime.go:131)
+// and preview through the WebView/DevPreview path, so an empty remote-runtime
+// target list is correct for them, not a bug. I asserted otherwise first and
+// was wrong — recorded so the next reader does not "fix" it back.
+//
+// RN is the real gap: it resolves to ExecutionModeRNHermes but is made
+// eligible for targets via the rnSim path, and comes back with twelve
+// simulator/emulator targets and no browser lane — the cheapest one, and the
+// only one where the in-app feedback SDK applies. Left failing-by-omission
+// rather than papered over; see BROWSER_VIBING_AUDIT.md §3.
+func TestBrowserLaneForNativeBrowserRenderableStacks(t *testing.T) {
+	repo := "/Users/kivanccakmak/Workspace/yaver.io"
+	cases := []struct{ dir, framework, why string }{
+		{repo + "/demo/yaver-todo-swift-wasm", "swift", "SwiftWasm compiles to wasm and runs in a browser"},
+		{repo + "/demo", "flutter", "Flutter is classed a web dev server (devserver_kind.go)"},
+	}
+	for _, c := range cases {
+		if _, err := os.Stat(c.dir); err != nil {
+			t.Logf("skip %s — not in this checkout", c.dir)
+			continue
+		}
+		caps := remoteRuntimeCapabilitiesForProject(c.dir, c.framework)
+		browser, ok := targetByID(caps, "browser-window")
+		if !ok {
+			var ids []string
+			for _, tg := range caps.Targets {
+				ids = append(ids, tg.ID)
+			}
+			t.Errorf("%s (%s): no browser-window — %s. targets=%v", c.dir, c.framework, c.why, ids)
+			continue
+		}
+		if DiscoverChromeBinary() != "" && !browser.Enabled {
+			t.Errorf("%s (%s): browser present but target disabled: %q", c.dir, c.framework, browser.Reason)
+		}
+		if !browser.Enabled && browser.Reason == "" {
+			t.Errorf("%s (%s): disabled with no remedy", c.dir, c.framework)
+		}
+	}
+}
