@@ -13,7 +13,11 @@ on:
       server_type:
         description: Hetzner server type for ephemeral mode
         required: false
-        default: cax21
+        default: cpx21
+      location:
+        description: Hetzner location for ephemeral mode
+        required: false
+        default: nbg1
 
 concurrency:
   group: remote-vibing-smoke
@@ -30,7 +34,7 @@ jobs:
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
       HCLOUD_SSH_KEY_NAME: yaver-ci
       CI_SERVER_TYPE: ${{ inputs.server_type }}
-      CI_SERVER_LOCATION: hel1
+      CI_SERVER_LOCATION: ${{ inputs.location }}
       CI_SERVER_IMAGE: ubuntu-24.04
       HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
     steps:
@@ -79,10 +83,18 @@ jobs:
         run: |
           set -euo pipefail
           hcloud context list >/dev/null
-          if [ -n "${HETZNER_TEST_SNAPSHOT_ID:-}" ] && hcloud image describe "$HETZNER_TEST_SNAPSHOT_ID" >/dev/null 2>&1; then
+          arch=amd64
+          case "$CI_SERVER_TYPE" in
+            cax*|cax1*|cax2*|cax3*|cax4*) arch=arm64 ;;
+          esac
+          cloud_image="$(jq -r --arg arch "$arch" '.providers.hetzner.snapshots[$arch] // empty' cloud-images.json)"
+          if [ -n "$cloud_image" ] && hcloud image describe "$cloud_image" >/dev/null 2>&1; then
+            echo "Using Yaver cloud image from cloud-images.json for $arch"
+            echo "HETZNER_TEST_SNAPSHOT_ID=$cloud_image" >> "$GITHUB_ENV"
+          elif [ -n "${HETZNER_TEST_SNAPSHOT_ID:-}" ] && hcloud image describe "$HETZNER_TEST_SNAPSHOT_ID" >/dev/null 2>&1; then
             echo "Using configured Hetzner snapshot for ephemeral smoke"
           else
-            echo "::warning::HETZNER_TEST_SNAPSHOT_ID is missing, invalid, or inaccessible; falling back to raw $CI_SERVER_IMAGE"
+            echo "::warning::No accessible Yaver cloud image/snapshot for $arch; falling back to raw $CI_SERVER_IMAGE and source bootstrap"
             echo "HETZNER_TEST_SNAPSHOT_ID=" >> "$GITHUB_ENV"
           fi
 
@@ -223,6 +235,6 @@ jobs:
               -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
               "root@$HETZNER_TEST_SERVER_IP" "bash /opt/yaver/scripts/remote-vibing-smoke-runner.sh"
 
-      - name: Delete ephemeral box
+      - name: Stop/delete ephemeral box
         if: always() && inputs.target == 'ephemeral'
         run: ./ci/hcloud/delete-server.sh
