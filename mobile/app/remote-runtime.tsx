@@ -91,33 +91,54 @@ export default function RemoteRuntimeScreen() {
     setConnectionPhase("Preparing connection");
     pushConnectionLog("Preparing connection");
     clearConnectionTimers();
-    connectionTimers.current = [
-      setTimeout(() => {
-        setConnectionPhase("Resolving machine");
-        pushConnectionLog("Resolving machine");
-      }, 120),
-      setTimeout(() => {
-        setConnectionPhase(quicClient.activeRelayBaseUrl ? "Trying relay" : "Trying direct");
-        pushConnectionLog(quicClient.activeRelayBaseUrl ? "Trying relay" : "Trying direct");
-      }, 700),
-      setTimeout(() => {
-        setConnectionPhase("Authenticating");
-        pushConnectionLog("Auth OK", "success");
-      }, 1400),
-      setTimeout(() => {
-        setConnectionPhase("Starting remote view");
-        pushConnectionLog("Starting remote view");
-      }, 2100),
-    ];
+
+    // Every line below reports something that ACTUALLY happened.
+    //
+    // This used to be four setTimeouts at 120/700/1400/2100 ms that ran
+    // regardless of the network: "Auth OK ✓" was printed by a timer, not by an
+    // auth result, and "Session ready ✓" fired 500 ms after the create call
+    // returned — before the WebView loaded, before ICE, before a single frame.
+    // The user read "Session ready ✓" over a black screen. That is the same
+    // false green we spent this week removing from the agent, and it costs
+    // more trust here than a missing feature would.
+    //
+    // The overlay now closes when the STREAM is up (first frame), not when the
+    // HTTP call returns. finishConnectionOverlay is still called on failure so
+    // it can never trap the user.
+    const usingRelay = !!quicClient.activeRelayBaseUrl;
     try {
-      const transportMode = quicClient.activeRelayBaseUrl ? "relay-jpeg-poll" : "direct-webrtc";
+      setConnectionPhase(usingRelay ? "Connecting via relay" : "Connecting directly");
+      pushConnectionLog(usingRelay ? "Connecting via relay" : "Connecting directly");
+
+      // A relay session is NOT WebRTC — it is ~1 fps JPEG polling. Say so
+      // before the user concludes the stream is broken. Previously the only
+      // trace was a `transportMode` token in a metadata line.
+      const transportMode = usingRelay ? "relay-jpeg-poll" : "direct-webrtc";
+      if (usingRelay) {
+        pushConnectionLog("Relay path: still frames (~1 fps), not video", "error");
+      }
+
       const next = await quicClient.startRemoteRuntimeSession(path, framework, target.id, transportMode);
       setSession(next);
       setViewerNote(next.note || `Session ${next.id} created.`);
-      setConnectionPhase("Session ready");
-      pushConnectionLog(transportMode === "relay-jpeg-poll" ? "Relay ready" : "Direct ready", "success");
-      pushConnectionLog("Session ready", "success");
-      setTimeout(() => finishConnectionOverlay(), 500);
+      // The session EXISTS. It is not yet showing anything — the viewer
+      // reports first paint via onFirstFrame below.
+      setConnectionPhase(usingRelay ? "Waiting for first frame" : "Negotiating WebRTC");
+      pushConnectionLog("Session created on the box", "success");
+
+      // A frame that never arrives must not hang the overlay forever. The old
+      // code could not stall here because it closed on a timer regardless;
+      // closing on a real event means we owe the user a bound.
+      connectionTimers.current = [
+        setTimeout(() => {
+          setConnectionPhase("No frames yet");
+          pushConnectionLog(
+            "The session started but no frames arrived in 20s — the simulator may still be booting, or media is blocked on this network.",
+            "error",
+          );
+          finishConnectionOverlay();
+        }, 20000),
+      ];
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setConnectionPhase("Connection failed");
@@ -256,6 +277,29 @@ export default function RemoteRuntimeScreen() {
                         }
                         if (typeof payload?.note === "string") setViewerNote(payload.note);
                         if (typeof payload?.error === "string") setViewerNote(payload.error);
+                        // First real pixels — THIS is when the connection is
+                        // done, not when the create call returned.
+                        if (payload?.type === "first-frame") {
+                          pushConnectionLog(
+                            payload.how === "relay-jpeg" ? "First frame (relay stills)" : "First frame decoded",
+                            "success",
+                          );
+                          setConnectionPhase("Streaming");
+                          finishConnectionOverlay();
+                        }
+                        if (payload?.type === "stream-failed") {
+                          setConnectionPhase("Connection failed");
+                          pushConnectionLog(
+                            payload.reason === "ice-failed"
+                              ? "Direct WebRTC blocked on this network — a relay is required"
+                              : String(payload.reason || "stream failed"),
+                            "error",
+                          );
+                          finishConnectionOverlay();
+                        }
+                        if (payload?.type === "stream-stalled") {
+                          setViewerNote("Stream stalled — the box stopped sending frames.");
+                        }
                         if (payload?.type === "feedback-launch-request") triggerFeedbackLaunch("remote-runtime");
                       } catch {
                         setViewerNote(event.nativeEvent.data);
@@ -547,6 +591,17 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
           window.ReactNativeWebView.postMessage(JSON.stringify(payload));
         }
       }
+      // firstFrame fires ONCE, on the first frame the user can actually see.
+      // ontrack only means a track object arrived - it can arrive and never
+      // decode, which is how "H.264 stream active." ended up over a black
+      // screen. The JPEG path never reported anything at all, so it sat on
+      // "Negotiating WebRTC…" while frames were painting.
+      var reportedFirstFrame = false;
+      function reportFirstFrame(how) {
+        if (reportedFirstFrame) return;
+        reportedFirstFrame = true;
+        post({ type: "first-frame", how: how });
+      }
       function setStatus(note) {
         statusEl.textContent = note;
         post({ type: "status", note });
@@ -611,7 +666,8 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
               if (objectUrl) URL.revokeObjectURL(objectUrl);
               objectUrl = URL.createObjectURL(blob);
               frameEl.src = objectUrl;
-              setStatus("Relay frame polling active.");
+              setStatus("Relay frame polling active (still frames, ~1 fps).");
+              reportFirstFrame("relay-jpeg");
             } catch (error) {
               setStatus(error.message || String(error));
             } finally {
@@ -650,8 +706,21 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
           // Autoplay: muted inline playback is allowed without a gesture.
           videoEl.play().catch(() => {});
           setStatus("H.264 stream active.");
+          // Wait for real pixels: loadeddata is the first decoded frame.
+          video.addEventListener("loadeddata", function () { reportFirstFrame("video"); }, { once: true });
         };
-        pc.onconnectionstatechange = () => setStatus("Peer state: " + pc.connectionState);
+        pc.onconnectionstatechange = function () {
+          // "Peer state: failed" is an implementation detail leaking into the
+          // UI. Say what it means for the user and what to do.
+          var st = pc.connectionState;
+          if (st === "connected") { setStatus("Connected — waiting for frames…"); }
+          else if (st === "failed") {
+            setStatus("Could not reach the box's media ports. Direct WebRTC was blocked — a relay is needed on this network.");
+            post({ type: "stream-failed", reason: "ice-failed" });
+          }
+          else if (st === "disconnected") { setStatus("Stream dropped — the box stopped sending."); post({ type: "stream-stalled" }); }
+          else { setStatus("Connecting…"); }
+        };
         pc.ondatachannel = (event) => {
           if (event.channel.label === "frames") {
             event.channel.binaryType = "arraybuffer";
