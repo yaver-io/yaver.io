@@ -428,6 +428,14 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			// binary exists (linux/arm64); sim/emu stay first-class
 			// wherever the host supports them.
 			caps.Targets = []RemoteRuntimeTarget{
+				// Flutter runs as a WEB dev server on the box
+				// (devserver_kind.go classes it DevServerKindWeb), so the
+				// lightest honest preview is the app itself in a browser —
+				// no emulator boot, no Redroid, and the in-app yaver_feedback
+				// SDK (pub.dev) works because the app is real rather than a
+				// video of one. Simulators stay below for platform-specific
+				// checks.
+				probeBrowserWindowTarget(),
 				probeAndroidEmulatorTarget(),
 				probeAndroidWearTarget(),
 				probeAndroidTVTarget(),

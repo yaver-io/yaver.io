@@ -138,3 +138,20 @@ func TestNativeSwiftOnMacReachesTheSimulatorTarget(t *testing.T) {
 		t.Error("a disabled simulator target must carry its remedy")
 	}
 }
+
+// Flutter renders as a web dev server on the box, so the browser target must
+// be offered — and lead. It is the only path where the in-app yaver_feedback
+// SDK (pub.dev) applies, because the app is real rather than a video of one.
+func TestFlutterIsOfferedTheBrowserTargetFirst(t *testing.T) {
+	caps := remoteRuntimeCapabilitiesForProject(t.TempDir(), "flutter")
+	if len(caps.Targets) == 0 {
+		t.Fatal("flutter must be offered targets")
+	}
+	if caps.Targets[0].ID != "browser-window" {
+		var ids []string
+		for _, tg := range caps.Targets {
+			ids = append(ids, tg.ID)
+		}
+		t.Errorf("browser-window must lead for flutter; got %v", ids)
+	}
+}
