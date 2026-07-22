@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -61,6 +62,79 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "runtime_turn_run",
+		Description: "Promote a captured runtime_turn idea into real work. Accepts {turnId:\"rq_...\"}. Keeps the original turnId so surfaces don't show a duplicate.",
+		Schema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"itemId": map[string]interface{}{"type": "string"},
+				"turnId": map[string]interface{}{"type": "string"},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsRuntimeTurnRunHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "runtime_turn_verify",
+		Description: "Attempt the device reload for a runtime turn and report what actually happened. Returns testTarget.state=delivered (a live device accepted it) or unreachable (nothing is listening). Task-finished alone never means testable.",
+		Schema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"itemId": map[string]interface{}{"type": "string"},
+				"turnId": map[string]interface{}{"type": "string"},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsRuntimeTurnVerifyHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// runtimeTurnIDFromPayload reads the {itemId|turnId} shape shared by the
+// status/run/verify verbs.
+func runtimeTurnIDFromPayload(payload json.RawMessage) (string, *OpsResult) {
+	var req struct {
+		ItemID string `json:"itemId"`
+		TurnID string `json:"turnId"`
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &req); err != nil {
+			return "", &OpsResult{OK: false, Code: "bad_payload", Error: "invalid payload: " + err.Error()}
+		}
+	}
+	id := firstNonEmptyStr(strings.TrimSpace(req.ItemID), strings.TrimSpace(req.TurnID))
+	if id == "" {
+		return "", &OpsResult{OK: false, Code: "bad_payload", Error: "itemId or turnId is required"}
+	}
+	return id, nil
+}
+
+func opsRuntimeTurnRunHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	id, bad := runtimeTurnIDFromPayload(payload)
+	if bad != nil {
+		return *bad
+	}
+	resp := runtimeTurnRun(c, id)
+	if !resp.OK {
+		return OpsResult{OK: false, Code: firstNonEmptyStr(resp.Code, "runtime_turn_failed"), Error: firstNonEmptyStr(resp.Error, resp.Spoken, "could not start that turn"), Initial: resp}
+	}
+	return OpsResult{OK: true, Initial: resp}
+}
+
+func opsRuntimeTurnVerifyHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	id, bad := runtimeTurnIDFromPayload(payload)
+	if bad != nil {
+		return *bad
+	}
+	resp := runtimeTurnVerify(c, id)
+	if !resp.OK {
+		return OpsResult{OK: false, Code: firstNonEmptyStr(resp.Code, "not_verified"), Error: firstNonEmptyStr(resp.Error, resp.Spoken, "reload not delivered"), Initial: resp}
+	}
+	return OpsResult{OK: true, Initial: resp}
 }
 
 func opsRuntimeTurnHandler(c OpsContext, payload json.RawMessage) OpsResult {
@@ -87,14 +161,21 @@ func opsRuntimeTurnsHandler(c OpsContext, payload json.RawMessage) OpsResult {
 			return OpsResult{OK: false, Code: "bad_payload", Error: "invalid payload: " + err.Error()}
 		}
 	}
-	items := runtimeQueue.list(req.Limit)
+	items := runtimeQueue.list(c.ActorUserID, req.Limit)
 	if c.Server != nil && c.Server.taskMgr != nil {
+		refreshed := false
 		for _, item := range items {
-			if item.TaskID != "" {
+			// Terminal items can never change again. Refreshing them cost a
+			// task lookup per poll and, before the fingerprint guard landed,
+			// reshuffled the whole list on every phone poll.
+			if item.TaskID != "" && !isRuntimeQueueTerminal(item.State) {
 				_ = runtimeTurnStatus(c, item.ItemID)
+				refreshed = true
 			}
 		}
-		items = runtimeQueue.list(req.Limit)
+		if refreshed {
+			items = runtimeQueue.list(c.ActorUserID, req.Limit)
+		}
 	}
 	return OpsResult{OK: true, Initial: RuntimeTurnListResponse{OK: true, Items: items, Count: len(items)}}
 }
@@ -148,6 +229,7 @@ func executeRuntimeTurn(c OpsContext, req RuntimeTurnRequest) RuntimeTurnRespons
 	}
 
 	item := runtimeQueue.add(&RuntimeTurnQueueItem{
+		OwnerUserID: c.ActorUserID,
 		State:       runtimeQueueStateQueued,
 		Utterance:   req.Utterance,
 		IntentClass: intentClass,
@@ -161,9 +243,9 @@ func executeRuntimeTurn(c OpsContext, req RuntimeTurnRequest) RuntimeTurnRespons
 	if intentClass == "idea-capture" && !runtimeTurnShouldRun(req) {
 		item, _ = runtimeQueue.update(item.ItemID, func(i *RuntimeTurnQueueItem) {
 			i.State = runtimeQueueStateCaptured
-			i.Spoken = "Captured. I'll attach it to the current app."
+			i.Spoken = "Captured. Say run it, or start it from your phone."
 		})
-		return runtimeTurnResponseFromItem(item, "Captured. I'll attach it to the current app.", true)
+		return runtimeTurnResponseFromItem(item, "Captured. Say run it, or start it from your phone.", true)
 	}
 
 	if shouldUseRuntimeSessionTurn(req, intentClass) {
@@ -204,8 +286,17 @@ func executeRuntimeTurn(c OpsContext, req RuntimeTurnRequest) RuntimeTurnRespons
 		return resp
 	}
 
+	return startRuntimeTurnTask(c, req, intentClass, item.ItemID)
+}
+
+// startRuntimeTurnTask creates the backing task for an existing queue item and
+// folds the outcome back into that same item. It is shared by the initial
+// runtime_turn dispatch and by runtime_turn_run promoting a captured idea, so a
+// promoted idea keeps its original turnId instead of forking a second row that
+// the phone would render as a duplicate.
+func startRuntimeTurnTask(c OpsContext, req RuntimeTurnRequest, intentClass, itemID string) RuntimeTurnResponse {
 	if c.Server == nil || c.Server.taskMgr == nil {
-		item, _ = runtimeQueue.update(item.ItemID, func(i *RuntimeTurnQueueItem) {
+		item, _ := runtimeQueue.update(itemID, func(i *RuntimeTurnQueueItem) {
 			i.State = runtimeQueueStateFailed
 			i.Error = "task manager unavailable"
 			i.Spoken = "No runner is available."
@@ -227,14 +318,14 @@ func executeRuntimeTurn(c OpsContext, req RuntimeTurnRequest) RuntimeTurnRespons
 		},
 	)
 	if err != nil {
-		item, _ = runtimeQueue.update(item.ItemID, func(i *RuntimeTurnQueueItem) {
+		item, _ := runtimeQueue.update(itemID, func(i *RuntimeTurnQueueItem) {
 			i.State = runtimeQueueStateFailed
 			i.Error = err.Error()
 			i.Spoken = "I couldn't start that."
 		})
 		return runtimeTurnResponseFromItem(item, "I couldn't start that.", false)
 	}
-	item, _ = runtimeQueue.update(item.ItemID, func(i *RuntimeTurnQueueItem) {
+	item, _ := runtimeQueue.update(itemID, func(i *RuntimeTurnQueueItem) {
 		i.State = runtimeQueueStateRunning
 		i.TaskID = task.ID
 		i.Runner = task.RunnerID
@@ -245,8 +336,90 @@ func executeRuntimeTurn(c OpsContext, req RuntimeTurnRequest) RuntimeTurnRespons
 	return resp
 }
 
+// runtimeTurnRun promotes a previously captured idea into real work. Without
+// this, `captured` was a black hole: the surface said "I'll attach it to the
+// current app" and no code path ever moved the item out of that state again.
+func runtimeTurnRun(c OpsContext, itemID string) RuntimeTurnResponse {
+	item, ok := runtimeQueue.get(c.ActorUserID, itemID)
+	if !ok {
+		return RuntimeTurnResponse{OK: false, State: runtimeQueueStateFailed, Code: "not_found", Error: "runtime turn not found", Spoken: "I lost track of that."}
+	}
+	if item.TaskID != "" {
+		return runtimeTurnResponseFromItem(item, "That's already running.", true)
+	}
+	if isRuntimeQueueTerminal(item.State) {
+		return RuntimeTurnResponse{OK: false, State: item.State, Code: "already_terminal", Error: "runtime turn is already " + item.State, Spoken: "That one's already finished."}
+	}
+	req := RuntimeTurnRequest{
+		Utterance: item.Utterance,
+		Target:    item.Target,
+		Surface:   item.Surface,
+		Development: RuntimeTurnDevelopment{
+			Evidence: item.Evidence,
+			Meta:     item.Meta,
+		},
+	}
+	// A captured idea promoted on purpose is no longer "capture only" — the
+	// user explicitly asked for it to run, so it must take the coding path.
+	intentClass := item.IntentClass
+	if intentClass == "idea-capture" {
+		intentClass = "start-coding"
+	}
+	return startRuntimeTurnTask(c, req, intentClass, item.ItemID)
+}
+
+// runtimeTurnVerify attempts the reload and reports what actually happened.
+//
+// This exists because task-finished was being sold to the user as "ready to
+// test". It is the inventory-vs-operation trap: the task manager's inventory
+// says the work is done, but the operation the user cares about — the app
+// reloading on a device they can touch — may never have been attempted, and a
+// phone that registered a session but is not holding the command stream counts
+// for nothing. BroadcastCommand returns the number of LIVE listeners, so we
+// attempt the reload and report that number rather than assuming delivery.
+func runtimeTurnVerify(c OpsContext, itemID string) RuntimeTurnResponse {
+	item, ok := runtimeQueue.get(c.ActorUserID, itemID)
+	if !ok {
+		return RuntimeTurnResponse{OK: false, State: runtimeQueueStateFailed, Code: "not_found", Error: "runtime turn not found", Spoken: "I lost track of that."}
+	}
+	if c.Server == nil || c.Server.blackboxMgr == nil {
+		return RuntimeTurnResponse{OK: false, State: item.State, Code: "unavailable", Error: "no device command channel on this agent", Spoken: "I can't reach a device from here."}
+	}
+
+	delivered := c.Server.blackboxMgr.BroadcastCommand(BlackBoxCommand{Command: "reload"})
+	tt := &RuntimeTurnTestTarget{
+		Kind:        "yaver-mobile-container",
+		DeviceID:    item.Target.DeviceID,
+		Listeners:   delivered,
+		AttemptedAt: time.Now().UTC(),
+	}
+	spoken := ""
+	if delivered > 0 {
+		tt.State = "delivered"
+		tt.Detail = "reload accepted by a live device command stream"
+		spoken = "Reloaded. Take a look."
+	} else {
+		// The honest answer. Saying "ready to test" here is what sent users
+		// hunting through a phone that was never listening.
+		tt.State = "unreachable"
+		tt.Detail = "no device is holding the command stream; open Yaver on your phone and try again"
+		spoken = "Nothing's listening. Open Yaver on your phone."
+	}
+	item, _ = runtimeQueue.update(item.ItemID, func(i *RuntimeTurnQueueItem) {
+		i.TestTarget = tt
+		i.Spoken = spoken
+	})
+	resp := runtimeTurnResponseFromItem(item, spoken, delivered > 0)
+	resp.TestTarget = tt
+	if delivered == 0 {
+		resp.Code = "no_listener"
+		resp.Haptic = "attention"
+	}
+	return resp
+}
+
 func runtimeTurnStatus(c OpsContext, itemID string) RuntimeTurnResponse {
-	item, ok := runtimeQueue.get(itemID)
+	item, ok := runtimeQueue.get(c.ActorUserID, itemID)
 	if !ok {
 		return RuntimeTurnResponse{OK: false, State: runtimeQueueStateFailed, Code: "not_found", Error: "runtime turn not found", Spoken: "I lost track of that."}
 	}
@@ -287,7 +460,10 @@ func runtimeTurnSpokenFromTask(task *Task) string {
 	}
 	switch task.Status {
 	case TaskStatusFinished:
-		return "Done. You can test it in Yaver mobile."
+		// Deliberately not "you can test it" — nothing has reloaded yet. The
+		// user has to ask for that, and runtime_turn_verify reports whether a
+		// device was actually listening.
+		return "Code's done. Say test it to push it to your phone."
 	case TaskStatusFailed:
 		return "That failed. I sent the details to your phone."
 	case TaskStatusReview:
@@ -327,7 +503,19 @@ func runtimeTurnResponseFromItem(item RuntimeTurnQueueItem, spoken string, ok bo
 		resp.Error = item.Error
 	}
 	if item.State == runtimeQueueStateReadyToTest {
-		resp.TestTarget = &RuntimeTurnTestTarget{Kind: "yaver-mobile-container", State: "pending"}
+		// Report what we actually know. A finished task proves code changed,
+		// never that anything reloaded on a device — so the default is
+		// "unverified" until runtime_turn_verify attempts the real reload and
+		// records a listener count.
+		if item.TestTarget != nil {
+			resp.TestTarget = item.TestTarget
+		} else {
+			resp.TestTarget = &RuntimeTurnTestTarget{
+				Kind:   "yaver-mobile-container",
+				State:  "unverified",
+				Detail: "code work finished; no device reload attempted yet",
+			}
+		}
 		resp.Haptic = "success"
 	}
 	if item.State == runtimeQueueStateNeedsInput {

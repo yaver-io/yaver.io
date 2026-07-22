@@ -1,10 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -75,7 +72,11 @@ type RuntimeTurnRequest struct {
 }
 
 type RuntimeTurnQueueItem struct {
-	ItemID      string                 `json:"itemId"`
+	ItemID string `json:"itemId"`
+	// OwnerUserID scopes the item to the user who spoke it. A shared/multi-user
+	// agent must never list one tenant's utterances to another — see the
+	// postmortem in runtime_queue_store.go.
+	OwnerUserID string                 `json:"ownerUserId,omitempty"`
 	State       string                 `json:"state"`
 	Utterance   string                 `json:"utterance"`
 	IntentClass string                 `json:"intentClass,omitempty"`
@@ -88,15 +89,33 @@ type RuntimeTurnQueueItem struct {
 	Reason      string                 `json:"reason,omitempty"`
 	Spoken      string                 `json:"spoken,omitempty"`
 	Error       string                 `json:"error,omitempty"`
+	TestTarget  *RuntimeTurnTestTarget `json:"testTarget,omitempty"`
 	CreatedAt   time.Time              `json:"createdAt"`
 	UpdatedAt   time.Time              `json:"updatedAt"`
 	Meta        map[string]interface{} `json:"meta,omitempty"`
 }
 
+// RuntimeTurnTestTarget answers "can the user actually test this yet?".
+//
+// State is deliberately NOT derived from task status. A finished task means the
+// code changed; it does NOT mean anything reloaded on a device. The values are:
+//
+//	unverified — code work finished, no reload attempted yet (the honest default)
+//	delivered  — a reload command reached N live listeners (Listeners > 0)
+//	unreachable — reload attempted, ZERO live listeners; nothing is testable
+//	failed     — reload attempted and the runtime reported failure
+//
+// `delivered` is still not proof the app re-rendered — it is proof the command
+// was accepted by a live phone, which is the strongest claim the agent can make
+// from its own side of the wire. Do not upgrade it to "verified" without
+// evidence that came BACK from the device.
 type RuntimeTurnTestTarget struct {
-	Kind     string `json:"kind,omitempty"`
-	State    string `json:"state,omitempty"`
-	DeviceID string `json:"deviceId,omitempty"`
+	Kind        string    `json:"kind,omitempty"`
+	State       string    `json:"state,omitempty"`
+	DeviceID    string    `json:"deviceId,omitempty"`
+	Detail      string    `json:"detail,omitempty"`
+	Listeners   int       `json:"listeners,omitempty"`
+	AttemptedAt time.Time `json:"attemptedAt,omitempty"`
 }
 
 type RuntimeTurnResponse struct {
@@ -124,73 +143,9 @@ type RuntimeTurnListResponse struct {
 	Count int                    `json:"count"`
 }
 
-type runtimeQueueStore struct {
-	mu    sync.RWMutex
-	items map[string]*RuntimeTurnQueueItem
-}
-
-var runtimeQueue = &runtimeQueueStore{items: make(map[string]*RuntimeTurnQueueItem)}
-
-func (s *runtimeQueueStore) add(item *RuntimeTurnQueueItem) RuntimeTurnQueueItem {
-	if item.ItemID == "" {
-		item.ItemID = newRuntimeQueueID()
-	}
-	now := time.Now().UTC()
-	if item.CreatedAt.IsZero() {
-		item.CreatedAt = now
-	}
-	item.UpdatedAt = now
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := *item
-	s.items[item.ItemID] = &cp
-	return cp
-}
-
-func (s *runtimeQueueStore) update(id string, fn func(*RuntimeTurnQueueItem)) (RuntimeTurnQueueItem, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	item, ok := s.items[id]
-	if !ok {
-		return RuntimeTurnQueueItem{}, false
-	}
-	fn(item)
-	item.UpdatedAt = time.Now().UTC()
-	return *item, true
-}
-
-func (s *runtimeQueueStore) get(id string) (RuntimeTurnQueueItem, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	item, ok := s.items[id]
-	if !ok {
-		return RuntimeTurnQueueItem{}, false
-	}
-	return *item, true
-}
-
-func (s *runtimeQueueStore) list(limit int) []RuntimeTurnQueueItem {
-	if limit <= 0 || limit > 100 {
-		limit = 25
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	items := make([]RuntimeTurnQueueItem, 0, len(s.items))
-	for _, item := range s.items {
-		items = append(items, *item)
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].UpdatedAt.After(items[j].UpdatedAt)
-	})
-	if len(items) > limit {
-		items = items[:limit]
-	}
-	return items
-}
-
-func newRuntimeQueueID() string {
-	return fmt.Sprintf("rq_%d", time.Now().UTC().UnixNano())
-}
+// The queue store itself (durable, owner-scoped, evicting) lives in
+// runtime_queue_store.go — read the postmortem block at the top of that file
+// before changing persistence or list ordering.
 
 func classifyRuntimeTurn(req RuntimeTurnRequest) string {
 	if c := strings.ToLower(strings.TrimSpace(req.Development.IntentClass)); c != "" {

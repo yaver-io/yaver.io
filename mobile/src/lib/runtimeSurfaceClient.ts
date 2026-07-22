@@ -161,6 +161,28 @@ export const runtimeSurfaceClient = {
       30000,
     ),
 
+  /** Promote a captured idea into real work, keeping its original turnId. */
+  runtimeTurnRun: (target: OpsTarget, itemId: string) =>
+    callSurfaceOps<RuntimeTurnResponse>(
+      target,
+      "runtime_turn_run",
+      { itemId },
+      120000,
+    ),
+
+  /**
+   * Attempt the device reload and report what actually happened. Resolves with
+   * `testTarget.state === "unreachable"` when nothing was listening — surface
+   * that to the user rather than treating it as a successful test push.
+   */
+  runtimeTurnVerify: (target: OpsTarget, itemId: string) =>
+    callSurfaceOps<RuntimeTurnResponse>(
+      target,
+      "runtime_turn_verify",
+      { itemId },
+      60000,
+    ),
+
   gatewayIntent: (target: OpsTarget, utterance: string) =>
     callSurfaceOps<GatewayIntentResult>(
       target,

@@ -103,9 +103,27 @@ export interface RuntimeTurnQueueItem {
   reason?: string;
   spoken?: string;
   error?: string;
+  testTarget?: RuntimeTurnTestTarget;
   createdAt?: string;
   updatedAt?: string;
   meta?: Record<string, unknown>;
+}
+
+/**
+ * Whether the user can actually test this yet.
+ *
+ * `unverified` is the honest default after a task finishes: code changed, but
+ * nothing has reloaded on a device. `delivered` means a reload reached
+ * `listeners` live command streams. `unreachable` means the reload was
+ * attempted and NOTHING was listening — never render that as success.
+ */
+export interface RuntimeTurnTestTarget {
+  kind?: string;
+  state?: "unverified" | "delivered" | "unreachable" | "failed" | string;
+  deviceId?: string;
+  detail?: string;
+  listeners?: number;
+  attemptedAt?: string;
 }
 
 export type RuntimeTurnState =
@@ -131,7 +149,7 @@ export interface RuntimeTurnResponse {
   glance?: { title?: string; line?: string; [key: string]: string | undefined };
   queue?: RuntimeTurnQueueItem;
   target?: RuntimeTurnTarget;
-  testTarget?: { kind?: string; state?: string; deviceId?: string };
+  testTarget?: RuntimeTurnTestTarget;
   awaitingChoice?: boolean;
   options?: string[];
   panel?: { kind?: string; text?: string; [key: string]: string | undefined };

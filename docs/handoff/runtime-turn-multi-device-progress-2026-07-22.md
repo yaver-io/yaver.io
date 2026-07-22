@@ -10,6 +10,27 @@ Purpose: handoff for continuing the Yaver multi-device development-vibing work.
 The goal is a simple, generic remote-runtime turn contract that watch, car,
 tvOS, mobile, AR/VR, SDK feedback, and dogfooding flows can all use.
 
+> **Update 2026-07-23 — this work has LANDED on `main`.**
+>
+> The state described below as "uncommitted in a worktree" is historical. The
+> 16 feature files were replayed onto latest `main`, verified against the full
+> package (it compiles — that had never actually been checked), and committed.
+> A second commit filled the gaps this doc listed as remaining. What changed
+> since this handoff was written:
+>
+> - The queue is **durable and owner-scoped** (`runtime_queue_store.go`), not
+>   in-memory. Captured ideas survive an agent restart.
+> - `captured` is no longer a black hole — `runtime_turn_run` promotes a
+>   captured idea into real work, keeping its original `turnId`.
+> - `ready_to_test` no longer claims test-readiness. `runtime_turn_verify`
+>   attempts the real reload and reports the **live listener count**;
+>   `testTarget.state` is `unverified` / `delivered` / `unreachable`.
+> - Mobile has a **Runtime Turns screen** (`mobile/app/runtime-turns.tsx`),
+>   reachable from More.
+>
+> Sections below marked as limitations or "do not claim" have been corrected
+> in place. Treat the code as the source of truth regardless.
+
 ## Current State
 
 The first vertical slice is implemented in the `main` worktree, but not
@@ -99,7 +120,12 @@ Modified files:
 - `failed`
 - `cancelled`
 
-The queue is currently in-memory only.
+The queue is durable as of 2026-07-23: it persists to
+`~/.yaver/runtime-queue.json` (0600, atomic replace), is scoped to the acting
+user, caps at 500 items evicting terminal ones first, and downgrades any
+`running` item to `queued` on load — because work cannot still be running after
+the process died. See the postmortem block at the top of
+`desktop/agent/runtime_queue_store.go`.
 
 Important behavior:
 
@@ -112,8 +138,13 @@ Important behavior:
 - Completed task-backed turns map to `ready_to_test`.
 - Deploy is never automatic.
 
-Known limitation: `ready_to_test` currently means the remote task completed. It
-does not yet prove that the mobile container reload actually happened.
+`ready_to_test` means the remote task completed — nothing more. It is NOT a
+claim that the mobile container reloaded. That distinction is now explicit in
+the payload: `testTarget.state` starts at `unverified`, and only
+`runtime_turn_verify` can move it, by actually broadcasting the reload and
+reporting how many live command streams accepted it (`delivered`) or that none
+did (`unreachable`). A registered phone that is not holding the stream counts
+as zero.
 
 ## Mobile Shared Client
 
@@ -529,15 +560,22 @@ Expected:
 
 ## What Not To Claim Yet
 
-Do not claim these are complete:
+Still NOT complete (do not claim these):
 
-- durable queue
 - push notifications
-- real mobile-container reload verification
+- proof the app actually re-rendered — `delivered` means a live device accepted
+  the reload command, which is the strongest claim the agent can make from its
+  own side of the wire. Real confirmation has to come BACK from the device.
 - TestFlight / Google Play internal deploy flow
 - AR/VR-specific UI
 - full SDK evidence ingestion
 - end-to-end dogfood deploy
+
+Complete as of 2026-07-23:
+
+- durable, owner-scoped queue
+- reload delivery verification (attempted, with a live listener count)
+- mobile Runtime Turns screen
 
 The current implementation is the shared contract and first working vertical
 slice.
@@ -708,14 +746,20 @@ Keep these intact:
 
 ## Remaining Work
 
-Priority 1:
+Priority 1 (remaining):
 
-- Add durable queue storage for runtime turns.
 - Add an HTTP wrapper only if a non-ops native client actually needs it.
-- Add a small mobile queue/status screen backed by `runtimeTurns`.
 - Make watch/car subscribe or poll after initial ack so they can announce done.
-- Verify mobile-container reload before marking `ready_to_test` as truly
-  test-ready.
+- Close the last verification gap: `delivered` proves a device ACCEPTED the
+  reload, not that it re-rendered. That needs an ack from the device side.
+
+Priority 1 (done 2026-07-23):
+
+- ~~Add durable queue storage for runtime turns.~~ `runtime_queue_store.go`
+- ~~Add a small mobile queue/status screen backed by `runtimeTurns`.~~
+  `mobile/app/runtime-turns.tsx`
+- ~~Verify mobile-container reload before marking `ready_to_test` as truly
+  test-ready.~~ `runtime_turn_verify` + `testTarget.state`
 
 Priority 2:
 
