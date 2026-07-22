@@ -3827,10 +3827,13 @@ export default function TasksScreen() {
     }
   };
 
-  const handleAdoptTmuxSession = async (sessionName: string) => {
-    setIsAdopting(sessionName);
+  // paneId picks WHICH agent when a session is split across panes; without it
+  // the agent adopts the session's active pane, which on a split window is not
+  // necessarily the one the user tapped.
+  const handleAdoptTmuxSession = async (sessionName: string, paneId?: string) => {
+    setIsAdopting(paneId ? `${sessionName}#${paneId}` : sessionName);
     try {
-      const result = await quicClient.adoptTmuxSession(sessionName);
+      const result = await quicClient.adoptTmuxSession(sessionName, paneId);
       // Refresh both lists
       const [sessions] = await Promise.all([quicClient.listTmuxSessions(), fetchTasks()]);
       setTmuxSessions(sessions);
@@ -6353,6 +6356,35 @@ export default function TasksScreen() {
                             >
                               <Text style={[s.tmuxActionText, { color: "#ef4444" }]}>Detach</Text>
                             </Pressable>
+                          </View>
+                        ) : session.relationship !== "forked-by-yaver" && (session.panes?.length ?? 0) > 1 ? (
+                          // A split window is several agents, so offer one row
+                          // each rather than a single "Adopt Session" that
+                          // silently picks whichever pane is active.
+                          <View style={{ marginTop: 10, gap: 6 }}>
+                            {session.panes!.map((pane) => {
+                              const paneKey = `${session.name}#${pane.paneId}`;
+                              const busy = isAdopting === paneKey;
+                              const tone = pane.status === "awaiting-input" ? "#f59e0b"
+                                : pane.status === "working" ? "#22c55e"
+                                : pane.status === "no-agent" ? "#a1a1aa" : c.textMuted;
+                              return (
+                                <Pressable
+                                  key={pane.paneId}
+                                  style={[s.tmuxActionBtn, { backgroundColor: "#8b5cf618" }, busy && s.submitButtonDisabled]}
+                                  onPress={() => handleAdoptTmuxSession(session.name, pane.paneId)}
+                                  disabled={busy || !!pane.taskId}
+                                >
+                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                    {busy ? <ActivityIndicator size="small" color="#8b5cf6" /> : null}
+                                    <Text style={[s.tmuxActionText, { color: "#8b5cf6" }]} numberOfLines={1}>
+                                      {pane.taskId ? "Adopted" : "Adopt"} {pane.agent || "shell"} · {pane.paneId}
+                                    </Text>
+                                    <Text style={{ color: tone, fontSize: 11 }}>{pane.status}</Text>
+                                  </View>
+                                </Pressable>
+                              );
+                            })}
                           </View>
                         ) : session.relationship !== "forked-by-yaver" ? (
                           <Pressable

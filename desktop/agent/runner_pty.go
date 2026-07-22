@@ -57,6 +57,17 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// No runner named + a session name given ⇒ the caller means "attach to the
+	// tmux session that is already there", not "start a runner". This is the
+	// shape mobile's /shell?session=<name> deep link has always sent; before
+	// runner_pty_attach.go existed it fell through to the guard below and died
+	// with `unsupported runner ""`. Order matters: the check must precede the
+	// runner validation, not follow it.
+	if strings.TrimSpace(q.Get("runner")) == "" && strings.TrimSpace(q.Get("name")) != "" {
+		s.attachTmuxSessionPTY(conn, r)
+		return
+	}
+
 	runnerID := normalizeRunnerID(q.Get("runner"))
 	if runnerID == "" || !IsSupportedRunner(runnerID) {
 		runnerPTYFail(conn, fmt.Sprintf("unsupported runner %q — expected one of: %s",

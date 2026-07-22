@@ -833,7 +833,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "tmux_adopt_session",
-			"description": "Adopt an existing tmux session as a Yaver task. The session continues running and its output is streamed as task output. Useful for bringing pre-existing agent sessions under Yaver management.",
+			"description": "Adopt an existing tmux PANE as a Yaver task. The session continues running and the pane's output is streamed as task output. Useful for bringing pre-existing agent sessions under Yaver management. One session split across several panes is several agents and therefore several tasks — pass `pane` to pick which one; without it the session's currently-active pane is adopted, which on a split window may not be the agent you meant.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"session_name"},
@@ -841,6 +841,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"session_name": map[string]interface{}{
 						"type":        "string",
 						"description": "Name of the tmux session to adopt",
+					},
+					"pane": map[string]interface{}{
+						"type":        "string",
+						"description": "tmux pane id to adopt, e.g. \"%37\" (from tmux_list_sessions). Omit to adopt the session's active pane.",
 					},
 				},
 			},
@@ -894,6 +898,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"device_id": map[string]interface{}{
 						"type":        "string",
 						"description": "Optional: target device whose daemon owns the tmux pane (omit for the local machine)",
+					},
+					"allow_shell": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow sending into a pane with NO coding agent running, where the text is EXECUTED as a shell command rather than read as a prompt. Defaults to false, which refuses such panes — leave it off unless you mean to run a command.",
 					},
 				},
 			},

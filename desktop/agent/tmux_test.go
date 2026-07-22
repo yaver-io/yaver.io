@@ -379,9 +379,12 @@ func TestTmuxSendInput(t *testing.T) {
 		t.Fatalf("AdoptSession: %v", err)
 	}
 
-	err = mgr.SendTmuxInput(task.ID, "echo from-mobile")
+	// allowShell: this fixture is a bare shell pane, so "echo from-mobile" is a
+	// COMMAND, not a prompt. The default path refuses that on purpose — see
+	// SendTmuxInputWithIntent.
+	err = mgr.SendTmuxInputWithIntent(task.ID, "echo from-mobile", true)
 	if err != nil {
-		t.Fatalf("SendTmuxInput: %v", err)
+		t.Fatalf("SendTmuxInputWithIntent: %v", err)
 	}
 
 	// Wait for the command to execute and polling to capture
@@ -434,12 +437,14 @@ func TestTmuxReAdoptOnStartup(t *testing.T) {
 		t.Errorf("expected status=running after re-adopt, got %s", taskAfter.Status)
 	}
 
-	// Verify it's in the adopted map
+	// Verify it's in the adopted map. Adoption is keyed by PANE id, not by
+	// session name: one session split across panes is several agents and
+	// therefore several tasks, and a session key caps it at one.
 	mgr2.mu.RLock()
-	_, adopted := mgr2.adopted["yaver-test-readopt"]
+	_, adopted := mgr2.adopted[adoptionKey(taskAfter.TmuxSession, taskAfter.TmuxPaneID)]
 	mgr2.mu.RUnlock()
 	if !adopted {
-		t.Error("expected session to be in adopted map after re-adopt")
+		t.Error("expected the task's pane to be in the adopted map after re-adopt")
 	}
 }
 
@@ -529,7 +534,7 @@ func TestTmuxHTTPEndpoints(t *testing.T) {
 	}
 
 	// POST /tmux/input
-	status, body = doRequest(t, "POST", baseURL+"/tmux/input", token, fmt.Sprintf(`{"taskId":%q,"input":"echo test-http-input"}`, taskID))
+	status, body = doRequest(t, "POST", baseURL+"/tmux/input", token, fmt.Sprintf(`{"taskId":%q,"input":"echo test-http-input","allowShell":true}`, taskID))
 	if status != 200 {
 		t.Fatalf("POST /tmux/input: expected 200, got %d: %v", status, body)
 	}
@@ -835,7 +840,7 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 
 	// ── Step 4: Send input to adopted session ──
 	status, _ = doRequest(t, "POST", baseURL+"/tmux/input", token,
-		fmt.Sprintf(`{"taskId":%q,"input":"echo mobile-sent-this-12345"}`, taskID1))
+		fmt.Sprintf(`{"taskId":%q,"input":"echo mobile-sent-this-12345","allowShell":true}`, taskID1))
 	if status != 200 {
 		t.Fatalf("input: expected 200, got %d", status)
 	}
@@ -878,7 +883,7 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 
 	// Send input to session2
 	doRequest(t, "POST", baseURL+"/tmux/input", token,
-		fmt.Sprintf(`{"taskId":%q,"input":"echo session2-test-input"}`, taskID2))
+		fmt.Sprintf(`{"taskId":%q,"input":"echo session2-test-input","allowShell":true}`, taskID2))
 	time.Sleep(2 * time.Second)
 
 	// Verify session2 output
@@ -973,7 +978,7 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 
 	// Send input via MCP
 	status, body = doRequest(t, "POST", baseURL+"/mcp", token,
-		fmt.Sprintf(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tmux_send_input","arguments":{"task_id":%q,"input":"echo mcp-input-test"}}}`, taskID2))
+		fmt.Sprintf(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tmux_send_input","arguments":{"task_id":%q,"input":"echo mcp-input-test","allow_shell":true}}}`, taskID2))
 	if status != 200 {
 		t.Fatalf("MCP send_input: expected 200, got %d", status)
 	}

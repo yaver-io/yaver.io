@@ -35,6 +35,13 @@ type TmuxSession struct {
 	PaneID       string `json:"paneId,omitempty"`      // tmux pane_id, e.g. "%17"
 	PanePreview  string `json:"panePreview,omitempty"` // last ~20 lines of pane output
 	TaskID       string `json:"taskId,omitempty"`      // set if adopted as a Yaver task
+
+	// Panes is every pane in the session, each with its own agent and vibing
+	// status. The flat fields above describe the ACTIVE pane only and are kept
+	// for clients that predate this field — on a split window they describe one
+	// arbitrary agent out of several, which is why new callers should read
+	// Panes instead.
+	Panes []VibePane `json:"panes,omitempty"`
 }
 
 type tmuxPaneIdentity struct {
@@ -287,6 +294,17 @@ func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	sessions := make([]TmuxSession, 0, len(lines))
 
+	// One enumeration for the whole machine, then grouped per session — a fork
+	// per session per pane would put an unbounded number of `ps` calls in the
+	// task list's critical path. Failure here degrades to the legacy
+	// active-pane-only view rather than failing the listing.
+	panesBySession := map[string][]VibePane{}
+	if all, perr := ListVibePanes(context.Background()); perr == nil {
+		for _, p := range all {
+			panesBySession[p.SessionName] = append(panesBySession[p.SessionName], p)
+		}
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -296,8 +314,16 @@ func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
 		}
 		s := parseTmuxSessionLine(line)
 
-		// Determine relationship
+		// Determine relationship.
+		//
+		// Adoption is keyed by PANE, so a session counts as adopted when ANY of
+		// its panes is — the session-name lookup alone reported "unrelated" for
+		// every pane-adopted session. The flat TaskID keeps naming one task for
+		// old clients; Panes below says which pane each task actually owns.
 		if taskID, ok := m.adopted[s.Name]; ok {
+			s.Relationship = "adopted"
+			s.TaskID = taskID
+		} else if taskID := m.anyAdoptedPaneTask(panesBySession[s.Name]); taskID != "" {
 			s.Relationship = "adopted"
 			s.TaskID = taskID
 		} else if m.isForkedByYaver(s.Name) {
@@ -317,6 +343,14 @@ func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
 		// Get pane preview (last 20 lines)
 		s.PanePreview = capturePanePreview(s.Name, 20)
 
+		s.Panes = panesBySession[s.Name]
+		// Carry the adopted task id down onto the pane it actually belongs to,
+		// so a client can tell which of three agents in a window is the task it
+		// is looking at.
+		for i := range s.Panes {
+			s.Panes[i].TaskID = paneTaskID(m.taskMgr, s.Panes[i].PaneID)
+		}
+
 		sessions = append(sessions, s)
 	}
 	return sessions, nil
@@ -325,24 +359,57 @@ func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
 // AdoptSession creates a Yaver task for an existing tmux session and starts
 // polling its output. The tmux session continues running as-is.
 func (m *TmuxManager) AdoptSession(sessionName string) (*Task, error) {
+	return m.AdoptTarget(sessionName, "")
+}
+
+// AdoptTarget adopts ONE PANE as a Yaver task. With an empty paneID it adopts
+// the session's active pane, which is what AdoptSession has always done.
+//
+// The pane is the unit because a task must map to one agent. A session split
+// into a claude pane and a codex pane is two tasks, and adopting "the session"
+// would silently pick whichever pane happened to be active — then poll its
+// output and type follow-ups into it, both under a task title naming the other
+// agent.
+//
+// Adoption is keyed on the PANE id for the same reason: keyed on the session,
+// the second pane's adoption would collide with the first and be refused as
+// "already adopted".
+func (m *TmuxManager) AdoptTarget(sessionName, paneID string) (*Task, error) {
 	// Verify the tmux session exists
 	if !tmuxSessionExists(sessionName) {
 		return nil, fmt.Errorf("tmux session %q not found", sessionName)
 	}
 
+	// Resolve the pane BEFORE registering anything: an adoption keyed on a pane
+	// that does not exist is a task that can never be driven.
+	var pane tmuxPaneIdentity
+	if strings.TrimSpace(paneID) == "" {
+		pane = getActivePaneIdentity(sessionName)
+	} else {
+		var ok bool
+		pane, ok = paneIdentityByID(sessionName, paneID)
+		if !ok {
+			return nil, fmt.Errorf("pane %s is not part of tmux session %q (it may have closed since the list was fetched)", paneID, sessionName)
+		}
+	}
+
+	key := adoptionKey(sessionName, pane.PaneID)
+
 	m.mu.Lock()
-	if _, already := m.adopted[sessionName]; already {
+	if existing, already := m.adopted[key]; already {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("tmux session %q is already adopted", sessionName)
+		// Report the task id rather than a bare refusal: from the user's side
+		// re-adopting is "open it", and a duplicate error reads as a failure.
+		return nil, fmt.Errorf("already adopted as task %s", existing)
 	}
 	m.mu.Unlock()
 
-	// Detect what's running in the session
-	pane := getActivePaneIdentity(sessionName)
 	pid := pane.PanePID
 	agentType := ""
 	if pid > 0 {
-		agentType = detectAgentType(pid)
+		ctx, cancel := context.WithTimeout(context.Background(), vibeDefaultDeadline)
+		agentType, _ = detectPaneAgent(ctx, pid)
+		cancel()
 	}
 
 	runnerID := agentType
@@ -350,13 +417,20 @@ func (m *TmuxManager) AdoptSession(sessionName string) (*Task, error) {
 		runnerID = "unknown"
 	}
 
+	title := fmt.Sprintf("tmux: %s", sessionName)
+	if agentType != "" {
+		// Name the agent, not the session: with three panes in one session the
+		// session name is the one thing that does NOT distinguish the tasks.
+		title = fmt.Sprintf("%s · %s", agentType, sessionName)
+	}
+
 	// Create a task in the task manager
 	id := uuid.New().String()[:8]
 	now := time.Now()
 	task := &Task{
 		ID:              id,
-		Title:           fmt.Sprintf("tmux: %s", sessionName),
-		Description:     fmt.Sprintf("Adopted tmux session %q", sessionName),
+		Title:           title,
+		Description:     fmt.Sprintf("Adopted tmux session %q pane %s", sessionName, pane.PaneID),
 		Status:          TaskStatusRunning,
 		Source:          "tmux-adopted",
 		RunnerID:        runnerID,
@@ -379,18 +453,18 @@ func (m *TmuxManager) AdoptSession(sessionName string) (*Task, error) {
 	m.taskMgr.mu.Unlock()
 
 	// Register adoption and start polling
-	m.mu.Lock()
-	m.adopted[sessionName] = id
-	m.mu.Unlock()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
-	m.pollStop[sessionName] = cancel
+	m.adopted[key] = id
+	m.pollStop[key] = cancel
 	m.mu.Unlock()
 
-	go m.pollTmuxOutput(ctx, id, sessionName)
+	// Poll the PANE, not the session: capture-pane -t <session> reads whichever
+	// pane is active, so a session-targeted poll on a split window streams a
+	// neighbouring agent's screen into this task's output.
+	go m.pollTmuxOutput(ctx, id, key, adoptionPollTarget(key, sessionName))
 
-	log.Printf("[tmux] Adopted session %q as task %s (agent=%s, pid=%d)", sessionName, id, runnerID, pid)
+	log.Printf("[tmux] Adopted %s (session %q) as task %s (agent=%s, pid=%d)", key, sessionName, id, runnerID, pid)
 	return task, nil
 }
 
@@ -452,9 +526,9 @@ var tmuxSubmitDelay = 250 * time.Millisecond
 
 // sendTmuxKey types input literally with NO Enter. Used for menu answers,
 // where the keypress itself is the confirmation.
-func sendTmuxKey(sessionName, input string) error {
+func sendTmuxKey(target, input string) error {
 	key := strings.TrimSpace(input)
-	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", sessionName, "-l", "--", key).CombinedOutput(); err != nil {
+	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "-l", "--", key).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys (choice): %w: %s", err, string(out))
 	}
 	return nil
@@ -465,12 +539,12 @@ func sendTmuxKey(sessionName, input string) error {
 // `-l` matters: without it tmux parses the argument as key names, so a prompt
 // containing words like "Enter", "Space" or "C-c" would be delivered as those
 // keystrokes instead of as text. `--` guards inputs that begin with a dash.
-func sendTmuxLine(sessionName, input string) error {
-	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", sessionName, "-l", "--", input).CombinedOutput(); err != nil {
+func sendTmuxLine(target, input string) error {
+	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "-l", "--", input).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys (text): %w: %s", err, string(out))
 	}
 	time.Sleep(tmuxSubmitDelay)
-	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", sessionName, "Enter").CombinedOutput(); err != nil {
+	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys (submit): %w: %s", err, string(out))
 	}
 	return nil
@@ -493,12 +567,12 @@ var tmuxMenuOptionPattern = regexp.MustCompile(`^\s*[›❯>*]?\s*(\d{1,2})[.)]\
 // two or more numbered options — and returns them. Two is the threshold on
 // purpose: a single "1." can appear in ordinary agent output (a numbered list
 // in a reply), while a real menu always offers an alternative.
-func tmuxPaneAwaitingChoice(sessionName string) (bool, []string) {
-	out, err := exec.Command(tmuxCmdName(), "capture-pane", "-p", "-t", sessionName).Output()
+func tmuxPaneAwaitingChoice(target string) (bool, []string) {
+	out, err := exec.Command(tmuxCmdName(), "capture-pane", "-p", "-t", target).Output()
 	if err != nil {
 		return false, nil // cannot see the pane; do not block the caller
 	}
-	lines := strings.Split(string(out), "\n")
+	lines := trimTrailingBlankLines(strings.Split(string(out), "\n"))
 	if len(lines) > tmuxChoiceScanLines {
 		lines = lines[len(lines)-tmuxChoiceScanLines:]
 	}
@@ -519,7 +593,28 @@ func tmuxPaneAwaitingChoice(sessionName string) (bool, []string) {
 const tmuxChoiceScanLines = 12
 
 // SendTmuxInput sends keyboard input to an adopted tmux session via send-keys.
+//
+// It targets the task's PANE when one is recorded, falling back to the session
+// name only for tasks adopted before pane targeting existed. That distinction
+// is a safety property, not a nicety: `send-keys -t <session>` resolves to
+// whichever pane is ACTIVE, so on a split window a follow-up meant for the
+// codex task lands in the claude one while the caller is told "sent". The menu
+// guard below inherits the same target for the same reason — guarding the
+// active pane while typing into another is worse than not guarding at all.
 func (m *TmuxManager) SendTmuxInput(taskID, input string) error {
+	return m.SendTmuxInputWithIntent(taskID, input, false)
+}
+
+// SendTmuxInputWithIntent is SendTmuxInput with the caller's intent made
+// explicit.
+//
+// allowShell=false (the default, and what every prompt-shaped caller wants)
+// refuses a pane with no agent in it, because the text would be EXECUTED
+// rather than read. allowShell=true is the deliberate "run this command in my
+// adopted shell session" path — a real, shipped capability that predates agent
+// panes and must keep working; it simply has to be asked for, so that dictated
+// text can never fall into it by default.
+func (m *TmuxManager) SendTmuxInputWithIntent(taskID, input string, allowShell bool) error {
 	m.mu.RLock()
 	var sessionName string
 	for name, tid := range m.adopted {
@@ -538,27 +633,40 @@ func (m *TmuxManager) SendTmuxInput(taskID, input string) error {
 		return fmt.Errorf("tmux session %q no longer exists", sessionName)
 	}
 
-	// Refuse to type into a pane that is waiting on a menu choice. The Enter we
-	// append would pick whatever option happens to be highlighted: a prompt sent
-	// while codex showed "› 1. Update now" selected it, codex ran
-	// `npm install -g @openai/codex`, exited, and took the tmux session with it.
-	// A screenless surface (watch, car) cannot see that dialog, so the agent has
-	// to refuse on its behalf. A bare number is how a caller answers the menu.
+	target := m.taskTmuxTarget(taskID, sessionName)
+
 	if isTmuxChoiceAnswer(input) {
 		// A menu digit selects AND confirms on its own. Appending Enter here is
 		// actively dangerous: answering claude's "1. Yes, I trust this folder"
 		// pops a second modal whose option 1 is "No, exit", and the trailing
 		// Enter confirms it — claude quits and the session dies. Send the key,
 		// nothing more, and let the caller read the pane again.
-		if err := sendTmuxKey(sessionName, input); err != nil {
+		if err := sendTmuxKey(target, input); err != nil {
 			return err
 		}
 	} else {
-		if awaiting, options := tmuxPaneAwaitingChoice(sessionName); awaiting {
-			return fmt.Errorf("session %q is waiting on a choice, not a prompt — send just the option number (it confirms immediately; re-read the pane afterwards, menus can chain). Options: %s",
-				sessionName, strings.Join(options, " | "))
+		// A pane whose agent has exited is a plain SHELL, and text typed into a
+		// shell is a COMMAND, submitted by the Enter we append below. Verified
+		// on a live box: a turn aimed at a runner-less session ran the prompt
+		// and came back `zsh: command not found`. Sessions routinely outlive
+		// their runner, so this is the normal end state, not a corner case —
+		// same lesson as RunnerPTYSession.Confirmed (runner_pty.go:367).
+		// Digits are exempt above: answering a menu is safe by construction.
+		if ok, reason := tmuxTargetAcceptsPrompt(target); !ok && !allowShell {
+			return fmt.Errorf("refusing to type into %s: %s. If you meant to run it as a shell command, resend with allowShell", target, reason)
 		}
-		if err := sendTmuxLine(sessionName, input); err != nil {
+
+		// Refuse to type into a pane that is waiting on a menu choice. The Enter
+		// we append would pick whatever option happens to be highlighted: a
+		// prompt sent while codex showed "› 1. Update now" selected it, codex ran
+		// `npm install -g @openai/codex`, exited, and took the tmux session with
+		// it. A screenless surface (watch, car) cannot see that dialog, so the
+		// agent has to refuse on its behalf. A bare number answers the menu.
+		if awaiting, options := tmuxPaneAwaitingChoice(target); awaiting {
+			return fmt.Errorf("%s is waiting on a choice, not a prompt — send just the option number (it confirms immediately; re-read the pane afterwards, menus can chain). Options: %s",
+				target, strings.Join(options, " | "))
+		}
+		if err := sendTmuxLine(target, input); err != nil {
 			return err
 		}
 	}
@@ -582,7 +690,12 @@ func (m *TmuxManager) SendTmuxInput(taskID, input string) error {
 // pollTmuxOutput continuously captures the tmux pane and emits new content
 // through the task's output channel. Runs until context is cancelled or the
 // tmux session disappears.
-func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, sessionName string) {
+// The target is a PANE id whenever the task was adopted at pane granularity;
+// only pre-pane tasks fall back to a session name. Liveness is therefore
+// checked on the target, not on the session: a pane can close while its session
+// keeps running, and a session-scoped check would leave that task "running"
+// forever against a pane nobody can reach.
+func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, key, target string) {
 	var prevCapture string
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -592,9 +705,9 @@ func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, sessionName st
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Check if tmux session still exists
-			if !tmuxSessionExists(sessionName) {
-				log.Printf("[tmux] Session %q disappeared — marking task %s as finished", sessionName, taskID)
+			// Check whether the pane (or legacy session) still exists
+			if !tmuxTargetExists(target) {
+				log.Printf("[tmux] Target %q disappeared — marking task %s as finished", target, taskID)
 				m.taskMgr.mu.Lock()
 				if task, ok := m.taskMgr.tasks[taskID]; ok {
 					task.Status = TaskStatusFinished
@@ -613,14 +726,14 @@ func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, sessionName st
 
 				// Clean up adoption state
 				m.mu.Lock()
-				delete(m.adopted, sessionName)
-				delete(m.pollStop, sessionName)
+				delete(m.adopted, key)
+				delete(m.pollStop, key)
 				m.mu.Unlock()
 				return
 			}
 
 			// Capture current pane content (last 200 lines for reasonable diff window)
-			capture := capturePaneContent(sessionName, 200)
+			capture := capturePaneContent(target, 200)
 			if capture == "" || capture == prevCapture {
 				continue
 			}
@@ -679,7 +792,22 @@ func (m *TmuxManager) ReAdoptOnStartup() {
 		}
 
 		if tmuxSessionExists(task.TmuxSession) {
-			pane := getActivePaneIdentity(task.TmuxSession)
+			// Re-resolve the task's OWN pane. Re-reading the active pane here
+			// would silently re-point the task at whatever the user happened to
+			// be looking at when the agent restarted — on a split window that
+			// is a different agent, and the task would then poll and type into
+			// it under the old title.
+			pane, ok := paneIdentityByID(task.TmuxSession, task.TmuxPaneID)
+			if !ok {
+				// The recorded pane is gone. Its session lives, but this task's
+				// seat does not, so do not adopt a neighbour in its place.
+				task.Status = TaskStatusStopped
+				now := time.Now()
+				task.FinishedAt = &now
+				log.Printf("[tmux] Pane %s of session %q is gone — marking task %s as stopped",
+					task.TmuxPaneID, task.TmuxSession, task.ID)
+				continue
+			}
 			task.TmuxSessionID = pane.SessionID
 			task.TmuxWindowIndex = pane.WindowIndex
 			task.TmuxWindowName = pane.WindowName
@@ -689,14 +817,15 @@ func (m *TmuxManager) ReAdoptOnStartup() {
 			task.outputCh = make(chan string, 512)
 			task.doneCh = make(chan struct{})
 
+			key := adoptionKey(task.TmuxSession, task.TmuxPaneID)
 			m.mu.Lock()
-			m.adopted[task.TmuxSession] = task.ID
+			m.adopted[key] = task.ID
 			ctx, cancel := context.WithCancel(context.Background())
-			m.pollStop[task.TmuxSession] = cancel
+			m.pollStop[key] = cancel
 			m.mu.Unlock()
 
-			go m.pollTmuxOutput(ctx, task.ID, task.TmuxSession)
-			log.Printf("[tmux] Re-adopted session %q for task %s on startup", task.TmuxSession, task.ID)
+			go m.pollTmuxOutput(ctx, task.ID, key, adoptionPollTarget(key, task.TmuxSession))
+			log.Printf("[tmux] Re-adopted pane %s of session %q for task %s on startup", task.TmuxPaneID, task.TmuxSession, task.ID)
 		} else {
 			// Session gone — mark task as stopped
 			task.Status = TaskStatusStopped

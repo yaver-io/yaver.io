@@ -7552,12 +7552,33 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				sb.WriteString(" (attached)")
 			}
 			sb.WriteString("\n")
+			// Per-pane detail: on a split window the session line above
+			// describes only the ACTIVE pane, so a caller reading just that
+			// sees one of several agents and cannot tell which.
+			for _, p := range s.Panes {
+				pa := p.Agent
+				if pa == "" {
+					pa = "shell"
+				}
+				sb.WriteString(fmt.Sprintf("    %s %s [%s]", p.PaneID, pa, p.Status))
+				if !p.AgentConfirmed {
+					sb.WriteString(" (unconfirmed)")
+				}
+				if p.TaskID != "" {
+					sb.WriteString(fmt.Sprintf(" task=%s", p.TaskID))
+				}
+				if p.StatusReason != "" {
+					sb.WriteString(" — " + p.StatusReason)
+				}
+				sb.WriteString("\n")
+			}
 		}
 		return mcpToolResult(sb.String())
 
 	case "tmux_adopt_session":
 		var args struct {
 			SessionName string `json:"session_name"`
+			Pane        string `json:"pane"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionName == "" {
@@ -7567,12 +7588,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if tmuxMgr == nil {
 			return mcpToolError("tmux is not available on this machine")
 		}
-		task, err := tmuxMgr.AdoptSession(args.SessionName)
+		task, err := tmuxMgr.AdoptTarget(args.SessionName, args.Pane)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("adopt failed: %v", err))
 		}
-		log.Printf("[MCP] Adopted tmux session %q as task %s", args.SessionName, task.ID)
-		return mcpToolResult(fmt.Sprintf("Adopted tmux session %q as task %s.\nStatus: %s\nRunner: %s", args.SessionName, task.ID, task.Status, task.RunnerID))
+		log.Printf("[MCP] Adopted tmux session %q pane %q as task %s", args.SessionName, task.TmuxPaneID, task.ID)
+		return mcpToolResult(fmt.Sprintf("Adopted tmux session %q pane %s as task %s.\nStatus: %s\nRunner: %s", args.SessionName, task.TmuxPaneID, task.ID, task.Status, task.RunnerID))
 
 	case "tmux_detach_session":
 		var args struct {
@@ -7620,6 +7641,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			TaskID   string `json:"task_id"`
 			Input    string `json:"input"`
 			DeviceID string `json:"device_id"`
+			// AllowShell opts in to a pane with no agent, where the text is
+			// EXECUTED rather than read as a prompt.
+			AllowShell bool `json:"allow_shell"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.TaskID == "" {
@@ -7628,7 +7652,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		// Remote: type into a tmux pane (e.g. a live Claude Code session) on
 		// another device. Empty/own deviceId → errProxyLocal → local below.
 		if dev := strings.TrimSpace(args.DeviceID); dev != "" {
-			body := map[string]any{"taskId": args.TaskID, "input": args.Input}
+			body := map[string]any{"taskId": args.TaskID, "input": args.Input, "allowShell": args.AllowShell}
 			status, raw, err := proxyToDevice(context.Background(), "tmux_send_input", dev, http.MethodPost, "/tmux/input", mustJSONBytes(body))
 			if err == nil {
 				if status >= 300 {
@@ -7645,7 +7669,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if tmuxMgr == nil {
 			return mcpToolError("tmux is not available on this machine")
 		}
-		if err := tmuxMgr.SendTmuxInput(args.TaskID, args.Input); err != nil {
+		if err := tmuxMgr.SendTmuxInputWithIntent(args.TaskID, args.Input, args.AllowShell); err != nil {
 			return mcpToolError(fmt.Sprintf("send input failed: %v", err))
 		}
 		return mcpToolResult("Input sent to tmux session.")
@@ -18644,12 +18668,16 @@ func (s *HTTPServer) handleTmuxAdopt(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Session string `json:"session"`
+		// Pane adopts ONE pane ("%37") as its own task. Omitted, the session's
+		// active pane is adopted — which is all this endpoint could ever do
+		// before, and is wrong on a split window carrying several agents.
+		Pane string `json:"pane"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Session == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session name"})
 		return
 	}
-	task, err := tmuxMgr.AdoptSession(body.Session)
+	task, err := tmuxMgr.AdoptTarget(body.Session, body.Pane)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -18657,6 +18685,7 @@ func (s *HTTPServer) handleTmuxAdopt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"taskId":  task.ID,
 		"session": body.Session,
+		"pane":    task.TmuxPaneID,
 	})
 }
 
@@ -18699,12 +18728,16 @@ func (s *HTTPServer) handleTmuxInput(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		TaskID string `json:"taskId"`
 		Input  string `json:"input"`
+		// AllowShell opts in to typing into a pane with no agent, where the text
+		// is EXECUTED as a command rather than read as a prompt. Off by default
+		// so a dictated follow-up can never land there by accident.
+		AllowShell bool `json:"allowShell"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TaskID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing taskId or input"})
 		return
 	}
-	if err := tmuxMgr.SendTmuxInput(body.TaskID, body.Input); err != nil {
+	if err := tmuxMgr.SendTmuxInputWithIntent(body.TaskID, body.Input, body.AllowShell); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

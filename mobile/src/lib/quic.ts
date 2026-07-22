@@ -868,6 +868,45 @@ export interface RemoteRuntimeSession {
   };
 }
 
+/** What a single agent pane is doing. Mirrors VibeStatus* in the Go agent. */
+export type VibeStatus =
+  | "working"
+  | "awaiting-input"
+  | "idle"
+  | "no-agent"
+  | "dead"
+  | "unknown";
+
+/** One agent seat: a single tmux pane.
+ *
+ *  A tmux session split across panes is SEVERAL agents, so a session's flat
+ *  agentType/paneId describe only its active pane. Read `panes` instead — each
+ *  entry is its own task. */
+export interface VibePane {
+  paneId: string;
+  sessionName: string;
+  sessionId?: string;
+  windowIndex?: string;
+  windowName?: string;
+  paneIndex?: string;
+  active: boolean;
+  agent?: string;
+  /** True only when a real agent process was OBSERVED. False means typing here
+   *  would run a shell command, not send a prompt. */
+  agentConfirmed: boolean;
+  pid?: number;
+  status: VibeStatus;
+  statusReason?: string;
+  /** Menu options, when status is "awaiting-input". Answer with a bare digit. */
+  options?: string[];
+  title?: string;
+  idleMs?: number;
+  /** Absolute path — P2P only. Never send this to Convex. */
+  currentPath?: string;
+  preview?: string;
+  taskId?: string;
+}
+
 export interface TmuxSession {
   name: string;
   id?: string;
@@ -883,6 +922,8 @@ export interface TmuxSession {
   paneId?: string;
   panePreview?: string;
   taskId?: string;
+  /** Every pane in the session, each with its own agent and status. */
+  panes?: VibePane[];
 }
 
 export interface ModelInfo {
@@ -4291,13 +4332,20 @@ export class QuicClient {
     }
   }
 
-  /** Adopt a tmux session as a Yaver task. Returns the created task. */
-  async adoptTmuxSession(sessionName: string): Promise<{ taskId: string; session: string }> {
+  /** Adopt a tmux PANE as a Yaver task. Returns the created task.
+   *
+   *  Pass `paneId` to pick which agent: one session split across panes is
+   *  several agents, and without it the session's currently-active pane is
+   *  adopted — which on a split window may not be the one the user tapped. */
+  async adoptTmuxSession(
+    sessionName: string,
+    paneId?: string,
+  ): Promise<{ taskId: string; session: string; pane?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tmux/adopt`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ session: sessionName }),
+      body: JSON.stringify({ session: sessionName, pane: paneId }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -4320,13 +4368,18 @@ export class QuicClient {
     }
   }
 
-  /** Send keyboard input to an adopted tmux session. */
-  async sendTmuxInput(taskId: string, input: string): Promise<void> {
+  /** Send keyboard input to an adopted tmux pane.
+   *
+   *  `allowShell` opts in to a pane with NO agent running, where the text is
+   *  EXECUTED as a shell command rather than read as a prompt. Leave it off for
+   *  anything the user typed or dictated as a prompt — the agent refuses those
+   *  panes by default, and the error explains why. */
+  async sendTmuxInput(taskId: string, input: string, allowShell = false): Promise<void> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tmux/input`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ taskId, input }),
+      body: JSON.stringify({ taskId, input, allowShell }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));

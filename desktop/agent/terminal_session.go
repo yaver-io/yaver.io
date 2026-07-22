@@ -25,6 +25,11 @@ type terminalSession struct {
 	ptmx    *os.File
 	srv     *HTTPServer
 	onTouch func(force bool)
+	// onClose runs once, after the PTY and process are torn down, for cleanup
+	// that lives OUTSIDE the process tree — killing the PTY cannot reach it.
+	// The tmux-attach path (runner_pty_attach.go) uses it to reap the grouped
+	// mirror session, which belongs to the tmux server, not to this pty.
+	onClose func()
 
 	mu             sync.Mutex
 	conn           *websocket.Conn
@@ -212,6 +217,7 @@ func (ts *terminalSession) close(remove bool) {
 	if ts.cmd != nil { // helper-brokered sessions have no local cmd
 		process = ts.cmd.Process
 	}
+	onClose := ts.onClose
 	ts.mu.Unlock()
 
 	if conn != nil {
@@ -227,6 +233,9 @@ func (ts *terminalSession) close(remove bool) {
 	}
 	if remove && ts.srv != nil {
 		ts.srv.terminalSessions.Delete(ts.id)
+	}
+	if onClose != nil {
+		onClose()
 	}
 }
 
