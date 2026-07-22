@@ -235,6 +235,10 @@ func init() {
 	registerDevServer(&FlutterDevServer{})
 	registerDevServer(&ViteDevServer{})
 	registerDevServer(&NextDevServer{})
+	// Tokamak/SwiftWasm. Registered LAST because its Detect() is the most
+	// expensive (it samples Swift sources) and the cheapest detectors should
+	// short-circuit first — a JS project must not pay for a Swift scan.
+	registerDevServer(&SwiftWasmDevServer{})
 }
 
 // ─── DevServerManager ──────────────────────────────────────────────────
@@ -296,14 +300,14 @@ type DevServerManager struct {
 // web-js-bundle or web-hermes-wasm). The /dev/web-bundle handler reads
 // it to pick the right on-disk dir to serve.
 type WebBundleInfo struct {
-	Target    string `json:"target"`             // "web-js-bundle" | "web-hermes-wasm"
-	BuildDir  string `json:"buildDir"`           // absolute path on host
-	WorkDir   string `json:"workDir,omitempty"`  // source repo root — used by serve-time freshness check + auto-rebuild
-	IndexFile string `json:"indexFile"`          // typically "index.html"
-	Size      int64  `json:"size"`               // total bundle bytes
-	FileCount int    `json:"fileCount"`          // file count for js-bundle target
-	BuiltAt   string `json:"builtAt"`            // RFC3339 build completion timestamp
-	Caller    string `json:"caller"`             // X-Yaver-Caller of the build trigger
+	Target    string `json:"target"`            // "web-js-bundle" | "web-hermes-wasm"
+	BuildDir  string `json:"buildDir"`          // absolute path on host
+	WorkDir   string `json:"workDir,omitempty"` // source repo root — used by serve-time freshness check + auto-rebuild
+	IndexFile string `json:"indexFile"`         // typically "index.html"
+	Size      int64  `json:"size"`              // total bundle bytes
+	FileCount int    `json:"fileCount"`         // file count for js-bundle target
+	BuiltAt   string `json:"builtAt"`           // RFC3339 build completion timestamp
+	Caller    string `json:"caller"`            // X-Yaver-Caller of the build trigger
 }
 
 // NativeBundleInfo describes one compiled Hermes/native build artifact set.

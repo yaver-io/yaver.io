@@ -53,7 +53,15 @@ type SwiftDetection struct {
 // Marker files/imports, in the order they are checked. ORDER IS LOAD-BEARING —
 // see DetectSwiftProject.
 var (
-	tokamakMarkers = []string{"TokamakDOM", "TokamakShim", "TokamakCore", "swiftwasm", "carton"}
+	// Includes the bare package name and the org, because a real Package.swift
+	// dependency reads
+	//   .package(url: "https://github.com/TokamakUI/Tokamak", from: "0.11.0")
+	// and only the .product(...) line mentions TokamakShim/TokamakDOM. Matching
+	// only the module names missed actual Tokamak projects — caught by test.
+	tokamakMarkers = []string{
+		"TokamakUI", "TokamakDOM", "TokamakShim", "TokamakCore", "Tokamak",
+		"swiftwasm", "SwiftWasm", "carton",
+	}
 	serverMarkers  = []string{"vapor", "hummingbird", "swift-nio", "Vapor", "Hummingbird"}
 	appleUIImports = []string{"import UIKit", "import SwiftUI", "import AppKit"}
 )

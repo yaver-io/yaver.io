@@ -136,3 +136,36 @@ func TestResolveForDirBeatsLabelOnlyForSwift(t *testing.T) {
 		t.Fatalf("non-swift routing changed: %+v", p)
 	}
 }
+
+func TestSwiftWasmDevServerDetection(t *testing.T) {
+	srv := &SwiftWasmDevServer{}
+	// A Tokamak package is detected.
+	tok := writeSwiftProject(t, map[string]string{
+		"Package.swift": `.package(url: "https://github.com/TokamakUI/Tokamak", from: "0.11.0")`,
+	})
+	if !srv.Detect(tok) {
+		t.Fatal("tokamak package should be detected")
+	}
+	// A BARE Package.swift must NOT be — starting carton on an ordinary Swift
+	// library fails confusingly after a long toolchain spin-up.
+	plain := writeSwiftProject(t, map[string]string{
+		"Package.swift": "// just a library",
+	})
+	if srv.Detect(plain) {
+		t.Fatal("a plain Swift package must not be treated as SwiftWasm")
+	}
+	// Not a Swift project at all.
+	if srv.Detect(t.TempDir()) {
+		t.Fatal("empty dir must not detect")
+	}
+	// It is a WEB surface — it streams via chrome-webrtc, not the Hermes tab.
+	if srv.Kind() != DevServerKindWeb {
+		t.Fatalf("swiftwasm must class as web, got %q", srv.Kind())
+	}
+	// HMR must be reported FALSE: a Swift edit is a full WASM rebuild plus a
+	// page reload. Claiming otherwise would make the caller preserve state it
+	// is about to lose.
+	if srv.SupportsHotReload() {
+		t.Fatal("swiftwasm has no HMR and must not claim it")
+	}
+}
