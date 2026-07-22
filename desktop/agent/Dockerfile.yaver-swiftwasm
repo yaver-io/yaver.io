@@ -27,7 +27,19 @@
 #   docker build -f Dockerfile.yaver-swiftwasm \
 #     -t ghcr.io/yaver-io/yaver-swiftwasm:latest .
 
-FROM swift:5.10-jammy
+# swift:6.2-jammy, not 5.10. Two reasons, both learned the hard way:
+#
+#  1. Tokamak's dependency tree (JavaScriptKit, OpenCombine) resolves to versions
+#     requiring Swift 6.x. Pinning 5.10 would fail at dependency resolution.
+#  2. The OPEN-SOURCE toolchain in this image ships a clang WITH the WebAssembly
+#     backend. Apple's Xcode clang does NOT — a build on macOS dies with
+#     "No available targets are compatible with triple wasm32-unknown-wasip1"
+#     when compiling the C targets (_CJavaScriptKit, _CJavaScriptEventLoop).
+#     Verified locally on Swift 6.2.3 / Xcode 2026-07-22.
+#
+#     That is precisely why SwiftWasm belongs on the Linux workspace: Linux gets
+#     it out of the box, macOS needs a separate swift.org toolchain beside Xcode.
+FROM swift:6.2-jammy
 
 LABEL org.opencontainers.image.title="yaver-swiftwasm"
 LABEL org.opencontainers.image.description="Yaver workspace with Swift + SwiftWasm + carton for Tokamak previews"
@@ -56,7 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # PINNED, never "latest". SwiftWasm tracks upstream Swift with a lag, and an
 # unpinned toolchain means a workspace that built yesterday fails today for
 # reasons no one changed. Upgrading is a deliberate act.
-ARG SWIFTWASM_VERSION=5.10
+ARG SWIFTWASM_VERSION=6.2
 ARG CARTON_VERSION=1.1.3
 
 RUN set -eux; \
@@ -68,9 +80,22 @@ RUN set -eux; \
     esac; \
     echo "SwiftWasm target arch: ${wasm_arch}"
 
-# carton is the SwiftWasm dev server the agent invokes (`carton dev`).
-# Installed via SwiftPM so it is built against the toolchain already in this
-# image rather than a mismatched prebuilt binary.
+# The Swift SDK for WebAssembly. Swift 6.x installs this natively — a 108 MB
+# artifact bundle rather than building a toolchain fork from source, which on a
+# 2-core box would be tens of minutes of image build.
+#
+# The checksum is REQUIRED by `swift sdk install` for remote URLs and is fetched
+# from the publisher's own .sha256 next to the artifact. Verified working
+# locally 2026-07-22.
+RUN set -eux; \
+    url="https://github.com/swiftwasm/swift/releases/download/swift-wasm-${SWIFTWASM_VERSION}-RELEASE/swift-wasm-${SWIFTWASM_VERSION}-RELEASE-wasm32-unknown-wasip1.artifactbundle.zip"; \
+    sum="$(curl -sL "${url}.sha256" | tr -d '[:space:]')"; \
+    test -n "$sum" || { echo "could not fetch SwiftWasm SDK checksum" >&2; exit 1; }; \
+    swift sdk install "$url" --checksum "$sum"; \
+    swift sdk list
+
+# carton is the dev server the agent invokes (`carton dev`). Built from source
+# against the toolchain already in this image rather than a mismatched prebuilt.
 RUN set -eux; \
     git clone --depth 1 --branch "${CARTON_VERSION}" https://github.com/swiftwasm/carton /tmp/carton || \
       git clone --depth 1 https://github.com/swiftwasm/carton /tmp/carton; \

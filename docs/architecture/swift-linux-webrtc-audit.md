@@ -136,6 +136,42 @@ Worth knowing before promising a general Swift loop.
 
 ---
 
+## 5.5 MEASURED: why this must be Linux, not macOS
+
+Attempted locally on Swift 6.2.3 / Xcode, 2026-07-22:
+
+```
+swift sdk install …swift-wasm-6.2-RELEASE…      ✅ installs (108 MB, checksum-verified)
+swift build --swift-sdk …wasm32-unknown-wasip1  ❌ error: unable to create target:
+                                                   'No available targets are compatible
+                                                    with triple "wasm32-unknown-wasip1"'
+```
+
+**Apple's Xcode clang is built without the WebAssembly backend.** The SwiftWasm
+SDK supplies the Swift stdlib for wasm, but Tokamak's tree contains C targets
+(`_CJavaScriptKit`, `_CJavaScriptEventLoop`) that need a clang able to emit
+wasm — and Apple's cannot.
+
+This **validates** the Linux decision rather than undermining it: the
+open-source toolchain in `swift:*-jammy` ships the wasm backend out of the box.
+macOS would need a separate swift.org toolchain installed alongside Xcode.
+
+Two consequences applied to `Dockerfile.yaver-swiftwasm`:
+
+1. **Base bumped 5.10 → 6.2.** Tokamak's dependency tree (JavaScriptKit,
+   OpenCombine) resolves to versions requiring Swift 6.x; 5.10 would have failed
+   at dependency resolution.
+2. **Use the native `swift sdk install`** (108 MB, checksummed) instead of
+   building a toolchain fork from source — on a 2-core box that is tens of
+   minutes of image build avoided. Note `swift sdk install` REQUIRES
+   `--checksum` for remote URLs; it is published alongside the artifact.
+
+The cheap local attempt cost nothing and moved two Dockerfile bugs from
+"discovered during a 40-minute image build on a billing box" to "fixed before
+the first build".
+
+---
+
 ## 6. Prerequisites not yet in place
 
 | Item | State |
