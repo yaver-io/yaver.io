@@ -103,12 +103,13 @@ type RuntimeTurnQueueItem struct {
 //	unverified — code work finished, no reload attempted yet (the honest default)
 //	delivered  — a reload command reached N live listeners (Listeners > 0)
 //	unreachable — reload attempted, ZERO live listeners; nothing is testable
-//	failed     — reload attempted and the runtime reported failure
+//	verified   — the DEVICE reported the bundle actually loaded
+//	failed     — the device reported the reload failed
 //
-// `delivered` is still not proof the app re-rendered — it is proof the command
-// was accepted by a live phone, which is the strongest claim the agent can make
-// from its own side of the wire. Do not upgrade it to "verified" without
-// evidence that came BACK from the device.
+// `delivered` is the strongest claim the agent can make from its own side of
+// the wire; only `verified` means the app really came back up, and it is set
+// exclusively from a device-emitted event (runtime_turn_ack.go). Never infer
+// `verified` agent-side.
 type RuntimeTurnTestTarget struct {
 	Kind        string    `json:"kind,omitempty"`
 	State       string    `json:"state,omitempty"`
@@ -259,6 +260,40 @@ func runtimeViewportFromSurface(surface RuntimeTurnSurface) *TaskViewport {
 		}
 		if vp.RiskPolicy == "" {
 			vp.RiskPolicy = "driving"
+		}
+	case "glass", "spatial", "ar", "vr", "headset", "visionos", "xreal":
+		// Spatial sits between watch and TV: hands are usually busy so voice
+		// leads, but a panel can carry real detail — unlike the car, where
+		// reading anything is a hazard.
+		vp.Surface = "spatial"
+		vp.Voice = true
+		vp.STTEnabled = true
+		vp.TTSEnabled = true
+		if vp.TTSBudget == 0 {
+			vp.TTSBudget = 220
+		}
+		if vp.VisualBudget == "" {
+			vp.VisualBudget = "panel"
+		}
+		if vp.RiskPolicy == "" {
+			vp.RiskPolicy = "spatial"
+		}
+	case "tv", "tvos", "shared-tv", "androidtv":
+		// A TV is often in a shared room. It may show more than a watch, but
+		// home paths and secrets must be redacted before display.
+		vp.Surface = "shared-tv"
+		vp.TTSEnabled = true
+		if vp.TTSBudget == 0 {
+			vp.TTSBudget = 200
+		}
+		if vp.VisualBudget == "" {
+			vp.VisualBudget = "panel"
+		}
+		if vp.RiskPolicy == "" {
+			vp.RiskPolicy = "shared-tv"
+		}
+		if vp.Interaction == "" {
+			vp.Interaction = "dpad"
 		}
 	}
 	if vp.Interaction == "" && vp.Voice {

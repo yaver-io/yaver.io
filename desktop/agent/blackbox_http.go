@@ -237,6 +237,9 @@ func (s *HTTPServer) handleBlackBoxEvents(w http.ResponseWriter, r *http.Request
 	session := s.blackboxMgr.GetOrCreateSession(deviceID, platform, appName)
 	for _, e := range events {
 		session.PushEvent(e)
+		// A reload outcome the DEVICE reported is the only thing that can move
+		// a runtime turn to `verified` — see runtime_turn_ack.go.
+		runtimeTurnObserveDeviceEvent(deviceID, e)
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{

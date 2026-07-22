@@ -14,6 +14,8 @@ import {
   type RuntimeTurnListResponse,
   type RuntimeTurnResponse,
   type RuntimeTurnState,
+  type RuntimeTurnEvidence,
+  type RuntimeDeployPreflight,
 } from "./runtimeSurfaceTypes";
 
 export {
@@ -41,6 +43,8 @@ export type {
   RuntimeTurnState,
   RuntimeTurnSurface,
   RuntimeTurnTarget,
+  RuntimeTurnTestTarget,
+  RuntimeDeployPreflight,
 } from "./runtimeSurfaceTypes";
 
 async function callSurfaceOps<T = unknown>(
@@ -180,6 +184,35 @@ export const runtimeSurfaceClient = {
       target,
       "runtime_turn_verify",
       { itemId },
+      60000,
+    ),
+
+  /** Attach evidence refs (screenshot, clip, console, route) to a turn. */
+  runtimeTurnEvidence: (
+    target: OpsTarget,
+    itemId: string,
+    evidence: RuntimeTurnEvidence[],
+  ) =>
+    callSurfaceOps<RuntimeTurnResponse>(
+      target,
+      "runtime_turn_evidence",
+      { itemId, evidence },
+      30000,
+    ),
+
+  /**
+   * Check whether a turn is shippable and get the exact command to run.
+   * This NEVER deploys — deploy stays a human action on a full-visual surface.
+   */
+  runtimeTurnDeployPreflight: (
+    target: OpsTarget,
+    itemId: string,
+    deployTarget?: string,
+  ) =>
+    callSurfaceOps<RuntimeDeployPreflight>(
+      target,
+      "runtime_turn_deploy_preflight",
+      { itemId, target: deployTarget },
       60000,
     ),
 

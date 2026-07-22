@@ -54,6 +54,55 @@ private struct RuntimeTurnQueueItem: Decodable {
     let runner: String?
 }
 
+/// One row of the runtime-turn queue, for the TV's list view.
+///
+/// A TV is usually in a shared room, so this carries only what is safe to put
+/// on a large screen someone else may be looking at: the utterance the user
+/// spoke, its state, and where it came from. No pane text, no diffs, no paths.
+struct RuntimeTurnRow: Decodable, Identifiable {
+    let itemId: String
+    let state: String
+    let utterance: String
+    let intentClass: String?
+    let spoken: String?
+    let taskId: String?
+    let testTarget: RuntimeTurnTestTargetInfo?
+
+    var id: String { itemId }
+
+    /// Whether the user can actually test this yet — see
+    /// desktop/agent/runtime_queue.go. `delivered` means a device ACCEPTED the
+    /// reload; only `verified` means it really loaded.
+    var testSummary: String? {
+        guard state == "ready_to_test" || state == "ready_to_deploy" else { return nil }
+        switch testTarget?.state {
+        case .some("verified"): return "Running on your device"
+        case .some("delivered"): return "Sent — waiting for it to load"
+        case .some("unreachable"): return "Nothing was listening"
+        case .some("failed"): return "Reload failed on the device"
+        default: return "Not on a device yet"
+        }
+    }
+}
+
+struct RuntimeTurnTestTargetInfo: Decodable {
+    let state: String?
+    let detail: String?
+    let listeners: Int?
+}
+
+private struct RuntimeTurnListEnvelope: Decodable {
+    let ok: Bool?
+    let initial: RuntimeTurnList?
+    let error: String?
+}
+
+private struct RuntimeTurnList: Decodable {
+    let ok: Bool?
+    let items: [RuntimeTurnRow]?
+    let count: Int?
+}
+
 actor SessionClient {
     private let token: String
     private let box: BoxTarget
@@ -94,6 +143,43 @@ actor SessionClient {
             // still the proven TV path, so keep it as a rollout fallback.
         }
         return try await directTurn(text: text, choice: choice, session: session, waitMs: waitMs)
+    }
+
+    /// List recent runtime turns for a TV dashboard.
+    ///
+    /// Returns [] rather than throwing when the agent is too old to know the
+    /// verb: a missing list is an empty dashboard, not an error banner on
+    /// someone's television.
+    func runtimeTurns(limit: Int = 25) async -> [RuntimeTurnRow] {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/ops") else { return [] }
+        guard let body = try? JSONSerialization.data(withJSONObject: [
+            "verb": "runtime_turns",
+            "payload": ["limit": limit],
+            "machine": "local",
+        ]) else { return [] }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        req.httpBody = body
+
+        guard let (data, resp) = try? await self.session.data(for: req),
+              let http = resp as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            return []
+        }
+        if let env = try? JSONDecoder().decode(RuntimeTurnListEnvelope.self, from: data),
+           let items = env.initial?.items {
+            return items
+        }
+        // Some ops transports return the payload unwrapped.
+        if let list = try? JSONDecoder().decode(RuntimeTurnList.self, from: data),
+           let items = list.items {
+            return items
+        }
+        return []
     }
 
     private func runtimeTurn(text: String?, choice: String?, session: String?, waitMs: Int) async throws -> SessionTurnResult {

@@ -188,6 +188,13 @@ export default function TabLayout() {
       if (!command) return;
 
       if (command === "reload_bundle" || command === "reload") {
+        // A runtime turn stamps its id on the reload so the agent can tell
+        // WHICH turn this outcome belongs to. Echo it back on every branch —
+        // including the failures. A turn that hears nothing sits on
+        // "delivered" forever and the user waits for a reload that already
+        // died. See desktop/agent/runtime_turn_ack.go.
+        const turnId = typeof data.turnId === "string" ? data.turnId : undefined;
+
         // Loading a guest bundle into the container needs the native
         // YaverBundleLoader module (iOS + Android). Guard on the capability so
         // a build / web preview without the module reports back cleanly
@@ -202,7 +209,7 @@ export default function TabLayout() {
             level: "warn",
             message: "preview_worker_bundle_load_unsupported_platform",
             timestamp: Date.now(),
-            metadata: { platform },
+            metadata: { platform, ...(turnId ? { turnId } : {}) },
           }]);
           return;
         }
@@ -217,7 +224,7 @@ export default function TabLayout() {
             level: "info",
             message: "preview_worker_bundle_loaded",
             timestamp: Date.now(),
-            metadata: { bundleUrl: bundlePath, moduleName },
+            metadata: { bundleUrl: bundlePath, moduleName, ...(turnId ? { turnId } : {}) },
           }]);
         } catch (error: any) {
           await quicClient.pushBlackBoxEvents(resolved.id, [{
@@ -225,7 +232,7 @@ export default function TabLayout() {
             level: "error",
             message: `preview_worker_bundle_load_failed: ${error?.message || "unknown error"}`,
             timestamp: Date.now(),
-            metadata: { bundleUrl: bundlePath, moduleName },
+            metadata: { bundleUrl: bundlePath, moduleName, ...(turnId ? { turnId } : {}) },
           }]);
         }
         return;

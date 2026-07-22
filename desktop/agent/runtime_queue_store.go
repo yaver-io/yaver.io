@@ -204,6 +204,19 @@ func (s *runtimeQueueStore) update(id string, fn func(*RuntimeTurnQueueItem)) (R
 	return *item, true
 }
 
+// updateAny mutates an item WITHOUT an owner check. It exists for inbound
+// device acknowledgements, which arrive on the black-box event stream and carry
+// a device identity rather than a user session — there is no ActorUserID to
+// scope by. Safe because the caller cannot choose the item: the correlation id
+// was minted by this agent and handed to the device on the way out, so an
+// attacker would have to guess a random turn id to reach anything, and the only
+// reachable mutation is the reload outcome.
+//
+// Do NOT use this for anything a user-facing verb can call.
+func (s *runtimeQueueStore) updateAny(id string, fn func(*RuntimeTurnQueueItem)) (RuntimeTurnQueueItem, bool) {
+	return s.update(id, fn)
+}
+
 // runtimeItemFingerprint captures every field a refresh can legitimately
 // change. If this string is unchanged, the refresh was a no-op and must not
 // disturb the item's position in the list.

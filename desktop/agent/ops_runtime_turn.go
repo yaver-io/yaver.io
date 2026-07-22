@@ -386,7 +386,13 @@ func runtimeTurnVerify(c OpsContext, itemID string) RuntimeTurnResponse {
 		return RuntimeTurnResponse{OK: false, State: item.State, Code: "unavailable", Error: "no device command channel on this agent", Spoken: "I can't reach a device from here."}
 	}
 
-	delivered := c.Server.blackboxMgr.BroadcastCommand(BlackBoxCommand{Command: "reload"})
+	// Carry the turn id so the device can tell us WHICH turn its reload
+	// outcome belongs to. Without this correlation the best the agent could
+	// ever say is "delivered".
+	delivered := c.Server.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+		Command: "reload",
+		Data:    map[string]interface{}{runtimeTurnAckMetaKey: item.ItemID},
+	})
 	tt := &RuntimeTurnTestTarget{
 		Kind:        "yaver-mobile-container",
 		DeviceID:    item.Target.DeviceID,

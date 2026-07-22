@@ -562,20 +562,27 @@ Expected:
 
 Still NOT complete (do not claim these):
 
-- push notifications
-- proof the app actually re-rendered — `delivered` means a live device accepted
-  the reload command, which is the strongest claim the agent can make from its
-  own side of the wire. Real confirmation has to come BACK from the device.
-- TestFlight / Google Play internal deploy flow
-- AR/VR-specific UI
-- full SDK evidence ingestion
-- end-to-end dogfood deploy
+- **Automatic deploy — and this is deliberate, not a gap.**
+  `runtime_turn_deploy_preflight` checks shippability and prints the command;
+  a human runs it. A voice surface cannot meaningfully consent to a store
+  submission, and TestFlight has no rollback.
+- **Evidence blobs.** `runtime_turn_evidence` attaches *refs*; screenshots and
+  clips stay on the device/box and are never uploaded to Convex.
+- end-to-end dogfood deploy (capture on watch → ship from phone, unbroken)
+- a spatial/AR-VR *native* panel — the spatial surface class is handled
+  agent-side, but the RN glass screens still render the generic view
 
 Complete as of 2026-07-23:
 
 - durable, owner-scoped queue
-- reload delivery verification (attempted, with a live listener count)
-- mobile Runtime Turns screen
+- the full verification ladder: `unverified` → `delivered` → `verified`, with
+  `verified` set ONLY from a device-emitted event (`runtime_turn_ack.go`)
+- mobile Runtime Turns screen, with Run it / Test on device / Ship it?
+- completion announcements on watch + car (`runtimeTurnAnnouncer.ts`), which
+  fire on transitions only and never read a stack trace aloud
+- evidence attachment to an existing turn
+- deploy preflight with full blocker list
+- spatial + shared-TV surface classes; tvOS runtime-turns list
 
 The current implementation is the shared contract and first working vertical
 slice.
@@ -746,20 +753,22 @@ Keep these intact:
 
 ## Remaining Work
 
-Priority 1 (remaining):
-
-- Add an HTTP wrapper only if a non-ops native client actually needs it.
-- Make watch/car subscribe or poll after initial ack so they can announce done.
-- Close the last verification gap: `delivered` proves a device ACCEPTED the
-  reload, not that it re-rendered. That needs an ack from the device side.
-
-Priority 1 (done 2026-07-23):
+Priority 1 — all closed 2026-07-23:
 
 - ~~Add durable queue storage for runtime turns.~~ `runtime_queue_store.go`
 - ~~Add a small mobile queue/status screen backed by `runtimeTurns`.~~
   `mobile/app/runtime-turns.tsx`
 - ~~Verify mobile-container reload before marking `ready_to_test` as truly
-  test-ready.~~ `runtime_turn_verify` + `testTarget.state`
+  test-ready.~~ `runtime_turn_verify` + device ack in `runtime_turn_ack.go`
+- ~~Make watch/car subscribe or poll after initial ack so they can announce
+  done.~~ `runtimeTurnAnnouncer.ts` + `RuntimeTurnAnnouncerHost.tsx`
+- ~~Close the last verification gap.~~ The device now echoes the turn id on its
+  `preview_worker_bundle_loaded` / `_failed` event, so `verified` comes from
+  the device, not from an agent-side inference.
+
+Deliberately NOT done: an HTTP wrapper. No non-ops native client needs one —
+tvOS, watch, car and mobile all reach the verbs through `/ops`. Adding a second
+door would be a second thing to keep authorized.
 
 Priority 2:
 

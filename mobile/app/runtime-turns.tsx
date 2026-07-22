@@ -12,7 +12,7 @@
 //      listener count back, so "nothing was listening" reads as a failure
 //      instead of a green check.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
@@ -81,16 +81,25 @@ function relativeTime(iso?: string): string {
   return `${Math.round(secs / 86400)}d ago`;
 }
 
-/** The honest one-liner about whether this is testable yet. */
+/**
+ * The honest one-liner about whether this is testable yet.
+ *
+ * Note the ladder: `delivered` means a phone ACCEPTED the reload command;
+ * only `verified` means the device reported the bundle actually loaded. They
+ * are not the same claim and this screen doesn't blur them.
+ */
 function testLine(item: RuntimeTurnQueueItem): { text: string; bad: boolean } | null {
-  if (item.state !== "ready_to_test") return null;
+  if (item.state !== "ready_to_test" && item.state !== "ready_to_deploy") return null;
   const tt = item.testTarget;
   if (!tt || tt.state === "unverified") {
     return { text: "Not on a device yet", bad: false };
   }
+  if (tt.state === "verified") {
+    return { text: "Running on your device", bad: false };
+  }
   if (tt.state === "delivered") {
     const n = tt.listeners ?? 0;
-    return { text: `Sent to ${n} device${n === 1 ? "" : "s"}`, bad: false };
+    return { text: `Sent to ${n} device${n === 1 ? "" : "s"} — waiting for it to load`, bad: false };
   }
   if (tt.state === "unreachable") {
     return { text: tt.detail || "Nothing was listening", bad: true };
@@ -112,6 +121,7 @@ export default function RuntimeTurnsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shipPlan, setShipPlan] = useState<{ turnId: string; command: string; note: string } | null>(null);
 
   const load = useCallback(async () => {
     if (!deviceId) {
@@ -165,6 +175,32 @@ export default function RuntimeTurnsScreen() {
     [deviceId, load],
   );
 
+  // Preflight only. Yaver does not deploy for you — it reports whether the
+  // turn is shippable and hands back the command to run. A tap on a phone is
+  // not consent to burn one of ~15 daily TestFlight slots that cannot be
+  // rolled back.
+  const preflight = useCallback(
+    async (item: RuntimeTurnQueueItem) => {
+      setBusyId(item.itemId);
+      setError(null);
+      setShipPlan(null);
+      try {
+        const res = await runtimeSurfaceClient.runtimeTurnDeployPreflight(deviceId, item.itemId);
+        if (res.ready && res.command) {
+          setShipPlan({ turnId: item.itemId, command: res.command, note: res.note });
+        } else {
+          setError(`Not ready to ship: ${(res.blockers || ["unknown reason"]).join("; ")}`);
+        }
+        await load();
+      } catch (e: any) {
+        setError(e?.message || "Preflight failed");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [deviceId, load],
+  );
+
   // The Tasks tab owns task detail; it subscribes to this bus and opens its
   // chat-detail modal. There is no standalone task-detail route.
   const openTask = useCallback(
@@ -201,6 +237,21 @@ export default function RuntimeTurnsScreen() {
       {error ? (
         <View style={[styles.banner, { backgroundColor: "#e5534b22", borderColor: "#e5534b" }]}>
           <Text style={[styles.bannerText, { color: c.textPrimary }]}>{error}</Text>
+        </View>
+      ) : null}
+
+      {shipPlan ? (
+        <View style={[styles.banner, { backgroundColor: "#3fb95022", borderColor: "#3fb950" }]}>
+          <Text style={[styles.bannerText, { color: c.textPrimary, fontWeight: "700" }]}>
+            Ready to ship — run this yourself:
+          </Text>
+          <Text selectable style={[styles.command, { color: c.textPrimary }]}>
+            {shipPlan.command}
+          </Text>
+          <Text style={[styles.bannerText, { color: c.textSecondary }]}>{shipPlan.note}</Text>
+          <Pressable onPress={() => setShipPlan(null)} style={{ paddingTop: 6 }}>
+            <Text style={[styles.btnText, { color: ACCENT }]}>Dismiss</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -280,6 +331,17 @@ export default function RuntimeTurnsScreen() {
                     </Pressable>
                   ) : null}
 
+                  {item.testTarget?.state === "verified" ||
+                  item.state === "ready_to_deploy" ? (
+                    <Pressable
+                      disabled={busy}
+                      onPress={() => void preflight(item)}
+                      style={[styles.btn, { borderColor: "#3fb950", opacity: busy ? 0.5 : 1 }]}
+                    >
+                      <Text style={[styles.btnText, { color: "#3fb950" }]}>Ship it?</Text>
+                    </Pressable>
+                  ) : null}
+
                   {item.taskId ? (
                     <Pressable
                       onPress={() => openTask(item.taskId as string)}
@@ -315,6 +377,11 @@ const styles = StyleSheet.create({
   list: { padding: 16, gap: 12 },
   banner: { marginHorizontal: 16, marginTop: 8, padding: 10, borderRadius: 8, borderWidth: 1 },
   bannerText: { fontSize: 13 },
+  command: {
+    fontSize: 13,
+    fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
+    paddingVertical: 6,
+  },
   card: { borderRadius: 12, borderWidth: 1, padding: 14, gap: 6 },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   state: { fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },

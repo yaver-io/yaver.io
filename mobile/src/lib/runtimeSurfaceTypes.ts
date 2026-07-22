@@ -165,6 +165,25 @@ export interface RuntimeTurnListResponse {
   count: number;
 }
 
+/**
+ * Result of asking "is this shippable?" WITHOUT shipping it.
+ *
+ * `command` is what a human runs; Yaver never executes it for you. A voice
+ * surface cannot meaningfully consent to a store submission, and TestFlight
+ * has no rollback — a bad build can only be superseded.
+ */
+export interface RuntimeDeployPreflight {
+  ok: boolean;
+  target: string;
+  ready: boolean;
+  blockers?: string[];
+  command?: string;
+  note: string;
+  spoken?: string;
+  state: RuntimeTurnState;
+  turnId?: string;
+}
+
 export type DpadTarget = "appletv" | "androidtv" | "home";
 export type DpadKey =
   | "up" | "down" | "left" | "right" | "select" | "menu" | "home"
