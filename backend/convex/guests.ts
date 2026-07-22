@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { validateSessionInternal } from "./auth";
-import { Id } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { guestInviteHtml } from "./email";
 import { getActiveInfraGrant, guestCanReachHostDevice, guestCanReachSpecificHostDevice, listGrantedDeviceIdsForGrant, listGrantedMachineIdsForGrant, revokeInfraGrantsBetweenUsers } from "./access";
@@ -152,7 +152,7 @@ export const invite = mutation({
     }
 
     // Resolve guest user (if any). Precedence: userId > email.
-    let guestUser: Awaited<ReturnType<typeof ctx.db.get>> extends infer T ? (T | null) : never = null;
+    let guestUser: Doc<"users"> | null = null;
     if (rawUserId) {
       const matches = await ctx.db
         .query("users")
@@ -709,7 +709,7 @@ export const revoke = mutation({
     }
 
     // Resolve guest user first (prefer userId when provided).
-    let guestUser: Awaited<ReturnType<typeof ctx.db.get>> extends infer T ? (T | null) : never = null;
+    let guestUser: Doc<"users"> | null = null;
     if (guestUserIdStr) {
       const matches = await ctx.db
         .query("users")
@@ -769,6 +769,113 @@ export const revoke = mutation({
     }
 
     return { ok: true };
+  },
+});
+
+/**
+ * Delete/hide a guest row from the host-facing list. This first revokes any
+ * live access just like `revoke`, then marks matching invitation rows hidden
+ * for this host. It is intentionally not a block: the same person can be
+ * invited again later because invite() only checks live/pending state.
+ */
+export const deleteGuest = mutation({
+  args: {
+    tokenHash: v.string(),
+    inviteId: v.optional(v.string()),
+    guestEmail: v.optional(v.string()),
+    guestUserId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const hostUserId = session.user._id;
+    const inviteId = (args.inviteId ?? "").trim();
+    const guestEmail = (args.guestEmail ?? "").trim().toLowerCase();
+    const guestUserIdStr = (args.guestUserId ?? "").trim();
+
+    if (!inviteId && !guestEmail && !guestUserIdStr) {
+      throw new Error("inviteId, guestEmail, or guestUserId is required");
+    }
+
+    let guestUser: Doc<"users"> | null = null;
+    const invitations = new Map<string, any>();
+
+    if (inviteId) {
+      const inv = await ctx.db.get(inviteId as any);
+      if (!inv || (inv as any).hostUserId !== hostUserId) {
+        throw new Error("Guest invite not found");
+      }
+      invitations.set(String((inv as any)._id), inv);
+      if ((inv as any).guestUserId) {
+        guestUser = await ctx.db.get((inv as any).guestUserId as Id<"users">);
+      }
+    }
+
+    if (guestUserIdStr) {
+      const matches = await ctx.db
+        .query("users")
+        .filter((q) => q.eq(q.field("userId"), guestUserIdStr))
+        .collect();
+      guestUser = matches[0] ?? guestUser;
+    } else if (!guestUser && guestEmail) {
+      guestUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", guestEmail))
+        .first();
+    }
+
+    if (!inviteId && guestEmail) {
+      const byEmail = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guest", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestEmail", guestEmail)
+        )
+        .collect();
+      byEmail.forEach((i) => invitations.set(String(i._id), i));
+    }
+    const guestUserIdForDelete: Id<"users"> | undefined = guestUser?._id;
+    if (!inviteId && guestUserIdForDelete) {
+      const byUser = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guestUser", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUserIdForDelete)
+        )
+        .collect();
+      byUser.forEach((i) => invitations.set(String(i._id), i));
+    }
+
+    const now = Date.now();
+    let hiddenInvitations = 0;
+    for (const inv of invitations.values()) {
+      const patch: Record<string, unknown> = { hostHiddenAt: now };
+      if (inv.status === "pending" || inv.status === "accepted") {
+        patch.status = "revoked";
+        patch.revokedAt = inv.revokedAt ?? now;
+      }
+      await ctx.db.patch(inv._id, patch);
+      hiddenInvitations++;
+    }
+
+    let removedAccess = 0;
+    if (guestUserIdForDelete) {
+      const accessRecords = await ctx.db
+        .query("guestAccess")
+        .withIndex("by_host_guest", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUserIdForDelete)
+        )
+        .filter((q) => q.eq(q.field("revokedAt"), undefined))
+        .collect();
+
+      for (const access of accessRecords) {
+        await ctx.db.patch(access._id, { revokedAt: now });
+        removedAccess++;
+      }
+
+      await revokeInfraGrantsBetweenUsers(ctx, hostUserId, guestUserIdForDelete, now);
+    }
+
+    return { ok: true, hiddenInvitations, removedAccess };
   },
 });
 
@@ -928,6 +1035,7 @@ export const listGuests = query({
       revokedAt?: number;
       inviteCode?: string;
       invitedByUserId?: boolean;
+      inviteId?: string;
       proposedDeviceIds?: string[];
       proposedDevices?: Array<{
         deviceId: string;
@@ -938,6 +1046,7 @@ export const listGuests = query({
     }> = [];
 
     for (const inv of invitations) {
+      if ((inv as any).hostHiddenAt) continue;
       let status = inv.status as "pending" | "accepted" | "revoked" | "expired";
       if (status === "pending" && inv.expiresAt < Date.now()) {
         status = "expired";
@@ -972,6 +1081,7 @@ export const listGuests = query({
         revokedAt: inv.revokedAt,
         inviteCode: status === "pending" ? inv.inviteCode : undefined,
         invitedByUserId: inv.invitedByUserId,
+        inviteId: String(inv._id),
         proposedDeviceIds: displayDeviceIds,
         proposedDevices: displayDeviceIds.length > 0 ? await deviceSummariesById(ctx, displayDeviceIds) : undefined,
       });
