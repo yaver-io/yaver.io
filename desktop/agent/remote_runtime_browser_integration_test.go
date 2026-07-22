@@ -282,14 +282,21 @@ button{width:320px;height:96px;border:0;background:white;color:#111;font:700 22p
 		t.Fatalf("set remote: %v", err)
 	}
 
+	started := time.Now()
 	before := waitForBrowserColorFrame(t, frameCh, isRedRGB, 12*time.Second)
 	t.Logf("before tap avg rgb=%+v", before)
 
+	tapAt := time.Now()
 	if err := (browserWindowTarget{}).Tap(context.Background(), entry.id, 320, 200); err != nil {
 		t.Fatalf("tap: %v", err)
 	}
 	after := waitForBrowserColorFrame(t, frameCh, isGreenRGB, 12*time.Second)
-	t.Logf("after tap avg rgb=%+v", after)
+	tapToGreen := time.Since(tapAt)
+	total := time.Since(started)
+	t.Logf("after tap avg rgb=%+v tapToGreen=%s totalColorLoop=%s", after, tapToGreen.Round(time.Millisecond), total.Round(time.Millisecond))
+	if tapToGreen > 3*time.Second {
+		t.Fatalf("tap-to-green took %s; browser-window dev loop should stay below 3s on the JPEG data-channel path", tapToGreen.Round(time.Millisecond))
+	}
 }
 
 func TestBrowserPoolListReportsOpened(t *testing.T) {
