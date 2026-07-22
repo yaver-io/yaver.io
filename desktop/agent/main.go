@@ -723,8 +723,21 @@ func main() {
 			runDoctorBuild(os.Args[3:])
 			return
 		}
-		// `yaver doctor webrtc` lives in doctor_webrtc.go (parallel session,
-		// not yet committed). Restore this branch when that file lands.
+		// doctor_webrtc.go DID land; this branch was never restored, so
+		// `yaver doctor webrtc` has been dead code with a fully-written
+		// implementation behind it. Same shape as `yaver diagnose` in 1.99.33:
+		// a function that exists and is wired to nothing.
+		if len(os.Args) > 2 && os.Args[2] == "webrtc" {
+			runDoctorWebRTC(os.Args[3:])
+			return
+		}
+		// `yaver doctor surfaces` answers "what can this box actually preview"
+		// across every surface Yaver claims: iOS/iPadOS/watchOS/tvOS/visionOS
+		// simulators, CarPlay, Android emulator/device, Redroid, and the browser.
+		if len(os.Args) > 2 && (os.Args[2] == "surfaces" || os.Args[2] == "surface") {
+			runDoctorSurfaces(os.Args[3:])
+			return
+		}
 		runDoctor()
 	case "init", "setup":
 		runInit(os.Args[2:])
