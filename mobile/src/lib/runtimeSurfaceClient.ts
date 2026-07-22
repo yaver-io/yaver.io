@@ -216,6 +216,24 @@ export const runtimeSurfaceClient = {
       60000,
     ),
 
+  /**
+   * Ask the agent what a project actually supports.
+   *
+   * The agent can see the project on disk; a surface cannot. Every surface
+   * should render THIS answer rather than keeping its own copy of the
+   * per-framework rules — that duplication is what let the surfaces drift.
+   */
+  projectPreviewOptions: (
+    target: OpsTarget,
+    args: { workDir?: string; projectName?: string; framework?: string; hasPairedDevice?: boolean },
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "project_preview_options",
+      args as Record<string, unknown>,
+      20000,
+    ),
+
   gatewayIntent: (target: OpsTarget, utterance: string) =>
     callSurfaceOps<GatewayIntentResult>(
       target,

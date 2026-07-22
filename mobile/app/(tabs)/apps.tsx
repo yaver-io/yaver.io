@@ -34,7 +34,8 @@ import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
-import { guardYaverSelfDevelopmentActions, isHermesMobileFramework } from "../../src/lib/mobileProjectActions";
+import { applyPreviewCapabilities, guardYaverSelfDevelopmentActions, isHermesMobileFramework } from "../../src/lib/mobileProjectActions";
+import { runtimeSurfaceClient } from "../../src/lib/runtimeSurfaceClient";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -716,11 +717,31 @@ export default function AppsScreen() {
         }
         return a;
       });
-      result.actions = guardYaverSelfDevelopmentActions(
+      let composed = guardYaverSelfDevelopmentActions(
         [projectAction, previewManifestAction, ...hermesActions, ...nativeRemoteRuntimeActions, ...secondClassActions, gitSyncAction, ...result.actions],
         projectName,
         result.path || projectPath,
       );
+      // The AGENT owns which options exist — it can see the project on disk.
+      // Without this, every surface keeps its own copy of the per-framework
+      // rules and they drift; concretely, a Hermes button could still be
+      // composed for a Flutter/Kotlin/Swift project, which has no React Native
+      // runtime to load a bundle into. Best-effort: an older box that doesn't
+      // know the verb leaves the composed list untouched.
+      try {
+        const caps: any = await runtimeSurfaceClient.projectPreviewOptions(
+          activeDevice?.id,
+          {
+            workDir: result.path || projectPath,
+            projectName,
+            hasPairedDevice: true,
+          },
+        );
+        composed = applyPreviewCapabilities(composed, caps);
+      } catch {
+        /* older agent — keep the locally composed sheet */
+      }
+      result.actions = composed;
       setActionSheet({ ...result, compatibility });
     } catch (e) {
       // Don't silently send a vague task — the user just tapped a project and

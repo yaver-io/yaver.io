@@ -1,6 +1,11 @@
 package main
 
-import "strings"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // workspace_preview_strategy.go — how a Cloud Workspace previews the user's app.
 //
@@ -175,6 +180,60 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 			Reason:       "web dev server loaded directly by the viewer's browser — streaming video of a web page to a browser that can render it costs a vCPU to accomplish nothing",
 		}
 
+	// ── Wearables and car head-units ─────────────────────────────────────
+	//
+	// These MUST precede the generic android / swift cases below, and they must
+	// exist at all: without them every one of these stacks fell through to the
+	// `default:` arm and was answered "supported — web dev server, load it in
+	// your browser". That is the silent downgrade this file forbids three
+	// paragraphs up for Swift. A watchOS complication rendered as a web page is
+	// not the user's app; telling them it is wastes a debugging session before
+	// they work out the preview was never real.
+	//
+	// You cannot meaningfully PRESENT a preview on a watch or a car head-unit —
+	// the screen is a glance and the driver must not look at it. But developing
+	// FOR those targets is ordinary work, and it deserves an honest answer about
+	// where the app can actually run.
+	case strings.Contains(s, "wearos") || strings.Contains(s, "wear-os") ||
+		strings.Contains(s, "wear os") || strings.Contains(s, "android-wear"):
+		return WorkspacePreviewPlan{
+			// Wear OS is Android, so the Android runtimes apply. Redroid is a
+			// generic Android container and does not carry the round/square
+			// watch form factors, so a real AVD leads here.
+			Primary:      PreviewAndroidEmulator,
+			Fallbacks:    []PreviewStrategy{PreviewRedroidWebRTC},
+			MachineClass: "build",
+			// No native Wear feedback SDK — same as Kotlin.
+			Feedback:  FeedbackViewerTriggered,
+			Supported: true,
+			Reason:    "Wear OS is Android — needs a Wear AVD streamed over WebRTC (Redroid has no watch form factor); a paired watch is better still",
+		}
+
+	case strings.Contains(s, "androidauto") || strings.Contains(s, "android-auto") ||
+		strings.Contains(s, "android auto"):
+		return WorkspacePreviewPlan{
+			Primary:      PreviewAndroidEmulator,
+			Fallbacks:    []PreviewStrategy{PreviewRedroidWebRTC},
+			MachineClass: "build",
+			Feedback:     FeedbackViewerTriggered,
+			Supported:    true,
+			Reason:       "Android Auto renders through the Desktop Head Unit against an Android emulator — needs an AVD on the box, streamed over WebRTC",
+		}
+
+	case strings.Contains(s, "watchos") || strings.Contains(s, "watchkit") ||
+		strings.Contains(s, "carplay"):
+		// Apple wearable / head-unit: simulator only, and simulators are
+		// macOS-only. Same contract as native Swift — say what the STACK NEEDS
+		// and let ResolvePreviewForHost decide whether this machine has it, so
+		// a Mac with a booted simulator is not refused.
+		return WorkspacePreviewPlan{
+			Primary:      PreviewIOSSimulator,
+			MachineClass: "standard",
+			Feedback:     FeedbackViewerTriggered,
+			Supported:    true,
+			Reason:       "Apple watch / CarPlay UI — runs only in an Apple simulator, which exists only on a macOS host (or pair a real device via `yaver wire push`)",
+		}
+
 	// ── Native Android / Kotlin ──────────────────────────────────────────
 	case strings.Contains(s, "kotlin") || strings.Contains(s, "android") || strings.Contains(s, "gradle"):
 		return WorkspacePreviewPlan{
@@ -326,11 +385,99 @@ func FeedbackSDKPackage(stack string) string {
 // IsYaverSelfDevelopment reports whether the project under development is Yaver
 // itself. Detected from the repo identity rather than a flag: a flag can be
 // forgotten, and the consequence of missing this is a trapped user.
+//
+// NOTE: this is a substring match on an identity STRING (slug + repo URL). Do
+// NOT feed it a filesystem path — every project nested under a checkout of
+// `yaver.io/` would match, including the in-tree `demo/mobile/todo-rn` fixture,
+// which is a third-party RN app that legitimately wants Hermes. For a path, use
+// IsYaverSelfDevelopmentDir.
 func IsYaverSelfDevelopment(projectSlug, repoURL string) bool {
 	needle := strings.ToLower(projectSlug + " " + repoURL)
 	return strings.Contains(needle, "yaver.io") ||
 		strings.Contains(needle, "yaver-io/yaver") ||
 		strings.Contains(needle, "io.yaver.mobile")
+}
+
+// IsYaverSelfDevelopmentDir reports whether the project ROOTED AT workDir is
+// Yaver's own mobile app (or the monorepo itself).
+//
+// It reads the project's declared identity instead of looking at ancestor path
+// components, because "is this inside a folder called yaver.io" is a different
+// and much broader question than "is this Yaver". The repo ships third-party RN
+// fixtures under demo/, and refusing Hermes for those would break the exact
+// validation loop they exist to serve.
+//
+// Identity, in order:
+//  1. package.json  name == "yaver-mobile"
+//  2. app.json      expo.ios.bundleIdentifier / expo.android.package == io.yaver.mobile
+//  3. workDir is the monorepo root (desktop/agent + mobile + relay all present)
+func IsYaverSelfDevelopmentDir(workDir string) bool {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return false
+	}
+
+	if data, err := os.ReadFile(filepath.Join(workDir, "package.json")); err == nil {
+		var pkg struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(data, &pkg) == nil {
+			if strings.EqualFold(strings.TrimSpace(pkg.Name), "yaver-mobile") {
+				return true
+			}
+		}
+	}
+
+	if data, err := os.ReadFile(filepath.Join(workDir, "app.json")); err == nil {
+		var app struct {
+			Expo struct {
+				IOS struct {
+					BundleIdentifier string `json:"bundleIdentifier"`
+				} `json:"ios"`
+				Android struct {
+					Package string `json:"package"`
+				} `json:"android"`
+			} `json:"expo"`
+		}
+		if json.Unmarshal(data, &app) == nil {
+			if strings.EqualFold(app.Expo.IOS.BundleIdentifier, "io.yaver.mobile") ||
+				strings.EqualFold(app.Expo.Android.Package, "io.yaver.mobile") {
+				return true
+			}
+		}
+	}
+
+	// The monorepo root itself. All three must be present so a directory that
+	// merely happens to contain a `mobile/` folder isn't mistaken for Yaver.
+	agentDir := filepath.Join(workDir, "desktop", "agent")
+	mobileDir := filepath.Join(workDir, "mobile")
+	relayDir := filepath.Join(workDir, "relay")
+	if isDirPath(agentDir) && isDirPath(mobileDir) && isDirPath(relayDir) {
+		return true
+	}
+	return false
+}
+
+func isDirPath(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+// ShouldRefuseYaverSelfDevelopmentHermes is the decision behind the
+// /dev/build-native recursion guard, split out so it can be tested without
+// driving a real Metro/hermesc build.
+//
+// Only the mobile-hermes target is dangerous: it loads a bundle INTO the Yaver
+// container, which is what puts two shake/exit owners in one process. The web
+// targets render pixels in a browser and cannot trap anyone — refusing those
+// would block the very route this guard steers people toward.
+func ShouldRefuseYaverSelfDevelopmentHermes(buildTarget, workDir, projectName, bundleID string) bool {
+	if buildTarget != "mobile-hermes" {
+		return false
+	}
+	// Identity, never ancestor path: `yaver.io/demo/mobile/todo-rn` is a
+	// third-party fixture that legitimately wants Hermes.
+	return IsYaverSelfDevelopmentDir(workDir) || IsYaverSelfDevelopment(projectName, bundleID)
 }
 
 // EscapeOwner is the layer that owns the exit affordance for a preview.
