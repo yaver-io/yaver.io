@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -463,3 +464,277 @@ func BuildWireSurfaceReport(ctx context.Context) WireSurfaceReport {
 
 // JSON renders the report for every client surface.
 func (r WireSurfaceReport) JSON() ([]byte, error) { return json.Marshal(r) }
+
+// ─── project-side surface detection (third-party repos) ─────────────────────
+
+// DetectProjectSurfaces reports which surfaces a project ACTUALLY builds.
+//
+// This is the third-party monorepo case: `yaver wire push` run from someone
+// else's repo must discover what that repo produces rather than assume the
+// Yaver layout. Detection reads the build files, because a repo containing a
+// watch directory is not the same as a repo that BUILDS a watch target —
+// inventory versus operation again.
+//
+// Signals, in the order they are cheap to check:
+//
+//	watchOS   pbxproj SDKROOT watchos / an Embed Watch Content phase
+//	tvOS      pbxproj SDKROOT appletvos
+//	visionOS  pbxproj SDKROOT xros
+//	Wear OS   an Android manifest declaring android.hardware.type.watch
+//
+// A false negative costs a surface the user must name explicitly with
+// --surface; a false positive would start a 20-minute build for a target that
+// does not exist, so the markers are deliberately specific.
+func DetectProjectSurfaces(root, stack string) []WireSurface {
+	var found []WireSurface
+	seen := map[WireSurface]bool{}
+	add := func(s WireSurface) {
+		if !seen[s] {
+			seen[s] = true
+			found = append(found, s)
+		}
+	}
+
+	switch stack {
+	case "native-ios":
+		add(SurfaceIOS)
+	case "native-android":
+		add(SurfaceAndroid)
+	default:
+		// Cross-platform stacks (expo, react-native, flutter) build both once
+		// their platform dirs exist.
+		if wireExists(filepath.Join(root, "ios")) {
+			add(SurfaceIOS)
+		}
+		if wireExists(filepath.Join(root, "android")) {
+			add(SurfaceAndroid)
+		}
+	}
+
+	for _, pb := range findPbxprojFiles(root) {
+		data, err := readWireJSONBounded(pb, 12<<20)
+		if err != nil {
+			continue
+		}
+		s := strings.ToLower(string(data))
+		if strings.Contains(s, "sdkroot = watchos") || strings.Contains(s, "embed watch content") {
+			add(SurfaceWatchOS)
+			add(SurfaceIOS) // a watch target implies its iOS host
+		}
+		if strings.Contains(s, "sdkroot = appletvos") {
+			add(SurfaceTVOS)
+		}
+		if strings.Contains(s, "sdkroot = xros") || strings.Contains(s, "sdkroot = visionos") {
+			add(SurfaceVisionOS)
+		}
+	}
+
+	if androidDeclaresWatch(root) {
+		add(SurfaceWearOS)
+	}
+	return found
+}
+
+// findPbxprojFiles locates Xcode project files without walking the whole tree.
+//
+// Bounded on purpose: a full walk of a monorepo with node_modules is the
+// unbounded-breadth mistake CLAUDE.md names — advisory work must never sit in
+// the critical path. Only the conventional locations are checked.
+func findPbxprojFiles(root string) []string {
+	var out []string
+	candidates := []string{root, filepath.Join(root, "ios"), filepath.Join(root, "apple")}
+	for _, dir := range candidates {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() && strings.HasSuffix(e.Name(), ".xcodeproj") {
+				p := filepath.Join(dir, e.Name(), "project.pbxproj")
+				if wireFileExists(p) {
+					out = append(out, p)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// androidDeclaresWatch looks for the manifest feature that makes an Android
+// module a Wear OS app.
+//
+// `android.hardware.type.watch` is the definitive marker — a module named
+// "wear" proves nothing, and Wear modules are not always named that.
+func androidDeclaresWatch(root string) bool {
+	candidates := []string{
+		filepath.Join(root, "wear", "src", "main", "AndroidManifest.xml"),
+		filepath.Join(root, "android", "wear", "src", "main", "AndroidManifest.xml"),
+		filepath.Join(root, "wearos", "src", "main", "AndroidManifest.xml"),
+		filepath.Join(root, "app", "src", "main", "AndroidManifest.xml"),
+		filepath.Join(root, "android", "app", "src", "main", "AndroidManifest.xml"),
+	}
+	for _, p := range candidates {
+		data, err := readWireJSONBounded(p, 1<<20)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(data), "android.hardware.type.watch") {
+			return true
+		}
+	}
+	return false
+}
+
+// ─── CLI integration ────────────────────────────────────────────────────────
+
+// applyWireSurface resolves --surface into a concrete push, or explains why
+// there is nothing to push and stops.
+//
+// Returns true to continue with the normal ios|android push machinery, false
+// when the surface has already been fully answered (a companion hand-off, a
+// plan listing, or a blocked host).
+//
+// The honesty rule here: a surface whose BUILD path is not implemented must
+// say so rather than silently building an iPhone app and reporting success.
+// tvOS and visionOS need their own scheme/SDK selection, which native_build.go
+// does not yet do — so they report exactly that, and the detection + device
+// listing they DO have is still useful.
+func applyWireSurface(root, stack, name string, opts *wirePushOpts) bool {
+	if AmbiguousWatchSurface(name) {
+		fmt.Fprintln(os.Stderr, "yaver wire push: --surface watch is ambiguous — Apple Watch and Wear OS")
+		fmt.Fprintln(os.Stderr, "  install in completely different ways, so guessing would give you the")
+		fmt.Fprintln(os.Stderr, "  wrong instructions confidently. Use --surface watchos or --surface wearos.")
+		os.Exit(2)
+	}
+
+	if strings.EqualFold(strings.TrimSpace(name), "all") {
+		printWireSurfaceMatrix(root, stack)
+		return false
+	}
+
+	spec, ok := LookupWireSurface(name)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "yaver wire push: unknown surface %q\n", name)
+		fmt.Fprint(os.Stderr, "  known: ")
+		names := make([]string, 0, len(wireSurfaceOrder))
+		for _, s := range wireSurfaceOrder {
+			names = append(names, string(s))
+		}
+		fmt.Fprintln(os.Stderr, strings.Join(names, ", ")+", all")
+		os.Exit(2)
+	}
+
+	plan := PlanWirePush(spec.Surface, runtime.GOOS)
+	fmt.Printf("→ surface:  %s (%s)\n", spec.Surface, spec.Label)
+
+	if plan.Blocked {
+		fmt.Fprintf(os.Stderr, "\n✗ %s\n", plan.Reason)
+		os.Exit(2)
+	}
+
+	// Warn when the repo shows no sign of building this surface. A warning, not
+	// a refusal: detection reads conventional locations only, and being wrong
+	// about someone else's monorepo layout must not block them.
+	detected := DetectProjectSurfaces(root, stack)
+	if len(detected) > 0 && !containsSurface(detected, spec.Surface) {
+		fmt.Printf("  ⚠️  no %s target detected in this project (found: %s)\n",
+			spec.Surface, joinSurfaces(detected))
+		fmt.Println("     continuing anyway — detection only reads conventional locations")
+	}
+
+	if spec.Note != "" {
+		fmt.Printf("  note: %s\n", spec.Note)
+	}
+
+	switch spec.Surface {
+	case SurfaceIOS:
+		opts.platform = "ios"
+		return true
+
+	case SurfaceAndroid, SurfaceWearOS:
+		// A Wear OS watch is an ordinary adb target, so the Android install
+		// path is already correct for it — no new machinery needed.
+		opts.platform = "android"
+		return true
+
+	case SurfaceWatchOS:
+		// The whole reason this file exists. Build and push the iOS HOST app,
+		// then hand off with the literal taps.
+		fmt.Println()
+		fmt.Println("  Apple Watch apps have no direct install channel. Pushing the iOS host")
+		fmt.Println("  app instead — the watch app is embedded in it and rides along.")
+		fmt.Println()
+		opts.platform = "ios"
+		wirePendingManualStep = plan.NextStep
+		return true
+
+	case SurfaceTVOS, SurfaceVisionOS:
+		fmt.Fprintf(os.Stderr, "\n✗ %s builds are not wired yet.\n", spec.Label)
+		fmt.Fprintf(os.Stderr, "  Detection and device listing work (`yaver wire detect` will show a\n")
+		fmt.Fprintf(os.Stderr, "  paired %s), but the build path needs its own scheme + SDK selection\n", spec.Label)
+		fmt.Fprintf(os.Stderr, "  and native_build.go does not do that yet. Building the iOS target and\n")
+		fmt.Fprintf(os.Stderr, "  calling it a %s push would install the wrong app and report success.\n", spec.Label)
+		os.Exit(2)
+	}
+	return true
+}
+
+// wirePendingManualStep carries a companion-install instruction to be printed
+// AFTER a successful push, when the user is ready to act on it.
+var wirePendingManualStep string
+
+// PrintWirePendingManualStep emits the deferred hand-off, if any.
+func PrintWirePendingManualStep() {
+	if wirePendingManualStep == "" {
+		return
+	}
+	fmt.Println()
+	fmt.Println("─── one more step, on the phone ───────────────────────────────")
+	fmt.Println("  " + wirePendingManualStep)
+	fmt.Println()
+	fmt.Println("  This is not a bug and not a failed push: Apple ships no tool that")
+	fmt.Println("  installs a watch app on its own. The build is on the phone already.")
+	wirePendingManualStep = ""
+}
+
+// printWireSurfaceMatrix shows every surface, what this project builds, and
+// what would happen for each.
+func printWireSurfaceMatrix(root, stack string) {
+	detected := DetectProjectSurfaces(root, stack)
+	fmt.Printf("→ project surfaces detected: %s\n\n", joinSurfaces(detected))
+	fmt.Printf("  %-10s %-24s %-12s %s\n", "SURFACE", "DEVICE", "IN PROJECT", "WHAT HAPPENS")
+	for _, spec := range AllWireSurfaces() {
+		plan := PlanWirePush(spec.Surface, runtime.GOOS)
+		in := "—"
+		if containsSurface(detected, spec.Surface) {
+			in = "yes"
+		}
+		what := plan.Summary
+		if plan.Blocked {
+			what = "blocked: " + plan.Reason
+		}
+		fmt.Printf("  %-10s %-24s %-12s %s\n", spec.Surface, spec.Label, in, what)
+	}
+	fmt.Println()
+	fmt.Println("  Push one with:  yaver wire push --surface <name>")
+}
+
+func containsSurface(list []WireSurface, want WireSurface) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func joinSurfaces(list []WireSurface) string {
+	if len(list) == 0 {
+		return "(none detected)"
+	}
+	parts := make([]string, 0, len(list))
+	for _, s := range list {
+		parts = append(parts, string(s))
+	}
+	return strings.Join(parts, ", ")
+}

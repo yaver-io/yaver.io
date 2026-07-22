@@ -83,6 +83,9 @@ func wireUsage() {
 	fmt.Println("  yaver wire push                   (cwd)")
 	fmt.Println("  yaver wire push ./mobile")
 	fmt.Println("  yaver wire push --platform android --device R5CT123")
+	fmt.Println("  yaver wire push --surface all          # what does this repo build?")
+	fmt.Println("  yaver wire push --surface watchos      # pushes the iOS host, names the phone tap")
+	fmt.Println("  yaver wire push --surface wearos       # a Wear OS watch is an ordinary adb target")
 }
 
 // ---------- detect ----------
@@ -631,6 +634,7 @@ type wirePushOpts struct {
 	config      string // "Debug" | "Release"
 	noLaunch    bool
 	installDeps bool // approval to auto-install a missing JDK/Android SDK
+	surface     string
 }
 
 // release reports whether the current build configuration is Release.
@@ -645,6 +649,7 @@ func runWirePush(args []string) {
 	opts := wirePushOpts{}
 	fs.StringVar(&opts.device, "device", "", "specific device UDID/serial")
 	fs.StringVar(&opts.platform, "platform", "", "ios|android — force platform when both are supported")
+	fs.StringVar(&opts.surface, "surface", "", "ios|android|watchos|wearos|tvos|visionos (or 'all') — target a specific surface")
 	fs.StringVar(&opts.config, "config", "Release", "xcode/gradle build configuration: Debug|Release")
 	fs.BoolVar(&opts.noLaunch, "no-launch", false, "install without launching")
 	fs.BoolVar(&opts.installDeps, "install-deps", false, "approve auto-download+install of a missing JDK 17 / Android SDK")
@@ -687,6 +692,16 @@ func runWirePush(args []string) {
 	}
 	abs = projectRoot
 
+	// Surface routing runs BEFORE the platform check, because the surfaces that
+	// are not ios|android are precisely the ones the old check rejected with a
+	// syntax error. A user asking to push to their watch deserves an answer
+	// about watches, not a complaint about flag values.
+	if strings.TrimSpace(opts.surface) != "" {
+		if !applyWireSurface(abs, stack, opts.surface, &opts) {
+			return
+		}
+	}
+
 	platform := strings.ToLower(opts.platform)
 	if platform == "" {
 		platform = pickPlatformForStack(stack)
@@ -715,6 +730,10 @@ func runWirePush(args []string) {
 		fmt.Fprintf(os.Stderr, "\nyaver wire push: %v\n", err)
 		os.Exit(1)
 	}
+	// Printed only after a SUCCESSFUL push: a companion hand-off is an
+	// instruction to act on, and showing it beside a failure would read as part
+	// of the error.
+	PrintWirePendingManualStep()
 }
 
 // resolveMobileProject locates the actual mobile project starting from
