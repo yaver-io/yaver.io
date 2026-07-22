@@ -25,7 +25,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
       HCLOUD_SSH_KEY_NAME: yaver-ci
@@ -76,9 +76,15 @@ jobs:
 
       - name: Hetzner ephemeral preflight
         if: inputs.target == 'ephemeral'
-        env:
-          HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
-        run: ./ci/hcloud/preflight.sh ephemeral
+        run: |
+          set -euo pipefail
+          hcloud context list >/dev/null
+          if [ -n "${HETZNER_TEST_SNAPSHOT_ID:-}" ] && hcloud image describe "$HETZNER_TEST_SNAPSHOT_ID" >/dev/null 2>&1; then
+            echo "Using configured Hetzner snapshot for ephemeral smoke"
+          else
+            echo "::warning::HETZNER_TEST_SNAPSHOT_ID is missing, invalid, or inaccessible; falling back to raw $CI_SERVER_IMAGE"
+            echo "HETZNER_TEST_SNAPSHOT_ID=" >> "$GITHUB_ENV"
+          fi
 
       - name: Create ephemeral box
         if: inputs.target == 'ephemeral'
@@ -97,6 +103,30 @@ jobs:
 
       - name: Wait for SSH
         run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Sync repo to remote box
+        run: ./ci/hcloud/sync-repo.sh
+
+      - name: Bootstrap raw ephemeral box
+        if: inputs.target == 'ephemeral'
+        run: |
+          HETZNER_TEST_SERVER_IP="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "cd /opt/yaver && YAVER_SKIP_OLLAMA=1 bash ci/remote/bootstrap.sh"
+
+      - name: Build and start source agent
+        run: |
+          HETZNER_TEST_SERVER_IP="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "chmod +x /opt/yaver/scripts/remote-vibing-agent-setup.sh && YAVER_REMOTE_SMOKE_TOKEN=ci-remote-vibing-token bash /opt/yaver/scripts/remote-vibing-agent-setup.sh"
 
       - name: Copy smoke scripts and fixtures
         run: |
