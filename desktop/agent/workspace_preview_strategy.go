@@ -92,6 +92,11 @@ type FeedbackTransport string
 const (
 	// In-app SDK present: react-native, web, flutter.
 	FeedbackInAppSDK FeedbackTransport = "in-app-sdk"
+	// The viewer injects a shake/control event into the streamed simulator; the
+	// guest app's own SDK then opens inside that simulator. This is intentionally
+	// not "viewer-overlay": feedback still originates in the app SDK, but the
+	// trigger is delivered through the remote-runtime control channel.
+	FeedbackClientShakeRemoteSim = "client-shake-remote-sim"
 	// No in-app SDK: the viewer triggers over the WebRTC events channel.
 	FeedbackViewerTriggered FeedbackTransport = "viewer-triggered"
 	// Hermes bundle loaded on a real device — the guest app's own RN SDK fires,

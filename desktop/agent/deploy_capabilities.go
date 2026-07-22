@@ -138,19 +138,21 @@ type DeployCapabilitiesReport struct {
 // means there is no CI fallback (everything has one today, but the
 // shape stays open for future targets that are inherently local).
 var targetCIWorkflow = map[string]string{
-	"cloudflare":         "release-web.yml on web/* tag",
-	"convex":             "release-web.yml on web/* tag (also runs convex deploy)",
-	"convex-selfhosted":  "release-web.yml on web/* tag (self-hosted Convex deploy script)",
-	"firebase":           "release-web.yml workflow_dispatch (firebase deploy step)",
-	"fly":                "release-web.yml workflow_dispatch (fly deploy step)",
-	"netlify":            "release-web.yml workflow_dispatch (netlify deploy step)",
-	"pages":              "release-web.yml on web/* tag",
-	"playstore":          "release-mobile.yml workflow_dispatch (upload_playstore=true)",
-	"railway":            "release-web.yml workflow_dispatch (railway deploy step)",
-	"supabase-db":        "release-web.yml workflow_dispatch (supabase db push step)",
-	"supabase-functions": "release-web.yml workflow_dispatch (supabase functions step)",
-	"testflight":         "release-mobile.yml workflow_dispatch (upload_testflight=true)",
-	"vercel":             "release-web.yml workflow_dispatch (vercel deploy step)",
+	"cloudflare":           "release-web.yml on web/* tag",
+	"convex":               "release-web.yml on web/* tag (also runs convex deploy)",
+	"convex-selfhosted":    "release-web.yml on web/* tag (self-hosted Convex deploy script)",
+	"firebase":             "release-web.yml workflow_dispatch (firebase deploy step)",
+	"fly":                  "release-web.yml workflow_dispatch (fly deploy step)",
+	"netlify":              "release-web.yml workflow_dispatch (netlify deploy step)",
+	"pages":                "release-web.yml on web/* tag",
+	"playstore":            "release-mobile.yml workflow_dispatch (upload_playstore=true)",
+	"playstore-production": "release-mobile.yml workflow_dispatch (upload_playstore=true, production track)",
+	"railway":              "release-web.yml workflow_dispatch (railway deploy step)",
+	"supabase-db":          "release-web.yml workflow_dispatch (supabase db push step)",
+	"supabase-functions":   "release-web.yml workflow_dispatch (supabase functions step)",
+	"testflight":           "release-mobile.yml workflow_dispatch (upload_testflight=true)",
+	"tvos":                 "release-mobile.yml workflow_dispatch (tvos upload step, when enabled)",
+	"vercel":               "release-web.yml workflow_dispatch (vercel deploy step)",
 }
 
 // targetDefaultVaultProject is the vault project a target's secrets
@@ -162,6 +164,7 @@ var targetCIWorkflow = map[string]string{
 // the user creates.
 var targetDefaultVaultProject = map[string]string{
 	"testflight":           "mobile",
+	"tvos":                 "mobile",
 	"playstore":            "mobile",
 	"playstore-production": "mobile",
 	"convex":               "backend",

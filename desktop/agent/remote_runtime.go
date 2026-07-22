@@ -49,7 +49,7 @@ type RemoteRuntimeCapabilities struct {
 	RemoteRuntimeEligible   bool                  `json:"remoteRuntimeEligible"`
 	FeedbackSDKCompatible   bool                  `json:"feedbackSdkCompatible"`
 	FeedbackSDKNote         string                `json:"feedbackSdkNote,omitempty"`
-	FeedbackSurface         string                `json:"feedbackSurface,omitempty"` // "viewer-overlay" (RN sim stream) | "in-app-sdk" (native)
+	FeedbackSurface         string                `json:"feedbackSurface,omitempty"` // "client-shake-remote-sim" (RN sim stream) | "in-app-sdk" (browser/flutter/native)
 	FeedbackControlProtocol string                `json:"feedbackControlProtocol,omitempty"`
 	SupportedTransports     []string              `json:"supportedTransports,omitempty"`
 	CurrentHostClass        string                `json:"currentHostClass,omitempty"`
@@ -376,14 +376,17 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			return "Remote runtime is intended to coexist with Yaver Feedback SDK instrumentation in native apps; session transport and feedback transport remain separate."
 		}(),
 		// FeedbackSurface tells the client HOW feedback is captured for this
-		// session: "viewer-overlay" = the phone draws the feedback UI over the
-		// WebRTC video (RN sim streaming); "in-app-sdk" = the running app carries
-		// its own SDK (native). The mobile RemoteRuntimeViewer switches on this.
+		// session: "client-shake-remote-sim" = the viewer sends a shake/control
+		// event into a real simulator, where the guest app's own SDK opens;
+		// "in-app-sdk" = the browser/native app carries its own SDK directly.
+		// Keep this on the shared FeedbackTransport constants so runtime
+		// capabilities, preview planning and the SDK examples cannot drift into
+		// three spellings for the same transport.
 		FeedbackSurface: func() string {
 			if rnSim {
-				return "client-shake-remote-sim"
+				return FeedbackClientShakeRemoteSim
 			}
-			return "in-app-sdk"
+			return string(FeedbackInAppSDK)
 		}(),
 		FeedbackControlProtocol: "remote-runtime-feedback-v1",
 		SupportedTransports:     []string{"direct-webrtc", "relay-jpeg-poll"},

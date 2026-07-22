@@ -233,6 +233,26 @@ var buildTargets = map[string]buildTarget{
 		// the same floor `mobile-cache-cleanup.sh preflight` enforces.
 		MinFreeGB: 20,
 	},
+	"tvos": {
+		Name:        "tvos",
+		Stack:       "tvos",
+		Description: "Archive and upload the standalone Yaver tvOS app with xcodebuild and App Store Connect API.",
+		Tools: []buildTool{
+			{Name: "xcodebuild", VersionFlag: "-version", Required: true, Platforms: []string{"darwin"}, InstallHint: "install full Xcode with the tvOS platform component"},
+			{Name: "xcodegen", VersionFlag: "version", Required: false, Platforms: []string{"darwin"}, InstallHint: "brew install xcodegen (required when tvos/YaverTV.xcodeproj has not been generated)"},
+		},
+		Secrets: []string{
+			"APP_STORE_KEY_PATH",
+			"APP_STORE_KEY_ID",
+			"APP_STORE_KEY_ISSUER",
+			"APPLE_TEAM_ID",
+		},
+		NeedsCodesign: true,
+		// tvOS archives are smaller than iOS but still need room for DerivedData,
+		// archive and export. A doctor that ignores disk repeats the same
+		// false-green class as TestFlight on a nearly-full Mac.
+		MinFreeGB: 12,
+	},
 	"vercel": {
 		Name:        "vercel",
 		Stack:       "nextjs",

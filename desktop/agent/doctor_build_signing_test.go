@@ -156,6 +156,22 @@ func TestTestflightTargetDeclaresSigningAndDiskRequirements(t *testing.T) {
 	}
 }
 
+func TestTVOSTargetDeclaresSigningAndDiskRequirements(t *testing.T) {
+	tv, ok := buildTargets["tvos"]
+	if !ok {
+		t.Fatal("tvos target missing from catalogue")
+	}
+	if !tv.NeedsCodesign {
+		t.Error("tvos must set NeedsCodesign — App Store Connect upload needs a signed Apple TV archive")
+	}
+	if tv.MinFreeGB < 10 {
+		t.Errorf("tvos MinFreeGB=%d — a tvOS archive/export needs real disk headroom", tv.MinFreeGB)
+	}
+	if len(tv.Secrets) == 0 {
+		t.Error("tvos must declare App Store Connect secrets so doctor/deploy panes can report missing upload credentials")
+	}
+}
+
 // The report is consumed over HTTP/MCP by the mobile + web deploy panes;
 // the new blocks must survive a JSON round-trip.
 func TestBuildDoctorReportRoundTripsSigningAndDisk(t *testing.T) {
