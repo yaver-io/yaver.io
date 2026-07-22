@@ -57,7 +57,16 @@ func HostCanRunIOSSimulator(p HostPlatform) bool { return p == HostMacOS }
 // Docker runs inside a Linux VM, and Redroid's kernel-module requirements
 // (binder/ashmem) are not reliably available there, so this reports false
 // rather than promising a container that will not start.
-func HostCanRunRedroid(p HostPlatform) bool { return p == HostLinux }
+func HostCanRunRedroid(p HostPlatform) bool {
+	if p != HostLinux {
+		return false
+	}
+	// "It is Linux" is not enough. WSL2 is Linux and its default kernel has no
+	// binder, so Redroid there fails when the CONTAINER starts rather than when
+	// we probe — the inventory-says-yes shape. Ask the kernel.
+	ok, _ := HostCanRunRedroidHere()
+	return ok
+}
 
 // HostCanRunAndroidEmulator reports whether a real Android emulator can run.
 //
@@ -66,8 +75,23 @@ func HostCanRunRedroid(p HostPlatform) bool { return p == HostLinux }
 // installed. So it probes for the binaries rather than assuming — the whole
 // point of adding this strategy was that a host's real capability differed
 // from what the platform implied.
+// hostPlatformAllowsEmulator is the PLATFORM half of the emulator gate, split
+// out so a test can pin "Windows is allowed" independently of whether an SDK
+// happens to be installed on the machine running the test.
+func hostPlatformAllowsEmulator(p HostPlatform) bool {
+	return p == HostMacOS || p == HostLinux || p == HostWindows
+}
+
 func HostCanRunAndroidEmulator(p HostPlatform) bool {
-	if p != HostMacOS && p != HostLinux {
+	// Native Windows runs the emulator on WHPX and is a perfectly good remote
+	// Android host — excluding it made every Windows box useless for Kotlin.
+	if p != HostMacOS && p != HostLinux && p != HostWindows {
+		return false
+	}
+	// Inside WSL2 the emulator needs nested virtualisation, which is off by
+	// default; the emulator belongs on the WINDOWS side of such a machine.
+	// Claiming it here produces a boot that hangs instead of a clear refusal.
+	if w := DetectWSL(); w.IsWSL {
 		return false
 	}
 	return DiscoverBinary("emulator") != "" && DiscoverBinary("adb") != ""
