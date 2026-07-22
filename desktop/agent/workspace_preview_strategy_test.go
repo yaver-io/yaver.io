@@ -48,12 +48,17 @@ func TestResolveWorkspacePreview(t *testing.T) {
 		t.Fatalf("kotlin feedback must be viewer-triggered with no SDK: %+v", p)
 	}
 	// iOS on a Linux workspace MUST refuse rather than degrade to web.
-	p = ResolveWorkspacePreview("swift", false)
-	if p.Supported || p.Primary != PreviewUnsupported {
+	//
+	// Asserted through the HOST layer, because that is where the refusal now
+	// lives: the stack layer states what Swift NEEDS (a simulator) and the host
+	// layer answers whether this machine has one. Asserting "unsupported" at
+	// the stack layer is what made Swift unsupported on Macs too.
+	p = ResolvePreviewForHost(ResolveWorkspacePreview("swift", false), HostLinux)
+	if p.Supported {
 		t.Fatalf("swift must be unsupported on a Linux workspace, got %+v", p)
 	}
-	if p.Primary == PreviewChromeWebRTC {
-		t.Fatal("swift must never silently fall back to a web preview")
+	if p.Primary == PreviewChromeWebRTC || p.Primary == PreviewDirectURL {
+		t.Fatal("swift must never silently fall back to a web preview — it would not be the user's app")
 	}
 	// Machine class must follow the strategy, not lag it.
 	if PreviewStrategyMachineClass(PreviewRedroidWebRTC) != "build" {

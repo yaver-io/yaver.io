@@ -199,15 +199,27 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 		}
 
 	case strings.Contains(s, "swift") || strings.Contains(s, "ios") || strings.Contains(s, "xcode"):
+		// State what the STACK NEEDS — an iOS simulator — and let
+		// ResolvePreviewForHost decide whether this machine has one. That
+		// separation is this file's stated contract ("what does this stack
+		// need" vs "what can this machine do"), and returning PreviewUnsupported
+		// here broke it: ResolvePreviewForHost only upgrades a plan whose
+		// Primary is PreviewIOSSimulator, so a hardcoded "unsupported" could
+		// never be reconsidered. On a Mac with a booted simulator and
+		// ios-simulator=true in the WebRTC doctor, Swift still reported
+		// supported=false — and said "cannot run on a Linux Cloud Workspace"
+		// while running on macOS. Verified on this machine 2026-07-22.
+		//
+		// The refusal is not lost, it MOVES to the layer that can see the host:
+		// on Linux, ResolvePreviewForHost still returns Supported=false with
+		// the specific remedy. Falling back to a web preview remains wrong —
+		// it would render something that is NOT the user's app.
 		return WorkspacePreviewPlan{
-			Primary:      PreviewUnsupported,
+			Primary:      PreviewIOSSimulator,
 			MachineClass: "standard",
 			Feedback:     FeedbackViewerTriggered,
-			Supported:    false,
-			// Refuse, loudly and specifically. Falling back to a web preview
-			// would render something that is NOT the user's app, which is worse
-			// than an honest "this needs a Mac".
-			Reason: "iOS simulators require macOS and cannot run on a Linux Cloud Workspace. Use a paired iPhone (yaver wire push) or a Mac host; a web preview would not be your app",
+			Supported:    true,
+			Reason:       "native Apple UI — needs an iOS simulator, which exists only on a macOS host (or use a paired iPhone via `yaver wire push`)",
 		}
 
 	default:

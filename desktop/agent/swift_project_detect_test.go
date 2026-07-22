@@ -111,10 +111,10 @@ func TestUnknownNeverGuesses(t *testing.T) {
 }
 
 func TestResolveForDirBeatsLabelOnlyForSwift(t *testing.T) {
-	// Label alone => conservative: Swift needs a Mac.
-	label := ResolveWorkspacePreview("swift", false)
+	// Label alone => conservative: Swift needs a Mac, so a LINUX host refuses.
+	label := ResolvePreviewForHost(ResolveWorkspacePreview("swift", false), HostLinux)
 	if label.Supported {
-		t.Fatal("label-only swift should stay conservative")
+		t.Fatal("label-only swift should stay conservative on a Linux host")
 	}
 	// With the directory, a Tokamak project routes to Linux + chrome-webrtc.
 	dir := writeSwiftProject(t, map[string]string{

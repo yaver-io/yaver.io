@@ -70,3 +70,38 @@ func TestDetectHostPlatformIsReal(t *testing.T) {
 		t.Fatal("macOS cannot run redroid")
 	}
 }
+
+// A Mac with a simulator must report Swift SUPPORTED. This failed in exactly
+// the way that is hardest to see: the stack resolver hardcoded
+// PreviewUnsupported, and ResolvePreviewForHost only ever upgrades a plan whose
+// Primary is PreviewIOSSimulator — so the host layer could never reconsider it.
+// On this Mac, with a booted iPhone 17 Pro and ios-simulator=true in the WebRTC
+// doctor, Swift reported supported=false AND said "cannot run on a Linux Cloud
+// Workspace" while running on macOS.
+func TestSwiftIsSupportedOnAMacAndRefusedOnLinux(t *testing.T) {
+	mac := ResolvePreviewForHost(ResolveWorkspacePreview("swift", false), HostMacOS)
+	if !mac.Supported {
+		t.Errorf("native Swift must be supported on a macOS host: %+v", mac)
+	}
+	if mac.Primary != PreviewIOSSimulator {
+		t.Errorf("macOS Swift should route to the simulator, got %q", mac.Primary)
+	}
+	if strings.Contains(strings.ToLower(mac.Reason), "linux") {
+		t.Errorf("a macOS plan must not explain itself in terms of Linux: %q", mac.Reason)
+	}
+
+	lin := ResolvePreviewForHost(ResolveWorkspacePreview("swift", false), HostLinux)
+	if lin.Supported {
+		t.Errorf("native Swift cannot run on Linux — no simulator exists there: %+v", lin)
+	}
+	if lin.Reason == "" {
+		t.Error("the Linux refusal must carry the remedy, not just a false")
+	}
+
+	// SwiftWasm is the Swift runtime that DOES work on Linux, and must not be
+	// dragged down with native Swift.
+	wasm := ResolvePreviewForHost(ResolveWorkspacePreview("swiftwasm", false), HostLinux)
+	if !wasm.Supported || wasm.Primary != PreviewDirectURL {
+		t.Errorf("swiftwasm must stay supported as a URL on Linux: %+v", wasm)
+	}
+}
