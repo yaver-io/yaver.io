@@ -202,6 +202,10 @@ export const set = internalMutation({
     // existing value. Null on any key clears that subsystem.
     managed: v.optional(managedPatchValidator),
     deployPreferences: v.optional(deployPreferencePatchValidator),
+    // Which tab the mobile app opens on. Stored here so the choice follows the
+    // ACCOUNT across devices; the phone keeps a local copy because boot cannot
+    // wait on a round-trip without flashing the wrong tab.
+    startupScreen: v.optional(v.union(v.literal("projects"), v.literal("tasks"), v.null())),
   },
   handler: async (ctx, args) => {
     const normalizedPrimaryDeviceId = await normalizeOwnedDeviceId(
@@ -347,6 +351,10 @@ export const setByToken = mutation({
     ),
     managed: v.optional(managedPatchValidator),
     deployPreferences: v.optional(deployPreferencePatchValidator),
+    // Which tab the mobile app opens on. Stored here so the choice follows the
+    // ACCOUNT across devices; the phone keeps a local copy because boot cannot
+    // wait on a round-trip without flashing the wrong tab.
+    startupScreen: v.optional(v.union(v.literal("projects"), v.literal("tasks"), v.null())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);

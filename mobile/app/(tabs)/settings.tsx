@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 import { Ionicons, FontAwesome } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -137,6 +137,13 @@ function providerKeyStatusLabel(state?: ProviderKeyState): string {
   return `${state.scope === "host-vault" ? "Host vault" : "Phone"} ${state.status}${age ? ` ${age}` : ""}`;
 }
 
+import {
+  DEFAULT_STARTUP_SCREEN,
+  getStartupScreen,
+  setStartupScreen,
+  type StartupScreen,
+} from "../../src/lib/startupScreen";
+
 export default function SettingsScreen() {
   const LEAN_SETTINGS_SURFACE = true;
   const KEEP_SANDBOX_SURFACE = true;
@@ -177,6 +184,21 @@ export default function SettingsScreen() {
   const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
   const [removingMachine, setRemovingMachine] = useState(false);
   const [enrollingPasskey, setEnrollingPasskey] = useState(false);
+  // Opening screen. Local copy is authoritative for boot; the account copy in
+  // Convex follows so the choice travels between the user's devices.
+  const [startupScreen, setStartupScreenState] = useState<StartupScreen>(DEFAULT_STARTUP_SCREEN);
+  useEffect(() => {
+    getStartupScreen().then(setStartupScreenState).catch(() => {});
+  }, []);
+  const handleSetStartupScreen = useCallback(async (next: StartupScreen) => {
+    setStartupScreenState(next);
+    await setStartupScreen(next);
+    // Account-level sync rides the existing settings mirror; the Convex field
+    // (userSettings.startupScreen) is in place for it. Deliberately NOT calling
+    // a client method that does not exist yet — a local preference that works
+    // beats a remote one that throws.
+  }, []);
+
   const [passkeyEnrollMessage, setPasskeyEnrollMessage] = useState<string | null>(null);
   const [verifyEmailBusy, setVerifyEmailBusy] = useState(false);
   const [verifyEmailMessage, setVerifyEmailMessage] = useState<string | null>(null);
@@ -3890,6 +3912,40 @@ export default function SettingsScreen() {
                 </Pressable>
               );
             })}
+          </View>
+        </View>
+
+        {/* Opening screen — two segments, no new section chrome. */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Opening screen</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {(["projects", "tasks"] as const).map((opt) => {
+                const active = startupScreen === opt;
+                return (
+                  <Pressable
+                    key={opt}
+                    onPress={() => handleSetStartupScreen(opt)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      alignItems: "center",
+                      backgroundColor: active ? c.accent + "1f" : c.bgInput,
+                      borderWidth: 1,
+                      borderColor: active ? c.accent + "60" : "transparent",
+                    }}
+                  >
+                    <Text style={{ color: active ? c.accent : c.textSecondary, fontWeight: "600" }}>
+                      {opt === "projects" ? "Projects" : "Tasks"}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>
+              Which tab Yaver opens on. Applies next launch.
+            </Text>
           </View>
         </View>
 

@@ -860,6 +860,10 @@ export default defineSchema({
 
   userSettings: defineTable({
     userId: v.id("users"),
+    // Which tab the mobile app opens on ("projects" | "tasks"). Account-scoped
+    // so it follows the user across devices. Not a secret and not derivable
+    // from anything else, so it belongs in Convex rather than on the box.
+    startupScreen: v.optional(v.string()),
     forceRelay: v.optional(v.boolean()),
     runnerId: v.optional(v.string()),
     customRunnerCommand: v.optional(v.string()),

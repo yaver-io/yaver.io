@@ -79,6 +79,12 @@ function TabIcon({ label, focused, showGreenDot, rail }: { label: string; focuse
   );
 }
 
+import {
+  DEFAULT_STARTUP_SCREEN,
+  STARTUP_SCREEN_ROUTES,
+  getStartupRoute,
+} from "../../src/lib/startupScreen";
+
 export default function TabLayout() {
   const c = useColors();
   const { isDark } = useTheme();
@@ -297,8 +303,21 @@ export default function TabLayout() {
     return <Redirect href="/login" />;
   }
 
+  // Startup tab preference. Defaults to Projects (see startupScreen.ts).
+  const [startupRoute, setStartupRoute] = useState<string>(STARTUP_SCREEN_ROUTES[DEFAULT_STARTUP_SCREEN]);
+  useEffect(() => {
+    let alive = true;
+    getStartupRoute().then((r) => { if (alive) setStartupRoute(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   return (
     <Tabs
+      // Which tab the app lands on. Read once at mount from the local copy so
+      // the first render is already correct — resolving this over the network
+      // would flash the wrong tab before correcting itself, which is worse
+      // than a stale preference.
+      initialRouteName={startupRoute}
       screenOptions={{
         headerStyle: { backgroundColor: c.bg },
         headerTintColor: c.textPrimary,
