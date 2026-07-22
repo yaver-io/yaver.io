@@ -1277,7 +1277,10 @@ func metaInstallPlan(name string) (installPlan, bool) {
 			description: "Chromium — headless browser used by chromedp for vibe-preview frame capture",
 			macOS:       []string{"brew install --cask chromium"},
 			linux: []linuxStep{
-				{"apt-get", "sudo apt-get install -y chromium-browser"},
+				// chromium-browser is a SNAP STUB on Ubuntu (both jammy and
+				// noble) and `chromium` has no apt candidate — install real
+				// Chrome from Google's repo instead. See chrome_install.go.
+				{"apt-get", "sudo apt-get install -y chromium || sudo snap install chromium"},
 				{"dnf", "sudo dnf install -y chromium"},
 				{"pacman", "sudo pacman -S --noconfirm chromium"},
 			},

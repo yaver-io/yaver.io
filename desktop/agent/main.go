@@ -3088,6 +3088,16 @@ func runServe(args []string) {
 	// read: without tmux this agent will accept an autorun and silently never
 	// run it. Best-effort and never interactive — see EnsureTmuxInstalled.
 	EnsureTmuxInstalled(context.Background(), log.Printf)
+
+	// Same argument for a browser: chrome-webrtc is the fallback preview path
+	// for EVERY browser-renderable stack (RN, Expo, Flutter, SwiftWasm, Next)
+	// whenever the viewer cannot reach the dev server or cannot render a URL,
+	// and it is the light alternative to Redroid's ~6.5 GB `build` class. A
+	// workspace with no browser loses that path silently. Runs in the
+	// background because adding an apt repo and pulling Chrome takes far
+	// longer than tmux, and serve must not block on it.
+	go EnsureChromeInstalled(context.Background(), log.Printf)
+
 	taskMgr.TmuxMgr = NewTmuxManager(taskMgr)
 	if taskMgr.TmuxMgr != nil {
 		log.Println("Tmux: available — session adoption enabled")

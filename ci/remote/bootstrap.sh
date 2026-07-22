@@ -271,7 +271,15 @@ log "chromium for the browser-video recorder (browser_video.go)"
 # snap shim), so this is BEST-EFFORT and must never abort the image build:
 # a missing browser only disables video recording, not the box. The Debian
 # container image (Dockerfile.yaver-cloud) gets a proper chromium .deb instead.
-apt-get install -y chromium-browser fonts-liberation \
+# chromium-browser is a SNAP STUB on Ubuntu (2:1snap1-0ubuntu2, both jammy and
+# noble) and `chromium` has no apt candidate — a snap shim will not run headless
+# in a container. Install real Chrome from Google's own repo, which is the only
+# supported path. Verified on a clean 24.04 box 2026-07-22.
+install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+apt-get update
+apt-get install -y google-chrome-stable fonts-liberation \
   || apt-get install -y chromium fonts-liberation \
   || log "chromium unavailable on this distro/arch — browser video recording disabled"
 
