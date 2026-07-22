@@ -100,14 +100,21 @@ func hasProjectGitContext(dir string) bool {
 
 // MobileProject represents a discovered mobile project on the dev machine.
 type MobileProject struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Framework   string `json:"framework"`            // "flutter", "expo", "react-native", "unity", "next", "vite"
-	SDKVersion  string `json:"sdkVersion,omitempty"` // e.g. "52.0.0", "55.0.6"
-	HasDevBuild bool   `json:"hasDevBuild"`          // true if ios/ or android/ prebuild exists
-	Branch      string `json:"branch,omitempty"`
-	Remote      string `json:"remote,omitempty"`
-	SizeHuman   string `json:"size,omitempty"`
+	Name              string   `json:"name"`
+	Path              string   `json:"path"`
+	Framework         string   `json:"framework"`          // "flutter", "expo", "react-native", "unity", "next", "vite"
+	Stack             string   `json:"stack,omitempty"`    // primary canonical workspace stack label
+	Stacks            []string `json:"stacks,omitempty"`   // every detected dev stack
+	Surfaces          []string `json:"surfaces,omitempty"` // mobile, web, backend, watch, tv, car, vision
+	TestSurfaces      []string `json:"testSurfaces,omitempty"`
+	FeedbackSDK       string   `json:"feedbackSdk,omitempty"`
+	FeedbackTransport string   `json:"feedbackTransport,omitempty"`
+	VoiceCapabilities []string `json:"voiceCapabilities,omitempty"`
+	SDKVersion        string   `json:"sdkVersion,omitempty"` // e.g. "52.0.0", "55.0.6"
+	HasDevBuild       bool     `json:"hasDevBuild"`          // true if ios/ or android/ prebuild exists
+	Branch            string   `json:"branch,omitempty"`
+	Remote            string   `json:"remote,omitempty"`
+	SizeHuman         string   `json:"size,omitempty"`
 	// Capabilities (Yaver Protocol v1 — surface the dashboard's mode
 	// toggle correctly per project). One project can be both web and
 	// mobile capable (RN+RN-Web) — that's why these are independent flags.
@@ -148,6 +155,47 @@ func projectKindLabel(framework string, mobileCapable, webCapable bool) string {
 		return fw
 	}
 	return "project"
+}
+
+func surfacesForMobileProject(dir string, p MobileProject) []string {
+	frameworks := frameworksForStackLabels([]string{p.Framework, p.Stack})
+	d := &StackDetection{
+		Framework:  p.Framework,
+		Frameworks: frameworks,
+		Stack:      p.Stack,
+		Stacks:     p.Stacks,
+	}
+	if p.MobileCapable {
+		d.Surfaces = append(d.Surfaces, "mobile")
+	}
+	if p.WebCapable {
+		d.Surfaces = append(d.Surfaces, "web")
+	}
+	d.Surfaces = append(d.Surfaces, detectDevelopmentSurfaces(dir, d)...)
+	return dedupeSorted(d.Surfaces)
+}
+
+func testSurfacesForMobileProject(p MobileProject) []string {
+	frameworks := frameworksForStackLabels([]string{p.Framework, p.Stack})
+	return detectTestSurfaces(&StackDetection{
+		Framework:  p.Framework,
+		Frameworks: frameworks,
+		Stack:      p.Stack,
+		Stacks:     p.Stacks,
+		Surfaces:   p.Surfaces,
+	})
+}
+
+func voiceCapabilitiesForMobileProject(p MobileProject) []string {
+	return feedbackVoiceCapabilities(&StackDetection{
+		Framework:         p.Framework,
+		Frameworks:        frameworksForStackLabels([]string{p.Framework, p.Stack}),
+		Stack:             p.Stack,
+		Stacks:            p.Stacks,
+		Surfaces:          p.Surfaces,
+		FeedbackSDK:       p.FeedbackSDK,
+		FeedbackTransport: p.FeedbackTransport,
+	})
 }
 
 func repoDisplayName(repoRoot string) string {
@@ -717,6 +765,8 @@ func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobile
 				Name:           displayProjectName(repoRoot, monorepoApp, appName, framework, mobileCapable, webCapable),
 				Path:           dir,
 				Framework:      framework,
+				Stack:          primaryStack(stackLabelsForFrameworks(frameworksForStackLabels([]string{framework}))),
+				Stacks:         stackLabelsForFrameworks(frameworksForStackLabels([]string{framework})),
 				SDKVersion:     sdkVersion,
 				HasDevBuild:    hasDevBuild,
 				WebCapable:     webCapable,
@@ -724,6 +774,11 @@ func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobile
 				ExecutionMode:  string(executionModeForFramework(framework)),
 				PrimarySurface: primarySurfaceForFramework(framework),
 			}
+			proj.Surfaces = surfacesForMobileProject(dir, proj)
+			proj.TestSurfaces = testSurfacesForMobileProject(proj)
+			proj.FeedbackSDK = FeedbackSDKPackage(firstNonEmptyString(proj.Stack, proj.Framework))
+			proj.FeedbackTransport = string(ResolveFeedbackBehaviour(firstNonEmptyString(proj.Stack, proj.Framework), false, false).Transport)
+			proj.VoiceCapabilities = voiceCapabilitiesForMobileProject(proj)
 			// Monorepo lineage detection. If `dir` is N levels under a
 			// directory that has its own .git AND is also one of the
 			// well-known monorepo subdirs (`apps/<app>`, `packages/<pkg>`,

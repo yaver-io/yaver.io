@@ -55,6 +55,8 @@ const (
 	FwGo          = "go"
 	FwRust        = "rust"
 	FwPython      = "python"
+	FwUnity       = "unity"
+	FwYaverXML    = "yaver-xml"
 )
 
 // providerKind groups targets so a UI can section them without knowing
@@ -131,11 +133,27 @@ type StackDetection struct {
 	// labelled swift just because ios/*.xcodeproj exists.
 	Framework  string   `json:"framework,omitempty"`
 	Frameworks []string `json:"frameworks,omitempty"`
-	Role       string   `json:"role,omitempty"`
-	Backend    string   `json:"backend,omitempty"` // canonical BackendKind value
-	Hosting    []string `json:"hosting,omitempty"`
-	ORM        string   `json:"orm,omitempty"`
-	Services   []string `json:"services,omitempty"`
+	// Stack is the primary workspace stack label. Stacks carries every
+	// detected development stack in a vocabulary suitable for UI filters and
+	// yaver.workspace.yaml. Framework remains for legacy callers.
+	Stack  string   `json:"stack,omitempty"`
+	Stacks []string `json:"stacks,omitempty"`
+	// Surfaces are product targets this project can plausibly build for.
+	// TestSurfaces are the Yaver preview/runtime surfaces that can exercise
+	// them (browser, rn-hermes, simulator, emulator, webrtc). Both are
+	// explicit so mobile/web/watch/tv/car/vision UIs do not need to reverse
+	// engineer a stack string.
+	Surfaces     []string `json:"surfaces,omitempty"`
+	TestSurfaces []string `json:"testSurfaces,omitempty"`
+	// Feedback metadata describes how the SDK loop reaches this stack.
+	FeedbackSDK       string   `json:"feedbackSdk,omitempty"`
+	FeedbackTransport string   `json:"feedbackTransport,omitempty"`
+	VoiceCapabilities []string `json:"voiceCapabilities,omitempty"`
+	Role              string   `json:"role,omitempty"`
+	Backend           string   `json:"backend,omitempty"` // canonical BackendKind value
+	Hosting           []string `json:"hosting,omitempty"`
+	ORM               string   `json:"orm,omitempty"`
+	Services          []string `json:"services,omitempty"`
 
 	// Tags are the UI chips. Union of framework + backend + hosting +
 	// orm + language markers, deduped and stable-sorted.
@@ -364,6 +382,12 @@ func detectCanonicalFrameworks(dir string, pkg pkgJSON) ([]string, []StackEviden
 	if f := firstExisting(dir, "pyproject.toml", "setup.py", "requirements.txt"); f != "" {
 		add(FwPython, f)
 	}
+	if f := firstExisting(dir, "ProjectSettings/ProjectVersion.txt", "Packages/manifest.json"); f != "" && isDir(filepath.Join(dir, "Assets")) {
+		add(FwUnity, f)
+	}
+	if f := firstExisting(dir, "yaver.xml", "yaver.config.xml", ".yaver/project.xml"); f != "" {
+		add(FwYaverXML, f)
+	}
 	frameworks = dedupeSorted(frameworks)
 	sort.SliceStable(evidence, func(i, j int) bool {
 		return frameworkRank(evidence[i].Implies) < frameworkRank(evidence[j].Implies)
@@ -395,6 +419,10 @@ func frameworkRank(framework string) int {
 		return 9
 	case FwPython:
 		return 10
+	case FwUnity:
+		return 11
+	case FwYaverXML:
+		return 12
 	default:
 		return 999
 	}
@@ -624,11 +652,14 @@ func detectOneDir(dir, root string) *StackDetection {
 	if frameworks, evidence := detectCanonicalFrameworks(dir, pkg); len(frameworks) > 0 {
 		d.Frameworks = frameworks
 		d.Framework = primaryFramework(frameworks)
+		d.Stacks = stackLabelsForFrameworks(frameworks)
+		d.Stack = primaryStack(d.Stacks)
 		for _, ev := range evidence {
 			ev.Path = rel
 			d.Evidence = append(d.Evidence, ev)
 		}
 		d.Tags = append(d.Tags, frameworks...)
+		d.Tags = append(d.Tags, d.Stacks...)
 	}
 
 	for _, p := range stackProviders {
@@ -672,6 +703,14 @@ func detectOneDir(dir, root string) *StackDetection {
 
 	d.Warnings = append(d.Warnings, detectStackWarnings(dir, d)...)
 	d.Role = detectStackRole(d)
+	d.Surfaces = detectDevelopmentSurfaces(dir, d)
+	d.TestSurfaces = detectTestSurfaces(d)
+	d.FeedbackSDK = FeedbackSDKPackage(d.Stack)
+	if d.FeedbackSDK == "" {
+		d.FeedbackSDK = FeedbackSDKPackage(d.Framework)
+	}
+	d.FeedbackTransport = string(ResolveFeedbackBehaviour(firstNonEmptyStackString(d.Stack, d.Framework), false, false).Transport)
+	d.VoiceCapabilities = feedbackVoiceCapabilities(d)
 	d.Tags = dedupeSorted(d.Tags)
 	d.Services = dedupeSorted(d.Services)
 	d.Hosting = dedupeSorted(d.Hosting)
@@ -685,6 +724,141 @@ func detectOneDir(dir, root string) *StackDetection {
 		return d.Evidence[i].Implies < d.Evidence[j].Implies
 	})
 	return d
+}
+
+func stackLabelsForFrameworks(frameworks []string) []string {
+	var out []string
+	for _, fw := range frameworks {
+		switch fw {
+		case FwExpo:
+			out = append(out, "react-native-expo")
+		case FwReactNative:
+			out = append(out, "react-native")
+		case FwNextJS:
+			out = append(out, "nextjs")
+		case FwYaverXML:
+			out = append(out, "yaver-xml")
+		case FwUnity:
+			out = append(out, "unity")
+		default:
+			out = append(out, fw)
+		}
+	}
+	return dedupeSorted(out)
+}
+
+func primaryStack(stacks []string) string {
+	if len(stacks) == 0 {
+		return ""
+	}
+	for _, want := range []string{"react-native-expo", "react-native", "flutter", "unity", "nextjs", "vite", "react", "swift", "kotlin", "go", "rust", "python", "yaver-xml"} {
+		for _, s := range stacks {
+			if s == want {
+				return s
+			}
+		}
+	}
+	return stacks[0]
+}
+
+func detectDevelopmentSurfaces(dir string, d *StackDetection) []string {
+	var out []string
+	if d == nil {
+		return nil
+	}
+	if d.Backend != "" || containsAnyString(d.Frameworks, FwGo, FwRust, FwPython) || hasTargetID(d, "docker") {
+		out = append(out, "backend")
+	}
+	if containsAnyString(d.Frameworks, FwNextJS, FwVite, FwReact) {
+		out = append(out, "web")
+	}
+	if containsAnyString(d.Frameworks, FwExpo, FwReactNative, FwFlutter) {
+		out = append(out, "mobile", "web")
+	}
+	if containsAnyString(d.Frameworks, FwSwift) {
+		out = append(out, "mobile")
+	}
+	if containsAnyString(d.Frameworks, FwKotlin) {
+		out = append(out, "mobile")
+	}
+	if containsAnyString(d.Frameworks, FwYaverXML) {
+		out = append(out, "mobile", "web", "backend", "watch", "tv", "car", "vision")
+	}
+	for _, marker := range []struct {
+		surface string
+		paths   []string
+	}{
+		{"watch", []string{"watch", "wear", "watchos", "WatchKit Extension"}},
+		{"tv", []string{"tvos", "tv", "androidtv", "android-tv"}},
+		{"car", []string{"car", "carplay", "android-auto", "automotive"}},
+		{"vision", []string{"visionos", "vision", "xr", "ar", "vr"}},
+	} {
+		for _, p := range marker.paths {
+			if fileExists(filepath.Join(dir, filepath.FromSlash(p))) || isDir(filepath.Join(dir, filepath.FromSlash(p))) {
+				out = append(out, marker.surface)
+				break
+			}
+		}
+	}
+	if containsAnyString(d.Frameworks, FwUnity) {
+		out = append(out, "mobile", "web", "tv", "vision")
+	}
+	return dedupeSorted(out)
+}
+
+func detectTestSurfaces(d *StackDetection) []string {
+	var out []string
+	for _, surface := range d.Surfaces {
+		switch surface {
+		case "web":
+			out = append(out, "browser")
+		case "mobile":
+			if containsAnyString(d.Frameworks, FwExpo, FwReactNative) {
+				out = append(out, "rn-hermes", "browser", "ios-simulator", "android-emulator", "webrtc")
+			} else if containsAnyString(d.Frameworks, FwFlutter) {
+				out = append(out, "browser", "android-emulator", "webrtc")
+			} else {
+				out = append(out, "ios-simulator", "android-emulator", "webrtc")
+			}
+		case "watch":
+			out = append(out, "watchos-simulator", "android-wear", "webrtc")
+		case "tv":
+			out = append(out, "tvos-simulator", "android-tv", "webrtc")
+		case "car":
+			out = append(out, "carplay-simulator", "android-auto", "webrtc")
+		case "vision":
+			out = append(out, "visionos-simulator", "android-xr", "browser", "webrtc")
+		case "backend":
+			out = append(out, "cli", "http")
+		}
+	}
+	return dedupeSorted(out)
+}
+
+func feedbackVoiceCapabilities(d *StackDetection) []string {
+	var out []string
+	if d == nil {
+		return nil
+	}
+	if d.FeedbackTransport != "" {
+		out = append(out, "voice-notes", "voice-vibing", "stt", "tts")
+	}
+	if containsAnyString(d.Surfaces, "web") {
+		out = append(out, "browser-mic", "browser-tts")
+	}
+	if containsAnyString(d.Surfaces, "mobile", "watch", "tv", "car", "vision") {
+		out = append(out, "device-mic", "device-tts")
+	}
+	return dedupeSorted(out)
+}
+
+func firstNonEmptyStackString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func primaryFramework(frameworks []string) string {

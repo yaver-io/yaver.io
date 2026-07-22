@@ -29,6 +29,7 @@ Flags:
   --expect <state>        enabled | disabled
   --transport <mode>      direct-webrtc | relay-jpeg-poll (default: relay-jpeg-poll)
   --check-frame           Create a session and fetch one JPEG frame.
+  --check-control         Send one safe control command to the live session.
   --prepare-android       Run `yaver install remote-runtime` before checks.
 EOF
 }
@@ -48,6 +49,7 @@ TARGET=""
 EXPECT_STATE=""
 TRANSPORT="relay-jpeg-poll"
 CHECK_FRAME=0
+CHECK_CONTROL=0
 PREPARE_ANDROID=0
 
 while [[ $# -gt 0 ]]; do
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --expect) EXPECT_STATE="${2:-}"; shift 2 ;;
     --transport) TRANSPORT="${2:-}"; shift 2 ;;
     --check-frame) CHECK_FRAME=1; shift ;;
+    --check-control) CHECK_CONTROL=1; shift ;;
     --prepare-android) PREPARE_ANDROID=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -147,9 +150,9 @@ if [[ "$FRAMEWORK" == "kotlin" ]]; then
   }
 fi
 
-if [[ "$CHECK_FRAME" == "1" ]]; then
+if [[ "$CHECK_FRAME" == "1" || "$CHECK_CONTROL" == "1" ]]; then
   [[ "$EXPECT_STATE" == "enabled" ]] || {
-    echo "--check-frame only makes sense for enabled targets" >&2
+    echo "--check-frame/--check-control only make sense for enabled targets" >&2
     exit 2
   }
   echo "== create remote-runtime session =="
@@ -167,7 +170,9 @@ if [[ "$CHECK_FRAME" == "1" ]]; then
     curl -fsS "${auth[@]}" -X DELETE "$AGENT/remote-runtime/sessions/$session_id" >/dev/null || true
   }
   trap cleanup EXIT
+fi
 
+if [[ "$CHECK_FRAME" == "1" ]]; then
   echo "== fetch relay frame =="
   tmp_jpg="$(mktemp /tmp/yaver-remote-runtime-frame.XXXXXX.jpg)"
   curl -fsS "${auth[@]}" "$AGENT/remote-runtime/sessions/$session_id/frame" -o "$tmp_jpg"
@@ -178,6 +183,19 @@ if [[ "$CHECK_FRAME" == "1" ]]; then
     exit 1
   }
   rm -f "$tmp_jpg"
+fi
+
+if [[ "$CHECK_CONTROL" == "1" ]]; then
+  echo "== send safe control command =="
+  control_json="$(curl -fsS "${auth[@]}" \
+    -H 'Content-Type: application/json' \
+    -d '{"action":"key","key":"home","clientId":"ci-remote-runtime","clientLabel":"CI remote runtime smoke"}' \
+    "$AGENT/remote-runtime/sessions/$session_id/control")"
+  echo "$control_json" | jq '{ok, session: {id: .session.id, status: .session.status, lastCommand: .session.lastCommand, note: .session.note}}'
+  if [[ "$(echo "$control_json" | jq -r '.ok')" != "true" ]]; then
+    echo "control command did not return ok=true" >&2
+    exit 1
+  fi
 fi
 
 echo "remote-runtime smoke ok"

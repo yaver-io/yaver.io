@@ -211,6 +211,20 @@ export interface FeedbackConfig {
    */
   projectName?: string;
   bundleId?: string;
+  /** Primary Yaver product surface for this app/package. */
+  surface?: YaverSurface;
+  /** All product surfaces this app/package owns. */
+  surfaces?: YaverSurface[];
+  /** Canonical development stack labels, e.g. react-native-expo, yaver-xml. */
+  stack?: string;
+  stacks?: string[];
+  /** Yaver preview/runtime targets that can exercise this app. */
+  testSurfaces?: string[];
+  feedbackSdk?: string;
+  feedbackTransport?: string;
+  voiceCapabilities?: string[];
+  sttProvider?: string;
+  ttsProvider?: string;
   /** How feedback collection is triggered */
   trigger?: 'shake' | 'floating-button' | 'manual';
   /**
@@ -557,9 +571,20 @@ export interface FeedbackProjectRef {
    * so the type matches the wire format the agent parses.
    */
   projectPath?: string;
-  surface?: 'web' | 'mobile' | 'backend';
+  surface?: YaverSurface;
+  surfaces?: YaverSurface[];
+  stack?: string;
+  stacks?: string[];
+  testSurfaces?: string[];
+  feedbackSdk?: string;
+  feedbackTransport?: string;
+  voiceCapabilities?: string[];
+  sttProvider?: string;
+  ttsProvider?: string;
   releaseChannel?: 'production' | 'candidate' | 'development';
 }
+
+export type YaverSurface = 'web' | 'mobile' | 'backend' | 'watch' | 'tv' | 'car' | 'vision' | 'desktop' | 'cli';
 
 export interface TimelineEvent {
   type: 'screenshot' | 'audio' | 'video';

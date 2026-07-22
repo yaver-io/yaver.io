@@ -19,17 +19,23 @@ import (
 // Includes kind (derived from stack) + envMissing so the UI can grey
 // out apps whose required env vars aren't set on the host.
 type WorkspaceAppView struct {
-	Name       string            `json:"name"`
-	Path       string            `json:"path"`
-	AbsPath    string            `json:"absPath,omitempty"`
-	Stack      string            `json:"stack,omitempty"`
-	Kind       DevServerKind     `json:"kind,omitempty"`
-	Framework  string            `json:"framework,omitempty"`
-	Depends    []string          `json:"depends,omitempty"`
-	Env        []string          `json:"env,omitempty"`
-	EnvMissing []string          `json:"envMissing,omitempty"`
-	Provider   map[string]string `json:"provider,omitempty"`
-	Exists     bool              `json:"exists"`
+	Name              string            `json:"name"`
+	Path              string            `json:"path"`
+	AbsPath           string            `json:"absPath,omitempty"`
+	Stack             string            `json:"stack,omitempty"`
+	Stacks            []string          `json:"stacks,omitempty"`
+	Surfaces          []string          `json:"surfaces,omitempty"`
+	TestSurfaces      []string          `json:"testSurfaces,omitempty"`
+	FeedbackSDK       string            `json:"feedbackSdk,omitempty"`
+	FeedbackTransport string            `json:"feedbackTransport,omitempty"`
+	VoiceCapabilities []string          `json:"voiceCapabilities,omitempty"`
+	Kind              DevServerKind     `json:"kind,omitempty"`
+	Framework         string            `json:"framework,omitempty"`
+	Depends           []string          `json:"depends,omitempty"`
+	Env               []string          `json:"env,omitempty"`
+	EnvMissing        []string          `json:"envMissing,omitempty"`
+	Provider          map[string]string `json:"provider,omitempty"`
+	Exists            bool              `json:"exists"`
 }
 
 type workspaceResponse struct {
@@ -155,16 +161,22 @@ func buildAppViews(root string, m *WorkspaceManifest) []*WorkspaceAppView {
 		app := &m.Apps[i]
 		abs := appAbsPath(root, m, app)
 		view := &WorkspaceAppView{
-			Name:      app.Name,
-			Path:      app.Path,
-			AbsPath:   abs,
-			Stack:     app.Stack,
-			Kind:      StackToDevServerKind(app.Stack),
-			Framework: StackToFramework(app.Stack),
-			Depends:   app.Depends,
-			Env:       app.Env,
-			Provider:  app.Provider,
-			Exists:    dirExists(abs),
+			Name:              app.Name,
+			Path:              app.Path,
+			AbsPath:           abs,
+			Stack:             app.Stack,
+			Stacks:            workspaceAppStacks(app),
+			Surfaces:          workspaceAppSurfaces(app),
+			TestSurfaces:      workspaceAppTestSurfaces(app),
+			FeedbackSDK:       workspaceAppFeedbackSDK(app),
+			FeedbackTransport: workspaceAppFeedbackTransport(app),
+			VoiceCapabilities: workspaceAppVoiceCapabilities(app),
+			Kind:              StackToDevServerKind(app.Stack),
+			Framework:         StackToFramework(app.Stack),
+			Depends:           app.Depends,
+			Env:               app.Env,
+			Provider:          app.Provider,
+			Exists:            dirExists(abs),
 		}
 		// Missing env: union of app.Env + shared.Env, minus anything
 		// present in the host environment. The web dashboard uses this
@@ -173,6 +185,145 @@ func buildAppViews(root string, m *WorkspaceManifest) []*WorkspaceAppView {
 		out = append(out, view)
 	}
 	return out
+}
+
+func workspaceAppStacks(app *WorkspaceApp) []string {
+	if app == nil {
+		return nil
+	}
+	out := append([]string(nil), app.Stacks...)
+	if strings.TrimSpace(app.Stack) != "" {
+		out = append(out, strings.TrimSpace(app.Stack))
+	}
+	return dedupeSorted(out)
+}
+
+func workspaceAppSurfaces(app *WorkspaceApp) []string {
+	if app == nil {
+		return nil
+	}
+	if len(app.Surfaces) > 0 {
+		return dedupeSorted(app.Surfaces)
+	}
+	return surfacesForStackLabels(workspaceAppStacks(app))
+}
+
+func workspaceAppTestSurfaces(app *WorkspaceApp) []string {
+	if app == nil {
+		return nil
+	}
+	if len(app.TestSurfaces) > 0 {
+		return dedupeSorted(app.TestSurfaces)
+	}
+	return testSurfacesForStackLabels(workspaceAppStacks(app), workspaceAppSurfaces(app))
+}
+
+func workspaceAppFeedbackSDK(app *WorkspaceApp) string {
+	if app == nil {
+		return ""
+	}
+	if strings.TrimSpace(app.FeedbackSDK) != "" {
+		return strings.TrimSpace(app.FeedbackSDK)
+	}
+	if pkg := FeedbackSDKPackage(app.Stack); pkg != "" {
+		return pkg
+	}
+	for _, stack := range workspaceAppStacks(app) {
+		if pkg := FeedbackSDKPackage(stack); pkg != "" {
+			return pkg
+		}
+	}
+	return ""
+}
+
+func workspaceAppFeedbackTransport(app *WorkspaceApp) string {
+	if app == nil {
+		return ""
+	}
+	if strings.TrimSpace(app.FeedbackTransport) != "" {
+		return strings.TrimSpace(app.FeedbackTransport)
+	}
+	if FeedbackSDKPackage(app.Stack) != "" {
+		return string(FeedbackInAppSDK)
+	}
+	for _, stack := range workspaceAppStacks(app) {
+		if pkg := FeedbackSDKPackage(stack); pkg != "" {
+			_ = pkg
+			return string(FeedbackInAppSDK)
+		}
+	}
+	return string(FeedbackViewerTriggered)
+}
+
+func workspaceAppVoiceCapabilities(app *WorkspaceApp) []string {
+	if app == nil {
+		return nil
+	}
+	if len(app.VoiceCapabilities) > 0 {
+		return dedupeSorted(app.VoiceCapabilities)
+	}
+	surfaces := workspaceAppSurfaces(app)
+	out := []string{"voice-notes", "voice-vibing", "stt", "tts"}
+	if containsAnyString(surfaces, "web") {
+		out = append(out, "browser-mic", "browser-tts")
+	}
+	if containsAnyString(surfaces, "mobile", "watch", "tv", "car", "vision") {
+		out = append(out, "device-mic", "device-tts")
+	}
+	return dedupeSorted(out)
+}
+
+func surfacesForStackLabels(stacks []string) []string {
+	d := &StackDetection{Stack: primaryStack(stacks), Stacks: stacks, Frameworks: frameworksForStackLabels(stacks)}
+	if len(d.Frameworks) == 0 {
+		for _, s := range stacks {
+			switch strings.ToLower(strings.TrimSpace(s)) {
+			case "backend", "convex", "supabase", "firebase", "node", "bun", "go", "python", "rust", "relay", "yaver-serverless":
+				d.Backend = s
+			}
+		}
+	}
+	return detectDevelopmentSurfaces("", d)
+}
+
+func testSurfacesForStackLabels(stacks, surfaces []string) []string {
+	d := &StackDetection{Stack: primaryStack(stacks), Stacks: stacks, Frameworks: frameworksForStackLabels(stacks), Surfaces: surfaces}
+	return detectTestSurfaces(d)
+}
+
+func frameworksForStackLabels(stacks []string) []string {
+	var out []string
+	for _, s := range stacks {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "react-native-expo", "expo", "expo-rn":
+			out = append(out, FwExpo, FwReactNative)
+		case "react-native", "rn":
+			out = append(out, FwReactNative)
+		case "next", "nextjs", "next.js":
+			out = append(out, FwNextJS)
+		case "vite":
+			out = append(out, FwVite)
+		case "react":
+			out = append(out, FwReact)
+		case "flutter":
+			out = append(out, FwFlutter)
+		case "unity":
+			out = append(out, FwUnity)
+		case "swift", "ios", "swiftui":
+			out = append(out, FwSwift)
+		case "kotlin", "android", "gradle":
+			out = append(out, FwKotlin)
+		case "go":
+			out = append(out, FwGo)
+		case "rust":
+			out = append(out, FwRust)
+		case "python":
+			out = append(out, FwPython)
+		case "yaver-xml", "yaver.xml":
+			out = append(out, FwYaverXML)
+		}
+	}
+	return dedupeSorted(out)
 }
 
 func appAbsPath(root string, m *WorkspaceManifest, app *WorkspaceApp) string {

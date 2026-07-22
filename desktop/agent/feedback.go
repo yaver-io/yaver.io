@@ -82,9 +82,18 @@ type FeedbackProject struct {
 	// projects sharing a name prefix. Resolved via
 	// findMobileProjectByBundleID, which checks pbxproj, build.gradle,
 	// and app.json.
-	BundleID       string `json:"bundleId,omitempty"`
-	Surface        string `json:"surface,omitempty"`
-	ReleaseChannel string `json:"releaseChannel,omitempty"`
+	BundleID          string   `json:"bundleId,omitempty"`
+	Surface           string   `json:"surface,omitempty"`
+	Stack             string   `json:"stack,omitempty"`
+	Stacks            []string `json:"stacks,omitempty"`
+	Surfaces          []string `json:"surfaces,omitempty"`
+	TestSurfaces      []string `json:"testSurfaces,omitempty"`
+	FeedbackSDK       string   `json:"feedbackSdk,omitempty"`
+	FeedbackTransport string   `json:"feedbackTransport,omitempty"`
+	VoiceCapabilities []string `json:"voiceCapabilities,omitempty"`
+	STTProvider       string   `json:"sttProvider,omitempty"`
+	TTSProvider       string   `json:"ttsProvider,omitempty"`
+	ReleaseChannel    string   `json:"releaseChannel,omitempty"`
 }
 
 type FeedbackCandidateMetadata struct {
@@ -616,11 +625,11 @@ func feedbackFirstNonEmpty(values ...string) string {
 // previously be joined verbatim by filepath.Join, which collapses
 // internal "../" segments but does NOT block traversal out of the
 // parent directory. This helper closes that hole by:
-//   1. Reducing the input to its basename (filepath.Base).
-//   2. Rejecting if the basename equals "." or ".." or starts with
-//      "." (no hidden-file writes).
-//   3. Rejecting if the basename still contains a path separator on
-//      either platform (defense in depth — Base usually strips them).
+//  1. Reducing the input to its basename (filepath.Base).
+//  2. Rejecting if the basename equals "." or ".." or starts with
+//     "." (no hidden-file writes).
+//  3. Rejecting if the basename still contains a path separator on
+//     either platform (defense in depth — Base usually strips them).
 func sanitizeFeedbackUploadName(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

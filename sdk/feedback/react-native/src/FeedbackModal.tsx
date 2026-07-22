@@ -666,6 +666,16 @@ export const FeedbackModal: React.FC = () => {
       const identity = resolveReportIdentity({
         projectName: cfg?.projectName,
         bundleId: cfg?.bundleId,
+        surface: cfg?.surface,
+        surfaces: cfg?.surfaces,
+        stack: cfg?.stack,
+        stacks: cfg?.stacks,
+        testSurfaces: cfg?.testSurfaces,
+        feedbackSdk: cfg?.feedbackSdk,
+        feedbackTransport: cfg?.feedbackTransport,
+        voiceCapabilities: cfg?.voiceCapabilities,
+        sttProvider: cfg?.sttProvider,
+        ttsProvider: cfg?.ttsProvider,
       });
       const deviceInfo: DeviceInfo = {
         platform: Platform.OS,

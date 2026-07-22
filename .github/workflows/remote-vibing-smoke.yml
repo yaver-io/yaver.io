@@ -1,0 +1,117 @@
+name: Remote Vibing Smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: remote-vibing-smoke
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: testing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CI runner Opencode GLM smoke
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+        run: |
+          if [ -z "${GLM_API_KEY:-}" ]; then
+            echo "::error::GLM_API_KEY secret is required for CI runner Opencode smoke"
+            exit 1
+          fi
+          echo "::add-mask::$GLM_API_KEY"
+          chmod +x scripts/opencode-glm-smoke.sh
+          scripts/opencode-glm-smoke.sh
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+          HCLOUD_SSH_PRIVATE_KEY: ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+        run: |
+          install -m 600 /dev/null "$HCLOUD_SSH_PRIVATE_KEY_PATH"
+          printf '%s\n' "$HCLOUD_SSH_PRIVATE_KEY" > "$HCLOUD_SSH_PRIVATE_KEY_PATH"
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Copy smoke scripts and fixtures
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh_base="ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          $ssh_base "root@$HETZNER_TEST_SERVER_IP" "mkdir -p /opt/yaver/tests/fixtures /opt/yaver/scripts"
+          rsync -az -e "$ssh_base" scripts/remote-runtime-smoke.sh \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/scripts/remote-runtime-smoke.sh"
+          rsync -az -e "$ssh_base" scripts/remote-opencode-hermes-smoke.sh \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/scripts/remote-opencode-hermes-smoke.sh"
+          rsync -az -e "$ssh_base" scripts/remote-browser-color-vibe-smoke.sh \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/scripts/remote-browser-color-vibe-smoke.sh"
+          rsync -az -e "$ssh_base" scripts/remote-browser-color-page-setup.sh \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/scripts/remote-browser-color-page-setup.sh"
+          rsync -az -e "$ssh_base" scripts/remote-vibing-smoke-runner.sh \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/scripts/remote-vibing-smoke-runner.sh"
+          rsync -az -e "$ssh_base" tests/fixtures/native-ios-swift/ \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/tests/fixtures/native-ios-swift/"
+          rsync -az -e "$ssh_base" tests/fixtures/native-android-kotlin/ \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/tests/fixtures/native-android-kotlin/"
+
+      - name: Browser WebRTC todo color smoke from CI runner
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          set -euo pipefail
+          ssh_base="ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          token="$($ssh_base "root@$HETZNER_TEST_SERVER_IP" "python3 -c \"import json; from pathlib import Path; paths=(Path('/home/yaver/.yaver/config.json'), Path('/root/.yaver/config.json')); p=next((x for x in paths if x.exists()), None); raise SystemExit(1) if p is None else print(json.loads(p.read_text())['auth_token'])\"")"
+          echo "::add-mask::$token"
+          page_json="$($ssh_base "root@$HETZNER_TEST_SERVER_IP" "chmod +x /opt/yaver/scripts/remote-browser-color-page-setup.sh && /opt/yaver/scripts/remote-browser-color-page-setup.sh")"
+          remote_pid="$(printf '%s' "$page_json" | jq -r '.pid')"
+          remote_tmp="$(printf '%s' "$page_json" | jq -r '.tmp')"
+          remote_url="$(printf '%s' "$page_json" | jq -r '.url')"
+          tunnel_pid=""
+          cleanup() {
+            if [ -n "$tunnel_pid" ]; then
+              kill "$tunnel_pid" >/dev/null 2>&1 || true
+            fi
+            $ssh_base "root@$HETZNER_TEST_SERVER_IP" "kill '$remote_pid' >/dev/null 2>&1 || true; rm -rf '$remote_tmp'" || true
+          }
+          trap cleanup EXIT
+
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ExitOnForwardFailure=yes \
+            -N -L 18080:127.0.0.1:18080 \
+            "root@$HETZNER_TEST_SERVER_IP" &
+          tunnel_pid="$!"
+          sleep 1
+
+          pw_tmp="$(mktemp -d)"
+          npm --prefix "$pw_tmp" init -y >/dev/null
+          npm --prefix "$pw_tmp" install --silent playwright@1.49.0
+          npm --prefix "$pw_tmp" exec -- playwright install --with-deps chromium
+          NODE_PATH="$pw_tmp/node_modules" \
+            AGENT_BASE="http://127.0.0.1:18080" \
+            AGENT_TOKEN="$token" \
+            REMOTE_PAGE_URL="$remote_url" \
+            node scripts/browser-webrtc-color-vibe-smoke.mjs
+
+      - name: Run Opencode GLM, Hermes reload, and remote-runtime smoke
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+        run: |
+          if [ -z "${GLM_API_KEY:-}" ]; then
+            echo "::error::GLM_API_KEY secret is required for remote vibing smoke"
+            exit 1
+          fi
+          echo "::add-mask::$GLM_API_KEY"
+          printf '%s\n' "$GLM_API_KEY" | ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /opt/yaver/scripts/remote-vibing-smoke-runner.sh"

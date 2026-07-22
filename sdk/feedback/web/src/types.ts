@@ -61,7 +61,19 @@ export interface FeedbackConfig {
    */
   projectPath?: string;
   /** Which surface is being improved. */
-  surface?: 'web' | 'mobile' | 'backend';
+  surface?: YaverSurface;
+  /** All product surfaces this app/package owns. */
+  surfaces?: YaverSurface[];
+  /** Canonical development stack labels, e.g. nextjs, react-native-expo. */
+  stack?: string;
+  stacks?: string[];
+  /** Yaver preview/runtime targets that can exercise this app. */
+  testSurfaces?: string[];
+  feedbackSdk?: string;
+  feedbackTransport?: string;
+  voiceCapabilities?: string[];
+  sttProvider?: string;
+  ttsProvider?: string;
   /** Which release lane the user is currently exercising. */
   releaseChannel?: 'production' | 'candidate' | 'development';
   /** Candidate deploy metadata for safe self-improving flows. */
@@ -284,9 +296,20 @@ export interface FeedbackProjectRef {
   appName?: string;
   projectName?: string;
   projectPath?: string;
-  surface?: 'web' | 'mobile' | 'backend';
+  surface?: YaverSurface;
+  surfaces?: YaverSurface[];
+  stack?: string;
+  stacks?: string[];
+  testSurfaces?: string[];
+  feedbackSdk?: string;
+  feedbackTransport?: string;
+  voiceCapabilities?: string[];
+  sttProvider?: string;
+  ttsProvider?: string;
   releaseChannel?: 'production' | 'candidate' | 'development';
 }
+
+export type YaverSurface = 'web' | 'mobile' | 'backend' | 'watch' | 'tv' | 'car' | 'vision' | 'desktop' | 'cli';
 
 export interface FeedbackCandidateMetadata {
   enabled?: boolean;
@@ -309,7 +332,7 @@ export interface FeedbackChangeSet {
   feedbackId: string;
   projectName?: string;
   projectPath?: string;
-  surface?: 'web' | 'mobile' | 'backend';
+  surface?: YaverSurface;
   releaseChannel?: 'production' | 'candidate' | 'development';
   status:
     | 'draft'

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -42,8 +43,17 @@ func TestRunnerSessionTurnRejectsNonPost(t *testing.T) {
 // is not the only one, guessing would type a prompt into the wrong agent — so
 // the caller is told to name it.
 func TestResolveRunnerSessionErrors(t *testing.T) {
-	// No tmux sessions exist under `go test`, so every lookup must fail with a
-	// message that tells the caller what to do rather than a bare "not found".
+	// Use an isolated tmux socket directory so this unit test never observes the
+	// developer's real live runner sessions.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	}
+
+	// No tmux sessions exist in this isolated server, so every lookup must fail
+	// with a message that tells the caller what to do rather than a bare "not found".
 	if _, _, err := resolveRunnerSession("", ""); err == nil {
 		t.Fatal("expected an error when no sessions are live")
 	} else if !strings.Contains(err.Error(), "no live runner sessions") {

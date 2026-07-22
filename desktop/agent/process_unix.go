@@ -516,6 +516,9 @@ func isAutoStartInstalled() bool {
 // without starting it — the caller already has the agent running.
 // Returns a user-facing message describing what was set up, or "" if skipped.
 func ensureAutoStart(exePath, workDir string) string {
+	if envTruthy(os.Getenv("YAVER_SKIP_AUTO_START")) {
+		return ""
+	}
 	if isAutoStartInstalled() {
 		return "" // already registered
 	}
