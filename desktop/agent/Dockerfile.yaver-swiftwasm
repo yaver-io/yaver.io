@@ -1,0 +1,102 @@
+# Yaver Cloud Workspace — SwiftWasm variant.
+#
+# Adds the Swift + SwiftWasm + carton toolchain to a workspace so a Tokamak
+# project can be built and STREAMED from a Linux box over chrome-webrtc.
+#
+# ─── Why a separate image, not a layer on the default one ───────────────────
+#
+# The Swift toolchain plus SwiftWasm is roughly 1.5-2 GB. The default workspace
+# is 2c/4GB and its whole economic case rests on being small and fast to pull —
+# a two-minute image pull is two minutes of a ninety-second promise. Swift users
+# opt into this image; everyone else must not pay for it.
+#
+# ─── What this image can and cannot do ──────────────────────────────────────
+#
+#   ✅ Tokamak / SwiftWasm  — compiles to WebAssembly, renders in Chromium,
+#                             streams over WebRTC. The whole point.
+#   ✅ server-side Swift    — Vapor/Hummingbird serve HTTP; the browser is the
+#                             client.
+#   ✅ swift build / test   — for ANY Swift project, including UIKit ones. The
+#                             toolchain is cross-platform; only rendering is not.
+#   ❌ iOS Simulator        — Apple-proprietary, macOS-only, licence-restricted.
+#                             UIKit/SwiftUI previews need a Mac host. No amount
+#                             of configuration changes this; see
+#                             docs/architecture/swift-linux-webrtc-audit.md.
+#
+# Build:
+#   docker build -f Dockerfile.yaver-swiftwasm \
+#     -t ghcr.io/yaver-io/yaver-swiftwasm:latest .
+
+FROM swift:5.10-jammy
+
+LABEL org.opencontainers.image.title="yaver-swiftwasm"
+LABEL org.opencontainers.image.description="Yaver workspace with Swift + SwiftWasm + carton for Tokamak previews"
+
+# Chromium renders the WASM bundle; the stream is WebRTC passthrough, not
+# encoding, which is why this still fits a modest box. fonts-liberation is not
+# optional — without it the app renders as boxes and the preview looks broken.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      chromium-browser \
+      fonts-liberation \
+      ca-certificates \
+      curl \
+      git \
+      dumb-init \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── SwiftWasm toolchain ─────────────────────────────────────────────────────
+# PINNED, never "latest". SwiftWasm tracks upstream Swift with a lag, and an
+# unpinned toolchain means a workspace that built yesterday fails today for
+# reasons no one changed. Upgrading is a deliberate act.
+ARG SWIFTWASM_VERSION=5.10
+ARG CARTON_VERSION=1.1.3
+
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64)  wasm_arch="x86_64" ;; \
+      aarch64) wasm_arch="aarch64" ;; \
+      # Fail loudly rather than installing the wrong toolchain and dying later
+      # with an opaque linker error.
+      *) echo "unsupported architecture for SwiftWasm: $arch" >&2; exit 1 ;; \
+    esac; \
+    echo "SwiftWasm target arch: ${wasm_arch}"
+
+# carton is the SwiftWasm dev server the agent invokes (`carton dev`).
+# Installed via SwiftPM so it is built against the toolchain already in this
+# image rather than a mismatched prebuilt binary.
+RUN set -eux; \
+    git clone --depth 1 --branch "${CARTON_VERSION}" https://github.com/swiftwasm/carton /tmp/carton || \
+      git clone --depth 1 https://github.com/swiftwasm/carton /tmp/carton; \
+    cd /tmp/carton; \
+    swift build -c release; \
+    install -m 0755 "$(swift build -c release --show-bin-path)/carton" /usr/local/bin/carton; \
+    rm -rf /tmp/carton ~/.cache/org.swift.swiftpm
+
+# Run as a non-root user: a workspace is internet-reachable via the relay, and
+# root inside the container buys nothing while costing blast radius.
+RUN useradd -m -u 10001 -s /bin/bash yaver
+USER yaver
+WORKDIR /home/yaver
+
+COPY --chown=yaver:yaver ./yaver /usr/local/bin/yaver
+
+ENV YAVER_PREVIEW_STRATEGY=chrome-webrtc \
+    CHROME_BIN=/usr/bin/chromium-browser \
+    # The agent probes for these on PATH before starting a SwiftWasm dev server
+    # (see devserver_swiftwasm.go) and fails with a specific remedy if absent.
+    YAVER_SWIFTWASM=1
+
+# Fail the BUILD if the tools the agent probes for are missing. Catching a
+# mis-built image here costs a CI minute; catching it at first use costs a user
+# a long wait followed by an opaque error, and they cannot tell a broken image
+# from a broken product.
+RUN test -x /usr/local/bin/carton \
+ && swift --version \
+ && test -x /usr/bin/chromium-browser \
+ || (echo "SWIFTWASM IMAGE INCOMPLETE — carton, swift or chromium missing" && exit 1)
+
+# No EXPOSE: reachability is outbound-registered through the relay, which is
+# both the transport Yaver already uses and the largest free abuse reduction.
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["yaver", "serve"]

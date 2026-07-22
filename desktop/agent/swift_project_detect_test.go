@@ -169,3 +169,30 @@ func TestSwiftWasmDevServerDetection(t *testing.T) {
 		t.Fatal("swiftwasm has no HMR and must not claim it")
 	}
 }
+
+// TestTokamakFixtureRoutesEndToEnd pins the whole chain the demo depends on:
+// the real fixture on disk -> detection -> preview plan -> dev server.
+//
+// Kept as a permanent test rather than a one-off probe because every link is a
+// place the routing could silently regress: widen a marker, reorder detection,
+// or rename the fixture, and the Swift demo stops working with no compile error.
+func TestTokamakFixtureRoutesEndToEnd(t *testing.T) {
+	const fixture = "../../demo/yaver-todo-swift-wasm"
+	if _, err := os.Stat(filepath.Join(fixture, "Package.swift")); err != nil {
+		t.Skip("fixture not present in this checkout")
+	}
+	d := DetectSwiftProject(fixture)
+	if d.Kind != SwiftKindTokamak || !d.RendersOnLinux {
+		t.Fatalf("fixture must detect as tokamak and render on Linux: %+v", d)
+	}
+	p := ResolveSwiftPreview(d)
+	if !p.Supported || p.Primary != PreviewChromeWebRTC {
+		t.Fatalf("fixture must route to chrome-webrtc: %+v", p)
+	}
+	if p.MachineClass != "standard" {
+		t.Fatalf("fixture must fit the 2c/4GB default class, got %q", p.MachineClass)
+	}
+	if !(&SwiftWasmDevServer{}).Detect(fixture) {
+		t.Fatal("SwiftWasmDevServer must claim the fixture")
+	}
+}
