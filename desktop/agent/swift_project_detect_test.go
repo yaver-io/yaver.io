@@ -132,7 +132,7 @@ func TestResolveForDirBeatsLabelOnlyForSwift(t *testing.T) {
 		t.Fatalf("UIKit must not become supported on Linux: %+v", p)
 	}
 	// Non-Swift stacks are untouched by this path.
-	if p := ResolveWorkspacePreviewForDir("react-native", dir, false); p.Primary != PreviewChromeWebRTC {
+	if p := ResolveWorkspacePreviewForDir("react-native", dir, false); p.Primary != PreviewDirectURL {
 		t.Fatalf("non-swift routing changed: %+v", p)
 	}
 }

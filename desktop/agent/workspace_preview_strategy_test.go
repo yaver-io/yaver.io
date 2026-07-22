@@ -6,21 +6,37 @@ import (
 )
 
 func TestResolveWorkspacePreview(t *testing.T) {
-	// RN with no device -> Chrome/WebRTC on the cheap box (the whole reason
-	// the default class can be 2c/4GB).
+	// RN with no device -> the viewer's browser loads the web target itself.
+	// Streaming VIDEO of a web page to a browser costs ~1 vCPU for the whole
+	// session to render something the client could already render; Chrome/WebRTC
+	// stays as the fallback for viewers that cannot reach or cannot render.
 	p := ResolveWorkspacePreview("react-native", false)
-	if p.Primary != PreviewChromeWebRTC || p.MachineClass != "standard" {
+	if p.Primary != PreviewDirectURL || p.MachineClass != "standard" {
 		t.Fatalf("rn/no-device: %+v", p)
+	}
+	if len(p.Fallbacks) == 0 || p.Fallbacks[0] != PreviewChromeWebRTC {
+		t.Fatalf("rn/no-device must keep pixels as the fallback: %+v", p)
 	}
 	// RN WITH a paired device -> real hardware beats a browser render.
 	p = ResolveWorkspacePreview("expo", true)
 	if p.Primary != PreviewHermesBundle || p.Feedback != FeedbackDeviceSDK {
 		t.Fatalf("rn/device: %+v", p)
 	}
-	// Flutter is a web dev server on the box.
+	// Flutter is a web dev server on the box, so the browser loads it directly.
 	p = ResolveWorkspacePreview("flutter", false)
-	if p.Primary != PreviewChromeWebRTC || p.MachineClass != "standard" {
+	if p.Primary != PreviewDirectURL || p.MachineClass != "standard" {
 		t.Fatalf("flutter: %+v", p)
+	}
+	// SwiftWasm is the one Swift runtime that works on Linux — it compiles to
+	// WebAssembly and runs in the viewer's browser. It must NOT fall into the
+	// native-Swift branch, which refuses anything containing "swift" as
+	// needing macOS.
+	p = ResolveWorkspacePreview("swiftwasm", false)
+	if !p.Supported || p.Primary != PreviewDirectURL {
+		t.Fatalf("swiftwasm must be supported and served as a URL: %+v", p)
+	}
+	if p := ResolvePreviewForHost(ResolveWorkspacePreview("swiftwasm", false), HostLinux); !p.Supported {
+		t.Fatalf("swiftwasm must stay supported on a LINUX host: %+v", p)
 	}
 	// Kotlin -> Redroid, and it MUST pull up the machine class.
 	p = ResolveWorkspacePreview("kotlin", false)

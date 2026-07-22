@@ -114,11 +114,12 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 	// ── React Native / Expo ──────────────────────────────────────────────
 	case strings.Contains(s, "react-native") || strings.Contains(s, "expo") || s == "rn":
 		plan := WorkspacePreviewPlan{
-			Primary:      PreviewChromeWebRTC,
+			Primary:      PreviewDirectURL,
+			Fallbacks:    []PreviewStrategy{PreviewChromeWebRTC},
 			MachineClass: "standard",
 			Feedback:     FeedbackInAppSDK,
 			Supported:    true,
-			Reason:       "RN web target in headless Chrome, streamed over WebRTC — lightest path, runs on the default 2c/4GB box",
+			Reason:       "RN web target served straight to the viewer's browser — no encoder, no Chromium, ~0 vCPU; Chrome/WebRTC only when the viewer cannot reach the dev server or cannot render",
 		}
 		if hasPairedDevice {
 			// A real phone beats a browser render of the web target: it is the
@@ -128,31 +129,32 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 			plan.Fallbacks = []PreviewStrategy{PreviewChromeWebRTC, PreviewRedroidWebRTC}
 			plan.Reason = "paired device present — agent builds a Hermes bundle (/dev/build-native) and the phone pulls it; Chrome/WebRTC as fallback"
 		} else {
-			plan.Fallbacks = []PreviewStrategy{PreviewHermesBundle, PreviewRedroidWebRTC}
+			plan.Fallbacks = []PreviewStrategy{PreviewChromeWebRTC, PreviewHermesBundle, PreviewRedroidWebRTC}
 		}
 		return plan
 
 	// ── Flutter ──────────────────────────────────────────────────────────
 	case strings.Contains(s, "flutter"):
 		return WorkspacePreviewPlan{
-			Primary:      PreviewChromeWebRTC,
-			Fallbacks:    []PreviewStrategy{PreviewRedroidWebRTC},
+			Primary:      PreviewDirectURL,
+			Fallbacks:    []PreviewStrategy{PreviewChromeWebRTC, PreviewRedroidWebRTC},
 			MachineClass: "standard",
 			// yaver_feedback exists on pub.dev, so Flutter gets the in-app loop.
 			Feedback:  FeedbackInAppSDK,
 			Supported: true,
-			Reason:    "Flutter runs as a web dev server on the box (devserver_kind classes it web) and streams over WebRTC",
+			Reason:    "Flutter runs as a web dev server on the box (devserver_kind classes it web); the viewer's browser loads it directly at ~0 vCPU",
 		}
 
 	// ── Plain web ────────────────────────────────────────────────────────
 	case strings.Contains(s, "next") || strings.Contains(s, "vite") ||
 		strings.Contains(s, "astro") || strings.Contains(s, "remix") || s == "web":
 		return WorkspacePreviewPlan{
-			Primary:      PreviewChromeWebRTC,
+			Primary:      PreviewDirectURL,
+			Fallbacks:    []PreviewStrategy{PreviewChromeWebRTC},
 			MachineClass: "standard",
 			Feedback:     FeedbackInAppSDK, // yaver-feedback-web
 			Supported:    true,
-			Reason:       "web dev server streamed over WebRTC",
+			Reason:       "web dev server loaded directly by the viewer's browser — streaming video of a web page to a browser that can render it costs a vCPU to accomplish nothing",
 		}
 
 	// ── Native Android / Kotlin ──────────────────────────────────────────
@@ -174,6 +176,28 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 	// inspects the project and can route Tokamak/SwiftWasm and server-side
 	// Swift to Linux instead — "Swift" is four different runtimes, and a flat
 	// refusal turns away developers whose loop would work here today.
+	// ── SwiftWasm / Tokamak — Swift that runs in a BROWSER ───────────────
+	//
+	// Must precede the native-Swift case below, which matches any string
+	// containing "swift" and refuses it as needing macOS. That ordering bug
+	// made the one Swift runtime which provably works on Linux report
+	// "unsupported" on Linux: the Swift todo fixture compiles to a 9.6 MB wasm
+	// artifact in 5.42 s in a swift:6.3.0-jammy container, and the result is a
+	// URL a browser opens — no simulator, no Mac, no encoder.
+	case strings.Contains(s, "swiftwasm") || strings.Contains(s, "tokamak") ||
+		(strings.Contains(s, "swift") && strings.Contains(s, "wasm")):
+		return WorkspacePreviewPlan{
+			Primary:      PreviewDirectURL,
+			Fallbacks:    []PreviewStrategy{PreviewChromeWebRTC},
+			MachineClass: "standard",
+			// The app is Swift but it runs in a browser, so the WEB SDK is the
+			// one that applies. There is no native Swift feedback SDK and none
+			// is needed here.
+			Feedback:  FeedbackInAppSDK,
+			Supported: true,
+			Reason:    "SwiftWasm compiles to WebAssembly and runs in the viewer's browser — fully supported on a Linux workspace, no Mac and no simulator required",
+		}
+
 	case strings.Contains(s, "swift") || strings.Contains(s, "ios") || strings.Contains(s, "xcode"):
 		return WorkspacePreviewPlan{
 			Primary:      PreviewUnsupported,
@@ -188,11 +212,12 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 
 	default:
 		return WorkspacePreviewPlan{
-			Primary:      PreviewChromeWebRTC,
+			Primary:      PreviewDirectURL,
+			Fallbacks:    []PreviewStrategy{PreviewChromeWebRTC},
 			MachineClass: "standard",
 			Feedback:     FeedbackInAppSDK,
 			Supported:    true,
-			Reason:       "unknown stack — defaulting to the lightest path (web dev server over WebRTC)",
+			Reason:       "unknown stack — defaulting to the lightest path (web dev server loaded directly by the viewer)",
 		}
 	}
 }
