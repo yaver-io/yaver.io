@@ -443,7 +443,11 @@ export default function AppsScreen() {
   const [webViewKey, setWebViewKey] = useState(0);
   const [webViewLoading, setWebViewLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  // Default to the mobile view: Yaver is overwhelmingly used for mobile app
+  // development, and a repo tree usually holds far more non-mobile projects
+  // than mobile ones — so an unfiltered list buries the thing the user came
+  // for. "All" is one tap away.
+  const [activeFilter, setActiveFilter] = useState<string | null>("mobile");
   const [actionSheet, setActionSheet] = useState<{
     project: string;
     path: string;
@@ -1818,7 +1822,11 @@ export default function AppsScreen() {
             Chat → tasks tab inherits workDir=repo-root so codex/claude
             can edit the WHOLE repo (Go agent + web + mobile + cli),
             not just a per-framework subdir. */}
-        {repos.length > 0 && (
+        {/* Repos are hidden in the Mobile view. The sliding strip was the
+            first thing on the screen and mostly showed non-mobile repos —
+            the user is here for the mobile app. It returns under "All",
+            where browsing the whole tree is the point. */}
+        {repos.length > 0 && !activeFilter && (
           <View style={s.reposSection}>
             <Text style={[s.reposHeader, { color: c.textMuted }]}>
               Repos · {repos.length}
@@ -1844,10 +1852,9 @@ export default function AppsScreen() {
                         {repo.name}
                       </Text>
                     </View>
-                    {repo.branch ? (
+                    {repo.isMonorepo ? (
                       <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
-                        {repo.branch}
-                        {repo.isMonorepo ? " · monorepo" : ""}
+                        monorepo
                       </Text>
                     ) : null}
                   </Pressable>
@@ -1871,10 +1878,9 @@ export default function AppsScreen() {
                         {repo.name}
                       </Text>
                     </View>
-                    {repo.branch ? (
+                    {repo.isMonorepo ? (
                       <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
-                        {repo.branch}
-                        {repo.isMonorepo ? " · monorepo" : ""}
+                        monorepo
                       </Text>
                     ) : null}
                   </Pressable>
@@ -2027,11 +2033,9 @@ export default function AppsScreen() {
                         </View>
                       </View>
                     )}
-                    {item.branch ? (
-                      <Text style={[s.projectMeta, { color: c.textSecondary }]} numberOfLines={1}>
-                        {item.branch}
-                      </Text>
-                    ) : null}
+                    {/* No branch line. A card is name + framework + path;
+                        the branch is the same on nearly every row, so it read
+                        as noise rather than information. */}
                     <Text
                       style={[
                         s.projectPath,

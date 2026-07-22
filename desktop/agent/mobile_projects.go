@@ -449,10 +449,29 @@ func classifyProjectMarker(path, name, dir string) projectMarkerDetection {
 			return set(filepath.Dir(dir), "unity", true, false)
 		}
 	case "Info.plist":
+		// A built .app/.framework carries an Info.plist too; it describes a
+		// BINARY, not a project. This produced `talos (Contents)` as a swift
+		// project from a compiled bundle.
+		if isBuiltAppBundlePath(path) {
+			return out
+		}
 		if root := projectRootFromInfoPlist(path); root != "" {
+			// An RN/Flutter app's generated ios/ is its build system, not a
+			// separate Swift project — and projectRootFromInfoPlist resolves
+			// <app>/ios/... up to <app>, so without this the shell STEALS the
+			// app's own directory and relabels the repo root "swift".
+			if owner := nativeShellOwner(filepath.Dir(path)); owner != "" {
+				return out
+			}
+			if declaresCrossPlatformApp(root) {
+				return out
+			}
 			return set(root, "swift", true, false)
 		}
 	case "Package.swift":
+		if owner := nativeShellOwner(dir); owner != "" {
+			return out
+		}
 		return set(dir, "swift", true, false)
 	case "project.yml":
 		if isXcodegenIOSProject(dir) {
@@ -461,6 +480,10 @@ func classifyProjectMarker(path, name, dir string) projectMarkerDetection {
 	case "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle":
 		if isKotlinAndroidProject(dir) {
 			if isKotlinSubmoduleOfParent(dir) {
+				return out
+			}
+			// <app>/android of an RN or Flutter app: its build system.
+			if owner := nativeShellOwner(dir); owner != "" {
 				return out
 			}
 			return set(dir, "kotlin", true, false)
@@ -597,6 +620,11 @@ func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobile
 					}
 				}
 				if skipDirs[name] {
+					return filepath.SkipDir
+				}
+				// Compiled bundles are build output, not source. Walking into a
+				// .app also costs thousands of pointless stats.
+				if isBuiltAppBundlePath(path) {
 					return filepath.SkipDir
 				}
 				// Skip SDK/tool paths
