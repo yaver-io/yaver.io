@@ -93,6 +93,7 @@ jobs:
           if hcloud ssh-key describe "$HCLOUD_SSH_KEY_NAME" >/dev/null 2>&1; then
             exit 0
           fi
+          mkdir -p ci/.artifacts
           ssh-keygen -y -f "$HCLOUD_SSH_PRIVATE_KEY_PATH" > ci/.artifacts/hcloud-ci.pub
           hcloud ssh-key create \
             --name "$HCLOUD_SSH_KEY_NAME" \
