@@ -457,10 +457,20 @@ Owner-only, all of it; the new routes join `/tmux/*` in the
 GET  /tmux/sessions                    # EXTEND: each session gains panes:[VibePane]
                                        # existing mobile/spatial callers keep parsing
 POST /tmux/adopt   {session, pane?}    # EXTEND: adopt ONE pane as a Task
-POST /tmux/input   {taskId, input}     # EXTEND: route by the Task's PaneID, not session
+POST /tmux/input   {taskId, input, allowShell?}
+                                       # EXTEND: route by the Task's PaneID, not session
 WS   /ws/runner?name=<session>         # FIX GAP 2: attach when no runner= given
-WS   /ws/runner?name=<session>&pane=%37&mode=mirror   # Mode A
 ```
+
+**`allowShell` (added during implementation, 2026-07-22).** Refusing every
+`no-agent` pane outright would have broken a real shipped capability: adopting a
+plain tmux session and sending it shell commands, which three existing tests
+covered and which the spatial web UI relies on. The refusal is therefore the
+DEFAULT rather than an absolute — `allowShell: true` is the explicit "I mean to
+run a command" opt-in, and the refusal message names the flag so the capability
+stays discoverable. Prompt-shaped callers (the mobile composer, dictation, the
+screenless turn) simply never set it, so dictated text cannot reach a shell by
+accident. MCP mirrors it as `allow_shell`.
 
 **Extend, do not add.** Every route above is already called by shipped clients;
 a new `/vibe/*` namespace would mean new client code, which the directive
