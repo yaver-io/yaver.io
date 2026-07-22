@@ -68,7 +68,30 @@ func DiscoverChromeBinary() string {
 			return path
 		}
 	}
+	// macOS ships Chrome as an app BUNDLE with nothing on $PATH. Omitting this
+	// made `yaver doctor surfaces` report "no usable browser" on a Mac with
+	// Google Chrome sitting in /Applications, and would have had
+	// EnsureChromeInstalled brew-install a browser the box already had.
+	// Caught by the remote-runtime browser-target test, which compared this
+	// against the probe chromedp actually uses.
+	for _, p := range macOSBrowserBundlePaths {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		if chromeBinaryUsable(p) {
+			return p
+		}
+	}
 	return ""
+}
+
+// macOSBrowserBundlePaths are the app-bundle executables chromedp probes by
+// default. Kept here so the install/discovery path and the remote-runtime
+// target agree on what "a browser exists" means.
+var macOSBrowserBundlePaths = []string{
+	"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+	"/Applications/Chromium.app/Contents/MacOS/Chromium",
+	"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 }
 
 // chromeBinaryUsable reports whether the binary actually runs. The snap stub

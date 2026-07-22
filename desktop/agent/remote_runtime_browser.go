@@ -369,7 +369,7 @@ func probeBrowserWindowTarget() RemoteRuntimeTarget {
 	}
 	if !browserBinaryAvailable() {
 		target.Enabled = false
-		target.Reason = "No Chrome/Chromium binary found. Install Google Chrome, Chromium, or Microsoft Edge."
+		target.Reason = "No usable browser on this host. " + ChromeInstallHint()
 		return target
 	}
 	target.Enabled = true
@@ -377,11 +377,21 @@ func probeBrowserWindowTarget() RemoteRuntimeTarget {
 }
 
 func browserBinaryAvailable() bool {
-	for _, bin := range []string{
-		"google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-		"microsoft-edge", "edge", "chrome",
-	} {
-		if _, err := exec.LookPath(bin); err == nil {
+	// Prefer the VERIFIED probe: DiscoverChromeBinary runs `--version` and
+	// requires the output to name chrome/chromium. A LookPath hit proves
+	// nothing — Ubuntu's `chromium-browser` is a snap stub that resolves on
+	// PATH and then refuses to launch, so a name-only check reports a usable
+	// browser and the stream fails later with no explanation. See
+	// chrome_install.go.
+	if DiscoverChromeBinary() != "" {
+		return true
+	}
+	// Edge and bare `chrome` are not covered by DiscoverChromeBinary, so they
+	// still get a PATH lookup — but VERIFIED, never name-only. A LookPath hit
+	// that cannot run is precisely what made this report a usable browser on a
+	// box that had none.
+	for _, bin := range []string{"microsoft-edge", "edge", "chrome"} {
+		if p, err := exec.LookPath(bin); err == nil && chromeBinaryUsable(p) {
 			return true
 		}
 	}
@@ -391,7 +401,8 @@ func browserBinaryAvailable() bool {
 		"/Applications/Chromium.app/Contents/MacOS/Chromium",
 		"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 	} {
-		if _, err := os.Stat(p); err == nil {
+		// Stat proves a file exists, not that it launches. Verify.
+		if _, err := os.Stat(p); err == nil && chromeBinaryUsable(p) {
 			return true
 		}
 	}

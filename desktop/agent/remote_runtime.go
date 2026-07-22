@@ -368,6 +368,30 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 	case ExecutionModeNativeWebRTC:
 		switch strings.ToLower(strings.TrimSpace(framework)) {
 		case "swift":
+			// "Swift" is four runtimes wearing one label, and only ONE of them
+			// needs a Mac. A SwiftWasm/Tokamak project compiles to wasm and
+			// renders in a browser, so it streams over WebRTC from a LINUX
+			// workspace through the headless-Chrome target — no simulator, no
+			// Mac. Before this, every Swift project was routed to the Apple
+			// arm below, every target answered "Requires a macOS host with
+			// Xcode installed", and browser-window (RuntimeHostClass "any",
+			// gated only on a Chrome binary) was never offered to it. The
+			// capability existed and the routing could not reach it.
+			//
+			// Detected from the project, not the label — a label cannot tell
+			// UIKit from JavaScriptKit, and guessing wrong either strands a
+			// Linux user or renders a blank tab for a UIKit app.
+			if swiftKind := DetectSwiftProject(workDir).Kind; swiftKind == SwiftKindTokamak {
+				caps.Targets = []RemoteRuntimeTarget{
+					probeBrowserWindowTarget(),
+					// Simulators still listed after it: on a Mac the user may
+					// legitimately prefer to see it in a real iOS shell.
+					probeIOSSimulatorTarget(appleFams),
+					probeIPadSimulatorTarget(appleFams),
+					probeIOSDeviceTarget(),
+				}
+				break
+			}
 			// iPhone default; then iPad/watchOS/tvOS/visionOS sims (each
 			// gated on its runtime being installed); physical iPhone last.
 			caps.Targets = []RemoteRuntimeTarget{
