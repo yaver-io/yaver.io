@@ -90,6 +90,22 @@ type WorkspaceApp struct {
 	// react-native-expo, react-native, flutter, go, convex, relay,
 	// bun, node, python, rust.
 	Stack string `yaml:"stack" json:"stack,omitempty"`
+	// Stacks declares every UI/backend/runtime stack this app owns. Stack is
+	// the primary label for older clients; Stacks lets monorepos describe
+	// Solito/RN-web, Yaver XML, backend-adjacent apps, and other hybrid
+	// layouts without hiding the secondary targets.
+	Stacks []string `yaml:"stacks,omitempty" json:"stacks,omitempty"`
+	// Surfaces are product targets: mobile, web, backend, watch, tv, car,
+	// vision. TestSurfaces are how Yaver should exercise them: browser,
+	// rn-hermes, simulator, emulator, webrtc, cli/http.
+	Surfaces     []string `yaml:"surfaces,omitempty" json:"surfaces,omitempty"`
+	TestSurfaces []string `yaml:"test_surfaces,omitempty" json:"testSurfaces,omitempty"`
+	// FeedbackSDK/FeedbackTransport/VoiceCapabilities make the feedback loop
+	// explicit per app, including STT/TTS support, instead of making every UI
+	// infer from a stack string.
+	FeedbackSDK       string   `yaml:"feedback_sdk,omitempty" json:"feedbackSdk,omitempty"`
+	FeedbackTransport string   `yaml:"feedback_transport,omitempty" json:"feedbackTransport,omitempty"`
+	VoiceCapabilities []string `yaml:"voice_capabilities,omitempty" json:"voiceCapabilities,omitempty"`
 	// Provider: per-action hints, e.g. {deploy: cloudflare, release:
 	// testflight, analytics: plausible}. Values are opaque to the
 	// workspace engine; the action handlers interpret them.

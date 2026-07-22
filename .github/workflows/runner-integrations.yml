@@ -86,6 +86,15 @@ jobs:
           YAVER_OPENCODE_MODEL: ${{ matrix.opencode_model }}
           YAVER_BIN: /tmp/yaver
         run: |
+          if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+            echo "::add-mask::$OPENAI_API_KEY"
+          fi
+          if [[ -n "${GLM_API_KEY:-}" ]]; then
+            echo "::add-mask::$GLM_API_KEY"
+          fi
+          if [[ -n "${ZAI_API_KEY:-}" ]]; then
+            echo "::add-mask::$ZAI_API_KEY"
+          fi
           REQUIRED_VALUE=""
           case "${REQUIRED_SECRET:-}" in
             OPENAI_API_KEY) REQUIRED_VALUE="${OPENAI_API_KEY:-}" ;;

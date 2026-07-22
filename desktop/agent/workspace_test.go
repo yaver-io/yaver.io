@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -188,5 +189,48 @@ apps:
 	counts, _ := data["counts"].(map[string]int)
 	if counts["ok"] == 0 {
 		t.Fatalf("expected some ok actions, got %+v", data)
+	}
+}
+
+func TestWorkspaceAppViewCarriesSurfaceAndFeedbackMetadata(t *testing.T) {
+	m := &WorkspaceManifest{
+		Version: 1,
+		Apps: []WorkspaceApp{
+			{
+				Name:         "omni",
+				Path:         "./apps/omni",
+				Stack:        "react-native-expo",
+				Stacks:       []string{"nextjs", "yaver-xml"},
+				Surfaces:     []string{"mobile", "web", "watch", "tv", "car", "vision"},
+				TestSurfaces: []string{"rn-hermes", "browser", "watchos-simulator"},
+			},
+			{Name: "api", Path: "./backend", Stack: "go"},
+		},
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps", "omni"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	views := buildAppViews(root, m)
+	if len(views) != 2 {
+		t.Fatalf("views = %d, want 2", len(views))
+	}
+	omni := views[0]
+	for _, want := range []string{"react-native-expo", "nextjs", "yaver-xml"} {
+		if !slices.Contains(omni.Stacks, want) {
+			t.Fatalf("stacks = %v, missing %q", omni.Stacks, want)
+		}
+	}
+	for _, want := range []string{"watch", "tv", "car", "vision"} {
+		if !slices.Contains(omni.Surfaces, want) {
+			t.Fatalf("surfaces = %v, missing %q", omni.Surfaces, want)
+		}
+	}
+	if omni.FeedbackSDK != "yaver-feedback-react-native" {
+		t.Fatalf("feedback sdk = %q, want yaver-feedback-react-native", omni.FeedbackSDK)
+	}
+	if !slices.Contains(omni.VoiceCapabilities, "stt") || !slices.Contains(omni.VoiceCapabilities, "tts") {
+		t.Fatalf("voice capabilities = %v, want stt+tts", omni.VoiceCapabilities)
 	}
 }

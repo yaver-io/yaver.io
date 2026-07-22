@@ -60,7 +60,7 @@ async function pickFreePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(baseUrl: string, timeoutMs = 10_000): Promise<void> {
+async function waitForHealth(baseUrl: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown = null;
   while (Date.now() < deadline) {
@@ -102,6 +102,11 @@ async function startAgent(): Promise<Harness> {
         // config-load gate passes; YAVER_NO_BOOTSTRAP stops any real
         // Convex calls from blocking startup.
         convex_site_url: "https://integration-test.invalid",
+        // CI must exercise the binary it just built. Leaving this implicit lets
+        // default-on auto-update replace /tmp/yaver-agent with the public
+        // latest release and re-exec in the middle of the test harness.
+        auto_update: false,
+        headless_keep_awake: false,
         // Flag both subsystems' onboarding as already done — pipe stdin
         // should skip them, but this is defence in depth in case a
         // future release removes the stdin check.
@@ -146,6 +151,11 @@ async function startAgent(): Promise<Harness> {
       HOME: homeDir,
       // Skip bootstrap mode when AuthToken alone is set (no Convex URL).
       YAVER_NO_BOOTSTRAP: "1",
+      // The integration harness owns this short-lived foreground process; it
+      // must not register launchd/systemd auto-start units on the host.
+      YAVER_SKIP_AUTO_START: "1",
+      YAVER_VAULT_SKIP_KEYCHAIN: "1",
+      YAVER_DISABLE_WIZARD_AUTOINIT: "1",
     },
     stdio: ["pipe", "pipe", "pipe"],
     detached: false,
@@ -202,7 +212,7 @@ d("WebClient — real agent (workspace + Web Reload)", () => {
     client = new WebClient({ token: TEST_TOKEN, agentBaseUrl: h.baseUrl });
     const r = await client.connect(TEST_DEVICE_ID);
     if (!r.ok) throw new Error(`connect failed: ${JSON.stringify(r.diagnostics)}`);
-  });
+  }, 40_000);
 
   afterAll(async () => {
     if (h) await stopAgent(h);

@@ -270,6 +270,9 @@ func isAutoStartInstalled() bool {
 // ensureAutoStart registers the agent as a Windows Scheduled Task
 // without starting it — the caller already has the agent running.
 func ensureAutoStart(exePath, workDir string) string {
+	if envTruthy(os.Getenv("YAVER_SKIP_AUTO_START")) {
+		return ""
+	}
 	if isAutoStartInstalled() {
 		return ""
 	}

@@ -149,6 +149,40 @@ describe('resolveReportIdentity', () => {
     expect(identity.project?.bundleId).toBe('com.override.app');
   });
 
+  it('passes declared surfaces stacks and voice metadata through', () => {
+    mockExpoConstants(EXPO_CONFIG);
+    const { resolveReportIdentity: resolve } = require('../P2PClient');
+
+    const identity = resolve({
+      projectName: 'Omni',
+      bundleId: 'io.example.omni',
+      surface: 'vision',
+      surfaces: ['mobile', 'web', 'watch', 'tv', 'car', 'vision'],
+      stack: 'react-native-expo',
+      stacks: ['react-native-expo', 'nextjs', 'yaver-xml'],
+      testSurfaces: ['rn-hermes', 'browser', 'visionos-simulator'],
+      feedbackSdk: 'yaver-feedback-react-native',
+      feedbackTransport: 'device-sdk',
+      voiceCapabilities: ['stt', 'tts', 'device-mic'],
+      sttProvider: 'deepgram',
+      ttsProvider: 'local',
+    });
+
+    expect(identity.project).toMatchObject({
+      surface: 'vision',
+      surfaces: ['mobile', 'web', 'watch', 'tv', 'car', 'vision'],
+      stack: 'react-native-expo',
+      stacks: ['react-native-expo', 'nextjs', 'yaver-xml'],
+      testSurfaces: ['rn-hermes', 'browser', 'visionos-simulator'],
+      feedbackSdk: 'yaver-feedback-react-native',
+      feedbackTransport: 'device-sdk',
+      voiceCapabilities: ['stt', 'tts', 'device-mic'],
+      sttProvider: 'deepgram',
+      ttsProvider: 'local',
+    });
+    expect(identity.project?.projectPath).toBeUndefined();
+  });
+
   it('omits the project block when nothing identifies the app', () => {
     // Bare RN with no expo-constants and no native modules. The report must
     // still upload — the agent just resolves it by its own means.

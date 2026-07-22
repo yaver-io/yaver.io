@@ -173,7 +173,7 @@ func TestRelayPasswordForBaseRejectsInsecureRemoteRelay(t *testing.T) {
 	}
 }
 
-func TestBuildRemoteAgentCandidatesPrefersLastGoodDirectPath(t *testing.T) {
+func TestBuildRemoteAgentCandidatesPrefersLastGoodOverDirectPath(t *testing.T) {
 	cfg := &Config{
 		RelayServers: []RelayServerConfig{
 			{ID: "relay-1", HttpURL: "https://relay.example.com", Password: "relay-secret", Priority: 1},
@@ -182,7 +182,7 @@ func TestBuildRemoteAgentCandidatesPrefersLastGoodDirectPath(t *testing.T) {
 	target := &DeviceInfo{
 		DeviceID: "dev-1",
 		Name:     "mac-mini",
-		QuicHost: "100.64.1.2",
+		QuicHost: "192.168.1.2",
 		QuicPort: 18080,
 		IsOnline: true,
 	}
@@ -199,8 +199,8 @@ func TestBuildRemoteAgentCandidatesPrefersLastGoodDirectPath(t *testing.T) {
 	if candidates[0].BaseURL != "https://relay.example.com/d/dev-1" {
 		t.Fatalf("first candidate = %q, want last-good relay first", candidates[0].BaseURL)
 	}
-	if candidates[1].Kind != "tailscale" {
-		t.Fatalf("second candidate kind = %q, want tailscale", candidates[1].Kind)
+	if candidates[1].Kind != "same-lan" {
+		t.Fatalf("second candidate kind = %q, want same-lan", candidates[1].Kind)
 	}
 }
 

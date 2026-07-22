@@ -151,6 +151,16 @@ function resolveInheritedGuestProjectName(): string | undefined {
 export function resolveReportIdentity(opts?: {
   projectName?: string;
   bundleId?: string;
+  surface?: FeedbackProjectRef['surface'];
+  surfaces?: FeedbackProjectRef['surfaces'];
+  stack?: string;
+  stacks?: string[];
+  testSurfaces?: string[];
+  feedbackSdk?: string;
+  feedbackTransport?: string;
+  voiceCapabilities?: string[];
+  sttProvider?: string;
+  ttsProvider?: string;
 }): {
   appName?: string;
   app: AppInfo;
@@ -196,7 +206,7 @@ export function resolveReportIdentity(opts?: {
     return { app };
   }
 
-  const project: FeedbackProjectRef = { surface: 'mobile' };
+  const project: FeedbackProjectRef = { surface: opts?.surface ?? 'mobile' };
   if (projectName) {
     project.projectName = projectName;
     project.appName = projectName;
@@ -204,6 +214,15 @@ export function resolveReportIdentity(opts?: {
   // Note: projectPath is intentionally omitted — the agent ignores
   // client-supplied paths on feedback reports and resolves them itself.
   if (bundleId) project.bundleId = bundleId;
+  if (opts?.surfaces) project.surfaces = opts.surfaces;
+  if (opts?.stack) project.stack = opts.stack;
+  if (opts?.stacks) project.stacks = opts.stacks;
+  if (opts?.testSurfaces) project.testSurfaces = opts.testSurfaces;
+  if (opts?.feedbackSdk) project.feedbackSdk = opts.feedbackSdk;
+  if (opts?.feedbackTransport) project.feedbackTransport = opts.feedbackTransport;
+  if (opts?.voiceCapabilities) project.voiceCapabilities = opts.voiceCapabilities;
+  if (opts?.sttProvider) project.sttProvider = opts.sttProvider;
+  if (opts?.ttsProvider) project.ttsProvider = opts.ttsProvider;
 
   return { appName: projectName, app, project };
 }

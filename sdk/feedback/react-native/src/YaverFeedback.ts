@@ -1170,6 +1170,16 @@ export class YaverFeedback {
       const identity = resolveReportIdentity({
         projectName: config?.projectName,
         bundleId: config?.bundleId,
+        surface: config?.surface,
+        surfaces: config?.surfaces,
+        stack: config?.stack,
+        stacks: config?.stacks,
+        testSurfaces: config?.testSurfaces,
+        feedbackSdk: config?.feedbackSdk,
+        feedbackTransport: config?.feedbackTransport,
+        voiceCapabilities: config?.voiceCapabilities,
+        sttProvider: config?.sttProvider,
+        ttsProvider: config?.ttsProvider,
       });
       const bundle = {
         metadata: {
@@ -1369,6 +1379,16 @@ export class YaverFeedback {
       const identity = resolveReportIdentity({
         projectName: config?.projectName,
         bundleId: config?.bundleId,
+        surface: config?.surface,
+        surfaces: config?.surfaces,
+        stack: config?.stack,
+        stacks: config?.stacks,
+        testSurfaces: config?.testSurfaces,
+        feedbackSdk: config?.feedbackSdk,
+        feedbackTransport: config?.feedbackTransport,
+        voiceCapabilities: config?.voiceCapabilities,
+        sttProvider: config?.sttProvider,
+        ttsProvider: config?.ttsProvider,
       });
       const bundle = {
         metadata: {

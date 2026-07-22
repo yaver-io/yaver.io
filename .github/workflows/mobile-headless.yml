@@ -82,15 +82,33 @@ jobs:
           # radius. Must match every subsequent step that talks to the
           # agent so they all see the same config.
           HOME: ${{ runner.temp }}/yaver-home
+          YAVER_SKIP_AUTO_START: "1"
+          YAVER_VAULT_SKIP_KEYCHAIN: "1"
+          YAVER_DISABLE_WIZARD_AUTOINIT: "1"
         run: |
           mkdir -p "$HOME/.yaver"
-          echo '{"auth_token":"ci-smoke-token","device_id":"ci-mobile-headless","convex_site_url":"https://perceptive-minnow-557.eu-west-1.convex.site"}' > "$HOME/.yaver/config.json"
-          nohup /tmp/yaver-agent serve --port 18080 >/tmp/agent.log 2>&1 &
+          mkdir -p "$RUNNER_TEMP/yaver-mobile-headless-work"
+          echo '{"auth_token":"ci-smoke-token","device_id":"ci-mobile-headless","convex_site_url":"https://perceptive-minnow-557.eu-west-1.convex.site","auto_update":false,"headless_keep_awake":false,"macos_permission_onboarding_done":true}' > "$HOME/.yaver/config.json"
+          nohup /tmp/yaver-agent serve --debug --dummy --no-relay --port 18080 --work-dir "$RUNNER_TEMP/yaver-mobile-headless-work" >/tmp/agent.log 2>&1 &
           echo $! > /tmp/agent.pid
+          ready=0
           for i in $(seq 1 30); do
             sleep 1
-            curl -fsS http://127.0.0.1:18080/health && break
+            if curl -fsS http://127.0.0.1:18080/health; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/agent.pid)" 2>/dev/null; then
+              echo "::error::agent exited before health became ready"
+              tail -120 /tmp/agent.log || true
+              exit 1
+            fi
           done
+          if [ "$ready" != "1" ]; then
+            echo "::error::agent health did not become ready"
+            tail -120 /tmp/agent.log || true
+            exit 1
+          fi
           cat /tmp/agent.log | head -50
       - name: Run smoke tests against live agent
         working-directory: mobile-headless
@@ -100,7 +118,13 @@ jobs:
           YMH_SMOKE_AGENT_URL: http://127.0.0.1:18080
           YMH_SMOKE_AGENT_TOKEN: ci-smoke-token
           YMH_GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          YAVER_SKIP_AUTO_START: "1"
+          YAVER_VAULT_SKIP_KEYCHAIN: "1"
+          YAVER_DISABLE_WIZARD_AUTOINIT: "1"
         run: |
+          if [ -n "${YMH_GLM_API_KEY:-}" ]; then
+            echo "::add-mask::$YMH_GLM_API_KEY"
+          fi
           mkdir -p "$YMH_DATA_DIR"
           bun test test/smoke-local.test.ts
       - name: CLI spot-check
@@ -108,6 +132,9 @@ jobs:
         env:
           HOME: ${{ runner.temp }}/yaver-home
           YMH_DATA_DIR: /tmp/ymh-ci
+          YAVER_SKIP_AUTO_START: "1"
+          YAVER_VAULT_SKIP_KEYCHAIN: "1"
+          YAVER_DISABLE_WIZARD_AUTOINIT: "1"
         run: |
           bun run src/bin/cli.ts install-list --token=ci-smoke-token | head -20 || true
           bun run src/bin/cli.ts raw-get /info --token=ci-smoke-token | head -20 || true
@@ -115,6 +142,9 @@ jobs:
         if: always()
         env:
           HOME: ${{ runner.temp }}/yaver-home
+          YAVER_SKIP_AUTO_START: "1"
+          YAVER_VAULT_SKIP_KEYCHAIN: "1"
+          YAVER_DISABLE_WIZARD_AUTOINIT: "1"
         run: |
           kill $(cat /tmp/agent.pid) || true
           tail -80 /tmp/agent.log || true

@@ -148,12 +148,72 @@ func TestStackDetectSolitoReportsAllFrameworks(t *testing.T) {
 	}
 }
 
+func TestStackDetectReportsSurfacesStacksFeedbackAndVoice(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":       `{"name":"omni","dependencies":{"expo":"51","react-native":"0.74","react":"18","next":"14"}}`,
+		"app.json":           `{"expo":{"name":"omni"}}`,
+		"next.config.js":     "module.exports = {}\n",
+		"watch/package.json": `{"name":"watch"}`,
+		"tvos/README.md":     "tv target\n",
+		"visionos/README.md": "vision target\n",
+		"carplay/README.md":  "car target\n",
+		"yaver.xml":          "<yaver />\n",
+	})
+
+	d := stackDetect(root)
+
+	for _, want := range []string{"react-native-expo", "react-native", "nextjs", "yaver-xml"} {
+		if !slices.Contains(d.Stacks, want) {
+			t.Fatalf("stacks = %v, missing %q", d.Stacks, want)
+		}
+	}
+	for _, want := range []string{"mobile", "web", "watch", "tv", "car", "vision", "backend"} {
+		if !slices.Contains(d.Surfaces, want) {
+			t.Fatalf("surfaces = %v, missing %q", d.Surfaces, want)
+		}
+	}
+	for _, want := range []string{"browser", "rn-hermes", "watchos-simulator", "tvos-simulator", "visionos-simulator", "android-auto"} {
+		if !slices.Contains(d.TestSurfaces, want) {
+			t.Fatalf("testSurfaces = %v, missing %q", d.TestSurfaces, want)
+		}
+	}
+	if d.FeedbackSDK != "yaver-feedback-react-native" {
+		t.Fatalf("feedback sdk = %q, want RN SDK", d.FeedbackSDK)
+	}
+	for _, want := range []string{"stt", "tts", "device-mic", "browser-mic"} {
+		if !slices.Contains(d.VoiceCapabilities, want) {
+			t.Fatalf("voice capabilities = %v, missing %q", d.VoiceCapabilities, want)
+		}
+	}
+}
+
 func TestStackDetectBareReactNative(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"package.json": `{"name":"m","dependencies":{"react-native":"0.74","react":"18"}}`,
 	})
 	if got := stackDetect(root).Framework; got != FwReactNative {
 		t.Errorf("framework = %q, want %q", got, FwReactNative)
+	}
+}
+
+func TestStackDetectUnityReportsVisionAndFeedbackSDK(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"Assets/Scripts/Game.cs":             "class Game {}\n",
+		"ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.0\n",
+		"Packages/manifest.json":             `{"dependencies":{}}`,
+	})
+
+	d := stackDetect(root)
+	if d.Framework != FwUnity {
+		t.Fatalf("framework = %q, want unity", d.Framework)
+	}
+	if d.FeedbackSDK != "yaver-feedback-unity" {
+		t.Fatalf("feedback sdk = %q, want unity SDK", d.FeedbackSDK)
+	}
+	for _, want := range []string{"mobile", "tv", "vision"} {
+		if !slices.Contains(d.Surfaces, want) {
+			t.Fatalf("surfaces = %v, missing %q", d.Surfaces, want)
+		}
 	}
 }
 

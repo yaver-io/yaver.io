@@ -202,11 +202,15 @@ jobs:
           # Pin HOME to a scratch dir — see mobile-headless.yml for rationale.
           # The agent reads config via os.UserHomeDir() which honors $HOME.
           HOME: ${{ runner.temp }}/yaver-home
+          YAVER_SKIP_AUTO_START: "1"
+          YAVER_VAULT_SKIP_KEYCHAIN: "1"
+          YAVER_DISABLE_WIZARD_AUTOINIT: "1"
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-feedback-device\"}" > ~/.yaver/config.json
-          ./yaver serve --debug --dummy > /tmp/yaver-feedback-agent.log 2>&1 &
+          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-feedback-device\",\"auto_update\":false,\"headless_keep_awake\":false,\"macos_permission_onboarding_done\":true}" > ~/.yaver/config.json
+          mkdir -p "$RUNNER_TEMP/yaver-feedback-work"
+          ./yaver serve --debug --dummy --no-relay --work-dir "$RUNNER_TEMP/yaver-feedback-work" > /tmp/yaver-feedback-agent.log 2>&1 &
           pid=$!
           for i in $(seq 1 30); do
             if curl -s http://localhost:18080/health | grep -q ok; then
@@ -344,11 +348,15 @@ jobs:
           # Pin HOME to a scratch dir — see mobile-headless.yml for rationale.
           # The agent reads config via os.UserHomeDir() which honors $HOME.
           HOME: ${{ runner.temp }}/yaver-home
+          YAVER_SKIP_AUTO_START: "1"
+          YAVER_VAULT_SKIP_KEYCHAIN: "1"
+          YAVER_DISABLE_WIZARD_AUTOINIT: "1"
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-integration-device\"}" > ~/.yaver/config.json
-          ./yaver serve --debug --dummy > /tmp/yaver-integration-agent.log 2>&1 &
+          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-integration-device\",\"auto_update\":false,\"headless_keep_awake\":false,\"macos_permission_onboarding_done\":true}" > ~/.yaver/config.json
+          mkdir -p "$RUNNER_TEMP/yaver-integration-work"
+          ./yaver serve --debug --dummy --no-relay --work-dir "$RUNNER_TEMP/yaver-integration-work" > /tmp/yaver-integration-agent.log 2>&1 &
           pid=$!
           for i in $(seq 1 30); do
             if curl -sf http://localhost:18080/health; then
@@ -377,7 +385,7 @@ jobs:
       - name: Go agent tests (all new features)
         run: |
           cd desktop/agent
-          go test -v -run "TestVault|TestBuild|TestFeedback|TestDetect|TestResolve|TestAgent|TestTunnel|TestParse|TestClip" -count=1 ./...
+          CI=1 YAVER_VAULT_SKIP_KEYCHAIN=1 YAVER_DISABLE_WIZARD_AUTOINIT=1 go test -v -run "TestVault|TestBuild|TestFeedback|TestDetect|TestResolve|TestAgent|TestTunnel|TestParse|TestClip" -count=1 ./...
 
       - name: Feedback HTTP API tests
         env:
