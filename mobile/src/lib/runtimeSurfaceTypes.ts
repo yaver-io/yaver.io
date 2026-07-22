@@ -39,6 +39,114 @@ export interface TaskViewportInput {
 
 export type OpsTarget = { id?: string } | string | undefined;
 
+export interface RuntimeTurnEvidence {
+  kind?: string;
+  ref?: string;
+  sourceSurface?: string;
+  screen?: string;
+  durationMs?: number;
+}
+
+export interface RuntimeTurnTarget {
+  deviceId?: string;
+  deviceAlias?: string;
+  session?: string;
+  runner?: string;
+  project?: string;
+  workDir?: string;
+}
+
+export interface RuntimeTurnSurface {
+  id?: string;
+  class?: string;
+  interaction?: SurfaceInteraction | string;
+  visualBudget?: SurfaceVisualBudget | string;
+  ttsBudget?: number;
+  riskPolicy?: SurfaceRiskPolicy | string;
+  replyTo?: string;
+}
+
+export interface RuntimeTurnRequest {
+  utterance?: string;
+  text?: string;
+  prompt?: string;
+  choice?: string;
+  target?: RuntimeTurnTarget;
+  surface?: RuntimeTurnSurface;
+  development?: {
+    goal?: string;
+    intentClass?: "idea-capture" | "goal" | "start-coding" | "queue" | "autorun" | "session-turn" | "analysis" | string;
+    evidence?: RuntimeTurnEvidence[];
+    queue?: {
+      mode?: "capture" | "enqueue" | "enqueue-or-run" | "run" | string;
+      priority?: "low" | "normal" | "high" | string;
+      afterFinish?: string[];
+    };
+    meta?: Record<string, unknown>;
+  };
+  mode?: "auto" | "run" | string;
+  run?: boolean;
+  queue?: boolean;
+}
+
+export interface RuntimeTurnQueueItem {
+  itemId: string;
+  state: RuntimeTurnState;
+  utterance: string;
+  intentClass?: string;
+  target?: RuntimeTurnTarget;
+  surface?: RuntimeTurnSurface;
+  evidence?: RuntimeTurnEvidence[];
+  taskId?: string;
+  session?: string;
+  runner?: string;
+  reason?: string;
+  spoken?: string;
+  error?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  meta?: Record<string, unknown>;
+}
+
+export type RuntimeTurnState =
+  | "captured"
+  | "queued"
+  | "waking"
+  | "running"
+  | "needs_input"
+  | "ready_to_test"
+  | "ready_to_deploy"
+  | "deploying"
+  | "done"
+  | "failed"
+  | "cancelled"
+  | string;
+
+export interface RuntimeTurnResponse {
+  ok: boolean;
+  turnId?: string;
+  state: RuntimeTurnState;
+  spoken?: string;
+  haptic?: "start" | "attention" | "success" | "failure" | string;
+  glance?: { title?: string; line?: string; [key: string]: string | undefined };
+  queue?: RuntimeTurnQueueItem;
+  target?: RuntimeTurnTarget;
+  testTarget?: { kind?: string; state?: string; deviceId?: string };
+  awaitingChoice?: boolean;
+  options?: string[];
+  panel?: { kind?: string; text?: string; [key: string]: string | undefined };
+  handoff?: { targetSurface?: string; reason?: string; url?: string; [key: string]: string | undefined };
+  error?: string;
+  code?: string;
+  reason?: string;
+}
+
+export interface RuntimeTurnListResponse {
+  ok: boolean;
+  items: RuntimeTurnQueueItem[];
+  count: number;
+}
+
 export type DpadTarget = "appletv" | "androidtv" | "home";
 export type DpadKey =
   | "up" | "down" | "left" | "right" | "select" | "menu" | "home"

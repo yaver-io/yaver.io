@@ -44,6 +44,10 @@ import {
   dispatchSessionTurn,
   type SessionTurnDep,
 } from "./carSessionTurn";
+import type {
+  RuntimeTurnRequest,
+  RuntimeTurnResponse,
+} from "./runtimeSurfaceTypes";
 
 // ── Risky-verb detection ─────────────────────────────────────────────
 
@@ -181,6 +185,7 @@ export type CarReplyOutcome =
   | "dispatched" // command was sent to the box (task-spawning path)
   | "session-prompt" // prompt sent to the live session (/runner/session/turn)
   | "session-choice" // a menu choice was sent to the live session
+  | "runtime-turn" // command was queued through the surface-neutral runtime_turn verb
   | "surface" // handled by a car-safe ops verb (meetings/mail/etc.)
   | "needs-confirm" // risky command stashed; awaiting confirm
   | "confirmed" // a previously-stashed risky command was released + dispatched
@@ -213,6 +218,12 @@ export interface HandleCarReplyOpts {
    * preferred path (docs/yaver-car-surface.md §7 build order #2).
    */
   sessionTurn?: SessionTurnDep;
+  /**
+   * Optional: surface-neutral remote-runtime queue transport. When present,
+   * normal coding replies go through `runtime_turn` so watch/car/TV/mobile share
+   * the same queue/status/deploy-gate contract.
+   */
+  runtimeTurn?: (request: RuntimeTurnRequest) => Promise<RuntimeTurnResponse>;
   /**
    * Optional: tracks whether the last session turn left a menu on screen.
    * Required when `sessionTurn` is provided. The caller owns one instance for
@@ -258,6 +269,15 @@ export async function handleCarReply(
   if (gate.hasPending(conversationId)) {
     if (isConfirmReply(text)) {
       const command = gate.takePending(conversationId)!;
+      if (opts.runtimeTurn) {
+        const runtime = await dispatchRuntimeTurn(command, opts.runtimeTurn);
+        return {
+          outcome: "confirmed",
+          reply: spokenFromRuntimeTurn(runtime),
+          command,
+          awaitingChoice: runtime.awaitingChoice === true,
+        };
+      }
       const result = await dispatchAndSummarize(command, deps, config);
       return { outcome: "confirmed", reply: result.spoken, command, result };
     }
@@ -287,6 +307,16 @@ export async function handleCarReply(
     }
   }
 
+  if (opts.runtimeTurn) {
+    const runtime = await dispatchRuntimeTurn(text, opts.runtimeTurn);
+    return {
+      outcome: "runtime-turn",
+      reply: spokenFromRuntimeTurn(runtime),
+      command: text,
+      awaitingChoice: runtime.awaitingChoice === true,
+    };
+  }
+
   // SESSION path (preferred): drive the live coding session.
   if (opts.sessionTurn && opts.sessionChoiceGate) {
     const pendingChoice = opts.sessionChoiceGate.takeAwaiting(conversationId);
@@ -311,4 +341,43 @@ export async function handleCarReply(
 function clampForSpeech(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length <= 80 ? t : t.slice(0, 79).trimEnd() + "…";
+}
+
+async function dispatchRuntimeTurn(
+  text: string,
+  runtimeTurn: (request: RuntimeTurnRequest) => Promise<RuntimeTurnResponse>,
+): Promise<RuntimeTurnResponse> {
+  return runtimeTurn({
+    utterance: text,
+    surface: {
+      id: "car",
+      class: "car-audio",
+      interaction: "voice",
+      visualBudget: "none",
+      riskPolicy: "driving",
+      ttsBudget: 200,
+      replyTo: "car",
+    },
+    development: {
+      intentClass: "start-coding",
+      queue: {
+        mode: "enqueue-or-run",
+        priority: "normal",
+        afterFinish: ["load-mobile-container", "ask-deploy"],
+      },
+      meta: { source: "android-auto-remote-input" },
+    },
+    mode: "auto",
+  });
+}
+
+function spokenFromRuntimeTurn(resp: RuntimeTurnResponse): string {
+  const state = String(resp.state || "").toLowerCase();
+  if (resp.spoken) return resp.spoken;
+  if (resp.awaitingChoice || state === "needs_input") return "It needs your answer.";
+  if (state === "ready_to_test") return "Done. You can test it in Yaver mobile.";
+  if (state === "ready_to_deploy") return "Done. Confirm deploy from your phone.";
+  if (state === "failed") return "That failed. I sent the details to your phone.";
+  if (state === "captured") return "Captured.";
+  return "Added to the remote runner queue.";
 }

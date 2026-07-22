@@ -37,6 +37,7 @@ import {
   type CarSurfaceOps,
 } from "./carSurfaceIntent";
 import { buildWatchPrompt } from "./watchPrompt";
+import type { RuntimeTurnRequest, RuntimeTurnResponse } from "./runtimeSurfaceTypes";
 
 // ── Wire protocol v1 ─────────────────────────────────────────────────
 // The single TS source of truth. Mirrored byte-for-byte by:
@@ -65,6 +66,11 @@ export type WatchTurn =
  *  (startManagedCloudMachine) on the watch's behalf. Kept as a dep so the
  *  bridge stays headless-testable. */
 export type WatchWakeFn = (machineId?: string) => Promise<{ ok: boolean; error?: string }>;
+
+/** Optional runtime-turn bridge. When injected, the watch becomes a front door
+ *  to the remote runner queue / live-session router. Kept optional so the
+ *  existing car-task fallback remains valid on older agents. */
+export type WatchRuntimeTurnFn = (request: RuntimeTurnRequest) => Promise<RuntimeTurnResponse>;
 
 /** Phone → watch. Only the fields relevant to `kind` are set. */
 export interface WatchReply {
@@ -128,6 +134,7 @@ export async function handleWatchTurn(
   send: (r: WatchReply) => void = () => {},
   ops?: CarSurfaceOps,
   wakeBox?: WatchWakeFn,
+  runtimeTurn?: WatchRuntimeTurnFn,
 ): Promise<WatchReply> {
   switch (msg.kind) {
     case "wake": {
@@ -145,7 +152,7 @@ export async function handleWatchTurn(
     case "intent": {
       const text = watchIntentToTranscript(msg.intent);
       if (!text) return emit(send, reply("error", { spoken: "I don't know that shortcut." }));
-      return runTranscript(text, deps, config, send, ops);
+      return runTranscript(text, deps, config, send, ops, runtimeTurn);
     }
     case "confirm": {
       // Negation / ambiguity fails safe — only an explicit confirm proceeds.
@@ -155,10 +162,10 @@ export async function handleWatchTurn(
       const text = (msg.token || "").trim();
       if (!text) return emit(send, reply("error", { spoken: "I lost what you were confirming." }));
       // Risk gate already satisfied by the explicit confirm — dispatch.
-      return dispatch(text, deps, config, send);
+      return dispatch(text, deps, config, send, runtimeTurn);
     }
     case "transcript":
-      return runTranscript(msg.text, deps, config, send, ops);
+      return runTranscript(msg.text, deps, config, send, ops, runtimeTurn);
     default:
       return emit(send, reply("error", { spoken: "I didn't understand that." }));
   }
@@ -171,6 +178,7 @@ async function runTranscript(
   config: CarVoiceConfig,
   send: (r: WatchReply) => void,
   ops?: CarSurfaceOps,
+  runtimeTurn?: WatchRuntimeTurnFn,
 ): Promise<WatchReply> {
   const clean = (text || "").trim();
   if (!clean) return emit(send, reply("error", { spoken: "I didn't catch that." }));
@@ -196,7 +204,7 @@ async function runTranscript(
     return emit(send, reply("confirm-needed", { token: clean, prompt: risk.prompt }));
   }
 
-  return dispatch(clean, deps, config, send);
+  return dispatch(clean, deps, config, send, runtimeTurn);
 }
 
 /** Run the shared car loop and stream replies to the wrist. */
@@ -205,8 +213,35 @@ async function dispatch(
   deps: CarVoiceDeps,
   config: CarVoiceConfig,
   send: (r: WatchReply) => void,
+  runtimeTurn?: WatchRuntimeTurnFn,
 ): Promise<WatchReply> {
   const watchPlan = buildWatchPrompt(text);
+  if (runtimeTurn) {
+    send(reply("ack", { spoken: watchPlan.mode === "idea-capture" ? "Captured." : "On it." }));
+    try {
+      const result = await runtimeTurn({
+        utterance: text,
+        surface: {
+          id: "watch",
+          class: "watch",
+          interaction: "voice",
+          visualBudget: "glance",
+          riskPolicy: "watch",
+          ttsBudget: 160,
+          replyTo: "watch",
+        },
+        development: {
+          intentClass: watchPlan.mode,
+          queue: { mode: watchPlan.mode === "idea-capture" ? "enqueue" : "enqueue-or-run", afterFinish: ["load-mobile-container", "ask-deploy"] },
+        },
+        mode: "auto",
+      });
+      return emit(send, watchReplyFromRuntimeTurn(result));
+    } catch {
+      return emit(send, reply("error", { spoken: "I couldn't reach your runtime." }));
+    }
+  }
+
   let acked = false;
   const result = await dispatchAndSummarize(watchPlan.prompt, deps, config, (s) => {
     if (s.stage === "dispatched") {
@@ -230,4 +265,37 @@ async function dispatch(
 function emit(send: (r: WatchReply) => void, r: WatchReply): WatchReply {
   send(r);
   return r;
+}
+
+function watchReplyFromRuntimeTurn(result: RuntimeTurnResponse): WatchReply {
+  const spoken = result.spoken || result.error || "Done.";
+  if (result.awaitingChoice || result.state === "needs_input") {
+    return reply("confirm-needed", {
+      token: result.turnId || result.queue?.itemId || "",
+      prompt: result.options?.length ? `Choose: ${result.options.join(". ")}` : spoken,
+      spoken,
+    });
+  }
+  if (!result.ok || result.state === "failed") {
+    return reply("error", { spoken });
+  }
+  if (result.state === "ready_to_test" || result.state === "ready_to_deploy" || result.state === "done") {
+    return reply("summary", {
+      taskId: result.queue?.taskId || result.queue?.itemId || result.turnId,
+      status: result.state,
+      spoken,
+    });
+  }
+  if (result.state === "captured") {
+    return reply("summary", {
+      taskId: result.queue?.itemId || result.turnId,
+      status: result.state,
+      spoken,
+    });
+  }
+  return reply("working", {
+    taskId: result.queue?.taskId || result.queue?.itemId || result.turnId,
+    status: result.state,
+    spoken,
+  });
 }

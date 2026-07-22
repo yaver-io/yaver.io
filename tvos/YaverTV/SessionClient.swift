@@ -27,6 +27,33 @@ struct SessionTurnResult: Codable {
     let error: String?
 }
 
+private struct RuntimeTurnOpsEnvelope: Decodable {
+    let ok: Bool?
+    let initial: RuntimeTurnResult?
+    let error: String?
+}
+
+private struct RuntimeTurnResult: Decodable {
+    let ok: Bool?
+    let state: String?
+    let spoken: String?
+    let awaitingChoice: Bool?
+    let options: [String]?
+    let panel: RuntimeTurnPanel?
+    let queue: RuntimeTurnQueueItem?
+    let error: String?
+}
+
+private struct RuntimeTurnPanel: Decodable {
+    let kind: String?
+    let text: String?
+}
+
+private struct RuntimeTurnQueueItem: Decodable {
+    let session: String?
+    let runner: String?
+}
+
 actor SessionClient {
     private let token: String
     private let box: BoxTarget
@@ -60,6 +87,92 @@ actor SessionClient {
     }
 
     private func turn(text: String?, choice: String?, session: String?, waitMs: Int) async throws -> SessionTurnResult {
+        do {
+            return try await runtimeTurn(text: text, choice: choice, session: session, waitMs: waitMs)
+        } catch {
+            // Older agents do not have runtime_turn yet. The direct endpoint is
+            // still the proven TV path, so keep it as a rollout fallback.
+        }
+        return try await directTurn(text: text, choice: choice, session: session, waitMs: waitMs)
+    }
+
+    private func runtimeTurn(text: String?, choice: String?, session: String?, waitMs: Int) async throws -> SessionTurnResult {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/ops") else {
+            throw AgentError(message: "bad box host")
+        }
+        var target: [String: Any] = [:]
+        if let session, !session.isEmpty { target["session"] = session }
+        var payload: [String: Any] = [
+            "utterance": text ?? "",
+            "target": target,
+            "surface": [
+                "id": "tvos",
+                "class": "tv-apple",
+                "interaction": "dpad",
+                "visualBudget": "panel",
+                "riskPolicy": "shared-tv",
+                "ttsBudget": 240,
+                "replyTo": "tvos",
+            ],
+            "development": [
+                "intentClass": choice == nil ? "session-turn" : "session-turn",
+                "queue": [
+                    "mode": "run",
+                    "priority": "normal",
+                    "afterFinish": ["load-mobile-container", "ask-deploy"],
+                ],
+                "meta": ["source": "tvos-session"],
+            ],
+            "mode": "run",
+        ]
+        if let choice, !choice.isEmpty { payload["choice"] = choice }
+        let body = try JSONSerialization.data(withJSONObject: [
+            "verb": "runtime_turn",
+            "payload": payload,
+            "machine": "local",
+        ])
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        req.httpBody = body
+
+        let (data, resp) = try await self.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else {
+            throw AgentError(message: "no response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "runtime turn failed (\(http.statusCode))")
+        }
+        let envelope = try JSONDecoder().decode(RuntimeTurnOpsEnvelope.self, from: data)
+        if envelope.ok == false {
+            throw AgentError(message: envelope.error ?? "runtime turn failed")
+        }
+        guard let result = envelope.initial else {
+            throw AgentError(message: "runtime turn returned no result")
+        }
+        if result.ok == false, let err = result.error {
+            throw AgentError(message: err)
+        }
+        return SessionTurnResult(
+            ok: result.ok,
+            session: result.queue?.session,
+            runner: result.queue?.runner,
+            sent: choice == nil ? "prompt" : "choice",
+            awaitingChoice: result.awaitingChoice,
+            options: result.options,
+            pane: result.panel?.text ?? result.spoken,
+            error: result.error
+        )
+    }
+
+    private func directTurn(text: String?, choice: String?, session: String?, waitMs: Int) async throws -> SessionTurnResult {
         guard let url = URL(string: "http://\(box.host):\(box.port)/runner/session/turn") else {
             throw AgentError(message: "bad box host")
         }

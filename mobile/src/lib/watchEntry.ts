@@ -31,7 +31,7 @@
 //   posture as withMeshTunnel.js).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { handleWatchTurn, type WatchReply, type WatchTurn, type WatchWakeFn } from "./watchBridge";
+import { handleWatchTurn, type WatchReply, type WatchRuntimeTurnFn, type WatchTurn, type WatchWakeFn } from "./watchBridge";
 import type { CarVoiceConfig, CarVoiceDeps } from "./carVoiceCoding";
 import type { CarSurfaceOps } from "./carSurfaceIntent";
 
@@ -48,6 +48,9 @@ export interface WatchBridgeWiring {
   /** Resume a parked managed box on the wrist's behalf (the phone holds the
    *  control-plane token). Wire to startManagedCloudMachine. */
   wakeBox?: WatchWakeFn;
+  /** Optional remote-runtime queue/live-session router. Older agents can omit
+   *  this and the bridge falls back to the existing task loop. */
+  runtimeTurn?: WatchRuntimeTurnFn;
   /** Ship a reply JSON string back to the wrist (the native sender). */
   sender: (json: string) => void;
 }
@@ -84,7 +87,7 @@ export const watchBridgeBus: WatchBridgeBus = {
     }
     const config = w.config?.() ?? {};
     try {
-      return await handleWatchTurn(msg, w.makeDeps(), config, (r) => safeSend(w, r), w.ops, w.wakeBox);
+      return await handleWatchTurn(msg, w.makeDeps(), config, (r) => safeSend(w, r), w.ops, w.wakeBox, w.runtimeTurn);
     } catch (e) {
       const err: WatchReply = {
         v: 1,

@@ -68,6 +68,57 @@ test("walking idea is dispatched as idea capture, not blind code edit", async ()
   assert.match(dispatchedPrompt, /Do not edit code/i);
 });
 
+test("runtime turn injection routes a watch idea into the remote queue", async () => {
+  const { send, sent } = capture();
+  const calls: any[] = [];
+  const final = await handleWatchTurn(
+    { v: 1, kind: "transcript", text: "idea: make unreachable boxes show the failed probe" } as WatchTurn,
+    deps(),
+    {},
+    send,
+    undefined,
+    undefined,
+    async (request) => {
+      calls.push(request);
+      return {
+        ok: true,
+        state: "running",
+        spoken: "Added to the remote runner queue.",
+        turnId: "rq-1",
+        queue: { itemId: "rq-1", state: "running", utterance: request.utterance },
+      };
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].surface.class, "watch");
+  assert.equal(calls[0].development.intentClass, "idea-capture");
+  assert.equal(final.kind, "working");
+  assert.equal(final.taskId, "rq-1");
+  assert.deepEqual(sent.map((r) => r.kind), ["ack", "working"]);
+});
+
+test("runtime turn ready_to_test becomes a watch summary", async () => {
+  const final = await handleWatchTurn(
+    { v: 1, kind: "transcript", text: "fix the startup flicker" } as WatchTurn,
+    deps(),
+    {},
+    undefined,
+    undefined,
+    undefined,
+    async (request) => ({
+      ok: true,
+      state: "ready_to_test",
+      spoken: "Done. You can test it in Yaver mobile.",
+      turnId: "rq-2",
+      queue: { itemId: "rq-2", taskId: "task-2", state: "ready_to_test", utterance: request.utterance },
+    }),
+  );
+  assert.equal(final.kind, "summary");
+  assert.equal(final.taskId, "task-2");
+  assert.equal(final.status, "ready_to_test");
+  assert.match(final.spoken!, /test it in Yaver mobile/i);
+});
+
 // ── risky write: confirm round-trip ──────────────────────────────────
 
 test("a risky transcript asks for confirmation instead of dispatching", async () => {

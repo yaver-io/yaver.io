@@ -12,6 +12,9 @@ export interface WatchPromptPlan {
 
 export function classifyWatchPrompt(text: string): WatchPromptMode {
   const t = ` ${text.trim().toLowerCase()} `;
+  if (/\b(idea|remember|note|thought|feature idea|maybe|should we|what if)\b/.test(t)) {
+    return "idea-capture";
+  }
   if (/\b(implement|build|make|code|edit|change|add|fix|wire|create|ship|deploy|redeploy|deployment|release|rollout|push|force|reset|delete|remove|destroy|prod|production)\b/.test(t)) {
     return "implementation";
   }
@@ -20,9 +23,6 @@ export function classifyWatchPrompt(text: string): WatchPromptMode {
   }
   if (/\b(question|ask|check|status|what|why|how|can you|runtime|session|summari[sz]e)\b/.test(t)) {
     return "remote-runtime-question";
-  }
-  if (/\b(idea|remember|note|thought|feature idea|maybe|should we|what if)\b/.test(t)) {
-    return "idea-capture";
   }
   return "idea-capture";
 }

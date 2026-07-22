@@ -119,6 +119,13 @@ export function WatchBridgeHost() {
         if (!mid) return { ok: false, error: "No parked managed box to wake." };
         return wakeManagedDevice(token, mid);
       },
+      runtimeTurn: (request) => runtimeSurfaceClient.runtimeTurn(targetDeviceId, {
+        ...request,
+        target: {
+          ...(request.target ?? {}),
+          deviceId: targetDeviceId || request.target?.deviceId,
+        },
+      }),
       sender: (json) => bridge.sendToWatch?.(json),
     });
     return () => watchBridgeBus.reset();

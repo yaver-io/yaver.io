@@ -189,6 +189,77 @@ test("session path sends safe replies to the live session instead of spawning a 
   assert.deepEqual(dispatched, []);
 });
 
+test("runtime turn path sends safe replies to the shared remote queue", async () => {
+  const { deps, dispatched } = recordingDeps();
+  const gate = new CarReplyGate();
+  const calls: any[] = [];
+
+  const d = await handleCarReply({
+    conversationId: "c",
+    text: "keep developing the app",
+    gate,
+    deps,
+    runtimeTurn: async (request) => {
+      calls.push(request);
+      return {
+        ok: true,
+        turnId: "rq_1",
+        state: "ready_to_test",
+        spoken: "Done. You can test it in Yaver mobile.",
+      };
+    },
+    sessionChoiceGate: new SessionChoiceGate(),
+    sessionTurn: async () => {
+      throw new Error("session fallback should not be used");
+    },
+  });
+
+  assert.equal(d.outcome, "runtime-turn");
+  assert.equal(d.reply, "Done. You can test it in Yaver mobile.");
+  assert.deepEqual(dispatched, []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].surface.class, "car-audio");
+  assert.equal(calls[0].development.queue.mode, "enqueue-or-run");
+});
+
+test("confirm releases a risky reply through runtime turn when available", async () => {
+  const { deps, dispatched } = recordingDeps();
+  const gate = new CarReplyGate();
+  const calls: any[] = [];
+
+  await handleCarReply({
+    conversationId: "c",
+    text: "deploy to prod",
+    gate,
+    deps,
+    runtimeTurn: async () => {
+      throw new Error("must not dispatch before confirm");
+    },
+  });
+
+  const d = await handleCarReply({
+    conversationId: "c",
+    text: "confirm",
+    gate,
+    deps,
+    runtimeTurn: async (request) => {
+      calls.push(request);
+      return {
+        ok: true,
+        turnId: "rq_2",
+        state: "ready_to_deploy",
+        spoken: "Done. Confirm deploy from your phone.",
+      };
+    },
+  });
+
+  assert.equal(d.outcome, "confirmed");
+  assert.equal(d.reply, "Done. Confirm deploy from your phone.");
+  assert.deepEqual(dispatched, []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].utterance, "deploy to prod");
+});
+
 test("session path routes the next answer as a menu choice", async () => {
   const { deps } = recordingDeps();
   const gate = new CarReplyGate();

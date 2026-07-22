@@ -10,6 +10,10 @@ import {
   type DpadTarget,
   type GatewayIntentResult,
   type OpsTarget,
+  type RuntimeTurnRequest,
+  type RuntimeTurnListResponse,
+  type RuntimeTurnResponse,
+  type RuntimeTurnState,
 } from "./runtimeSurfaceTypes";
 
 export {
@@ -29,6 +33,14 @@ export type {
   SurfaceRiskPolicy,
   SurfaceVisualBudget,
   TaskViewportInput,
+  RuntimeTurnEvidence,
+  RuntimeTurnQueueItem,
+  RuntimeTurnRequest,
+  RuntimeTurnListResponse,
+  RuntimeTurnResponse,
+  RuntimeTurnState,
+  RuntimeTurnSurface,
+  RuntimeTurnTarget,
 } from "./runtimeSurfaceTypes";
 
 async function callSurfaceOps<T = unknown>(
@@ -44,12 +56,110 @@ async function callSurfaceOps<T = unknown>(
   return normalizeOpsInitial<T>(data);
 }
 
+const RUNTIME_TURN_TERMINAL = new Set([
+  "captured",
+  "needs_input",
+  "ready_to_test",
+  "ready_to_deploy",
+  "done",
+  "failed",
+  "cancelled",
+]);
+
+function isRuntimeTurnTerminal(state?: RuntimeTurnState): boolean {
+  return RUNTIME_TURN_TERMINAL.has(String(state || "").toLowerCase());
+}
+
+async function waitForRuntimeTurnDone(
+  target: OpsTarget,
+  initial: RuntimeTurnResponse,
+  opts: {
+    pollIntervalMs?: number;
+    maxWaitMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  } = {},
+): Promise<RuntimeTurnResponse> {
+  const itemId = initial.turnId || initial.queue?.itemId;
+  if (!itemId || isRuntimeTurnTerminal(initial.state)) return initial;
+
+  const pollMs = opts.pollIntervalMs ?? 4000;
+  const maxWaitMs = opts.maxWaitMs ?? 15 * 60 * 1000;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const now = opts.now ?? (() => Date.now());
+  const deadline = now() + maxWaitMs;
+  let last = initial;
+
+  while (now() < deadline) {
+    await sleep(pollMs);
+    last = await runtimeSurfaceClient.runtimeTurnStatus(target, itemId);
+    if (isRuntimeTurnTerminal(last.state)) return last;
+  }
+  return {
+    ...last,
+    spoken: last.spoken || "Still working. I'll let you know on your phone.",
+  };
+}
+
 export const runtimeSurfaceClient = {
   viewportHeaders,
   carVoiceViewport,
   headsetViewport,
   watchVoiceViewport,
   tvDpadViewport,
+  isRuntimeTurnTerminal,
+  waitForRuntimeTurnDone,
+
+  runtimeTurn: (
+    target: OpsTarget,
+    request: RuntimeTurnRequest,
+  ) =>
+    callSurfaceOps<RuntimeTurnResponse>(
+      target,
+      "runtime_turn",
+      request as unknown as Record<string, unknown>,
+      120000,
+    ),
+
+  turn: (
+    target: OpsTarget,
+    text: string,
+    opts: Partial<RuntimeTurnRequest> = {},
+  ) =>
+    callSurfaceOps<RuntimeTurnResponse>(
+      target,
+      "runtime_turn",
+      {
+        ...opts,
+        text,
+        queue: opts.queue ?? true,
+        surface: opts.surface ?? {
+          id: "mobile",
+          class: "mobile-phone",
+          interaction: "touch",
+          visualBudget: "full",
+          riskPolicy: "normal",
+          replyTo: "mobile",
+        },
+      } as unknown as Record<string, unknown>,
+      120000,
+    ),
+
+  runtimeTurnStatus: (target: OpsTarget, itemId: string) =>
+    callSurfaceOps<RuntimeTurnResponse>(
+      target,
+      "runtime_turn_status",
+      { itemId },
+      30000,
+    ),
+
+  runtimeTurns: (target: OpsTarget, limit = 25) =>
+    callSurfaceOps<RuntimeTurnListResponse>(
+      target,
+      "runtime_turns",
+      { limit },
+      30000,
+    ),
 
   gatewayIntent: (target: OpsTarget, utterance: string) =>
     callSurfaceOps<GatewayIntentResult>(

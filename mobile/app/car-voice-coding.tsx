@@ -73,6 +73,7 @@ import {
   type LiveActivityState,
 } from "../src/lib/liveActivity";
 import { runtimeSurfaceClient } from "../src/lib/runtimeSurfaceClient";
+import type { RuntimeTurnResponse } from "../src/lib/runtimeSurfaceTypes";
 import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 import { useHandsFreeVoice } from "../src/lib/voice/useHandsFreeVoice";
 import type { CreateVoiceCoreOptions } from "../src/lib/voice/createVoiceCore";
@@ -632,32 +633,86 @@ export default function CarVoiceCodingScreen() {
       config: CarVoiceConfig,
     ) => {
       setStatus("thinking");
-      const fixedDeps = { ...deps, transcribe: async () => transcript };
-      const r = await runCarVoiceTurn(
-        "preset://" + turnId,
-        fixedDeps,
-        config,
-        (step) => {
-          if (!liveRef.current) return;
-          if (step.stage === "dispatched") setStatus("thinking");
-          if (step.stage === "spoken") setStatus("speaking");
-          patchTurn(turnId, {
-            stage: step.stage,
-            status: step.status,
-            ...(step.text ? { spoken: step.text } : {}),
-          });
-        },
-      );
+      let spoken = "";
+      let finalStage: Turn["stage"] = "spoken";
+      let finalStatus = "";
+      let declined = false;
+      try {
+        const initial = await runtimeSurfaceClient.runtimeTurn(deviceId, {
+          utterance: transcript,
+          target: {
+            deviceId,
+            deviceAlias: pickedDevice?.name || pickedDevice?.alias || pickedDevice?.hostname,
+          },
+          surface: {
+            id: glass ? "glass" : "car",
+            class: glass ? "headset-visionos" : "car-audio",
+            interaction: "voice",
+            visualBudget: glass ? "panel" : "none",
+            riskPolicy: glass ? "spatial" : "driving",
+            ttsBudget: glass ? 260 : 200,
+            replyTo: glass ? "glass" : "car",
+          },
+          development: {
+            intentClass: "start-coding",
+            queue: {
+              mode: "enqueue-or-run",
+              priority: "normal",
+              afterFinish: ["load-mobile-container", "ask-deploy"],
+            },
+            meta: {
+              source: "car-voice-coding",
+              speechProvider: config.stt?.provider,
+              ttsProvider: config.tts?.provider,
+            },
+          },
+          mode: "auto",
+        });
+        patchTurn(turnId, {
+          stage: "dispatched",
+          spoken: initial.spoken || "Added to the remote runner queue.",
+          status: initial.state,
+        });
+        const final = await runtimeSurfaceClient.waitForRuntimeTurnDone(deviceId, initial);
+        spoken = spokenForRuntimeTurn(final);
+        finalStatus = final.state;
+        finalStage = final.state === "failed" || final.ok === false ? "error" : "spoken";
+      } catch {
+        // Older agents may not know runtime_turn yet. Keep the existing task
+        // path alive so CarPlay/Android Auto don't go dead during rollout.
+        const fixedDeps = { ...deps, transcribe: async () => transcript };
+        const r = await runCarVoiceTurn(
+          "preset://" + turnId,
+          fixedDeps,
+          config,
+          (step) => {
+            if (!liveRef.current) return;
+            if (step.stage === "dispatched") setStatus("thinking");
+            if (step.stage === "spoken") setStatus("speaking");
+            patchTurn(turnId, {
+              stage: step.stage,
+              status: step.status,
+              ...(step.text ? { spoken: step.text } : {}),
+            });
+          },
+        );
+        spoken = r.spoken;
+        finalStatus = r.status || "";
+        finalStage = r.declined ? "declined" : "spoken";
+        declined = !!r.declined;
+      }
       patchTurn(turnId, {
-        stage: r.declined ? "declined" : "spoken",
-        spoken: r.spoken,
-        status: r.status,
-        declined: r.declined,
+        stage: finalStage,
+        spoken,
+        status: finalStatus,
+        declined,
       });
-      await publishCarConversation(transcript, r.spoken);
+      setStatus("speaking");
+      await safeSpeak(deps, spoken);
+      await publishCarConversation(transcript, spoken);
       setStatus("idle");
     },
-    [publishCarConversation],
+    [deviceId, glass, pickedDevice?.alias, pickedDevice?.hostname, pickedDevice?.name, publishCarConversation],
   );
 
   function patchTurn(id: string, patch: Partial<Turn>) {
@@ -794,6 +849,17 @@ export default function CarVoiceCodingScreen() {
           deps,
           config,
           ops: callCarOps,
+          runtimeTurn: async (request) => {
+            const initial = await runtimeSurfaceClient.runtimeTurn(deviceId, {
+              ...request,
+              target: {
+                ...(request.target ?? {}),
+                deviceId,
+                deviceAlias: pickedDevice?.name || pickedDevice?.alias || pickedDevice?.hostname,
+              },
+            });
+            return runtimeSurfaceClient.waitForRuntimeTurnDone(deviceId, initial);
+          },
           sessionTurn: async (prompt, choice) => {
             const r = await quicClient.runnerSessionTurn(deviceId, prompt, choice);
             return {
@@ -834,6 +900,9 @@ export default function CarVoiceCodingScreen() {
     callCarOps,
     carContactName,
     deviceId,
+    pickedDevice?.alias,
+    pickedDevice?.hostname,
+    pickedDevice?.name,
   ]);
 
   // ── styles ────────────────────────────────────────────────────────
@@ -1335,4 +1404,24 @@ async function safeSpeak(
   } catch {
     /* ignore */
   }
+}
+
+function spokenForRuntimeTurn(resp: RuntimeTurnResponse): string {
+  const state = String(resp.state || "").toLowerCase();
+  if (resp.spoken) return resp.spoken;
+  if (resp.awaitingChoice || state === "needs_input") {
+    return "It needs your answer. Open Yaver on your phone.";
+  }
+  if (state === "ready_to_test") {
+    return "Done. You can test it in Yaver mobile.";
+  }
+  if (state === "ready_to_deploy") {
+    return "Done. I can prepare a deploy when you confirm from your phone.";
+  }
+  if (state === "captured") return "Captured.";
+  if (state === "failed") return "That failed. I sent the details to your phone.";
+  if (state === "queued" || state === "running") {
+    return "Still working. I'll let you know on your phone.";
+  }
+  return "Done.";
 }
