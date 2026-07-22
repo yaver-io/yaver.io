@@ -359,20 +359,20 @@ export default function TabLayout() {
           : undefined,
       }}
     >
-      <Tabs.Screen
-        name="hotreload"
-        options={{
-          // One-word label — "Hot Reload" wraps to two lines on every
-          // tab on a phone, while every other tab is single-word, so it
-          // sticks out. Route + screen file name stay `hotreload` to
-          // avoid breaking deeplinks (yaver://hotreload, sentry / convex
-          // event slugs, etc.).
-          title: "Reload",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} rail={useLeftRail} />
-          ),
-        }}
-      />
+      {/* Reload is retired from the tab bar — Projects absorbed it.
+          Measured before removing: 11 of Reload's agent calls were already
+          shared with Projects, and Projects held 12+ that Reload did not
+          (/dev/start, getProjectActions, getDevCompatibility,
+          getDevServerBundleUrl). Reload was a strict SUBSET wearing a tab, and
+          the two screens rendered the same project list from the same scan —
+          which is exactly how it read to users.
+
+          The route is KEPT (href: null) rather than deleted: yaver://hotreload
+          deep links, the `insert` broadcast that navigates here, and existing
+          Sentry/Convex event slugs all still resolve. Removing the file would
+          break those silently, which is a worse trade than one unlisted
+          route. */}
+      <Tabs.Screen name="hotreload" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="tasks"
         options={{

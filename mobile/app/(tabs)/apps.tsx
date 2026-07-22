@@ -649,12 +649,28 @@ export default function AppsScreen() {
                 ? "Kotlin flush targets Android only."
                 : undefined,
       }] : [];
-      const nativeRemoteRuntimeActions = (secondClassFramework === "swift" || secondClassFramework === "kotlin") ? [{
-        label: "Remote Runtime",
+      // WebRTC is offered for RN/Expo too, not just native.
+      //
+      // Native (swift/kotlin) has exactly one path, so tapping the project
+      // goes straight there. RN has TWO real paths and they are genuinely
+      // different products: Hermes loads the real bundle into the Yaver
+      // container on THIS phone, while WebRTC streams a simulator running on
+      // the dev box. Only the user knows which they want — Hermes for the true
+      // runtime and device APIs, WebRTC when the phone cannot build it or the
+      // app needs a platform this phone is not.
+      //
+      // Offering both is what makes "run it" a 3-tap flow for every stack:
+      // Projects -> project -> path. Native skips the choice because there is
+      // nothing to choose.
+      const remoteRuntimeFramework = secondClassFramework || hermesFramework;
+      const nativeRemoteRuntimeActions = (secondClassFramework === "swift" || secondClassFramework === "kotlin" || isHermesMobileFramework(hermesFramework)) ? [{
+        label: isHermesMobileFramework(hermesFramework) && !secondClassFramework
+          ? "Stream over WebRTC"
+          : "Remote Runtime",
         target: ".",
         type: "remote-runtime",
         icon: "\u{1F4FA}",
-        framework: secondClassFramework,
+        framework: remoteRuntimeFramework,
         platform: Platform.OS,
         supported: true,
       }] : [];
