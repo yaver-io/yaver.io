@@ -14,7 +14,9 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: testing
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      HCLOUD_SSH_KEY_NAME: yaver-ci
     steps:
       - uses: actions/checkout@v4
 
@@ -35,14 +37,43 @@ jobs:
           HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
           HCLOUD_SSH_PRIVATE_KEY: ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
         run: |
+          if [ -z "${HCLOUD_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::error::HCLOUD_SSH_PRIVATE_KEY secret is required"
+            exit 1
+          fi
           install -m 600 /dev/null "$HCLOUD_SSH_PRIVATE_KEY_PATH"
           printf '%s\n' "$HCLOUD_SSH_PRIVATE_KEY" > "$HCLOUD_SSH_PRIVATE_KEY_PATH"
           echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Copy smoke scripts and fixtures
-        env:
-          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+      - name: Install hcloud CLI
         run: |
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -C /usr/local/bin -xz hcloud
+          hcloud version
+
+      - name: Hetzner persistent preflight
+        env:
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      - name: Verify SSH key matches Hetzner key
+        run: |
+          set -euo pipefail
+          ci_pub="$(ssh-keygen -y -f "$HCLOUD_SSH_PRIVATE_KEY_PATH" | awk '{print $1" "$2}')"
+          hcloud ssh-key describe "$HCLOUD_SSH_KEY_NAME" -o json > ci/.artifacts/hcloud-ssh-key.json
+          hcloud_pub="$(jq -r '.public_key' ci/.artifacts/hcloud-ssh-key.json | awk '{print $1" "$2}')"
+          if [ "$ci_pub" != "$hcloud_pub" ]; then
+            echo "::error::HCLOUD_SSH_PRIVATE_KEY does not match Hetzner SSH key '$HCLOUD_SSH_KEY_NAME'"
+            exit 1
+          fi
+
+      - name: Wait for SSH
+        run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Copy smoke scripts and fixtures
+        run: |
+          HETZNER_TEST_SERVER_IP="$(cat ci/.artifacts/server-ip)"
           ssh_base="ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
           $ssh_base "root@$HETZNER_TEST_SERVER_IP" "mkdir -p /opt/yaver/tests/fixtures /opt/yaver/scripts"
           rsync -az -e "$ssh_base" scripts/remote-runtime-smoke.sh \
@@ -61,10 +92,9 @@ jobs:
             "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/tests/fixtures/native-android-kotlin/"
 
       - name: Browser WebRTC todo color smoke from CI runner
-        env:
-          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
         run: |
           set -euo pipefail
+          HETZNER_TEST_SERVER_IP="$(cat ci/.artifacts/server-ip)"
           ssh_base="ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
           token="$($ssh_base "root@$HETZNER_TEST_SERVER_IP" "python3 -c \"import json; from pathlib import Path; paths=(Path('/home/yaver/.yaver/config.json'), Path('/root/.yaver/config.json')); p=next((x for x in paths if x.exists()), None); raise SystemExit(1) if p is None else print(json.loads(p.read_text())['auth_token'])\"")"
           echo "::add-mask::$token"
@@ -102,13 +132,13 @@ jobs:
 
       - name: Run Opencode GLM, Hermes reload, and remote-runtime smoke
         env:
-          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: |
           if [ -z "${GLM_API_KEY:-}" ]; then
             echo "::error::GLM_API_KEY secret is required for remote vibing smoke"
             exit 1
           fi
+          HETZNER_TEST_SERVER_IP="$(cat ci/.artifacts/server-ip)"
           echo "::add-mask::$GLM_API_KEY"
           printf '%s\n' "$GLM_API_KEY" | ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
               -o StrictHostKeyChecking=no \
