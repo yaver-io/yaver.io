@@ -18,9 +18,20 @@ four different things** with four different runtimes. Treating them as one is
 how a capability gets declared that the operation cannot deliver — the failure
 mode this codebase has hit four times already.
 
+> ⚠️ **CORRECTION 2026-07-22 — Tokamak is abandoned.** Row 1 below originally
+> read "✅ the Linux path". It is not. Tokamak's last release was **0.11.1
+> (Nov 2022)** and its last commit **Feb 2023**; it fails to build against the
+> only SwiftWasm SDK releases that exist (6.2/6.3) with
+> `could not build C module 'CoreFoundation'`. There is no version pair where
+> modern SwiftWasm + Tokamak works. **The SwiftUI-compatible Linux path does not
+> currently exist in maintained form.** JavaScriptKit (actively maintained; it
+> ships the `PackageToJS` plugin) is the working alternative, at the cost of
+> DOM-style Swift rather than SwiftUI-style. See §5.6.
+
 | # | Kind | UI framework | Runs on Linux? |
 |---|---|---|---|
-| 1 | **Tokamak / SwiftWasm** | Tokamak (SwiftUI-*compatible*) | ✅ compiles to WASM, renders in a browser |
+| 1 | ~~**Tokamak / SwiftWasm**~~ | ~~Tokamak~~ | ❌ **ABANDONED — see correction above** |
+| 1b | **JavaScriptKit** | none (DOM-style Swift) | ✅ compiles to WASM, renders in a browser |
 | 2 | **Server-side Swift** | none (Vapor/Hummingbird serve HTML) | ✅ it is a web server |
 | 3 | **Apple SwiftUI** | Apple's SwiftUI | ❌ closed framework |
 | 4 | **UIKit** | UIKit | ❌ closed framework |
@@ -169,6 +180,48 @@ Two consequences applied to `Dockerfile.yaver-swiftwasm`:
 The cheap local attempt cost nothing and moved two Dockerfile bugs from
 "discovered during a 40-minute image build on a billing box" to "fixed before
 the first build".
+
+---
+
+## 5.6 MEASURED: the framework, not the toolchain, is the blocker
+
+Ran the real build on Linux in Docker, 2026-07-22. Three failures, each teaching
+something different, and each caught for ~EUR 0:
+
+| Attempt | Result |
+|---|---|
+| `swift:6.2-jammy` + SDK 6.2 | ❌ `module compiled with Swift 6.2 cannot be imported by the Swift 6.2.4 compiler` |
+| `swift:6.3-jammy` + SDK 6.3 | ❌ same — 6.3.3 vs 6.3.0 |
+| `swift:6.3.0-jammy` + SDK 6.3 | ✅ **version match resolved**, compiled 38s, then ❌ Tokamak: `could not build C module 'CoreFoundation'` |
+
+**Two independent findings:**
+
+1. **A MINOR tag can never match the SDK.** Docker Hub's `X.Y-jammy` always
+   carries the latest patch; swiftwasm publishes only `X.Y-RELEASE` (= X.Y.0);
+   Swift demands an exact match. The base MUST be an exact patch tag. This fails
+   SILENTLY — the image builds green and every wasm build inside it fails.
+
+2. **Tokamak is abandoned** (last commit Feb 2023) and does not build on any
+   toolchain that has an SDK bundle. This is not a configuration problem.
+
+**What this does and does not invalidate.** The INFRASTRUCTURE is proven: Linux
+clang has the wasm backend, the SDK installs, exact-patch pinning works,
+detection/routing/dev-server all function. None of that is wasted — it applies
+to any Swift-to-wasm framework. What died is the *SwiftUI-compatible* claim.
+
+**Revised honest position for Swift on a Linux workspace:**
+
+| Kind | Status |
+|---|---|
+| JavaScriptKit (DOM-style Swift) | ✅ maintained, builds |
+| Server-side Swift | ✅ it is a web server |
+| compile + `swift test`, ANY Swift project | ✅ including UIKit ones |
+| SwiftUI-*like* rendering | ❌ no maintained option |
+| Apple SwiftUI / UIKit | ❌ Mac host |
+
+**Do not market Swift-on-Linux as a SwiftUI experience.** What is shippable is
+the logic/test loop (real value for an agent, works for every Swift project),
+server-side Swift, and the Mac host for actual iOS.
 
 ---
 

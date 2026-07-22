@@ -1,88 +1,68 @@
-import TokamakDOM
+import JavaScriptKit
 
-// Yaver todo — Swift/Tokamak fixture.
+// Yaver todo — Swift compiled to WebAssembly, rendered in the browser.
 //
-// Deliberately mirrors yaver-todo-rn so the two are comparable: same list, same
-// add/complete interactions, same visual weight. Any difference a user notices
-// between the RN and Swift previews is the transport, not the app.
+// THE DEMO: this streams from a Linux Cloud Workspace over WebRTC, and an agent
+// changes `backgroundColor` below on request. One obvious declaration, so
+// "change the background to blue" has an unambiguous edit site — a demo that
+// requires guessing which of six colour expressions to touch proves nothing
+// about the loop.
 //
-// THE DEMO TARGET: an agent is asked "change the background to blue" and edits
-// `backgroundColor` below. The rebuild → WASM → browser reload → next WebRTC
-// frame chain is what proves a Swift-only app is developable from a phone,
-// against a Linux box, with no Mac anywhere.
-//
-// ⚠️ No HMR. A Swift edit is a full WASM recompile plus a page reload, so the
-// list resets. Fine for a todo fixture; worth knowing before generalising the
-// loop to an app with deep navigation.
+// Deliberately mirrors yaver-todo-rn's UX so the app is the CONTROL: any
+// difference you observe between the RN and Swift previews is the transport.
 
-/// The single knob the demo changes. Kept as one obvious declaration so an
-/// agent asked for "blue" has an unambiguous edit site — a demo that requires
-/// guessing which of six colour expressions to touch proves nothing about the
-/// loop.
-let backgroundColor = Color(red: 0.98, green: 0.98, blue: 0.99)
+/// The single knob the runner demo changes.
+let backgroundColor = "#fafafc"
 
-struct Todo: Identifiable {
+let document = JSObject.global.document
+
+struct Todo {
     let id: Int
     var title: String
     var done: Bool
 }
 
-struct TodoApp: App {
-    var body: some Scene {
-        WindowGroup("Yaver Todo — Swift") {
-            TodoList()
-        }
+var todos: [Todo] = [
+    Todo(id: 1, title: "Open Yaver on your phone", done: true),
+    Todo(id: 2, title: "Edit this app from anywhere", done: false),
+    Todo(id: 3, title: "Ship it", done: false),
+]
+var nextID = 4
+
+func el(_ tag: String) -> JSValue { document.createElement!(tag) }
+
+func render() {
+    let body = document.body
+    _ = body.style.object?.setProperty?("background", backgroundColor.jsValue)
+    _ = body.style.object?.setProperty?("font-family", "-apple-system, system-ui, sans-serif".jsValue)
+    _ = body.style.object?.setProperty?("padding", "24px".jsValue)
+
+    var root = document.getElementById!("app")
+    if root.isNull || root.isUndefined {
+        root = el("div")
+        _ = root.object?.setAttribute?("id", "app".jsValue)
+        _ = body.object?.appendChild?(root)
     }
+    _ = root.object?.setAttribute?("innerHTML", "".jsValue)
+    root.innerHTML = "".jsValue
+
+    let h1 = el("h1")
+    h1.textContent = "Yaver Todo".jsValue
+    _ = root.object?.appendChild?(h1)
+
+    for todo in todos {
+        let row = el("div")
+        _ = row.style.object?.setProperty?("padding", "8px 0".jsValue)
+        _ = row.style.object?.setProperty?("opacity", (todo.done ? "0.5" : "1").jsValue)
+        row.textContent = "\(todo.done ? "☑" : "☐") \(todo.title)".jsValue
+        _ = root.object?.appendChild?(row)
+    }
+
+    let caption = el("p")
+    _ = caption.style.object?.setProperty?("opacity", "0.6".jsValue)
+    _ = caption.style.object?.setProperty?("font-size", "13px".jsValue)
+    caption.textContent = "Swift → WebAssembly → browser → WebRTC".jsValue
+    _ = root.object?.appendChild?(caption)
 }
 
-struct TodoList: View {
-    @State private var todos: [Todo] = [
-        Todo(id: 1, title: "Open Yaver on your phone", done: true),
-        Todo(id: 2, title: "Edit this app from anywhere", done: false),
-        Todo(id: 3, title: "Ship it", done: false),
-    ]
-    @State private var draft: String = ""
-    @State private var nextID: Int = 4
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Yaver Todo")
-                .font(.largeTitle)
-
-            HStack {
-                TextField("What needs doing?", text: $draft)
-                Button("Add") { add() }
-            }
-
-            ForEach(todos) { todo in
-                HStack {
-                    Button(todo.done ? "☑" : "☐") { toggle(todo.id) }
-                    Text(todo.title)
-                        .opacity(todo.done ? 0.5 : 1.0)
-                }
-            }
-
-            Spacer()
-            Text("Swift → SwiftWasm → Chromium → WebRTC")
-                .font(.caption)
-                .opacity(0.6)
-        }
-        .padding(24)
-        .background(backgroundColor)
-    }
-
-    private func add() {
-        let title = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return }
-        todos.append(Todo(id: nextID, title: title, done: false))
-        nextID += 1
-        draft = ""
-    }
-
-    private func toggle(_ id: Int) {
-        guard let i = todos.firstIndex(where: { $0.id == id }) else { return }
-        todos[i].done.toggle()
-    }
-}
-
-TodoApp.main()
+render()
