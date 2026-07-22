@@ -1,0 +1,3 @@
+module YaverFeedback {
+    header "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/include/YaverFeedback-Swift.h"
+}

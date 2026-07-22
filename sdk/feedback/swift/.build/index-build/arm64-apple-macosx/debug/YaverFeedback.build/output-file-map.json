@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/master.swiftdeps"
+  },
+  "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/Sources/YaverFeedback/YaverFeedback.swift": {
+    "dependencies": "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/YaverFeedback.d",
+    "object": "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/YaverFeedback.swift.o",
+    "swiftmodule": "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/YaverFeedback~partial.swiftmodule",
+    "swift-dependencies": "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/YaverFeedback.swiftdeps",
+    "diagnostics": "/Users/kivanccakmak/Workspace/yaver.io/sdk/feedback/swift/.build/index-build/arm64-apple-macosx/debug/YaverFeedback.build/YaverFeedback.dia"
+  }
+}
