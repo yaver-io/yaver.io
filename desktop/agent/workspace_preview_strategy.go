@@ -160,6 +160,11 @@ func ResolveWorkspacePreview(stack string, hasPairedDevice bool) WorkspacePrevie
 		}
 
 	// ── Native iOS / Swift ───────────────────────────────────────────────
+	// NOTE: this stack-string path is the COARSE answer, used when only a label
+	// is known. When a directory is available, ResolveWorkspacePreviewForDir
+	// inspects the project and can route Tokamak/SwiftWasm and server-side
+	// Swift to Linux instead — "Swift" is four different runtimes, and a flat
+	// refusal turns away developers whose loop would work here today.
 	case strings.Contains(s, "swift") || strings.Contains(s, "ios") || strings.Contains(s, "xcode"):
 		return WorkspacePreviewPlan{
 			Primary:      PreviewUnsupported,
@@ -398,4 +403,32 @@ func ResolveFeedbackBehaviour(stack string, insideContainer bool, streamed bool)
 			Detail:    "standalone: the app's own SDK owns shake, unaffected by container suppression",
 		}
 	}
+}
+
+// ResolveWorkspacePreviewForDir is ResolveWorkspacePreview with the project on
+// disk available, which matters for exactly one stack: Swift.
+//
+// "Swift" is not one runtime. Tokamak/SwiftWasm compiles to WebAssembly and
+// renders in a browser; server-side Swift IS a web server; Apple SwiftUI and
+// UIKit need macOS; a plain package has no UI at all. Only the last two are
+// Mac-bound, and every one of them compiles and tests on Linux.
+//
+// Routing on the stack LABEL alone cannot distinguish them, so a label-only
+// caller gets the conservative answer (Mac required) while a caller with a
+// directory gets the accurate one. Preferring the accurate answer when we can
+// have it is the difference between "Swift: unsupported" and a workspace a
+// Swift developer can actually use.
+func ResolveWorkspacePreviewForDir(stack, dir string, hasPairedDevice bool) WorkspacePreviewPlan {
+	s := strings.ToLower(strings.TrimSpace(stack))
+	isSwift := strings.Contains(s, "swift") || strings.Contains(s, "ios") || strings.Contains(s, "xcode")
+	if !isSwift || strings.TrimSpace(dir) == "" {
+		return ResolveWorkspacePreview(stack, hasPairedDevice)
+	}
+	detection := DetectSwiftProject(dir)
+	if detection.Kind == SwiftKindUnknown {
+		// Nothing identifiable on disk — fall back to the label-based answer
+		// rather than inventing a render target.
+		return ResolveWorkspacePreview(stack, hasPairedDevice)
+	}
+	return ResolveSwiftPreview(detection)
 }
