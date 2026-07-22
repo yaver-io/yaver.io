@@ -59,6 +59,20 @@ func HostCanRunIOSSimulator(p HostPlatform) bool { return p == HostMacOS }
 // rather than promising a container that will not start.
 func HostCanRunRedroid(p HostPlatform) bool { return p == HostLinux }
 
+// HostCanRunAndroidEmulator reports whether a real Android emulator can run.
+//
+// Unlike the two above, this is NOT decidable from the platform alone: macOS
+// and Linux both support the emulator, but only if the SDK is actually
+// installed. So it probes for the binaries rather than assuming — the whole
+// point of adding this strategy was that a host's real capability differed
+// from what the platform implied.
+func HostCanRunAndroidEmulator(p HostPlatform) bool {
+	if p != HostMacOS && p != HostLinux {
+		return false
+	}
+	return DiscoverBinary("emulator") != "" && DiscoverBinary("adb") != ""
+}
+
 // ResolvePreviewForHost applies host-platform reality to a strategy plan.
 //
 // This is the layer that was missing: workspace_preview_strategy.go answers
@@ -85,11 +99,31 @@ func ResolvePreviewForHost(plan WorkspacePreviewPlan, host HostPlatform) Workspa
 		if HostCanRunRedroid(host) {
 			return plan
 		}
-		// Say what IS possible rather than only what is not: a paired Android
-		// device does the same job and costs nothing.
+		// Redroid cannot run here — but native Android still can, via a real
+		// emulator. Substituting is not a downgrade in capability, only in
+		// density: Redroid is a container (faster to start, packs denser),
+		// an AVD is a full VM. Refusing outright is what left every Mac
+		// unable to preview a Kotlin app while adb and emulator sat installed
+		// on the box and the WebRTC doctor reported android-emulator: true.
+		if HostCanRunAndroidEmulator(host) {
+			plan.Primary = PreviewAndroidEmulator
+			plan.Fallbacks = append([]PreviewStrategy{PreviewRedroidWebRTC}, plan.Fallbacks...)
+			plan.Supported = true
+			plan.Reason = "Redroid needs a Linux kernel, so this " + string(host) +
+				" host streams a real Android emulator (AVD) over WebRTC instead — same preview, full VM rather than a container"
+			return plan
+		}
 		plan.Supported = false
-		plan.Reason = "Redroid needs a real Linux kernel (binder/ashmem) and cannot run on a " +
-			string(host) + " host. Use a Linux workspace, or a paired Android device."
+		plan.Reason = "native Android needs either a Linux host (Redroid) or an Android emulator, and this " +
+			string(host) + " host has neither. Install the emulator with `yaver install remote-runtime`, or pair an Android device."
+		return plan
+
+	case PreviewAndroidEmulator:
+		if HostCanRunAndroidEmulator(host) {
+			return plan
+		}
+		plan.Supported = false
+		plan.Reason = "no Android emulator on this host — run `yaver install remote-runtime` to provision platform-tools + emulator, or pair a device"
 		return plan
 	}
 

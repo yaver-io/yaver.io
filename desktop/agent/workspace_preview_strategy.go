@@ -61,8 +61,21 @@ const (
 	// reader hunting for a transport that no longer exists.
 	PreviewHermesBundle  PreviewStrategy = "hermes-bundle"
 	PreviewRedroidWebRTC PreviewStrategy = "redroid-webrtc"
-	PreviewIOSSimulator  PreviewStrategy = "ios-simulator"
-	PreviewUnsupported   PreviewStrategy = "unsupported"
+	// PreviewAndroidEmulator streams a real Android emulator (AVD) over WebRTC.
+	//
+	// It exists because Redroid alone left native Android UNPREVIEWABLE on
+	// macOS: Redroid shares the host kernel (binder/ashmem) so it is
+	// Linux-only, and it was the sole strategy Kotlin could route to. A Mac
+	// with adb + emulator installed — which the WebRTC doctor already reports
+	// as `android-emulator: true` — still answered "unsupported" for a Kotlin
+	// app. The capability was present and the plan layer could not express it.
+	//
+	// Redroid stays preferred ON LINUX: it is a container, so it starts faster
+	// and packs denser than a full emulator. This is the macOS path, and the
+	// Linux fallback when Docker is unavailable.
+	PreviewAndroidEmulator PreviewStrategy = "android-emulator"
+	PreviewIOSSimulator    PreviewStrategy = "ios-simulator"
+	PreviewUnsupported     PreviewStrategy = "unsupported"
 )
 
 // FeedbackTransport is how the Yaver Feedback SDK loop reaches the app.
