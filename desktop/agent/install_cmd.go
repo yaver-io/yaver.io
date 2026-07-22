@@ -278,20 +278,38 @@ var integrations = []installPlan{
 	},
 	{
 		name:        "chrome",
-		description: "Google Chrome — required for `yaver test run` web target",
+		description: "Google Chrome — required for `yaver test run` web target and the chrome-webrtc preview",
 		macOS:       []string{"brew install --cask google-chrome"},
+		// `apt-get install google-chrome-stable` FAILS on a stock Debian/Ubuntu:
+		// the package is not in their archives, it is in Google's own. Verified
+		// on a clean Ubuntu 24.04 box (2026-07-22): the old one-liner returned
+		// `E: Unable to locate package google-chrome-stable`.
+		//
+		// That mattered more than a bad hint. chrome-webrtc is the FALLBACK for
+		// every browser-renderable stack when the viewer cannot reach the dev
+		// server, so on a fresh Linux workspace the degraded path was
+		// uninstallable by following our own instructions. Adding the repo is
+		// the only supported way; the keyring form is required since apt-key
+		// was removed.
 		linux: []linuxStep{
-			{"apt-get", "sudo apt-get update && sudo apt-get install -y google-chrome-stable"},
-			{"dnf", "sudo dnf install -y google-chrome-stable"},
-			{"pacman", "sudo pacman -S --noconfirm google-chrome"},
+			{"apt-get", "sudo install -d -m 0755 /etc/apt/keyrings && " +
+				"curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && " +
+				"echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main\" | sudo tee /etc/apt/sources.list.d/google-chrome.list >/dev/null && " +
+				"sudo apt-get update && sudo apt-get install -y google-chrome-stable"},
+			{"dnf", "sudo dnf install -y https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm"},
+			{"pacman", "sudo pacman -S --noconfirm chromium"}, // google-chrome is AUR-only
 		},
 	},
 	{
 		name:        "chromium",
 		description: "Chromium — open-source alternative to Chrome",
 		macOS:       []string{"brew install --cask chromium"},
+		// On Ubuntu, `chromium` has NO apt candidate and `chromium-browser` is a
+		// SNAP STUB (2:1snap1-0ubuntu2) — verified on both jammy and noble. A
+		// snap shim does not work headless in a container, so prefer real
+		// Chrome above; this entry stays for distros that ship a genuine deb.
 		linux: []linuxStep{
-			{"apt-get", "sudo apt-get install -y chromium-browser"},
+			{"apt-get", "sudo apt-get install -y chromium || sudo snap install chromium"},
 			{"dnf", "sudo dnf install -y chromium"},
 			{"pacman", "sudo pacman -S --noconfirm chromium"},
 		},
