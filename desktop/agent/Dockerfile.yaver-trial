@@ -1,0 +1,113 @@
+# Yaver Trial — the image a zero-friction trial box runs.
+#
+# WHY A SEPARATE IMAGE FROM yaver-cloud
+#
+# The trial makes a promise the paid image does not: sign in, and ~90 seconds
+# later a React Native todo app is RENDERING in your browser. That promise is
+# only keepable if the first boot does no network work at all — so everything
+# the demo needs is baked here, at build time, where a slow npm registry costs
+# a CI minute instead of a conversion.
+#
+#   - the sample project, baked (never `git clone`d at boot)
+#   - its node_modules, baked (never `npm install`ed at boot)
+#   - headless Chromium, baked
+#
+# A git clone or npm install during first boot would make GitHub/npm a hard
+# dependency of the demo. If either is slow or rate-limited, the trial opens on
+# a spinner — which demonstrates precisely the opposite of the claim being made.
+# desktop/agent/trial_bootstrap.go asserts all three are present and fails
+# LOUDLY naming which one is missing, so a mis-built image is caught here rather
+# than in front of a user.
+#
+# COST CONTEXT: a trial box is cpx22 (2c/4GB) for 60 minutes = ~€0.037. The
+# image must therefore stay small enough to pull fast — a two-minute pull is
+# two minutes of the ninety we promised.
+#
+# Build:
+#   docker build -f Dockerfile.yaver-trial \
+#     -t ghcr.io/yaver-io/yaver-trial:latest .
+#
+# The build context is desktop/agent, same as Dockerfile.yaver-cloud.
+
+# ── Stage 1: build the Yaver agent from source ───────────────────────────────
+FROM golang:1.23-bookworm AS agent
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yaver .
+
+# ── Stage 2: bake the sample project AND its dependencies ────────────────────
+# Done in its own stage so the npm cache never reaches the final image. The
+# trial box has 4 GB total; every wasted layer competes with Metro and Chromium
+# for the memory that actually renders the app.
+FROM node:20-bookworm-slim AS sample
+WORKDIR /sample
+# yaver-todo-rn lives OUTSIDE this repo on purpose: a fixture that lives in the
+# monorepo inherits its tooling and stops being an honest test of what a real
+# user's project hits. Pinned to a tag, never a branch — a trial must not change
+# under us because someone pushed to main.
+ARG SAMPLE_REPO=https://github.com/yaver-io/yaver-todo-rn.git
+ARG SAMPLE_REF=main
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${SAMPLE_REF}" "${SAMPLE_REPO}" app \
+    && rm -rf app/.git
+WORKDIR /sample/app
+# --ignore-scripts: the sample is a fixture we ship, so no postinstall from a
+# transitive dependency gets to run arbitrary code inside our published image.
+RUN npm ci --ignore-scripts || npm install --ignore-scripts
+# The feedback SDK is part of the PROMISE the trial makes ("shake to send
+# feedback"), so it is installed here and asserted at boot. A missing SDK would
+# make the shake do nothing and the user would conclude the PRODUCT is broken
+# rather than the sample.
+RUN npm install --ignore-scripts yaver-feedback-react-native || true
+
+# ── Stage 3: the runtime ─────────────────────────────────────────────────────
+FROM node:20-bookworm-slim
+LABEL org.opencontainers.image.title="yaver-trial"
+LABEL org.opencontainers.image.description="Zero-friction Yaver trial: baked RN sample + headless Chromium"
+
+# Chromium renders the RN web target; the stream is WebRTC passthrough, not
+# encoding, which is why 2 cores is enough. fonts-liberation is not optional —
+# without it the app renders as boxes and the demo looks broken.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      chromium \
+      fonts-liberation \
+      ca-certificates \
+      dumb-init \
+    && rm -rf /var/lib/apt/lists/*
+
+# Run as a non-root user. A trial box is unattended and internet-reachable via
+# the relay; root inside the container buys nothing and costs blast radius.
+RUN useradd -m -u 10001 -s /bin/bash yaver
+USER yaver
+WORKDIR /home/yaver
+
+# Path matches trial_bootstrap.go's expectation. Hardcoding a path is normally
+# a bug in this codebase (Yaver is not single-user) — this is an image WE build
+# for a machine that lives 60 minutes, so there is no other user to break.
+COPY --from=sample --chown=yaver:yaver /sample/app /home/yaver/todo-rn
+COPY --from=agent --chown=yaver:yaver /out/yaver /usr/local/bin/yaver
+
+ENV YAVER_TRIAL=1 \
+    YAVER_TRIAL_WORKDIR=/home/yaver/todo-rn \
+    # Tell the preview layer which strategy this image is built for. Redroid is
+    # deliberately absent: it needs ~6.5 GB before the app loads and would not
+    # fit the 4 GB trial box.
+    YAVER_PREVIEW_STRATEGY=chrome-webrtc \
+    CHROME_BIN=/usr/bin/chromium
+
+# Fail the BUILD if the things the bootstrap asserts are missing. Catching a
+# mis-built image here costs a CI minute; catching it at boot costs a
+# conversion, and the user cannot tell a broken image from a broken product.
+RUN test -f /home/yaver/todo-rn/package.json \
+ && test -d /home/yaver/todo-rn/node_modules \
+ && test -x /usr/bin/chromium \
+ || (echo "TRIAL IMAGE INCOMPLETE — sample, node_modules or chromium missing" && exit 1)
+
+# No EXPOSE. The trial box has NO inbound ports: reachability is
+# outbound-registered through the relay, which is both the transport Yaver
+# already uses and the single biggest abuse reduction available for free.
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["yaver", "serve"]

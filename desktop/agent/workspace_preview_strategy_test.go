@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResolveWorkspacePreview(t *testing.T) {
 	// RN with no device -> Chrome/WebRTC on the cheap box (the whole reason
@@ -51,5 +54,75 @@ func TestResolveWorkspacePreview(t *testing.T) {
 		if got := FeedbackSDKPackage(stack); got != want {
 			t.Fatalf("FeedbackSDKPackage(%q)=%q want %q", stack, got, want)
 		}
+	}
+}
+
+func TestYaverSelfDevelopmentRecursionGuard(t *testing.T) {
+	// Yaver-on-Yaver must be forced to chrome-webrtc EVEN WITH a paired device,
+	// where Hermes would otherwise win. Pixels cannot trap the host.
+	p := ResolveSelfDevelopmentPreview("yaver.io", "git@github.com:yaver-io/yaver.io.git", true)
+	if p.Primary != PreviewChromeWebRTC {
+		t.Fatalf("self-dev must force chrome-webrtc, got %q", p.Primary)
+	}
+	// Hermes must be REMOVED, not merely deprioritised: a fallback that can
+	// trap the user is not a fallback.
+	for _, f := range p.Fallbacks {
+		if f == PreviewHermesBundle {
+			t.Fatal("hermes must not remain a fallback for self-development")
+		}
+	}
+	// The refusal must be explained, or it looks like a resolver bug.
+	if !strings.Contains(p.Reason, "shake") {
+		t.Fatalf("refusal must name the recursion cause, got: %s", p.Reason)
+	}
+	// A third-party RN app with a device still gets Hermes — the guard must be
+	// narrow, not a blanket downgrade.
+	q := ResolveSelfDevelopmentPreview("acme-todo", "git@github.com:acme/todo.git", true)
+	if q.Primary != PreviewHermesBundle {
+		t.Fatalf("third-party RN with a device should still use Hermes, got %q", q.Primary)
+	}
+}
+
+func TestEscapeOwnership(t *testing.T) {
+	// Streamed strategies are structurally safe.
+	for _, s := range []PreviewStrategy{PreviewChromeWebRTC, PreviewRedroidWebRTC} {
+		if EscapeOwnerFor(s, false) != EscapeNativeViewer {
+			t.Fatalf("%q must be owned by the native viewer", s)
+		}
+		if EscapeOwnerFor(s, true) != EscapeNativeViewer {
+			t.Fatalf("%q must stay safe under self-development", s)
+		}
+	}
+	// Hermes is safe for a cooperating guest...
+	if EscapeOwnerFor(PreviewHermesBundle, false) != EscapeContainerOverlay {
+		t.Fatal("hermes guest should be owned by the container overlay")
+	}
+	// ...and AMBIGUOUS for Yaver-on-Yaver. That is the trap this guards.
+	if EscapeOwnerFor(PreviewHermesBundle, true) != EscapeAmbiguous {
+		t.Fatal("hermes self-development must report an ambiguous escape owner")
+	}
+}
+
+func TestFeedbackBehaviourAcrossContexts(t *testing.T) {
+	// Guest inside the container: container owns shake, guest SDK suppressed.
+	b := ResolveFeedbackBehaviour("react-native", true, false)
+	if b.Owner != EscapeContainerOverlay {
+		t.Fatalf("in-container guest: %+v", b)
+	}
+	// SAME app standalone: its own SDK owns shake. The suppression rule must
+	// not leak into this case.
+	b = ResolveFeedbackBehaviour("react-native", false, false)
+	if b.Transport != FeedbackInAppSDK || b.Owner != EscapeNativeViewer {
+		t.Fatalf("standalone guest: %+v", b)
+	}
+	// Streamed: app's own SDK fires inside the stream, phone keeps its exit.
+	b = ResolveFeedbackBehaviour("react-native", false, true)
+	if b.Owner != EscapeNativeViewer {
+		t.Fatalf("streamed: %+v", b)
+	}
+	// Native with no SDK, streamed: viewer-triggered over the events channel.
+	b = ResolveFeedbackBehaviour("kotlin", false, true)
+	if b.Transport != FeedbackViewerTriggered {
+		t.Fatalf("kotlin streamed must be viewer-triggered: %+v", b)
 	}
 }

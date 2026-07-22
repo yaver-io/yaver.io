@@ -224,3 +224,178 @@ func FeedbackSDKPackage(stack string) string {
 		return "" // kotlin/swift/native — viewer-triggered, no in-app SDK
 	}
 }
+
+// ─── Recursion guard: developing Yaver with Yaver ───────────────────────────
+//
+// Yaver's mobile app is a CONTAINER: it loads third-party RN apps in-process
+// from a Hermes bundle, and it owns the shake gesture because shake is how you
+// reach the "Reload / Back to Yaver" overlay. Guest apps cooperate — the RN
+// feedback SDK sees YaverInfo.isYaver and suppresses its own shake handler so
+// the two overlays cannot collide.
+//
+// Load YAVER INTO YAVER and that contract has no answer. Both layers are the
+// same code, both believe they own shake, and neither can tell from inside the
+// process which one is the host. The failure is not cosmetic — it is being
+// STUCK: a preview you cannot exit, because the only escape gesture is being
+// consumed by the thing you are trying to escape. Force-quit becomes the user's
+// remaining option, which is the one experience a dogfooding tool must never
+// produce.
+//
+// The rule that resolves it:
+//
+//	THE ESCAPE HATCH MUST LIVE IN A LAYER THE PREVIEWED APP CANNOT REACH.
+//
+// chrome-webrtc satisfies that structurally: the inner Yaver renders into a
+// browser ON THE BOX and arrives at the phone as VIDEO. It cannot register a
+// gesture handler on the host, cannot draw over the exit button, and cannot
+// wedge the outer shell. The recursion collapses because the two layers are no
+// longer in the same process.
+//
+// So this is a REFUSAL, not a preference — and it must be loud, because a
+// silent downgrade would look like a bug in the strategy resolver.
+
+// IsYaverSelfDevelopment reports whether the project under development is Yaver
+// itself. Detected from the repo identity rather than a flag: a flag can be
+// forgotten, and the consequence of missing this is a trapped user.
+func IsYaverSelfDevelopment(projectSlug, repoURL string) bool {
+	needle := strings.ToLower(projectSlug + " " + repoURL)
+	return strings.Contains(needle, "yaver.io") ||
+		strings.Contains(needle, "yaver-io/yaver") ||
+		strings.Contains(needle, "io.yaver.mobile")
+}
+
+// EscapeOwner is the layer that owns the exit affordance for a preview.
+type EscapeOwner string
+
+const (
+	// The phone's NATIVE chrome, outside the streamed surface. The previewed
+	// app is pixels and can never reach it.
+	EscapeNativeViewer EscapeOwner = "native-viewer"
+	// The Yaver container's ShakeDetector + overlay. Safe ONLY while the guest
+	// honours the suppression contract.
+	EscapeContainerOverlay EscapeOwner = "container-overlay"
+	// No safe owner — the previewed app can capture the escape. Never ship this.
+	EscapeAmbiguous EscapeOwner = "ambiguous"
+)
+
+// EscapeOwnerFor returns who owns the exit for a strategy.
+func EscapeOwnerFor(p PreviewStrategy, selfDev bool) EscapeOwner {
+	switch p {
+	case PreviewChromeWebRTC, PreviewRedroidWebRTC:
+		// Pixels. Structurally safe, self-development or not.
+		return EscapeNativeViewer
+	case PreviewHermesBundle:
+		if selfDev {
+			// Two identical layers, both claiming shake. This is the trap.
+			return EscapeAmbiguous
+		}
+		return EscapeContainerOverlay
+	default:
+		return EscapeNativeViewer
+	}
+}
+
+// ResolveSelfDevelopmentPreview is ResolveWorkspacePreview with the recursion
+// guard applied.
+//
+// Yaver-on-Yaver is forced onto chrome-webrtc even when a device is paired and
+// Hermes would otherwise win. Two independent reasons, either sufficient:
+//
+//  1. SAFETY — Hermes puts two identical shake-owning layers in one process
+//     (see above). Pixels cannot trap the host.
+//  2. SPEED — the chrome-webrtc reload chain is save → HMR → repaint → frame,
+//     roughly 200-600ms. The Hermes chain is save → Metro rebuild → HBC compile
+//     → device pull → bridge reload, roughly 2-6s. An order of magnitude, on the
+//     loop we run most.
+//
+// Accepted limitation, stated rather than hidden: this exercises the RN WEB
+// target, not the native container. Hermes loader, ShakeDetectingWindow and
+// YaverHTTPServer are NOT covered — native-container changes still need
+// `yaver wire push` to a real device.
+func ResolveSelfDevelopmentPreview(projectSlug, repoURL string, hasPairedDevice bool) WorkspacePreviewPlan {
+	plan := ResolveWorkspacePreview("react-native", hasPairedDevice)
+	if !IsYaverSelfDevelopment(projectSlug, repoURL) {
+		return plan
+	}
+	plan.Primary = PreviewChromeWebRTC
+	// Hermes is REMOVED from the fallbacks, not merely deprioritised. A
+	// fallback that can trap the user is not a fallback.
+	plan.Fallbacks = nil
+	plan.MachineClass = "standard"
+	plan.Feedback = FeedbackInAppSDK
+	plan.Supported = true
+	plan.Reason = "Yaver developing Yaver: forced to chrome-webrtc. Hermes would load Yaver " +
+		"into Yaver — two identical layers both owning shake, so the preview could not be " +
+		"exited. Streaming pixels keeps the escape in the phone's native chrome, where the " +
+		"previewed app cannot reach it. Covers the RN web target; native-container changes " +
+		"still need `yaver wire push`."
+	return plan
+}
+
+// FeedbackBehaviour describes what shake does for one app in one context.
+//
+// The same gesture means different things depending on who is listening, and
+// conflating them is how "feedback works everywhere" silently stops being true.
+type FeedbackBehaviour struct {
+	Transport FeedbackTransport
+	Owner     EscapeOwner
+	Detail    string
+}
+
+// ResolveFeedbackBehaviour answers the four cases that actually occur.
+//
+// `insideContainer` distinguishes a guest app loaded into the Yaver container
+// (Hermes) from the SAME app installed standalone from TestFlight/Play — the
+// suppression rule inverts between them, and getting it backwards means either
+// two overlays fight or none appears at all.
+func ResolveFeedbackBehaviour(stack string, insideContainer bool, streamed bool) FeedbackBehaviour {
+	pkg := FeedbackSDKPackage(stack)
+
+	switch {
+	case streamed:
+		// WebRTC: the app runs on the box. A phone shake becomes a `shake`
+		// session command that the box injects as a synthetic event, so the
+		// app's OWN SDK fires inside the stream. The phone keeps its exit —
+		// two loops, no collision, because one is pixels.
+		if pkg == "" {
+			return FeedbackBehaviour{
+				Transport: FeedbackViewerTriggered,
+				Owner:     EscapeNativeViewer,
+				Detail:    "no in-app SDK for this stack — viewer pushes launch-feedback down the events channel",
+			}
+		}
+		return FeedbackBehaviour{
+			Transport: FeedbackInAppSDK,
+			Owner:     EscapeNativeViewer,
+			Detail:    "app's own SDK fires inside the streamed surface; the phone's exit stays native",
+		}
+
+	case insideContainer:
+		// Hermes guest: the CONTAINER owns shake, and the guest SDK suppresses
+		// itself via YaverInfo.isYaver (RN SDK 0.5.5+). Without that
+		// suppression both overlays fire and neither is usable.
+		return FeedbackBehaviour{
+			Transport: FeedbackViewerTriggered,
+			Owner:     EscapeContainerOverlay,
+			Detail:    "guest SDK suppressed by YaverInfo.isYaver; container overlay owns shake (Reload / Back to Yaver)",
+		}
+
+	default:
+		// Standalone install (TestFlight / Play). No container, so the guest's
+		// own SDK owns shake outright — this is the case the suppression rule
+		// must NOT affect, and the reason suppression is runtime-detected
+		// rather than a build flag.
+		if pkg == "" {
+			return FeedbackBehaviour{
+				Transport: FeedbackViewerTriggered,
+				Owner:     EscapeNativeViewer,
+				Detail:    "standalone native app with no SDK — feedback requires a Yaver session",
+			}
+		}
+		return FeedbackBehaviour{
+			Transport: FeedbackInAppSDK,
+			Owner:     EscapeNativeViewer,
+			Detail:    "standalone: the app's own SDK owns shake, unaffected by container suppression",
+		}
+	}
+}
