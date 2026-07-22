@@ -415,7 +415,12 @@ export interface Task {
    *  show the wrong model label in its history card. */
   model?: string;
   source?: string;        // Task origin: "mobile", "mcp", "cli", "vibing", "vibing-cache", "todolist"
-  turns?: ConversationTurn[];  // Full conversation history
+  turns?: ConversationTurn[];  // Full conversation history (detail only)
+  /** How many turns the server holds, even when `turns` is omitted. The list
+   *  endpoint strips `turns` to bound its payload but keeps this count, so the
+   *  UI can tell "opened-from-list, needs hydration" (turnCount>0, turns empty)
+   *  from "genuinely has no history" (turnCount 0). */
+  turnCount?: number;
   createdAt: number;
   updatedAt: number;
   /** Device id this task is executing on. Used for target-aware retry/auth/config actions. */
@@ -2286,6 +2291,7 @@ export class QuicClient {
         inputTokens: typeof t.inputTokens === "number" ? t.inputTokens : undefined,
         outputTokens: typeof t.outputTokens === "number" ? t.outputTokens : undefined,
         turns: t.turns || undefined,
+        turnCount: typeof t.turnCount === "number" ? t.turnCount : (Array.isArray(t.turns) ? t.turns.length : undefined),
         tmuxSession: t.tmuxSession || undefined,
         tmuxSessionId: t.tmuxSessionId || undefined,
         tmuxWindowIndex: t.tmuxWindowIndex || undefined,
@@ -2340,6 +2346,7 @@ export class QuicClient {
       inputTokens: typeof t.inputTokens === "number" ? t.inputTokens : undefined,
       outputTokens: typeof t.outputTokens === "number" ? t.outputTokens : undefined,
       turns: t.turns || undefined,
+      turnCount: typeof t.turnCount === "number" ? t.turnCount : (Array.isArray(t.turns) ? t.turns.length : undefined),
       tmuxSession: t.tmuxSession || undefined,
       tmuxSessionId: t.tmuxSessionId || undefined,
       tmuxWindowIndex: t.tmuxWindowIndex || undefined,

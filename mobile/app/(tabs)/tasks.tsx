@@ -65,7 +65,7 @@ import {
   TmuxSession,
 } from "../../src/lib/quic";
 import { connectionManager } from "../../src/lib/connectionManager";
-import { markTaskDeleted, getDeletedTaskIds } from "../../src/lib/storage";
+import { markTaskDeleted, getDeletedTaskIds, cacheTaskTurns, getCachedTaskTurns, cacheTaskList, getCachedTaskList } from "../../src/lib/storage";
 import {
   getTaskPlacementStatus,
   listTaskDispatchIntents,
@@ -935,7 +935,7 @@ function ChatBubbleImpl({
   return (
     <View style={s.assistantRow}>
       <Pressable
-        style={[s.assistantFrame, { borderColor: c.border }]}
+        style={[s.assistantFrame, { backgroundColor: c.bgCard, borderColor: c.border }]}
         onLongPress={() => setShowRaw((v) => !v)}
         delayLongPress={500}
       >
@@ -1154,10 +1154,10 @@ function TaskCardInner({
                 {signal.label.charAt(0).toUpperCase() + signal.label.slice(1)}
               </Text>
             </View>
-            {item.isAdopted && (
+            {(item.tmuxSession || item.tmuxSessionId) && (
               <View style={[s.metaPill, { backgroundColor: "#8b5cf614", borderColor: "#8b5cf633" }]}>
                 <Text style={[s.metaPillText, { color: "#8b5cf6" }]} numberOfLines={1}>
-                  {`tmux ${item.tmuxSessionId || item.tmuxSession || ""}`.trim()}
+                  {`tmux ${[item.tmuxSession, item.tmuxSessionId].filter(Boolean).join(" · ")}`.trim()}
                 </Text>
               </View>
             )}
@@ -1353,6 +1353,13 @@ function buildAgentContextRows(
       const provider = extras.providerByDevice?.[deviceId];
       if (provider) rows.push({ label: "Provider", value: provider, mono: false });
     }
+  }
+  if (task.tmuxSession || task.tmuxSessionId) {
+    rows.push({
+      label: "Tmux",
+      value: [task.tmuxSession, task.tmuxSessionId].filter(Boolean).join(" · "),
+      mono: true,
+    });
   }
   if (connMode) {
     rows.push({ label: "Transport", value: connMode, mono: false });
@@ -2046,11 +2053,26 @@ export default function TasksScreen() {
         ...pendingCloudTasks,
         ...capped.filter((task) => !pendingCloudTasks.some((pending) => pending.id === task.id)),
       ];
-      setTasks(nextTasks);
-      // Keep selected task in sync with latest data
+      // Persist the (turns-stripped, small) list so a cold start paints instantly.
+      void cacheTaskList(nextTasks);
+      // The list endpoint STRIPS turns to bound its payload, so a fresh row
+      // carries no history. Merging it verbatim onto an open task would wipe the
+      // hydrated thread on every 3s poll (and hydration won't re-run — same id).
+      // So preserve the richer in-memory turns whenever the fresh row lacks them.
+      const keepTurns = (fresh: Task, old?: Task): Task =>
+        old && (fresh.turns?.length ?? 0) === 0 && (old.turns?.length ?? 0) > 0
+          ? { ...fresh, turns: old.turns, turnCount: old.turnCount ?? old.turns?.length }
+          : fresh;
+      setTasks((prev) => {
+        const prevById = new Map(prev.map((t) => [t.id, t]));
+        return nextTasks.map((t) => keepTurns(t, prevById.get(t.id)));
+      });
+      // Keep selected task in sync with latest data, but never let the stripped
+      // list clobber the open thread's history.
       setSelectedTask((prev) => {
         if (!prev) return null;
-        return nextTasks.find((t) => t.id === prev.id) || prev;
+        const fresh = nextTasks.find((t) => t.id === prev.id);
+        return fresh ? keepTurns(fresh, prev) : prev;
       });
     } catch {}
   }, [activeDevice?.id, activeDevice?.name, devices]);
@@ -2175,6 +2197,22 @@ export default function TasksScreen() {
     : effectiveFilter === "review" ? tasks.filter(t => t.status === "review")
     : effectiveFilter === "completed" ? tasks.filter(t => t.status === "completed")
     : tasks.filter(t => t.status === "failed" || t.status === "stopped");
+  // Paint the last-known task list instantly from cache on cold start, so the
+  // screen is never empty while the first network fetch is in flight. Only fills
+  // when we have nothing yet — never stomps a live list.
+  const cachePaintedRef = useRef(false);
+  useEffect(() => {
+    if (cachePaintedRef.current) return;
+    cachePaintedRef.current = true;
+    (async () => {
+      try {
+        const cached = await getCachedTaskList();
+        if (cached.length > 0) {
+          setTasks((prev) => (prev.length === 0 ? cached : prev));
+        }
+      } catch { /* no cache — the fetch below fills it */ }
+    })();
+  }, []);
   useEffect(() => {
     fetchTasks();
     // Poll less frequently when a task is running (streaming handles live output)
@@ -2384,6 +2422,10 @@ export default function TasksScreen() {
     lastOutputTimeRef.current = Date.now();
   }, [selectedTask?.output.length]);
 
+  // Tracks which task id we've already hydrated full turns for, so neither the
+  // running-poll refresh nor the open-hydration effect re-fetches on every tick.
+  const hydratedTurnsForRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!selectedTask || selectedTask.status !== "running") return;
     const interval = setInterval(async () => {
@@ -2397,6 +2439,8 @@ export default function TasksScreen() {
             : fresh;
           setSelectedTask(capped);
           setTasks(prev => prev.map(t => t.id === capped.id ? capped : t));
+          hydratedTurnsForRef.current = capped.id;
+          if ((capped.turns?.length ?? 0) > 0) void cacheTaskTurns(capped.id, capped.turns as unknown[]);
         }
       }
     }, 5000);
@@ -2427,6 +2471,61 @@ export default function TasksScreen() {
       } catch { /* drop intent silently — pill will retry next tap */ }
     });
   }, [tasks]);
+
+  // Hydrate the FULL conversation when a task is opened. The list endpoint
+  // strips Turns to keep its payload small (agent httpserver.go nils Turns +
+  // TurnCount), so a row tapped straight from the list arrives with NO history
+  // and buildChatMessages falls back to "title + last result" — one exchange.
+  // That is why the WhatsApp thread appeared right after a fork (turns carried
+  // in memory) but vanished on re-entry from the list. Fix: on open, if the
+  // selected task has no turns but the server says it has some (TurnCount > 0),
+  // fetch the detail ONCE and cache it in selectedTask memory. Lightweight list
+  // + lazy full-detail fetch is the optimal shape — we never re-ship history on
+  // the 3s/10s list poll, only once per open.
+  useEffect(() => {
+    const t = selectedTask;
+    if (!t) return;
+    // Local yaver-agent tasks live only in memory — getTask would 404 and wipe
+    // the live turns. They already carry their full turns, so never refetch.
+    if (t.runnerId === "yaver-agent" || t.id.startsWith("yaver-agent-")) return;
+    // Already have the thread in memory (fork-carried or previously hydrated).
+    if ((t.turns?.length ?? 0) > 0) { hydratedTurnsForRef.current = t.id; void cacheTaskTurns(t.id, t.turns as unknown[]); return; }
+    // Nothing to hydrate: the server itself has no prior turns for this task.
+    if ((t.turnCount ?? 0) === 0) return;
+    if (hydratedTurnsForRef.current === t.id) return;
+    const taskId = t.id;
+    let cancelled = false;
+    (async () => {
+      // 1) INSTANT: paint cached turns first so re-opening a thread never shows
+      //    an empty/one-line chat while the detail fetch is in flight. The list
+      //    strips turns, so without this the WhatsApp thread flickers on every
+      //    open. Only applies if we haven't already filled turns from memory.
+      try {
+        const cached = await getCachedTaskTurns(taskId);
+        if (!cancelled && cached && cached.length > 0) {
+          setSelectedTask((prev) =>
+            prev && prev.id === taskId && (prev.turns?.length ?? 0) === 0
+              ? { ...prev, turns: cached as Task["turns"] }
+              : prev,
+          );
+        }
+      } catch { /* cache miss is fine — the fetch below is authoritative */ }
+      // 2) AUTHORITATIVE: fetch the full detail and reconcile. Server wins over
+      //    cache (no stale/missing data), and we refresh the cache for next time.
+      try {
+        const full = await quicClient.getTask(taskId);
+        if (cancelled || !full || (full.turns?.length ?? 0) === 0) return;
+        hydratedTurnsForRef.current = taskId;
+        const capped = full.output.length > MAX_OUTPUT_LINES_PER_TASK
+          ? { ...full, output: capOutput(full.output) }
+          : full;
+        setSelectedTask((prev) => (prev && prev.id === taskId ? capped : prev));
+        setTasks((prev) => prev.map((x) => (x.id === capped.id ? { ...x, turns: capped.turns, turnCount: capped.turns?.length ?? x.turnCount } : x)));
+        void cacheTaskTurns(taskId, capped.turns as unknown[]);
+      } catch { /* offline: keep the cached turns we painted in step 1 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedTask?.id]);
 
   // TTS: speak the final result when task completes
   const lastSpokenTaskRef = useRef<string | null>(null);
@@ -3428,7 +3527,10 @@ export default function TasksScreen() {
         //     matches Codex/Claude Code "continue into a new session"
         //     semantics. See task_fork.go on the agent side.
         const parentRunner = (selectedTask.runnerId || "").trim();
-        const desiredRunner = (selectedRunner || "").trim();
+        // A task detail follow-up is a chat reply, not a runner-picker action.
+        // Keep it on the task's recorded runner so stale global picker state
+        // cannot pop "Switch to Claude?" and break the WhatsApp-like thread.
+        const desiredRunner = parentRunner || (selectedRunner || "").trim();
         // planFollowUp owns this decision so it can be tested without React
         // Native — see mobile/src/lib/followUpPlan.test.ts. It is the reason
         // follow-ups appeared to "create a new task": a finished parent always
@@ -5524,6 +5626,8 @@ export default function TasksScreen() {
                   // somewhere else.
                   deviceName={selectedTask.deviceName || activeDevice?.name}
                   runnerLabel={selectedTask.runnerId ? displayRunnerLabel(selectedTask.runnerId) : undefined}
+                  tmuxSession={selectedTask.tmuxSession}
+                  tmuxSessionId={selectedTask.tmuxSessionId}
                   modelLabel={(() => {
                     // Authoritative source: Task.model from the agent
                     // (now plumbed through quic.ts). Picker fallback
@@ -6602,10 +6706,14 @@ const s = StyleSheet.create({
   userBubbleText: { color: "#fff", fontSize: 14, lineHeight: 20, fontFamily: monoFamily },
 
   assistantRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
-  // assistantFrame is the polished container around the markdown — a
-  // hairline border with no fill so the inner fenced code-block stands
-  // out (matches the bordered "ls output" card in the design mockup).
-  assistantFrame: { flex: 1, paddingHorizontal: 2, paddingVertical: 2 },
+  // assistantFrame is the assistant's chat bubble — WhatsApp/Claude-mobile
+  // shaped: a subtle fill, rounded with a bottom-LEFT tail (mirror of the
+  // user bubble's bottom-right tail), snug to its content rather than
+  // full-width. maxWidth 90% (a touch wider than the user's 80% because
+  // agent replies carry code/markdown that needs room); backgroundColor is
+  // applied inline from the theme. Fenced code blocks keep their own inner
+  // border so they still stand out against the bubble fill.
+  assistantFrame: { maxWidth: "90%", borderRadius: 20, borderBottomLeftRadius: 6, paddingHorizontal: 14, paddingVertical: 10 },
   assistantTokens: { fontSize: 12, marginBottom: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
   assistantToggle: { fontSize: 12, fontWeight: "600" },
 

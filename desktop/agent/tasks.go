@@ -441,6 +441,21 @@ type ConversationTurn struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// maxSeededForkTurns bounds how much parent history a fork copies into a child
+// for display continuity. A whole-thread copy per fork would compound into
+// unbounded persisted state across a long fork chain; the last ~40 turns is
+// plenty for the "don't lose the summary" thread the user actually reads.
+const maxSeededForkTurns = 40
+
+// seedForkTurns returns the tail of `turns` bounded to maxSeededForkTurns.
+// Nil-safe; never mutates the input.
+func seedForkTurns(turns []ConversationTurn) []ConversationTurn {
+	if len(turns) <= maxSeededForkTurns {
+		return turns
+	}
+	return turns[len(turns)-maxSeededForkTurns:]
+}
+
 const maxProcessRetries = 4 // Max auto-restart attempts when Claude crashes (2s, 4s, 8s, 16s)
 
 // isSoftRunnerFailure decides whether a non-zero exit from a coding-agent
@@ -826,6 +841,16 @@ type TaskCreateOptions struct {
 	InitialUserPrompt string
 	SliceContract     *TaskSliceContract
 	Placement         *TaskPlacementMetadata
+
+	// SeedTurns is prior conversation history to PREPEND to the new task's
+	// Turns purely for DISPLAY continuity — it is NOT re-sent to the runner
+	// (the runner receives its context via the prompt/handoff). A fork sets
+	// this to the parent's turns so the child renders as one continuous
+	// WhatsApp-style thread instead of an orphaned single exchange (the
+	// 2026-07-21 "I lost the summary — every follow-up starts a fresh chat"
+	// report). Bounded by seedForkTurns before use so a long parent thread
+	// can't bloat every child's persisted state.
+	SeedTurns []ConversationTurn
 
 	// Viewport (surface + STT/TTS shaping) is applied before startProcess
 	// runs so the prompt wrapper sees it during prompt assembly. Setting
@@ -1619,6 +1644,24 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 	if initialTurnContent == "" {
 		initialTurnContent = strings.TrimSpace(title)
 	}
+	// Prepend any seeded display history (a fork carries the parent's turns
+	// so the child reads as one continuous thread). Bounded, and we drop a
+	// trailing seed turn that duplicates the incoming user turn so the chat
+	// doesn't show the same message twice at the fork seam.
+	initialTurns := make([]ConversationTurn, 0, len(opts.SeedTurns)+1)
+	for _, st := range seedForkTurns(opts.SeedTurns) {
+		if strings.TrimSpace(st.Content) == "" {
+			continue
+		}
+		initialTurns = append(initialTurns, st)
+	}
+	if n := len(initialTurns); n > 0 {
+		last := initialTurns[n-1]
+		if last.Role == "user" && strings.TrimSpace(last.Content) == initialTurnContent {
+			initialTurns = initialTurns[:n-1]
+		}
+	}
+	initialTurns = append(initialTurns, ConversationTurn{Role: "user", Content: initialTurnContent, Timestamp: now})
 	task := &Task{
 		ID:                          id,
 		Title:                       title,
@@ -1650,9 +1693,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		RedactPII:                   opts.RedactPII,
 		ResumeLast:                  opts.ResumeLast,
 		SessionID:                   opts.ResumeSessionID,
-		Turns: []ConversationTurn{
-			{Role: "user", Content: initialTurnContent, Timestamp: now},
-		},
+		Turns: initialTurns,
 	}
 	if len(verbosityCtx) > 0 && verbosityCtx[0] != nil {
 		task.TaskVerbosity = verbosityCtx[0]

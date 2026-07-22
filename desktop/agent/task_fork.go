@@ -124,6 +124,11 @@ func (s *HTTPServer) handleTaskFork(w http.ResponseWriter, r *http.Request, pare
 		WorkDir:           parent.WorkDir,
 		InitialUserPrompt: req.Input,
 		Mode:              req.Mode,
+		// Carry the parent's conversation into the child for DISPLAY only, so
+		// the fork renders as one continuous thread on every surface instead of
+		// an orphaned single exchange. The runner still gets its context from
+		// the bounded handoff prompt above — SeedTurns never reaches the runner.
+		SeedTurns: parent.Turns,
 	}
 
 	// Inherit guest scoping if the parent was a guest task. A guest

@@ -261,6 +261,105 @@ func TestHandleTaskForkCreatesChildAndKeepsParentImmutable(t *testing.T) {
 	}
 }
 
+// The 2026-07-21 "I lost the summary — every follow-up starts a fresh chat"
+// report: a fork must render as ONE continuous thread, so the child carries the
+// parent's conversation turns for display (WhatsApp-style), then appends the new
+// user turn — without duplicating a message at the seam and without leaking the
+// giant handoff prompt into the visible history.
+func TestHandleTaskForkSeedsParentTurnsForContinuousThread(t *testing.T) {
+	s := newForkTestServer(t)
+	parent := mkParentTask(t)
+	s.taskMgr.tasks[parent.ID] = parent
+
+	body := bytes.NewReader([]byte(`{
+		"runner":"opencode",
+		"input":"now make it work on Android too",
+		"contextWords":800
+	}`))
+	r := httptest.NewRequest(http.MethodPost, "/tasks/parent-1/fork", body)
+	rr := httptest.NewRecorder()
+	s.handleTaskFork(rr, r, parent.ID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 — body %s", rr.Code, rr.Body.String())
+	}
+	var resp taskForkResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response: %v", err)
+	}
+	child, ok := s.taskMgr.GetTask(resp.TaskID)
+	if !ok {
+		t.Fatal("child task not found after fork")
+	}
+
+	// The whole parent thread must be present, in order, followed by the new
+	// user turn — so the phone shows a continuous conversation, not one exchange.
+	if len(child.Turns) != len(parent.Turns)+1 {
+		t.Fatalf("child turns: got %d want %d (parent %d + new user turn)",
+			len(child.Turns), len(parent.Turns)+1, len(parent.Turns))
+	}
+	for i, want := range parent.Turns {
+		if child.Turns[i].Role != want.Role || child.Turns[i].Content != want.Content {
+			t.Errorf("child turn %d: got {%s %q} want {%s %q}",
+				i, child.Turns[i].Role, child.Turns[i].Content, want.Role, want.Content)
+		}
+	}
+	last := child.Turns[len(child.Turns)-1]
+	if last.Role != "user" || last.Content != "now make it work on Android too" {
+		t.Errorf("last child turn should be the new user request, got {%s %q}", last.Role, last.Content)
+	}
+	// The visible history must NOT contain the [Conversation Handoff] scaffold —
+	// that goes to the runner via Title, never into the chat bubbles.
+	for i, turn := range child.Turns {
+		if strings.Contains(turn.Content, "[Conversation Handoff]") {
+			t.Errorf("turn %d leaked the handoff prompt into visible history: %q", i, turn.Content)
+		}
+	}
+}
+
+// A seed turn that duplicates the incoming user turn must collapse at the seam
+// (the client optimistically appends the follow-up to the parent before forking,
+// so the parent tail can equal the child's first turn).
+func TestCreateTaskSeedTurnsDedupesSeamDuplicate(t *testing.T) {
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	tm.DummyMode = true
+	seed := []ConversationTurn{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: "make it work on Android"}, // == the incoming prompt
+	}
+	task, err := tm.CreateTaskWithOptions("t", "", "", "test", "claude", "", nil, TaskCreateOptions{
+		InitialUserPrompt: "make it work on Android",
+		SeedTurns:         seed,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// 3 seed turns, last one dedup'd against the new user turn → 3 total, not 4.
+	if len(task.Turns) != 3 {
+		t.Fatalf("turns: got %d want 3 (seam duplicate collapsed) — %+v", len(task.Turns), task.Turns)
+	}
+	if task.Turns[2].Role != "user" || task.Turns[2].Content != "make it work on Android" {
+		t.Errorf("final turn wrong: {%s %q}", task.Turns[2].Role, task.Turns[2].Content)
+	}
+}
+
+func TestSeedForkTurnsBoundsTail(t *testing.T) {
+	big := make([]ConversationTurn, maxSeededForkTurns+25)
+	for i := range big {
+		big[i] = ConversationTurn{Role: "user", Content: "x"}
+	}
+	got := seedForkTurns(big)
+	if len(got) != maxSeededForkTurns {
+		t.Fatalf("bounded len: got %d want %d", len(got), maxSeededForkTurns)
+	}
+	if short := seedForkTurns(big[:3]); len(short) != 3 {
+		t.Fatalf("short passthrough: got %d want 3", len(short))
+	}
+	if seedForkTurns(nil) != nil {
+		t.Fatal("nil should pass through as nil")
+	}
+}
+
 func TestHandleTaskForkDefersCloudPlacementInsteadOfCreatingLocalChild(t *testing.T) {
 	var seen []string
 	var metadataPayloads []map[string]any
