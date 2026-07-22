@@ -95,6 +95,13 @@ jobs:
           fi
           mkdir -p ci/.artifacts
           ssh-keygen -y -f "$HCLOUD_SSH_PRIVATE_KEY_PATH" > ci/.artifacts/hcloud-ci.pub
+          ci_pub="$(awk '{print $1" "$2}' ci/.artifacts/hcloud-ci.pub)"
+          hcloud ssh-key list -o json > ci/.artifacts/hcloud-ssh-keys.json
+          existing_name="$(jq -r --arg pub "$ci_pub" '.[] | select(.public_key | startswith($pub)) | .name' ci/.artifacts/hcloud-ssh-keys.json | head -1)"
+          if [ -n "$existing_name" ]; then
+            echo "HCLOUD_SSH_KEY_NAME=$existing_name" >> "$GITHUB_ENV"
+            exit 0
+          fi
           hcloud ssh-key create \
             --name "$HCLOUD_SSH_KEY_NAME" \
             --public-key-from-file ci/.artifacts/hcloud-ci.pub >/dev/null
