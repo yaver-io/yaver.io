@@ -45,6 +45,15 @@ import "strings"
 type PreviewStrategy string
 
 const (
+	// PreviewDirectURL is the LIGHTEST path and the correct default for
+	// anything a browser can run: the viewer opens the dev server itself, so
+	// the workspace spends no vCPU rendering or encoding. See
+	// preview_transport_route.go for when it applies — it needs a
+	// browser-renderable stack, a viewer that can host a web view, AND proven
+	// reachability, so it is decided per (stack, viewer, network), never from
+	// the stack alone.
+	PreviewDirectURL PreviewStrategy = "direct-url"
+
 	PreviewChromeWebRTC PreviewStrategy = "chrome-webrtc"
 	// NOT a push. The agent BUILDS the Hermes bundle (POST /dev/build-native)
 	// and the mobile container PULLS it. The old `yaver push` → device port

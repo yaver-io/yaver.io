@@ -70,9 +70,25 @@ LABEL org.opencontainers.image.description="Yaver workspace with Swift + SwiftWa
 # would build a green image whose browser cannot start, and the failure would
 # appear at first preview as an opaque launch error rather than at build time.
 #
-# Ubuntu ships a real `chromium` deb in jammy; use that.
+# ⚠️ AND the fix above was ALSO wrong. Ubuntu jammy ships NO working Chromium
+# deb under either name: `chromium-browser` is the snap stub, and plain
+# `chromium` is DEBIAN's package name — it does not exist in jammy's archive at
+# all. `apt-get install chromium` fails with exit 100. Verified by building
+# this image 2026-07-22; the previous comment asserting a "real chromium deb in
+# jammy" was written from memory and never built.
+#
+# So Chromium is GONE from this image, and that is the correct outcome rather
+# than a workaround. A SwiftWasm app is a web page: it routes to
+# `direct-url` (preview_transport_route.go), where the VIEWER's browser renders
+# it and the workspace spends ~0 vCPU. The browser was only ever needed for the
+# chrome-webrtc fallback, which is a different image's job — bundling a ~500 MB
+# browser into every Swift workspace to support a path most sessions never take
+# is exactly the heavyweight default the routing layer exists to remove.
+#
+# If a video fallback IS needed, add Chromium in a derived image from a source
+# that actually ships a jammy deb (ppa:xtradeb/apps) and PROBE it at startup —
+# never trust the install (probeBrowserLaunches, preview_capability_probe.go).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium \
       fonts-liberation \
       ca-certificates \
       curl \
@@ -131,8 +147,7 @@ COPY --chown=yaver:yaver ./yaver /usr/local/bin/yaver
 # YAVER_SWIFTWASM marks the image; the agent still PROBES for swift/carton on
 # PATH before starting a dev server (devserver_swiftwasm.go) rather than
 # trusting this flag — a label is inventory, the binary is the operation.
-ENV YAVER_PREVIEW_STRATEGY=chrome-webrtc \
-    CHROME_BIN=/usr/bin/chromium \
+ENV YAVER_PREVIEW_STRATEGY=direct-url \
     YAVER_SWIFTWASM=1
 
 # Fail the BUILD if the tools the agent probes for are missing. Catching a
@@ -141,8 +156,7 @@ ENV YAVER_PREVIEW_STRATEGY=chrome-webrtc \
 # from a broken product.
 RUN test -x /usr/local/bin/carton \
  && swift --version \
- && test -x /usr/bin/chromium \
- || (echo "SWIFTWASM IMAGE INCOMPLETE — carton, swift or chromium missing" && exit 1)
+ || (echo "SWIFTWASM IMAGE INCOMPLETE — carton or swift missing" && exit 1)
 
 # No EXPOSE: reachability is outbound-registered through the relay, which is
 # both the transport Yaver already uses and the largest free abuse reduction.
