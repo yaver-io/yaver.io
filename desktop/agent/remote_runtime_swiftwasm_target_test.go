@@ -174,6 +174,7 @@ func TestBrowserLaneForNativeBrowserRenderableStacks(t *testing.T) {
 	cases := []struct{ dir, framework, why string }{
 		{repo + "/demo/yaver-todo-swift-wasm", "swift", "SwiftWasm compiles to wasm and runs in a browser"},
 		{repo + "/demo", "flutter", "Flutter is classed a web dev server (devserver_kind.go)"},
+		{repo + "/demo/mobile", "react-native", "RN's web target is the cheapest lane and the only one with the in-app SDK"},
 	}
 	for _, c := range cases {
 		if _, err := os.Stat(c.dir); err != nil {
@@ -196,5 +197,24 @@ func TestBrowserLaneForNativeBrowserRenderableStacks(t *testing.T) {
 		if !browser.Enabled && browser.Reason == "" {
 			t.Errorf("%s (%s): disabled with no remedy", c.dir, c.framework)
 		}
+	}
+}
+
+// RN is the one stack with three honest choices. Adding the browser lane must
+// not have cost it the simulators — Hermes lives in its own mode, and the
+// simulators must still be reachable for platform-specific work.
+func TestRNKeepsAllThreeOptions(t *testing.T) {
+	caps := remoteRuntimeCapabilitiesForProject(t.TempDir(), "react-native")
+	if _, ok := targetByID(caps, "browser-window"); !ok {
+		t.Error("RN must be offered the browser lane")
+	}
+	if _, ok := targetByID(caps, "ios-simulator"); !ok {
+		t.Error("RN must keep the iOS simulator — the browser lane adds, it does not replace")
+	}
+	if _, ok := targetByID(caps, "android-emulator"); !ok {
+		t.Error("RN must keep the Android emulator")
+	}
+	if caps.Targets[0].ID != "browser-window" {
+		t.Errorf("the cheapest lane should lead for RN, got %q", caps.Targets[0].ID)
 	}
 }

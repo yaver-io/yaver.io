@@ -168,6 +168,10 @@ func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
 	// redroid + device) + Apple sim fan-out (iPhone/iPad/watch/tv/
 	// vision) + ios-device = 13 targets.
 	wantIDs := map[string]bool{
+		// Flutter runs as a web dev server on the box, so the browser lane is
+		// offered and LEADS: ~0 vCPU against an emulator boot, and the only
+		// path where the in-app yaver_feedback SDK (pub.dev) applies.
+		"browser-window":   true,
 		"android-emulator": true, "android-wear": true, "android-tv": true,
 		"android-xr": true, "android-auto": true, "android-redroid": true,
 		"android-device": true, "ios-simulator": true, "ipados-simulator": true,

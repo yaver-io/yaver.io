@@ -344,6 +344,20 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 	if rnSim {
 		rnAppleFams := appleRuntimeFamiliesForCaps()
 		caps.Targets = []RemoteRuntimeTarget{
+			// RN's WEB target, streamed from a headless tab on the box.
+			//
+			// It leads because it is the cheapest lane by an order of
+			// magnitude — no simulator or emulator boot, ~0 vCPU against 1-2 —
+			// and because it is the only one here where the IN-APP feedback
+			// SDK applies: the app is genuinely running rather than being a
+			// video of one, so feedback carries real state instead of a
+			// viewer-triggered control message.
+			//
+			// It adds an option, it removes none. Hermes (the real bundle in
+			// the Yaver container on this phone) and the simulators below stay
+			// exactly as they were; RN is the one stack with three honest
+			// choices, and only the user knows which they want.
+			probeBrowserWindowTarget(),
 			probeIOSSimulatorTarget(rnAppleFams),
 			probeIPadSimulatorTarget(rnAppleFams),
 			probeWatchOSSimulatorTarget(rnAppleFams),

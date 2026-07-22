@@ -73,8 +73,12 @@ func TestPreviewCapabilityMatrix(t *testing.T) {
 		{"flutter", HostMacOS, true, PreviewDirectURL, true, ""},
 
 		// ── Native Kotlin / Android ─────────────────────────────────────
-		{"kotlin", HostLinux, true, PreviewRedroidWebRTC, true,
-			"Redroid is the dense container path on Linux"},
+		// Kotlin on Linux is asserted separately: HostCanRunRedroid now PROBES
+		// for binder rather than trusting the label, so the answer depends on
+		// the kernel of the machine running the test (WSL2 and this Mac have
+		// no binder). Pinning "redroid" here would only pass on a box that
+		// happens to have the module — the exact assumption the probe exists
+		// to remove.
 		// The cell that was broken: a Mac cannot run Redroid, but it CAN run
 		// an emulator. Expectation depends on the SDK actually being present,
 		// so this case is asserted separately below.
@@ -119,6 +123,24 @@ func TestPreviewCapabilityMatrix(t *testing.T) {
 // Native Android on macOS: Redroid is impossible, an emulator is not. The
 // expectation is conditional on the SDK being installed, because the whole
 // point of HostCanRunAndroidEmulator is that it probes rather than assumes.
+// Native Android on Linux takes Redroid where binder exists and the emulator
+// otherwise — either is a WebRTC lane, which is what "all cases" requires.
+func TestNativeAndroidOnLinuxHasAPixelLane(t *testing.T) {
+	plan := ResolvePreviewForHost(ResolveWorkspacePreview("kotlin", false), HostLinux)
+	switch plan.Primary {
+	case PreviewRedroidWebRTC, PreviewAndroidEmulator:
+		if !planUsesWebRTC(plan) {
+			t.Errorf("kotlin on linux must stream pixels, got %q", plan.Primary)
+		}
+	default:
+		if plan.Supported {
+			t.Errorf("kotlin on linux resolved to %q, which is not a pixel lane", plan.Primary)
+		} else if plan.Reason == "" {
+			t.Error("an unsupported kotlin plan must carry its remedy")
+		}
+	}
+}
+
 func TestNativeAndroidOnMacUsesEmulatorWhenAvailable(t *testing.T) {
 	plan := ResolvePreviewForHost(ResolveWorkspacePreview("kotlin", false), HostMacOS)
 
