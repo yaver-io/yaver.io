@@ -21,7 +21,10 @@ package main
 // fenced behind a build tag for that exact reason.
 
 import (
+	"bytes"
 	"context"
+	"image/jpeg"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -187,6 +190,108 @@ func TestBrowserWindowEndToEnd(t *testing.T) {
 	}
 }
 
+func TestBrowserWindowTapChangesTodoBackgroundOverWebRTC(t *testing.T) {
+	if !browserBinaryAvailable() {
+		t.Skip("no Chrome / Chromium binary available — skipping integration test")
+	}
+
+	openCtx, openCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer openCancel()
+	entry, err := browserPool.open(openCtx, 640, 400)
+	if err != nil {
+		t.Fatalf("browserPool.open: %v", err)
+	}
+	t.Cleanup(func() { browserPool.close(entry.id) })
+
+	page := `<!doctype html><html><head><style>
+html,body{margin:0;width:100%;height:100%;background:rgb(220,20,20)}
+body.done{background:rgb(20,180,60)}
+main{width:100vw;height:100vh;display:grid;place-items:center}
+button{width:320px;height:96px;border:0;background:white;color:#111;font:700 22px system-ui}
+</style></head><body><main><button id="todo">Ship WebRTC todo</button></main>
+<script>document.body.addEventListener("click",()=>document.body.classList.add("done"));</script>
+</body></html>`
+	if err := browserPool.navigate(entry.id, "data:text/html;charset=utf-8,"+url.QueryEscape(page)); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	mgr := NewRemoteRuntimeManager()
+	sessionID := "rr_test_browser_color"
+	now := time.Now().UTC().Format(time.RFC3339)
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = RemoteRuntimeSession{
+		ID:             sessionID,
+		Framework:      "browser",
+		ExecutionMode:  ExecutionModeNativeWebRTC,
+		TargetID:       "browser-window",
+		TargetLabel:    "Browser",
+		Platform:       "browser",
+		TransportMode:  "direct-webrtc",
+		FrameTransport: "webrtc-datachannel-jpeg-v1",
+		Status:         "control-ready",
+		DeviceID:       entry.id,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	mgr.live[sessionID] = &remoteRuntimeLiveState{
+		sessionID: sessionID,
+		targetID:  "browser-window",
+		platform:  "browser",
+		deviceID:  entry.id,
+	}
+	mgr.mu.Unlock()
+
+	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("client PC: %v", err)
+	}
+	defer clientPC.Close()
+	if _, err := clientPC.CreateDataChannel("primer", nil); err != nil {
+		t.Fatalf("client primer DC: %v", err)
+	}
+
+	frameCh := make(chan []byte, 16)
+	clientPC.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() != "frames" {
+			return
+		}
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			if !msg.IsString {
+				select {
+				case frameCh <- append([]byte(nil), msg.Data...):
+				default:
+				}
+			}
+		})
+	})
+
+	offer, err := clientPC.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+	gather := webrtc.GatheringCompletePromise(clientPC)
+	if err := clientPC.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set local: %v", err)
+	}
+	<-gather
+	_, answer, err := mgr.ApplyWebRTCOffer(sessionID, *clientPC.LocalDescription())
+	if err != nil {
+		t.Fatalf("ApplyWebRTCOffer: %v", err)
+	}
+	if err := clientPC.SetRemoteDescription(answer); err != nil {
+		t.Fatalf("set remote: %v", err)
+	}
+
+	before := waitForBrowserColorFrame(t, frameCh, isRedRGB, 12*time.Second)
+	t.Logf("before tap avg rgb=%+v", before)
+
+	if err := (browserWindowTarget{}).Tap(context.Background(), entry.id, 320, 200); err != nil {
+		t.Fatalf("tap: %v", err)
+	}
+	after := waitForBrowserColorFrame(t, frameCh, isGreenRGB, 12*time.Second)
+	t.Logf("after tap avg rgb=%+v", after)
+}
+
 func TestBrowserPoolListReportsOpened(t *testing.T) {
 	if !browserBinaryAvailable() {
 		t.Skip("no Chrome / Chromium binary available")
@@ -246,6 +351,63 @@ func TestBrowserScreenshotProducesPNG(t *testing.T) {
 
 func isProbableJPEG(b []byte) bool {
 	return len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF
+}
+
+type avgRGB struct {
+	R int
+	G int
+	B int
+}
+
+func waitForBrowserColorFrame(t *testing.T, frameCh <-chan []byte, pred func(avgRGB) bool, timeout time.Duration) avgRGB {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case data := <-frameCh:
+			rgb, err := averageJPEGCenter(data)
+			if err != nil {
+				t.Fatalf("decode JPEG frame: %v", err)
+			}
+			if pred(rgb) {
+				return rgb
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for matching color frame")
+		}
+	}
+}
+
+func averageJPEGCenter(data []byte) (avgRGB, error) {
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return avgRGB{}, err
+	}
+	b := img.Bounds()
+	cropW := min(240, b.Dx())
+	cropH := min(240, b.Dy())
+	startX := b.Min.X + (b.Dx()-cropW)/2
+	startY := b.Min.Y + (b.Dy()-cropH)/2
+	var r, g, bl uint64
+	var count uint64
+	for y := startY; y < startY+cropH; y++ {
+		for x := startX; x < startX+cropW; x++ {
+			cr, cg, cb, _ := img.At(x, y).RGBA()
+			r += uint64(cr >> 8)
+			g += uint64(cg >> 8)
+			bl += uint64(cb >> 8)
+			count++
+		}
+	}
+	return avgRGB{R: int(r / count), G: int(g / count), B: int(bl / count)}, nil
+}
+
+func isRedRGB(rgb avgRGB) bool {
+	return rgb.R >= 150 && rgb.G <= 120 && rgb.B <= 120 && rgb.R > rgb.G+40
+}
+
+func isGreenRGB(rgb avgRGB) bool {
+	return rgb.G >= 130 && rgb.R <= 140 && rgb.B <= 140 && rgb.G > rgb.R+40
 }
 
 func prefix(b []byte, n int) []byte {

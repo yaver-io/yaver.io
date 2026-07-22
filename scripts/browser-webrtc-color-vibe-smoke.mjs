@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import http from "node:http";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -14,28 +13,13 @@ if (!token || !remotePageUrl) {
   process.exit(2);
 }
 
-const viewerHTML = `<!doctype html><html><body><script>window.__ready = true;</script></body></html>`;
-const server = http.createServer((_, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-  res.end(viewerHTML);
+const browser = await chromium.launch({
+  headless: true,
 });
-
-function listen(server) {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
-  });
-}
-
-const port = await listen(server);
-const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 
 try {
-  const result = await page.goto(`http://127.0.0.1:${port}/`).then(() =>
+  const result = await page.goto(`${agentBase}/health`).then(() =>
     page.evaluate(
       async ({ agentBase, token, remotePageUrl }) => {
         const headers = { Authorization: `Bearer ${token}` };
@@ -235,5 +219,4 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } finally {
   await browser.close().catch(() => {});
-  server.close();
 }

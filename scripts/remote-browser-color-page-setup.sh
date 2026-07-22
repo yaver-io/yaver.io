@@ -52,15 +52,27 @@ cat > "$tmp/index.html" <<'HTML'
 </html>
 HTML
 
-(
-  cd "$tmp"
-  python3 -m http.server 0 --bind 127.0.0.1 > "$tmp/server.log" 2>&1 &
-  echo $! > "$tmp/server.pid"
-)
+cat > "$tmp/server.py" <<'PY'
+import functools
+import http.server
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+port_file = pathlib.Path(sys.argv[2])
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+port_file.write_text(str(server.server_address[1]) + "\n")
+port_file.chmod(0o600)
+server.serve_forever()
+PY
+
+python3 "$tmp/server.py" "$tmp" "$tmp/server.port" > "$tmp/server.log" 2>&1 &
+echo $! > "$tmp/server.pid"
 
 pid="$(cat "$tmp/server.pid")"
 for _ in $(seq 1 50); do
-  if grep -Eo 'Serving HTTP on 127\.0\.0\.1 port [0-9]+' "$tmp/server.log" >/dev/null 2>&1; then
+  if [[ -s "$tmp/server.port" ]]; then
     break
   fi
   if ! kill -0 "$pid" >/dev/null 2>&1; then
@@ -71,7 +83,7 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-port="$(grep -Eo 'Serving HTTP on 127\.0\.0\.1 port [0-9]+' "$tmp/server.log" | tail -1 | awk '{print $NF}')"
+port="$(cat "$tmp/server.port" 2>/dev/null || true)"
 if [[ -z "$port" ]]; then
   echo "could not discover python http server port" >&2
   cat "$tmp/server.log" >&2 || true

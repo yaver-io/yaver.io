@@ -452,6 +452,16 @@ type SharedStorageProfile struct {
 
 // ConfigDir returns the path to ~/.yaver/, creating it if needed.
 func ConfigDir() (string, error) {
+	if override := strings.TrimSpace(os.Getenv("YAVER_CONFIG_DIR")); override != "" {
+		dir, err := filepath.Abs(override)
+		if err != nil {
+			return "", fmt.Errorf("resolve YAVER_CONFIG_DIR: %w", err)
+		}
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", fmt.Errorf("create config dir: %w", err)
+		}
+		return dir, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("get home dir: %w", err)
