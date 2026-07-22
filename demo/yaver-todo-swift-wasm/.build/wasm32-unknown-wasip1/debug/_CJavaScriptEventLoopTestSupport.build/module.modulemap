@@ -1,0 +1,4 @@
+module _CJavaScriptEventLoopTestSupport {
+    umbrella "/app/.build/checkouts/JavaScriptKit/Sources/_CJavaScriptEventLoopTestSupport/include"
+    export *
+}

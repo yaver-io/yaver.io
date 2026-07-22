@@ -1,0 +1,82 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/ClosureCodegen.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ClosureCodegen.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ClosureCodegen.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ClosureCodegen~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ClosureCodegen.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ClosureCodegen.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/ExportSwift.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExportSwift.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExportSwift.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExportSwift~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExportSwift.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExportSwift.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/ExternalModuleIndex.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExternalModuleIndex.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExternalModuleIndex.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExternalModuleIndex~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExternalModuleIndex.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ExternalModuleIndex.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/ImportTS.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ImportTS.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ImportTS.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ImportTS~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ImportTS.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/ImportTS.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/Misc.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Misc.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Misc.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Misc~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Misc.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Misc.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/SwiftToSkeleton.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/SwiftToSkeleton.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/SwiftToSkeleton.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/SwiftToSkeleton~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/SwiftToSkeleton.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/SwiftToSkeleton.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSCore/TypeDeclResolver.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TypeDeclResolver.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TypeDeclResolver.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TypeDeclResolver~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TypeDeclResolver.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TypeDeclResolver.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSSkeleton/BridgeJSSkeleton.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSSkeleton.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSSkeleton.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSSkeleton~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSSkeleton.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSSkeleton.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSTool/BridgeJSTool.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSTool.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSTool.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSTool~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSTool.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/BridgeJSTool.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/BridgeJSUtilities/Utilities.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Utilities.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Utilities.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Utilities~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Utilities.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/Utilities.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSTool/TS2Swift/TS2Swift.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TS2Swift.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TS2Swift.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TS2Swift~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TS2Swift.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/BridgeJSTool.build/TS2Swift.dia"
+  }
+}

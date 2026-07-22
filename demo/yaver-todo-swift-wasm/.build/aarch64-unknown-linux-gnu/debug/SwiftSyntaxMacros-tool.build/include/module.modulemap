@@ -1,0 +1,3 @@
+module SwiftSyntaxMacros {
+    header "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntaxMacros-tool.build/include/SwiftSyntaxMacros-Swift.h"
+}

@@ -1,0 +1,15 @@
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/ActiveClauseEvaluator.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/ActiveSyntaxRewriter.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/ActiveSyntaxVisitor.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/BuildConfiguration.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/ConfiguredRegions.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/IfConfigDecl+IfConfig.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/IfConfigDiagnostic.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/IfConfigEvaluation.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/IfConfigFunctions.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/IfConfigRegionState.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/StaticBuildConfiguration.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/SyntaxLiteralUtils.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/SyntaxProtocol+IfConfig.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/VersionTuple+Parsing.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftIfConfig/VersionTuple.swift

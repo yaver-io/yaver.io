@@ -1,0 +1,24 @@
+dependencies: \
+  /app/.build/checkouts/JavaScriptKit/Sources/_CJavaScriptKit/_CJavaScriptKit.c \
+  /usr/lib/clang/21/include/stdint.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/stdint.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/bits/alltypes.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__struct_timeval.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__typedef_time_t.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__typedef_suseconds_t.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__struct_timespec.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__struct_iovec.h \
+  /usr/lib/clang/21/include/stddef.h \
+  /usr/lib/clang/21/include/__stddef_size_t.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/bits/stdint.h \
+  /app/.build/checkouts/JavaScriptKit/Sources/_CJavaScriptKit/include/_CJavaScriptKit.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/stdlib.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__functions_malloc.h \
+  /usr/lib/clang/21/include/__stddef_wchar_t.h \
+  /usr/lib/clang/21/include/__stddef_null.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/__header_stdlib.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/features.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/alloca.h \
+  /usr/lib/clang/21/include/stdbool.h \
+  /root/.swiftpm/swift-sdks/swift-wasm-6.3-RELEASE-wasm32-unknown-wasip1.artifactbundle/6.3-RELEASE-wasm32-unknown-wasip1/wasm32-unknown-wasip1/WASI.sdk/include/wasm32-wasip1/stdbool.h \
+  /app/.build/checkouts/JavaScriptKit/Sources/_CJavaScriptKit/include/WasmGlobalMacros.h

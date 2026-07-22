@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftCompilerPlugin-tool.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftCompilerPlugin/CompilerPlugin.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftCompilerPlugin-tool.build/CompilerPlugin.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftCompilerPlugin-tool.build/CompilerPlugin.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftCompilerPlugin-tool.build/CompilerPlugin~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftCompilerPlugin-tool.build/CompilerPlugin.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftCompilerPlugin-tool.build/CompilerPlugin.dia"
+  }
+}

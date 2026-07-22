@@ -1,0 +1,10 @@
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Convenience.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Diagnostic.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticDecorators/ANSIDiagnosticDecorator.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticDecorators/BasicDiagnosticDecorator.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticDecorators/DiagnosticDecorator.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticsFormatter.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/FixIt.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/GroupedDiagnostics.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Message.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Note.swift

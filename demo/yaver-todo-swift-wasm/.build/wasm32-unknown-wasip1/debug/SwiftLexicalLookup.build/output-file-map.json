@@ -1,0 +1,110 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/IdentifiableSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IdentifiableSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IdentifiableSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IdentifiableSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IdentifiableSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IdentifiableSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/LookupConfig.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupConfig.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupConfig.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupConfig~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupConfig.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupConfig.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/LookupName.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupName.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupName.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupName~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupName.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupName.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/LookupResult.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupResult.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupResult.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupResult~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupResult.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookupResult.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/CanInterleaveResultsLaterScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/CanInterleaveResultsLaterScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/CanInterleaveResultsLaterScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/CanInterleaveResultsLaterScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/CanInterleaveResultsLaterScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/CanInterleaveResultsLaterScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/FunctionScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/FunctionScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/FunctionScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/FunctionScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/FunctionScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/FunctionScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/GenericParameterScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/GenericParameterScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/GenericParameterScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/GenericParameterScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/GenericParameterScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/GenericParameterScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/IntroducingToSequentialParentScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IntroducingToSequentialParentScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IntroducingToSequentialParentScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IntroducingToSequentialParentScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IntroducingToSequentialParentScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/IntroducingToSequentialParentScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/LookInMembersScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookInMembersScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookInMembersScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookInMembersScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookInMembersScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/LookInMembersScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/NominalTypeDeclSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/NominalTypeDeclSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/NominalTypeDeclSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/NominalTypeDeclSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/NominalTypeDeclSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/NominalTypeDeclSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/ScopeImplementations.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeImplementations.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeImplementations.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeImplementations~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeImplementations.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeImplementations.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/ScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/ScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/SequentialScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SequentialScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SequentialScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SequentialScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SequentialScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SequentialScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/Scopes/WithGenericParametersScopeSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/WithGenericParametersScopeSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/WithGenericParametersScopeSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/WithGenericParametersScopeSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/WithGenericParametersScopeSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/WithGenericParametersScopeSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftLexicalLookup/SimpleLookupQueries.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SimpleLookupQueries.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SimpleLookupQueries.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SimpleLookupQueries~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SimpleLookupQueries.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftLexicalLookup.build/SimpleLookupQueries.dia"
+  }
+}

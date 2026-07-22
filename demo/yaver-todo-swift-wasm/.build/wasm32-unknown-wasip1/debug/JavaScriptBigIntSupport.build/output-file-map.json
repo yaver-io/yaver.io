@@ -1,0 +1,19 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptBigIntSupport/Int64+I64.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/Int64+I64.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/Int64+I64.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/Int64+I64~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/Int64+I64.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/Int64+I64.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptBigIntSupport/JSBigInt+I64.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/JSBigInt+I64.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/JSBigInt+I64.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/JSBigInt+I64~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/JSBigInt+I64.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptBigIntSupport.build/JSBigInt+I64.dia"
+  }
+}

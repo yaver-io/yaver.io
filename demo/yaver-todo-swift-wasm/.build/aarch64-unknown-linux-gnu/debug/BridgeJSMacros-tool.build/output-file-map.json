@@ -1,0 +1,47 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSMacros/BridgeJSMacrosPlugin.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/BridgeJSMacrosPlugin.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/BridgeJSMacrosPlugin.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/BridgeJSMacrosPlugin~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/BridgeJSMacrosPlugin.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/BridgeJSMacrosPlugin.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSMacros/JSClassMacro.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSClassMacro.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSClassMacro.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSClassMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSClassMacro.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSClassMacro.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSMacros/JSFunctionMacro.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSFunctionMacro.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSFunctionMacro.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSFunctionMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSFunctionMacro.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSFunctionMacro.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSMacros/JSGetterMacro.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSGetterMacro.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSGetterMacro.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSGetterMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSGetterMacro.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSGetterMacro.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSMacros/JSMacroSupport.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSMacroSupport.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSMacroSupport.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSMacroSupport~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSMacroSupport.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSMacroSupport.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/BridgeJSMacros/JSSetterMacro.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSSetterMacro.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSSetterMacro.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSSetterMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSSetterMacro.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/BridgeJSMacros-tool.build/JSSetterMacro.dia"
+  }
+}

@@ -1,0 +1,3 @@
+module SwiftSyntaxBuilder {
+    header "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxBuilder.build/include/SwiftSyntaxBuilder-Swift.h"
+}

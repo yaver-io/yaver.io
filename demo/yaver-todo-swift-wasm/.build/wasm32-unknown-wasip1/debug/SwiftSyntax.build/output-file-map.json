@@ -1,0 +1,495 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/AbsolutePosition.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsolutePosition.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsolutePosition.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsolutePosition~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsolutePosition.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsolutePosition.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/AbsoluteSyntaxInfo.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsoluteSyntaxInfo.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsoluteSyntaxInfo.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsoluteSyntaxInfo~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsoluteSyntaxInfo.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/AbsoluteSyntaxInfo.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/ArenaAllocatedBuffer.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ArenaAllocatedBuffer.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ArenaAllocatedBuffer.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ArenaAllocatedBuffer~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ArenaAllocatedBuffer.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ArenaAllocatedBuffer.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Assert.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Assert.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Assert.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Assert~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Assert.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Assert.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/BumpPtrAllocator.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/BumpPtrAllocator.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/BumpPtrAllocator.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/BumpPtrAllocator~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/BumpPtrAllocator.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/BumpPtrAllocator.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/CommonAncestor.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CommonAncestor.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CommonAncestor.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CommonAncestor~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CommonAncestor.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CommonAncestor.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Convenience.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Convenience.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Convenience.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Convenience~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Convenience.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Convenience.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/CustomTraits.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CustomTraits.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CustomTraits.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CustomTraits~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CustomTraits.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/CustomTraits.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/EditorPlaceholder.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/EditorPlaceholder.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/EditorPlaceholder.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/EditorPlaceholder~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/EditorPlaceholder.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/EditorPlaceholder.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Identifier.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Identifier.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Identifier.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Identifier~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Identifier.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Identifier.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/MemoryLayout.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MemoryLayout.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MemoryLayout.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MemoryLayout~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MemoryLayout.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MemoryLayout.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/MissingNodeInitializers.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MissingNodeInitializers.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MissingNodeInitializers.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MissingNodeInitializers~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MissingNodeInitializers.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/MissingNodeInitializers.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Raw/RawSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Raw/RawSyntaxArena.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxArena.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxArena.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxArena~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxArena.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxArena.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Raw/RawSyntaxLayoutView.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxLayoutView.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxLayoutView.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxLayoutView~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxLayoutView.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxLayoutView.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Raw/RawSyntaxNodeProtocol.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodeProtocol.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodeProtocol.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodeProtocol~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodeProtocol.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodeProtocol.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Raw/RawSyntaxTokenView.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxTokenView.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxTokenView.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxTokenView~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxTokenView.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxTokenView.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SourceEdit.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceEdit.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceEdit.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceEdit~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceEdit.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceEdit.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SourceLength.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLength.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLength.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLength~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLength.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLength.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SourceLocation.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLocation.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLocation.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLocation~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLocation.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourceLocation.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SourcePresence.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourcePresence.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourcePresence.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourcePresence~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourcePresence.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SourcePresence.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SwiftSyntaxCompatibility.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SwiftSyntaxCompatibility.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SwiftSyntaxCompatibility.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SwiftSyntaxCompatibility~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SwiftSyntaxCompatibility.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SwiftSyntaxCompatibility.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Syntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Syntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Syntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Syntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Syntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Syntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxChildren.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxChildren.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxChildren.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxChildren~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxChildren.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxChildren.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxCollection.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollection.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollection.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollection~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollection.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollection.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxHashable.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxHashable.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxHashable.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxHashable~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxHashable.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxHashable.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxIdentifier.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxIdentifier.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxIdentifier.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxIdentifier~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxIdentifier.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxIdentifier.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxNodeStructure.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodeStructure.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodeStructure.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodeStructure~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodeStructure.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodeStructure.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxProtocol.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxProtocol.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxProtocol.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxProtocol~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxProtocol.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxProtocol.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxText.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxText.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxText.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxText~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxText.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxText.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/SyntaxTreeViewMode.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTreeViewMode.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTreeViewMode.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTreeViewMode~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTreeViewMode.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTreeViewMode.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/TokenDiagnostic.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenDiagnostic.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenDiagnostic.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenDiagnostic~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenDiagnostic.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenDiagnostic.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/TokenSequence.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSequence.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSequence.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSequence~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSequence.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSequence.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/TokenSyntax.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSyntax.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSyntax.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSyntax~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSyntax.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenSyntax.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Trivia.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Trivia.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Trivia.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Trivia~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Trivia.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Trivia.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/Utils.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Utils.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Utils.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Utils~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Utils.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Utils.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/ChildNameForKeyPath.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ChildNameForKeyPath.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ChildNameForKeyPath.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ChildNameForKeyPath~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ChildNameForKeyPath.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/ChildNameForKeyPath.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/Keyword.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Keyword.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Keyword.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Keyword~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Keyword.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Keyword.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/RenamedChildrenCompatibility.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedChildrenCompatibility.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedChildrenCompatibility.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedChildrenCompatibility~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedChildrenCompatibility.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedChildrenCompatibility.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/RenamedNodesCompatibility.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedNodesCompatibility.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedNodesCompatibility.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedNodesCompatibility~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedNodesCompatibility.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RenamedNodesCompatibility.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxAnyVisitor.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxAnyVisitor.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxAnyVisitor.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxAnyVisitor~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxAnyVisitor.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxAnyVisitor.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxBaseNodes.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxBaseNodes.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxBaseNodes.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxBaseNodes~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxBaseNodes.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxBaseNodes.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxCollections.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollections.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollections.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollections~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollections.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxCollections.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxEnum.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxEnum.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxEnum.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxEnum~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxEnum.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxEnum.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxKind.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxKind.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxKind.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxKind~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxKind.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxKind.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxRewriter.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxRewriter.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxRewriter.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxRewriter~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxRewriter.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxRewriter.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxTraits.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTraits.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTraits.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTraits~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTraits.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxTraits.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/SyntaxVisitor.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxVisitor.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxVisitor.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxVisitor~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxVisitor.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxVisitor.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/TokenKind.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenKind.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenKind.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenKind~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenKind.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TokenKind.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/Tokens.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Tokens.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Tokens.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Tokens~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Tokens.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/Tokens.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/TriviaPieces.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TriviaPieces.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TriviaPieces.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TriviaPieces~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TriviaPieces.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/TriviaPieces.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesAB.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesAB.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesAB.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesAB~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesAB.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesAB.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesC.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesC.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesC.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesC~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesC.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesC.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesD.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesD.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesD.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesD~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesD.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesD.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesEF.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesEF.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesEF.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesEF~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesEF.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesEF.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesGHI.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesGHI.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesGHI.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesGHI~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesGHI.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesGHI.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesJKLMN.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesJKLMN.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesJKLMN.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesJKLMN~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesJKLMN.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesJKLMN.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesOP.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesOP.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesOP.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesOP~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesOP.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesOP.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesQRS.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesQRS.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesQRS.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesQRS~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesQRS.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesQRS.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxNodesTUVWXYZ.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesTUVWXYZ.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesTUVWXYZ.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesTUVWXYZ~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesTUVWXYZ.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxNodesTUVWXYZ.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/raw/RawSyntaxValidation.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxValidation.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxValidation.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxValidation~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxValidation.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/RawSyntaxValidation.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesAB.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesAB.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesAB.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesAB~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesAB.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesAB.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesC.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesC.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesC.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesC~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesC.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesC.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesD.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesD.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesD.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesD~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesD.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesD.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesEF.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesEF.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesEF.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesEF~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesEF.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesEF.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesGHI.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesGHI.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesGHI.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesGHI~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesGHI.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesGHI.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesJKLMN.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesJKLMN.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesJKLMN.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesJKLMN~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesJKLMN.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesJKLMN.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesOP.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesOP.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesOP.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesOP~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesOP.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesOP.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesQRS.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesQRS.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesQRS.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesQRS~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesQRS.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesQRS.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntax/generated/syntaxNodes/SyntaxNodesTUVWXYZ.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesTUVWXYZ.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesTUVWXYZ.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesTUVWXYZ~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesTUVWXYZ.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntax.build/SyntaxNodesTUVWXYZ.dia"
+  }
+}

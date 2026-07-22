@@ -1,0 +1,10 @@
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/Operator.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/OperatorError+Diagnostics.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/OperatorError.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/OperatorTable+Defaults.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/OperatorTable+Folding.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/OperatorTable+Semantics.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/OperatorTable.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/PrecedenceGraph.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/PrecedenceGroup.swift
+/app/.build/checkouts/swift-syntax/Sources/SwiftOperators/SyntaxSynthesis.swift

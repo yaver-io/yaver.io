@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptEventLoopTestSupport/JavaScriptEventLoopTestSupport.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/JavaScriptEventLoopTestSupport.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/JavaScriptEventLoopTestSupport.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/JavaScriptEventLoopTestSupport~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/JavaScriptEventLoopTestSupport.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/JavaScriptEventLoopTestSupport.dia"
+  }
+}

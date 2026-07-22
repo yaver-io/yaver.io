@@ -1,0 +1,47 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/BasicFormat.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/BasicFormat.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/BasicFormat.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/BasicFormat~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/BasicFormat.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/BasicFormat.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/Indenter.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Indenter.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Indenter.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Indenter~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Indenter.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Indenter.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/InferIndentation.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/InferIndentation.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/InferIndentation.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/InferIndentation~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/InferIndentation.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/InferIndentation.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/Syntax+Extensions.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Syntax+Extensions.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Syntax+Extensions.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Syntax+Extensions~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Syntax+Extensions.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Syntax+Extensions.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/SyntaxProtocol+Formatted.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/SyntaxProtocol+Formatted.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/SyntaxProtocol+Formatted.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/SyntaxProtocol+Formatted~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/SyntaxProtocol+Formatted.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/SyntaxProtocol+Formatted.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftBasicFormat/Trivia+FormatExtensions.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Trivia+FormatExtensions.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Trivia+FormatExtensions.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Trivia+FormatExtensions~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Trivia+FormatExtensions.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftBasicFormat-tool.build/Trivia+FormatExtensions.dia"
+  }
+}

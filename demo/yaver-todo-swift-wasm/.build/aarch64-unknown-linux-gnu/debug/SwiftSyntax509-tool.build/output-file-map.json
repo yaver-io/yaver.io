@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntax509-tool.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/VersionMarkerModules/SwiftSyntax509/Empty.swift": {
+    "dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntax509-tool.build/Empty.d",
+    "object": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntax509-tool.build/Empty.swift.o",
+    "swiftmodule": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntax509-tool.build/Empty~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntax509-tool.build/Empty.swiftdeps",
+    "diagnostics": "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftSyntax509-tool.build/Empty.dia"
+  }
+}

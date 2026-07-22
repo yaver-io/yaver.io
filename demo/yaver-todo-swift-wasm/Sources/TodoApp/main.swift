@@ -3,66 +3,69 @@ import JavaScriptKit
 // Yaver todo — Swift compiled to WebAssembly, rendered in the browser.
 //
 // THE DEMO: this streams from a Linux Cloud Workspace over WebRTC, and an agent
-// changes `backgroundColor` below on request. One obvious declaration, so
+// changes `backgroundColor` below on request. ONE obvious declaration, so
 // "change the background to blue" has an unambiguous edit site — a demo that
 // requires guessing which of six colour expressions to touch proves nothing
 // about the loop.
 //
 // Deliberately mirrors yaver-todo-rn's UX so the app is the CONTROL: any
-// difference you observe between the RN and Swift previews is the transport.
+// difference between the RN and Swift previews is the transport, not the app.
+//
+// JavaScriptKit, not Tokamak: Tokamak is abandoned (last commit Feb 2023) and
+// does not build against any SwiftWasm SDK that exists. See
+// docs/architecture/swift-linux-webrtc-audit.md §5.6.
 
 /// The single knob the runner demo changes.
 let backgroundColor = "#fafafc"
 
-let document = JSObject.global.document
-
 struct Todo {
     let id: Int
-    var title: String
-    var done: Bool
+    let title: String
+    let done: Bool
 }
 
-var todos: [Todo] = [
+let todos: [Todo] = [
     Todo(id: 1, title: "Open Yaver on your phone", done: true),
     Todo(id: 2, title: "Edit this app from anywhere", done: false),
     Todo(id: 3, title: "Ship it", done: false),
 ]
-var nextID = 4
 
-func el(_ tag: String) -> JSValue { document.createElement!(tag) }
+// Bind through JSObject rather than JSValue dynamic members: the JSValue form
+// is ambiguous under JavaScriptKit 0.19+ and produces
+// "ambiguous use of subscript(dynamicMember:)".
+let document = JSObject.global.document.object!
+let body = document.body.object!
 
-func render() {
-    let body = document.body
-    _ = body.style.object?.setProperty?("background", backgroundColor.jsValue)
-    _ = body.style.object?.setProperty?("font-family", "-apple-system, system-ui, sans-serif".jsValue)
-    _ = body.style.object?.setProperty?("padding", "24px".jsValue)
-
-    var root = document.getElementById!("app")
-    if root.isNull || root.isUndefined {
-        root = el("div")
-        _ = root.object?.setAttribute?("id", "app".jsValue)
-        _ = body.object?.appendChild?(root)
-    }
-    _ = root.object?.setAttribute?("innerHTML", "".jsValue)
-    root.innerHTML = "".jsValue
-
-    let h1 = el("h1")
-    h1.textContent = "Yaver Todo".jsValue
-    _ = root.object?.appendChild?(h1)
-
-    for todo in todos {
-        let row = el("div")
-        _ = row.style.object?.setProperty?("padding", "8px 0".jsValue)
-        _ = row.style.object?.setProperty?("opacity", (todo.done ? "0.5" : "1").jsValue)
-        row.textContent = "\(todo.done ? "☑" : "☐") \(todo.title)".jsValue
-        _ = root.object?.appendChild?(row)
-    }
-
-    let caption = el("p")
-    _ = caption.style.object?.setProperty?("opacity", "0.6".jsValue)
-    _ = caption.style.object?.setProperty?("font-size", "13px".jsValue)
-    caption.textContent = "Swift → WebAssembly → browser → WebRTC".jsValue
-    _ = root.object?.appendChild?(caption)
+func setStyle(_ node: JSObject, _ property: String, _ value: String) {
+    guard let style = node.style.object else { return }
+    _ = style.setProperty!(property, value)
 }
 
-render()
+func makeElement(_ tag: String, text: String? = nil) -> JSObject {
+    let node = document.createElement!(tag).object!
+    if let text { node.textContent = text.jsValue }
+    return node
+}
+
+setStyle(body, "background", backgroundColor)
+setStyle(body, "font-family", "-apple-system, system-ui, sans-serif")
+setStyle(body, "padding", "24px")
+setStyle(body, "margin", "0")
+
+let root = makeElement("div")
+_ = body.appendChild!(root)
+
+let heading = makeElement("h1", text: "Yaver Todo")
+_ = root.appendChild!(heading)
+
+for todo in todos {
+    let row = makeElement("div", text: "\(todo.done ? "☑" : "☐") \(todo.title)")
+    setStyle(row, "padding", "8px 0")
+    setStyle(row, "opacity", todo.done ? "0.5" : "1")
+    _ = root.appendChild!(row)
+}
+
+let caption = makeElement("p", text: "Swift → WebAssembly → browser → WebRTC")
+setStyle(caption, "opacity", "0.6")
+setStyle(caption, "font-size", "13px")
+_ = root.appendChild!(caption)

@@ -1,0 +1,75 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Convenience.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Convenience.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Convenience.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Convenience~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Convenience.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Convenience.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Diagnostic.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Diagnostic.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Diagnostic.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Diagnostic~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Diagnostic.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Diagnostic.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticDecorators/ANSIDiagnosticDecorator.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/ANSIDiagnosticDecorator.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/ANSIDiagnosticDecorator.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/ANSIDiagnosticDecorator~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/ANSIDiagnosticDecorator.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/ANSIDiagnosticDecorator.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticDecorators/BasicDiagnosticDecorator.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/BasicDiagnosticDecorator.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/BasicDiagnosticDecorator.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/BasicDiagnosticDecorator~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/BasicDiagnosticDecorator.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/BasicDiagnosticDecorator.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticDecorators/DiagnosticDecorator.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticDecorator.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticDecorator.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticDecorator~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticDecorator.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticDecorator.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/DiagnosticsFormatter.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticsFormatter.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticsFormatter.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticsFormatter~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticsFormatter.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/DiagnosticsFormatter.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/FixIt.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/FixIt.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/FixIt.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/FixIt~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/FixIt.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/FixIt.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/GroupedDiagnostics.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/GroupedDiagnostics.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/GroupedDiagnostics.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/GroupedDiagnostics~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/GroupedDiagnostics.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/GroupedDiagnostics.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Message.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Message.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Message.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Message~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Message.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Message.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftDiagnostics/Note.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Note.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Note.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Note~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Note.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftDiagnostics.build/Note.dia"
+  }
+}

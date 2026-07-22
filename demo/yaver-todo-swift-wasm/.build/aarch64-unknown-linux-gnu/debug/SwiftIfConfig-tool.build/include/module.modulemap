@@ -1,0 +1,3 @@
+module SwiftIfConfig {
+    header "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftIfConfig-tool.build/include/SwiftIfConfig-Swift.h"
+}

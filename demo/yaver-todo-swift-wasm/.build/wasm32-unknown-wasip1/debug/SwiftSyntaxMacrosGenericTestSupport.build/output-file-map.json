@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacrosGenericTestSupport.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacrosGenericTestSupport/Assertions.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacrosGenericTestSupport.build/Assertions.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacrosGenericTestSupport.build/Assertions.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacrosGenericTestSupport.build/Assertions~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacrosGenericTestSupport.build/Assertions.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacrosGenericTestSupport.build/Assertions.dia"
+  }
+}

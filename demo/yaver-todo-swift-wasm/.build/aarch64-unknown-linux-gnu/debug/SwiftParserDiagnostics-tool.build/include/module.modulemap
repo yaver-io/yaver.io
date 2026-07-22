@@ -1,0 +1,3 @@
+module SwiftParserDiagnostics {
+    header "/app/.build/aarch64-unknown-linux-gnu/debug/SwiftParserDiagnostics-tool.build/include/SwiftParserDiagnostics-Swift.h"
+}

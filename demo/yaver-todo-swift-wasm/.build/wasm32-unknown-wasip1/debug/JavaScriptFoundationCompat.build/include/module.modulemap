@@ -1,0 +1,3 @@
+module JavaScriptFoundationCompat {
+    header "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptFoundationCompat.build/include/JavaScriptFoundationCompat-Swift.h"
+}

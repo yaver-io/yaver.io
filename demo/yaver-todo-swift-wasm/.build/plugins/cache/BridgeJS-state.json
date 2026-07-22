@@ -1,0 +1,49 @@
+{
+  "commandLine" : [
+    "/usr/bin/swiftc",
+    "-L",
+    "/usr/lib/swift/pm/PluginAPI",
+    "-lPackagePlugin",
+    "-Xlinker",
+    "-rpath",
+    "-Xlinker",
+    "/usr/lib/swift/pm/PluginAPI",
+    "-g",
+    "-swift-version",
+    "6",
+    "-package-description-version",
+    "6.2.0",
+    "-I",
+    "/usr/lib/swift/pm/PluginAPI",
+    "-parse-as-library",
+    "-j10",
+    "-Xfrontend",
+    "-serialize-diagnostics-path",
+    "-Xfrontend",
+    "/app/.build/plugins/cache/BridgeJS.dia",
+    "/app/.build/checkouts/JavaScriptKit/Plugins/BridgeJS/Sources/BridgeJSBuildPlugin/BridgeJSBuildPlugin.swift",
+    "/app/.build/checkouts/JavaScriptKit/Plugins/BridgeJS/Sources/BridgeJSBuildPlugin/BridgeJSPluginUtilities/PluginPaths.swift",
+    "-o",
+    "/app/.build/plugins/cache/BridgeJS"
+  ],
+  "environment" : {
+    "HOME" : "/root",
+    "HOSTNAME" : "7966efc9c353",
+    "PATH" : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "PWD" : "/app",
+    "SHLVL" : "0",
+    "SWIFT_BRANCH" : "swift-6.3-release",
+    "SWIFT_PLATFORM" : "ubuntu22.04",
+    "SWIFT_SIGNING_KEY" : "52BB7E3DE28A71BE22EC05FFEF80A866B47A981F",
+    "SWIFT_VERSION" : "swift-6.3-RELEASE",
+    "SWIFT_WEBROOT" : "https://download.swift.org",
+    "_" : "/usr/bin/swift"
+  },
+  "inputHash" : "5ad331a14dfa876fe0515cbaa54caa5c01a8ad51097f90cdda9f601444ceb8de",
+  "output" : "",
+  "result" : {
+    "exit" : {
+      "code" : 0
+    }
+  }
+}

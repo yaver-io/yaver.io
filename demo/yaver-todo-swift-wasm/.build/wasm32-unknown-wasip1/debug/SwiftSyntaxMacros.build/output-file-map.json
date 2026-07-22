@@ -1,0 +1,131 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/AbstractSourceLocation.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AbstractSourceLocation.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AbstractSourceLocation.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AbstractSourceLocation~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AbstractSourceLocation.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AbstractSourceLocation.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroExpansionContext.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionContext.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionContext.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionContext~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionContext.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionContext.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroExpansionDiagnosticMessages.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionDiagnosticMessages.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionDiagnosticMessages.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionDiagnosticMessages~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionDiagnosticMessages.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MacroExpansionDiagnosticMessages.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/AccessorMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AccessorMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AccessorMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AccessorMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AccessorMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AccessorMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/AttachedMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AttachedMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AttachedMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AttachedMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AttachedMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/AttachedMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/BodyMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/BodyMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/BodyMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/BodyMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/BodyMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/BodyMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/CodeItemMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/CodeItemMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/CodeItemMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/CodeItemMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/CodeItemMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/CodeItemMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/DeclarationMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/DeclarationMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/DeclarationMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/DeclarationMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/DeclarationMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/DeclarationMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/ExpressionMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExpressionMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExpressionMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExpressionMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExpressionMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExpressionMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/ExtensionMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExtensionMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExtensionMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExtensionMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExtensionMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/ExtensionMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/FreestandingMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/FreestandingMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/FreestandingMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/FreestandingMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/FreestandingMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/FreestandingMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/Macro+Format.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro+Format.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro+Format.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro+Format~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro+Format.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro+Format.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/Macro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Macro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/MemberAttributeMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberAttributeMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberAttributeMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberAttributeMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberAttributeMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberAttributeMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/MemberMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/MemberMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/PeerMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PeerMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PeerMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PeerMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PeerMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PeerMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/MacroProtocols/PreambleMacro.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PreambleMacro.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PreambleMacro.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PreambleMacro~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PreambleMacro.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/PreambleMacro.dia"
+  },
+  "/app/.build/checkouts/swift-syntax/Sources/SwiftSyntaxMacros/Syntax+LexicalContext.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Syntax+LexicalContext.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Syntax+LexicalContext.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Syntax+LexicalContext~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Syntax+LexicalContext.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/SwiftSyntaxMacros.build/Syntax+LexicalContext.dia"
+  }
+}

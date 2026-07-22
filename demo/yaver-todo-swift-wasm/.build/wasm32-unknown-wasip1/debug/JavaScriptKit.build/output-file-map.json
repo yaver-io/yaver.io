@@ -1,0 +1,187 @@
+{
+  "": {
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/primary.swiftdeps"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BasicObjects/JSArray.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSArray.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSArray.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSArray~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSArray.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSArray.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BasicObjects/JSDate.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSDate.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSDate.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSDate~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSDate.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSDate.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BasicObjects/JSError.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSError.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSError.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSError~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSError.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSError.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BasicObjects/JSPromise.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSPromise.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSPromise.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSPromise~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSPromise.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSPromise.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BasicObjects/JSTimer.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTimer.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTimer.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTimer~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTimer.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTimer.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BasicObjects/JSTypedArray.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTypedArray.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTypedArray.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTypedArray~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTypedArray.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTypedArray.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/BridgeJSIntrinsics.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/BridgeJSIntrinsics.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/BridgeJSIntrinsics.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/BridgeJSIntrinsics~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/BridgeJSIntrinsics.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/BridgeJSIntrinsics.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/ConstructibleFromJSValue.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConstructibleFromJSValue.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConstructibleFromJSValue.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConstructibleFromJSValue~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConstructibleFromJSValue.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConstructibleFromJSValue.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/ConvertibleToJSValue.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConvertibleToJSValue.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConvertibleToJSValue.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConvertibleToJSValue~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConvertibleToJSValue.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ConvertibleToJSValue.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/Deprecated.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Deprecated.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Deprecated.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Deprecated~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Deprecated.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Deprecated.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/Features.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Features.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Features.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Features~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Features.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Features.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSBigInt.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBigInt.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBigInt.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBigInt~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBigInt.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBigInt.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSClosure.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSClosure.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSClosure.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSClosure~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSClosure.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSClosure.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSObject+CallAsFunction.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject+CallAsFunction.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject+CallAsFunction.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject+CallAsFunction~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject+CallAsFunction.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject+CallAsFunction.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSObject.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSObject.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSString.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSString.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSString.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSString~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSString.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSString.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSSymbol.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSSymbol.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSSymbol.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSSymbol~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSSymbol.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSSymbol.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/FundamentalObjects/JSThrowingFunction.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSThrowingFunction.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSThrowingFunction.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSThrowingFunction~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSThrowingFunction.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSThrowingFunction.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/JSBridgedType.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBridgedType.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBridgedType.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBridgedType~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBridgedType.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSBridgedType.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/JSException.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSException.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSException.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSException~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSException.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSException.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/JSTracing.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTracing.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTracing.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTracing~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTracing.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSTracing.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/JSUndefinedOr.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSUndefinedOr.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSUndefinedOr.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSUndefinedOr~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSUndefinedOr.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSUndefinedOr.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/JSValue.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValue.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValue.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValue~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValue.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValue.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/JSValueDecoder.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValueDecoder.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValueDecoder.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValueDecoder~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValueDecoder.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/JSValueDecoder.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/Macros.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Macros.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Macros.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Macros~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Macros.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/Macros.dia"
+  },
+  "/app/.build/checkouts/JavaScriptKit/Sources/JavaScriptKit/ThreadLocal.swift": {
+    "dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ThreadLocal.d",
+    "object": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ThreadLocal.swift.o",
+    "swiftmodule": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ThreadLocal~partial.swiftmodule",
+    "swift-dependencies": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ThreadLocal.swiftdeps",
+    "diagnostics": "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptKit.build/ThreadLocal.dia"
+  }
+}

@@ -1,0 +1,3 @@
+module JavaScriptEventLoopTestSupport {
+    header "/app/.build/wasm32-unknown-wasip1/debug/JavaScriptEventLoopTestSupport.build/include/JavaScriptEventLoopTestSupport-Swift.h"
+}
