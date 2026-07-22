@@ -34,6 +34,7 @@ import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
+import { guardYaverSelfDevelopmentActions, isHermesMobileFramework } from "../../src/lib/mobileProjectActions";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -92,10 +93,6 @@ function findProjectMatch(projects: ProjectItem[], query: string): ProjectItem |
     pathLeaf(p.path).toLowerCase().includes(target) ||
     p.path.toLowerCase().includes(target),
   ) || null;
-}
-
-function isHermesMobileFramework(framework?: string): boolean {
-  return framework === "expo" || framework === "react-native";
 }
 
 function isSecondClassMobileFramework(framework?: string): boolean {
@@ -719,7 +716,11 @@ export default function AppsScreen() {
         }
         return a;
       });
-      result.actions = [projectAction, previewManifestAction, ...hermesActions, ...nativeRemoteRuntimeActions, ...secondClassActions, gitSyncAction, ...result.actions];
+      result.actions = guardYaverSelfDevelopmentActions(
+        [projectAction, previewManifestAction, ...hermesActions, ...nativeRemoteRuntimeActions, ...secondClassActions, gitSyncAction, ...result.actions],
+        projectName,
+        result.path || projectPath,
+      );
       setActionSheet({ ...result, compatibility });
     } catch (e) {
       // Don't silently send a vague task — the user just tapped a project and
