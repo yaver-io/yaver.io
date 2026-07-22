@@ -118,6 +118,45 @@ type RemoteRuntimeManager struct {
 	// handlers consult this before touching the local manager and
 	// forward when a mapping exists. Local-only sessions stay nil.
 	proxied map[string]*proxiedSession
+
+	// devManager is the source of the URL a browser-window session
+	// should navigate to on Create. Wired explicitly at construction
+	// (SetDevServerManager) so the runtime manager doesn't reach through
+	// a package-level global — nil is fine for surfaces that never
+	// create browser-window sessions. See attachAndNavigateBrowserWindow.
+	//
+	// Held as an INTERFACE, not the concrete *DevServerManager, so tests
+	// can inject a stub that reports IsRunning/DevServerPort/WebPreviewPort
+	// without spinning up Metro/Vite/Flutter for real. The concrete
+	// *DevServerManager satisfies this interface by construction.
+	devManager devServerInfo
+
+	// browserNav is the browser-window attach+navigate seam Create uses
+	// for browser-window targets. Nil in production — the real
+	// browserWindowTarget{} is used. Tests inject a recorder to assert
+	// the URL Create picked without launching real Chrome.
+	browserNav browserWindowNavigator
+}
+
+// devServerInfo is the narrow read-only view attachAndNavigateBrowserWindow
+// needs from the DevServerManager. Split into an interface so a test can
+// provide a stub without constructing the full manager (which would need a
+// real dev-server subprocess to be interesting).
+type devServerInfo interface {
+	IsRunning() bool
+	Status() *DevServerStatus
+	DevServerPort() int
+	WebPreviewPort() int
+}
+
+// browserWindowNavigator is the two-verb subset of runtimeTarget that Create
+// uses when it needs to open a browser-window session on the project's dev
+// server. Split from the fuller interface so tests can supply a recorder that
+// captures the URL without spawning real Chrome (Attach on the real target
+// launches chromedp headlessly).
+type browserWindowNavigator interface {
+	Attach(ctx context.Context) (deviceID string, err error)
+	Navigate(ctx context.Context, deviceID, url string) error
 }
 
 func NewRemoteRuntimeManager() *RemoteRuntimeManager {
@@ -126,6 +165,24 @@ func NewRemoteRuntimeManager() *RemoteRuntimeManager {
 		live:     map[string]*remoteRuntimeLiveState{},
 		proxied:  map[string]*proxiedSession{},
 	}
+}
+
+// SetDevServerManager wires the manager that owns the running dev server.
+// Called by the HTTP server once both managers are constructed. A nil dev
+// manager is legal (browser-window sessions then always fall back to the
+// "no dev server" reason string) but not what production wires.
+func (m *RemoteRuntimeManager) SetDevServerManager(dsm devServerInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.devManager = dsm
+}
+
+// SetBrowserNavigator swaps the browser-window attach/navigate seam. Tests
+// only — production leaves it nil and gets the real browserWindowTarget.
+func (m *RemoteRuntimeManager) SetBrowserNavigator(nav browserWindowNavigator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.browserNav = nav
 }
 
 func executionModeForFramework(framework string) ProjectExecutionMode {
@@ -762,7 +819,136 @@ func (m *RemoteRuntimeManager) Create(workDir, framework, targetID, transportMod
 	m.sessions[session.ID] = session
 	m.live[session.ID] = &remoteRuntimeLiveState{sessionID: session.ID, targetID: selected.ID, platform: selected.Platform}
 	m.mu.Unlock()
+
+	// browser-window is the ONLY target where the session is content-less by
+	// default: chromedp opens about:blank. Every other target boots into an
+	// OS/app that shows something on its own. Wire the project's dev-server URL
+	// here so the caller doesn't get a session that streams a blank page — the
+	// bug this fix exists for. See BROWSER_VIBING_AUDIT.md §5.
+	if selected.ID == "browser-window" {
+		session = m.attachAndNavigateBrowserWindow(session, workDir, framework)
+	}
 	return session, nil
+}
+
+// resolveDevServerURL picks the URL a browser-window session should navigate
+// to for a given (workDir, framework). Returns (url, "") when we have one and
+// ("", reason) when the caller should carry a "start your dev server first"
+// note back to the viewer instead of pointing at a dead port.
+//
+// The port choice matters: Expo/RN's Metro serves bytecode, not the web app —
+// the web bundle lives on a SIBLING process started by StartWebPreview
+// (WebPreviewPort). Every other web dev server serves the app on its primary
+// port (DevServerPort). See the comment on WebPreviewPort in devserver.go.
+func (m *RemoteRuntimeManager) resolveDevServerURL(workDir, framework string) (string, string) {
+	m.mu.RLock()
+	dsm := m.devManager
+	m.mu.RUnlock()
+	if dsm == nil {
+		return "", "no dev-server manager wired for this agent — start a dev server first (yaver dev)"
+	}
+	if !dsm.IsRunning() {
+		return "", "no dev server is running — start one first (yaver dev) so the browser has something to load"
+	}
+	// A dev server for a DIFFERENT project would render the wrong app. Refuse
+	// rather than showing content that isn't yours; the user's next click
+	// (Start Dev Server) resolves it.
+	if st := dsm.Status(); st != nil {
+		if wantDir := strings.TrimSpace(workDir); wantDir != "" &&
+			!samePath(strings.TrimSpace(st.WorkDir), wantDir) {
+			return "", fmt.Sprintf("a dev server is running for %s, not this project — restart it for %s", st.WorkDir, wantDir)
+		}
+	}
+	fw := strings.ToLower(strings.TrimSpace(framework))
+	var port int
+	switch fw {
+	case "expo", "react-native":
+		port = dsm.WebPreviewPort()
+		if port == 0 {
+			return "", "Expo web preview isn't running — start it so RN-Web can load in the browser (Metro serves bytecode, not the web app)"
+		}
+	default:
+		port = dsm.DevServerPort()
+		if port == 0 {
+			return "", "the dev server is running but has no listening port yet — retry once it finishes starting"
+		}
+	}
+	// 127.0.0.1 rather than localhost: on some hosts localhost resolves to ::1
+	// first and headless Chrome retries slow the first paint noticeably.
+	return fmt.Sprintf("http://127.0.0.1:%d", port), ""
+}
+
+// samePath compares two absolute paths after cleaning + case-folding on macOS,
+// which is case-insensitive on the default APFS. Empty strings are not equal.
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	ca := filepath.Clean(a)
+	cb := filepath.Clean(b)
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return strings.EqualFold(ca, cb)
+	}
+	return ca == cb
+}
+
+// attachAndNavigateBrowserWindow opens the headless browser and points it at
+// the project's dev-server URL. Runs after Create has stored the session so
+// its result mutations flow through m.Update, which the manager already uses
+// for status/note updates from Attach and command handlers.
+//
+// If no URL is available (no dev server, wrong project, port not up yet), the
+// session is left at about:blank with a Note explaining why. A blank frame with
+// no explanation was the bug being fixed; a blank frame WITH an explanation is
+// acceptable — the viewer can act on "start a dev server first" in a way it
+// cannot on silence.
+func (m *RemoteRuntimeManager) attachAndNavigateBrowserWindow(session RemoteRuntimeSession, workDir, framework string) RemoteRuntimeSession {
+	url, reason := m.resolveDevServerURL(workDir, framework)
+	if url == "" {
+		updated, _ := m.Update(session.ID, func(s *RemoteRuntimeSession) {
+			s.Status = "waiting-for-dev-server"
+			s.Note = "Browser window will open blank: " + reason
+		})
+		return updated
+	}
+	m.mu.RLock()
+	nav := m.browserNav
+	m.mu.RUnlock()
+	if nav == nil {
+		nav = browserWindowTarget{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	deviceID, err := nav.Attach(ctx)
+	if err != nil {
+		updated, _ := m.Update(session.ID, func(s *RemoteRuntimeSession) {
+			s.Status = "attach-failed"
+			s.Note = fmt.Sprintf("Browser attach failed before navigate to %s: %v", url, err)
+		})
+		return updated
+	}
+	// Record the deviceID on live state so the HTTP handler's later Attach()
+	// call short-circuits on the DeviceID != "" guard — we already have the
+	// window open, and re-Attach would open a second one.
+	if live, ok := m.getLive(session.ID); ok {
+		live.mu.Lock()
+		live.deviceID = deviceID
+		live.mu.Unlock()
+	}
+	if err := nav.Navigate(ctx, deviceID, url); err != nil {
+		updated, _ := m.Update(session.ID, func(s *RemoteRuntimeSession) {
+			s.DeviceID = deviceID
+			s.Status = "navigate-failed"
+			s.Note = fmt.Sprintf("Browser opened but navigate to %s failed: %v", url, err)
+		})
+		return updated
+	}
+	updated, _ := m.Update(session.ID, func(s *RemoteRuntimeSession) {
+		s.DeviceID = deviceID
+		s.Status = "control-ready"
+		s.Note = fmt.Sprintf("Browser opened. Navigated to %s.", url)
+	})
+	return updated
 }
 
 // iosSimBuildArgs returns the xcodebuild invocation that builds an RN/Expo iOS
@@ -1227,6 +1413,13 @@ func launchAppOnRuntimeTarget(ctx context.Context, session RemoteRuntimeSession,
 func (s *HTTPServer) ensureRemoteRuntimeManager() *RemoteRuntimeManager {
 	if s.remoteRuntimeMgr == nil {
 		s.remoteRuntimeMgr = NewRemoteRuntimeManager()
+	}
+	// Keep the dev-server pointer fresh even after lazy allocation — the
+	// devServerMgr on HTTPServer is itself lazy for some code paths, so a
+	// nil-check-and-attach on every access covers a browser-window Create
+	// that happens after the dev-server manager was created.
+	if s.remoteRuntimeMgr.devManager == nil && s.devServerMgr != nil {
+		s.remoteRuntimeMgr.SetDevServerManager(s.devServerMgr)
 	}
 	return s.remoteRuntimeMgr
 }

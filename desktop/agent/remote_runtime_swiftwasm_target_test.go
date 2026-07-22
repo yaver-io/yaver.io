@@ -16,9 +16,11 @@ package main
 // SwiftWasm app on a Linux workspace saw nothing but "Requires a macOS host".
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -216,5 +218,244 @@ func TestRNKeepsAllThreeOptions(t *testing.T) {
 	}
 	if caps.Targets[0].ID != "browser-window" {
 		t.Errorf("the cheapest lane should lead for RN, got %q", caps.Targets[0].ID)
+	}
+}
+
+// ── Create → Navigate: the blank-page fix ──────────────────────────────
+//
+// TestFlight 457 shipped a browser-window session that opened at about:blank
+// and stayed there — Create built the session but never told the browser what
+// to load, and every subsequent tap/pinch returned 200 while the frame stayed
+// empty. The tests below pin the ONE change that closed that gap: after Create
+// resolves the browser-window target, it now navigates the session at the
+// project's dev-server URL, or explains in session.Note why it could not.
+//
+// Two dimensions matter and both are tested:
+//
+//   1. WHICH PORT. Metro (RN/Expo) serves bytecode, not the web app — the RN
+//      web bundle lives on a SIBLING Expo Web process whose port is
+//      WebPreviewPort(). Flutter / Vite / Next serve the app on the primary
+//      DevServerPort(). Picking the wrong one loads a JSON error page (Metro)
+//      instead of the RN-Web app.
+//
+//   2. WHAT HAPPENS WHEN THERE IS NO DEV SERVER. Silent about:blank is the
+//      bug being fixed; a blank page WITH an explanation is acceptable, so
+//      Create returns a session whose Note names the missing prerequisite.
+
+type fakeDevServer struct {
+	running    bool
+	workDir    string
+	devPort    int // Vite / Next / Flutter — primary
+	webPreview int // Expo web sibling — the RN-Web bundle
+}
+
+func (f *fakeDevServer) IsRunning() bool { return f.running }
+func (f *fakeDevServer) Status() *DevServerStatus {
+	if !f.running {
+		return nil
+	}
+	return &DevServerStatus{WorkDir: f.workDir}
+}
+func (f *fakeDevServer) DevServerPort() int  { return f.devPort }
+func (f *fakeDevServer) WebPreviewPort() int { return f.webPreview }
+
+func TestResolveDevServerURLPicksExpoSiblingForRN(t *testing.T) {
+	// Metro on 8081 is a decoy — an RN browser-window session must NOT be
+	// pointed at DevServerPort. WebPreviewPort (Expo web sibling) is where
+	// RN-Web actually lives; that is why WebPreviewPort exists at all.
+	mgr := NewRemoteRuntimeManager()
+	mgr.SetDevServerManager(&fakeDevServer{
+		running: true, workDir: "/tmp/rn", devPort: 8081, webPreview: 8085,
+	})
+	url, reason := mgr.resolveDevServerURL("/tmp/rn", "react-native")
+	if reason != "" {
+		t.Fatalf("expected URL with a running Expo web sibling, got reason=%q", reason)
+	}
+	if !strings.Contains(url, ":8085") {
+		t.Errorf("RN must resolve to WebPreviewPort (:8085), got %q — DevServerPort would land on Metro's JSON, not the app", url)
+	}
+	if strings.Contains(url, ":8081") {
+		t.Errorf("RN must NOT resolve to Metro's port (:8081): %q", url)
+	}
+}
+
+func TestResolveDevServerURLPicksDevPortForFlutter(t *testing.T) {
+	mgr := NewRemoteRuntimeManager()
+	mgr.SetDevServerManager(&fakeDevServer{
+		running: true, workDir: "/tmp/flutter", devPort: 4200,
+	})
+	url, reason := mgr.resolveDevServerURL("/tmp/flutter", "flutter")
+	if reason != "" {
+		t.Fatalf("flutter dev server running, but resolve returned reason %q", reason)
+	}
+	if !strings.Contains(url, ":4200") {
+		t.Errorf("flutter must resolve to DevServerPort (:4200), got %q", url)
+	}
+}
+
+func TestResolveDevServerURLPicksDevPortForWeb(t *testing.T) {
+	// Vite / Next serve directly — no sibling process. DevServerPort is
+	// correct for them.
+	mgr := NewRemoteRuntimeManager()
+	mgr.SetDevServerManager(&fakeDevServer{
+		running: true, workDir: "/tmp/next", devPort: 3000,
+	})
+	for _, fw := range []string{"next", "vite", "swift"} {
+		url, reason := mgr.resolveDevServerURL("/tmp/next", fw)
+		if reason != "" {
+			t.Errorf("%s: unexpected reason %q", fw, reason)
+			continue
+		}
+		if !strings.Contains(url, ":3000") {
+			t.Errorf("%s: expected DevServerPort (:3000), got %q", fw, url)
+		}
+	}
+}
+
+func TestResolveDevServerURLExplainsMissingDevServer(t *testing.T) {
+	// No dev-server manager wired at all — legal, but Create must carry a
+	// concrete "why" not a silent about:blank. That reversal is the fix.
+	mgr := NewRemoteRuntimeManager()
+	url, reason := mgr.resolveDevServerURL("/tmp/x", "flutter")
+	if url != "" {
+		t.Fatalf("expected no URL when manager is unwired, got %q", url)
+	}
+	if reason == "" {
+		t.Fatal("silent empty reason is the bug being fixed: the viewer must see WHY the browser is blank")
+	}
+
+	// Wired but nothing running.
+	mgr.SetDevServerManager(&fakeDevServer{running: false})
+	url, reason = mgr.resolveDevServerURL("/tmp/x", "flutter")
+	if url != "" || reason == "" {
+		t.Errorf("no dev server running: want (url==\"\", reason!=\"\"), got (%q, %q)", url, reason)
+	}
+	if !strings.Contains(strings.ToLower(reason), "dev server") {
+		t.Errorf("reason should name the missing prerequisite; got %q", reason)
+	}
+}
+
+func TestResolveDevServerURLRefusesWrongProject(t *testing.T) {
+	// A dev server running for project A must NOT be silently used to load
+	// the browser-window session for project B — the viewer would think
+	// they were looking at B and be wrong.
+	mgr := NewRemoteRuntimeManager()
+	mgr.SetDevServerManager(&fakeDevServer{
+		running: true, workDir: "/tmp/other-project", devPort: 4200,
+	})
+	url, reason := mgr.resolveDevServerURL("/tmp/this-project", "flutter")
+	if url != "" {
+		t.Fatalf("must not point session at another project's dev server, got %q", url)
+	}
+	if !strings.Contains(reason, "other-project") {
+		t.Errorf("reason should name the conflicting project so the viewer can act on it, got %q", reason)
+	}
+}
+
+// ── Create → Navigate (integration seam) ──────────────────────────────
+//
+// Exercises the Create path with a recording navigator: Create stores the
+// session, resolves the dev-server URL, and calls Navigate with it. Chrome is
+// not required because the injected navigator returns success without
+// launching a real browser — this is the "fake/recording browser target that
+// captures the URL" acceptance form named in the task.
+
+type recordingBrowserNav struct {
+	attachDeviceID string
+	navigatedURL   string
+	attachCalls    int
+	navigateCalls  int
+}
+
+func (r *recordingBrowserNav) Attach(_ context.Context) (string, error) {
+	r.attachCalls++
+	if r.attachDeviceID == "" {
+		r.attachDeviceID = "fake-browser-window"
+	}
+	return r.attachDeviceID, nil
+}
+func (r *recordingBrowserNav) Navigate(_ context.Context, deviceID, url string) error {
+	r.navigateCalls++
+	r.navigatedURL = url
+	return nil
+}
+
+func TestCreateBrowserWindowNavigatesToResolvedURL(t *testing.T) {
+	if !browserBinaryAvailable() {
+		t.Skip("browser-window target requires a Chrome binary on this host to be offered by Create")
+	}
+	mgr := NewRemoteRuntimeManager()
+	mgr.SetDevServerManager(&fakeDevServer{
+		running: true, workDir: "/tmp/flutter", devPort: 4200,
+	})
+	rec := &recordingBrowserNav{}
+	mgr.SetBrowserNavigator(rec)
+
+	session, err := mgr.Create("/tmp/flutter", "flutter", "browser-window", "direct-webrtc")
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if rec.navigateCalls != 1 {
+		t.Fatalf("Navigate must be called exactly once for a browser-window Create with a running dev server; got %d", rec.navigateCalls)
+	}
+	if !strings.Contains(rec.navigatedURL, ":4200") {
+		t.Errorf("Navigate got %q; expected the resolved dev-server URL (:4200)", rec.navigatedURL)
+	}
+	if !strings.Contains(session.Note, "4200") {
+		t.Errorf("session.Note should record the destination URL for viewer diagnostics; got %q", session.Note)
+	}
+	if session.DeviceID != rec.attachDeviceID {
+		t.Errorf("session.DeviceID must carry the attached browser id (so the HTTP handler's later Attach short-circuits); got %q, want %q", session.DeviceID, rec.attachDeviceID)
+	}
+}
+
+func TestCreateBrowserWindowExplainsWhenNoDevServer(t *testing.T) {
+	if !browserBinaryAvailable() {
+		t.Skip("browser-window target requires a Chrome binary on this host to be offered by Create")
+	}
+	mgr := NewRemoteRuntimeManager()
+	// deliberately no SetDevServerManager
+	rec := &recordingBrowserNav{}
+	mgr.SetBrowserNavigator(rec)
+
+	session, err := mgr.Create("/tmp/flutter", "flutter", "browser-window", "direct-webrtc")
+	if err != nil {
+		t.Fatalf("Create must succeed and carry the reason in session.Note, not return an error: %v", err)
+	}
+	if rec.navigateCalls != 0 {
+		t.Errorf("Navigate must not be called when no dev server is available — an about:blank hit is worse than not attaching")
+	}
+	if session.Note == "" || !strings.Contains(strings.ToLower(session.Note), "dev server") {
+		t.Errorf("session.Note must explain WHY the browser is blank; got %q", session.Note)
+	}
+	if session.Status != "waiting-for-dev-server" {
+		t.Errorf("session.Status must signal the missing prerequisite so the viewer can render a call-to-action; got %q", session.Status)
+	}
+}
+
+// The RN companion of the flutter test above — verifies the WebPreviewPort
+// picking is honoured through the full Create seam, not just at the resolver.
+// This is the assertion that would have caught the whole class of bug: a green
+// "session created" plus a check that the URL Navigate got carries the RIGHT
+// port. Metro's port on an RN session is the blank-page-with-extra-steps bug.
+func TestCreateBrowserWindowForRNUsesWebPreviewPort(t *testing.T) {
+	if !browserBinaryAvailable() {
+		t.Skip("browser-window target requires a Chrome binary on this host to be offered by Create")
+	}
+	mgr := NewRemoteRuntimeManager()
+	mgr.SetDevServerManager(&fakeDevServer{
+		running: true, workDir: "/tmp/rn", devPort: 8081, webPreview: 8085,
+	})
+	rec := &recordingBrowserNav{}
+	mgr.SetBrowserNavigator(rec)
+
+	if _, err := mgr.Create("/tmp/rn", "react-native", "browser-window", "direct-webrtc"); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !strings.Contains(rec.navigatedURL, ":8085") {
+		t.Errorf("RN Create must navigate to WebPreviewPort (:8085), got %q", rec.navigatedURL)
+	}
+	if strings.Contains(rec.navigatedURL, ":8081") {
+		t.Errorf("RN Create must NOT navigate to Metro (:8081), which serves bytecode: %q", rec.navigatedURL)
 	}
 }
