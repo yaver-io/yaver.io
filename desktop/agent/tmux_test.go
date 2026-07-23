@@ -142,7 +142,9 @@ func TestMatchAgentCommand(t *testing.T) {
 		{"/usr/local/bin/claude -p hello", "claude"},
 		{"claude ", "claude"},
 		{"codex --quiet --full-auto test", "codex"},
+		{"codex-aarch64-a --model gpt-5.4", "codex"},
 		{"/home/user/.local/bin/opencode run hello", "opencode"},
+		{"/opt/homebrew/bin/opencode-darwin-arm64 run hello", "opencode"},
 		{"opencode --help", "opencode"},
 		{"bash", ""},
 		{"python3 script.py", ""},
@@ -155,6 +157,21 @@ func TestMatchAgentCommand(t *testing.T) {
 			t.Errorf("matchAgentCommand(%q) = %q, want %q", tt.cmd, got, tt.expect)
 		}
 	}
+}
+
+func tmuxPaneCount(t *testing.T, session string) int {
+	t.Helper()
+	out, err := exec.Command("tmux", "list-panes", "-t", session, "-F", "#{pane_id}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("tmux list-panes %q: %v: %s", session, err, string(out))
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func TestLastNonEmptyLines(t *testing.T) {
@@ -312,6 +329,80 @@ func TestTmuxAdoptAndDetach(t *testing.T) {
 		if s.Name == "yaver-test-adopt" && s.Relationship == "adopted" {
 			t.Error("session should no longer be adopted after detach")
 		}
+	}
+}
+
+func TestTmuxCloseAdoptedPaneKeepsSiblingPane(t *testing.T) {
+	skipIfNoTmux(t)
+	cleanup := createTestTmuxSession(t, "yaver-test-close-pane")
+	defer cleanup()
+
+	out, err := exec.Command("tmux", "split-window", "-t", "yaver-test-close-pane").CombinedOutput()
+	if err != nil {
+		t.Fatalf("tmux split-window: %v: %s", err, string(out))
+	}
+	if got := tmuxPaneCount(t, "yaver-test-close-pane"); got < 2 {
+		t.Fatalf("expected at least 2 panes before close, got %d", got)
+	}
+
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	mgr := NewTmuxManager(tm)
+	tm.TmuxMgr = mgr
+	defer mgr.Shutdown()
+
+	pane := getActivePaneIdentity("yaver-test-close-pane")
+	if pane.PaneID == "" {
+		t.Fatal("expected active pane id")
+	}
+	task, err := mgr.AdoptTarget("yaver-test-close-pane", pane.PaneID)
+	if err != nil {
+		t.Fatalf("AdoptTarget: %v", err)
+	}
+
+	if err := mgr.CloseAdoptedTask(task.ID); err != nil {
+		t.Fatalf("CloseAdoptedTask: %v", err)
+	}
+
+	if tmuxPaneExists(pane.PaneID) {
+		t.Fatalf("closed pane %s should be gone", pane.PaneID)
+	}
+	if !tmuxSessionExists("yaver-test-close-pane") {
+		t.Fatal("tmux session should survive because a sibling pane remains")
+	}
+	if got := tmuxPaneCount(t, "yaver-test-close-pane"); got != 1 {
+		t.Fatalf("expected one sibling pane after close, got %d", got)
+	}
+}
+
+func TestDeleteAdoptedTmuxTaskClosesOnlyItsPane(t *testing.T) {
+	skipIfNoTmux(t)
+	cleanup := createTestTmuxSession(t, "yaver-test-delete-pane")
+	defer cleanup()
+
+	out, err := exec.Command("tmux", "split-window", "-t", "yaver-test-delete-pane").CombinedOutput()
+	if err != nil {
+		t.Fatalf("tmux split-window: %v: %s", err, string(out))
+	}
+
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	mgr := NewTmuxManager(tm)
+	tm.TmuxMgr = mgr
+	defer mgr.Shutdown()
+
+	pane := getActivePaneIdentity("yaver-test-delete-pane")
+	task, err := mgr.AdoptTarget("yaver-test-delete-pane", pane.PaneID)
+	if err != nil {
+		t.Fatalf("AdoptTarget: %v", err)
+	}
+
+	if err := tm.DeleteTask(task.ID); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if tmuxPaneExists(pane.PaneID) {
+		t.Fatalf("deleted adopted task should close pane %s", pane.PaneID)
+	}
+	if !tmuxSessionExists("yaver-test-delete-pane") {
+		t.Fatal("tmux session should survive because a sibling pane remains")
 	}
 }
 
@@ -548,6 +639,37 @@ func TestTmuxHTTPEndpoints(t *testing.T) {
 	// Verify session still exists
 	if !tmuxSessionExists("yaver-test-http") {
 		t.Error("tmux session should still exist after detach via HTTP")
+	}
+}
+
+func TestTmuxHTTPCloseEndpoint(t *testing.T) {
+	skipIfNoTmux(t)
+	cleanup := createTestTmuxSession(t, "yaver-test-http-close")
+	defer cleanup()
+
+	token := "tmux-test-token"
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	tm.TmuxMgr = NewTmuxManager(tm)
+	defer tm.TmuxMgr.Shutdown()
+
+	baseURL, cancel := startTestServer(t, token, tm)
+	defer cancel()
+
+	status, body := doRequest(t, "POST", baseURL+"/tmux/adopt", token, `{"session":"yaver-test-http-close"}`)
+	if status != 200 {
+		t.Fatalf("POST /tmux/adopt: expected 200, got %d: %v", status, body)
+	}
+	taskID, _ := body["taskId"].(string)
+	if taskID == "" {
+		t.Fatal("expected non-empty taskId")
+	}
+
+	status, body = doRequest(t, "POST", baseURL+"/tmux/close", token, fmt.Sprintf(`{"taskId":%q}`, taskID))
+	if status != 200 {
+		t.Fatalf("POST /tmux/close: expected 200, got %d: %v", status, body)
+	}
+	if tmuxSessionExists("yaver-test-http-close") {
+		t.Fatal("single-pane tmux session should close after /tmux/close")
 	}
 }
 

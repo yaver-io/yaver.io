@@ -515,6 +515,140 @@ func (m *TmuxManager) DetachSession(taskID string) error {
 	return nil
 }
 
+// CloseAdoptedTask stops the runner in an adopted pane, then closes only that
+// pane. This is deliberately pane-scoped: one tmux session can hold claude,
+// codex, and opencode in separate panes, and closing one adopted task must not
+// kill its sibling runners. Legacy adopted tasks without a pane id fall back to
+// closing the session because there is no narrower target recorded.
+func (m *TmuxManager) CloseAdoptedTask(taskID string) error {
+	m.mu.RLock()
+	var key string
+	for k, tid := range m.adopted {
+		if tid == taskID {
+			key = k
+			break
+		}
+	}
+	m.mu.RUnlock()
+	if key == "" {
+		return fmt.Errorf("task %s is not an adopted tmux session", taskID)
+	}
+
+	m.taskMgr.mu.RLock()
+	task, ok := m.taskMgr.tasks[taskID]
+	if !ok || task == nil {
+		m.taskMgr.mu.RUnlock()
+		return fmt.Errorf("task %s not found", taskID)
+	}
+	sessionName := task.TmuxSession
+	paneID := strings.TrimSpace(task.TmuxPaneID)
+	runnerID := normalizeRunnerID(task.RunnerID)
+	m.taskMgr.mu.RUnlock()
+
+	target := sessionName
+	if paneID != "" {
+		target = paneID
+	}
+	if target == "" {
+		return fmt.Errorf("task %s has no tmux target", taskID)
+	}
+
+	if tmuxTargetExists(target) {
+		if exitCmd := tmuxRunnerExitCommand(target, runnerID); exitCmd != "" {
+			if err := sendTmuxLine(target, exitCmd); err != nil {
+				log.Printf("[tmux] graceful runner exit for task %s target %s failed: %v", taskID, target, err)
+			} else {
+				waitForTmuxRunnerExit(target, 4*time.Second)
+			}
+		}
+
+		var out []byte
+		var err error
+		if paneID != "" {
+			// tmux command API, not configured keybindings such as prefix+x+y.
+			// kill-pane removes only this runner's pane; if it is the last pane,
+			// tmux naturally closes the containing window/session.
+			out, err = exec.Command(tmuxCmdName(), "kill-pane", "-t", paneID).CombinedOutput()
+		} else {
+			// Legacy adoption before pane ids were persisted. This is the only
+			// case where closing the whole session is honest: there is no
+			// recorded pane target to preserve sibling runners.
+			out, err = exec.Command(tmuxCmdName(), "kill-session", "-t", sessionName).CombinedOutput()
+		}
+		if err != nil && tmuxTargetExists(target) {
+			return fmt.Errorf("close tmux target %s: %w: %s", target, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	if err := m.DetachSession(taskID); err != nil {
+		return err
+	}
+	log.Printf("[tmux] Closed target %q for adopted task %s", target, taskID)
+	return nil
+}
+
+func tmuxRunnerExitCommand(target, runnerID string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), vibeDefaultDeadline)
+	defer cancel()
+
+	agent, confirmed := tmuxTargetAgent(ctx, target)
+	if !confirmed {
+		return ""
+	}
+	if runnerID == "" || runnerID == "unknown" {
+		runnerID = agent
+	}
+	switch normalizeRunnerID(runnerID) {
+	case "claude":
+		return "/exit"
+	case "codex":
+		return "/exit"
+	case "opencode":
+		return "/quit"
+	default:
+		return ""
+	}
+}
+
+func waitForTmuxRunnerExit(target string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !tmuxTargetExists(target) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		_, confirmed := tmuxTargetAgent(ctx, target)
+		cancel()
+		if !confirmed {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func tmuxTargetAgent(ctx context.Context, target string) (string, bool) {
+	out, err := exec.CommandContext(ctx, tmuxCmdName(), "list-panes", "-t", target, "-F", "#{pane_active}\t#{pane_pid}\t#{pane_dead}").Output()
+	if err != nil {
+		return "", false
+	}
+	var pid int
+	var dead bool
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) < 3 {
+			continue
+		}
+		p, _ := strconv.Atoi(f[1])
+		if pid == 0 || f[0] == "1" {
+			pid, dead = p, f[2] == "1"
+		}
+	}
+	if dead {
+		return "", false
+	}
+	return detectPaneAgent(ctx, pid)
+}
+
 // tmuxSubmitDelay is the pause between typing a line and pressing Enter.
 //
 // `send-keys <text> Enter` in one call delivers both before a TUI has finished
@@ -966,6 +1100,18 @@ func detectAgentType(pid int) string {
 // matchAgentCommand matches a process command string against known agent binaries.
 func matchAgentCommand(cmd string) string {
 	cmd = strings.ToLower(cmd)
+	fields := strings.Fields(cmd)
+	if len(fields) > 0 {
+		bin := fields[0]
+		if slash := strings.LastIndex(bin, "/"); slash >= 0 {
+			bin = bin[slash+1:]
+		}
+		for binary, agentType := range knownAgentBinaries {
+			if bin == binary || strings.HasPrefix(bin, binary+"-") {
+				return agentType
+			}
+		}
+	}
 	for binary, agentType := range knownAgentBinaries {
 		// Match the binary name at a word boundary (avoid false positives)
 		// Check if the binary name appears as a standalone command or path component

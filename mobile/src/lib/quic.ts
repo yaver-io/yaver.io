@@ -891,6 +891,7 @@ export interface VibePane {
   paneIndex?: string;
   active: boolean;
   agent?: string;
+  model?: string;
   /** True only when a real agent process was OBSERVED. False means typing here
    *  would run a shell command, not send a prompt. */
   agentConfirmed: boolean;
@@ -4365,6 +4366,20 @@ export class QuicClient {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || `Failed to detach: ${res.status}`);
+    }
+  }
+
+  /** Stop the adopted runner and close only its tmux pane. */
+  async closeTmuxTask(taskId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tmux/close`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ taskId }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Failed to close tmux pane: ${res.status}`);
     }
   }
 

@@ -3695,12 +3695,18 @@ export default function TasksScreen() {
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId) || (selectedTask?.id === taskId ? selectedTask : undefined);
     // Close detail modal if this task is open
     if (selectedTask?.id === taskId) setSelectedTask(null);
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     // Remember deletion so it won't reappear after refresh/re-login
     markTaskDeleted(taskId);
     try {
+      if (task?.isAdopted && task.tmuxSession) {
+        await quicClient.closeTmuxTask(taskId).catch((e) => {
+          console.warn("[Tasks] Tmux close before delete failed:", e);
+        });
+      }
       await quicClient.deleteTask(taskId);
     } catch (e) {
       // Ignore errors — task is already removed locally and marked as deleted
@@ -3756,10 +3762,16 @@ export default function TasksScreen() {
             const ids = active.map((t) => t.id);
             // Optimistic: drop them locally so the list clears immediately.
             setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
-            try { await quicClient.stopAllTasks(); } catch (e) { console.warn("[Tasks] Stop (for remove) failed:", e); }
             await Promise.all(ids.map((id) => markTaskDeleted(id).catch(() => {})));
             try {
-              await Promise.all(ids.map((id) => quicClient.deleteTask(id).catch(() => {})));
+              await Promise.all(active.map(async (task) => {
+                if (task.isAdopted && task.tmuxSession) {
+                  await quicClient.closeTmuxTask(task.id).catch(() => {});
+                } else {
+                  await quicClient.stopTask(task.id).catch(() => {});
+                }
+                await quicClient.deleteTask(task.id).catch(() => {});
+              }));
             } finally {
               await fetchTasks();
             }
@@ -3775,6 +3787,9 @@ export default function TasksScreen() {
     setTasks((prev) => prev.filter((t) => t.status === "running" || t.status === "queued"));
     await Promise.all(deletable.map((t) => markTaskDeleted(t.id)));
     try {
+      await Promise.all(deletable.map((task) => (
+        task.isAdopted && task.tmuxSession ? quicClient.closeTmuxTask(task.id).catch(() => {}) : Promise.resolve()
+      )));
       await quicClient.deleteAllTasks();
       await fetchTasks();
     } catch (e) {
@@ -3883,12 +3898,27 @@ export default function TasksScreen() {
   const handleDetachTmuxSession = async (taskId: string) => {
     try {
       await quicClient.detachTmuxSession(taskId);
-      await fetchTasks();
+      await markTaskDeleted(taskId);
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setTmuxSessions(await quicClient.listTmuxSessions());
       // If we're viewing this task, close the detail modal
       if (selectedTask?.id === taskId) setSelectedTask(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert("Detach Failed", msg);
+    }
+  };
+
+  const handleCloseTmuxTask = async (taskId: string) => {
+    try {
+      await quicClient.closeTmuxTask(taskId);
+      await markTaskDeleted(taskId);
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setTmuxSessions(await quicClient.listTmuxSessions());
+      if (selectedTask?.id === taskId) setSelectedTask(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert("Close Failed", msg);
     }
   };
 
@@ -5735,10 +5765,15 @@ export default function TasksScreen() {
                   onDetach={() => {
                     Alert.alert(
                       "Detach Session",
-                      `Stop monitoring "${selectedTask.tmuxSession || "tmux session"}"? The session will keep running.`,
+                      `Remove "${selectedTask.tmuxSession || "tmux session"}" from Tasks? The tmux pane and runner keep running.`,
                       [
                         { text: "Cancel", style: "cancel" },
                         { text: "Detach", onPress: () => handleDetachTmuxSession(selectedTask.id) },
+                        {
+                          text: "Close Runner",
+                          style: "destructive",
+                          onPress: () => handleCloseTmuxTask(selectedTask.id),
+                        },
                       ]
                     );
                   }}
@@ -6291,7 +6326,7 @@ export default function TasksScreen() {
         </Modal>
         {/* ── Tmux Sessions Modal ────────────────────────────────── */}
         <Modal visible={showTmuxSessions} animationType="slide" transparent onDismiss={flushAfterDismiss} onRequestClose={() => setShowTmuxSessions(false)}>
-          <View style={s.logsModalOverlay}>
+          <View style={[s.logsModalOverlay, { backgroundColor: c.bg }]}>
             <Pressable style={{ height: 80 }} onPress={() => setShowTmuxSessions(false)} />
             <View style={[s.logsModal, { backgroundColor: c.bg }]}>
               <View style={[s.logsHeader, { borderBottomColor: c.border }]}>
@@ -6323,7 +6358,11 @@ export default function TasksScreen() {
                   tmuxSessions.map((session) => {
                     const isBeingAdopted = isAdopting === session.name;
                     const alreadyAdopted = session.relationship === "adopted";
-                    const agent = session.agentType || "shell";
+                    const activePane = session.panes?.find((pane) => pane.active);
+                    const confirmedPaneAgent = activePane?.agentConfirmed && activePane.agent && activePane.agent !== "shell"
+                      ? activePane.agent
+                      : undefined;
+                    const runnerLabel = confirmedPaneAgent || (session.agentType ? session.agentType : "");
 
                     return (
                       <View
@@ -6334,8 +6373,8 @@ export default function TasksScreen() {
                           <View style={{ flex: 1 }}>
                             <Text style={[s.tmuxName, { color: c.textPrimary }]}>{session.name}</Text>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
-                              <View style={[s.statusBadge, { backgroundColor: agent !== "shell" ? "#22c55e22" : "#a1a1aa22" }]}>
-                                <Text style={[s.statusText, { color: agent !== "shell" ? "#22c55e" : "#a1a1aa" }]}>{agent}</Text>
+                              <View style={[s.statusBadge, { backgroundColor: runnerLabel ? "#22c55e22" : "#a1a1aa22" }]}>
+                                <Text style={[s.statusText, { color: runnerLabel ? "#22c55e" : "#a1a1aa" }]}>{runnerLabel || "shell"}</Text>
                               </View>
                               <Text style={{ color: c.textMuted, fontSize: 11 }}>
                                 {session.windows} window{session.windows !== 1 ? "s" : ""}
@@ -6343,7 +6382,7 @@ export default function TasksScreen() {
                               </Text>
                             </View>
                             <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }} numberOfLines={1}>
-                              {[session.id, session.windowIndex !== undefined ? `w${session.windowIndex}` : "", session.paneId || (session.paneIndex !== undefined ? `p${session.paneIndex}` : "")]
+                              {["session " + (session.id || session.name), session.windowIndex !== undefined ? `w${session.windowIndex}` : "", session.paneId || (session.paneIndex !== undefined ? `p${session.paneIndex}` : "")]
                                 .filter(Boolean)
                                 .join(" · ")}
                               {session.windowName ? ` · ${session.windowName}` : ""}
@@ -6370,7 +6409,85 @@ export default function TasksScreen() {
                         ) : null}
 
                         {/* Action button */}
-                        {alreadyAdopted ? (
+                        {session.relationship !== "forked-by-yaver" && (session.panes?.length ?? 0) > 1 ? (
+                          // A split window is several agents, so offer one row
+                          // each rather than a single "Adopt Session" that
+                          // silently picks whichever pane is active.
+                          <View style={{ marginTop: 10, gap: 6 }}>
+                            {session.panes!.map((pane) => {
+                              const paneKey = `${session.name}#${pane.paneId}`;
+                              const busy = isAdopting === paneKey;
+                              const paneRunner = pane.agentConfirmed && pane.agent && pane.agent !== "shell" ? pane.agent : "shell";
+                              const tone = pane.status === "awaiting-input" ? "#f59e0b"
+                                : pane.status === "working" ? "#22c55e"
+                                : pane.status === "no-agent" ? "#a1a1aa" : c.textMuted;
+                              return pane.taskId ? (
+                                <View key={pane.paneId} style={[s.tmuxPaneActionRow, { borderColor: c.borderSubtle }]}>
+                                  <Text style={[s.tmuxPaneLabel, { color: c.textSecondary }]} numberOfLines={1}>
+                                    {paneRunner} · {session.id || session.name} · {pane.paneId}
+                                  </Text>
+                                  <View style={{ flexDirection: "row", gap: 6 }}>
+                                    <Pressable
+                                      style={[s.tmuxPaneActionBtn, { backgroundColor: c.accent + "18" }]}
+                                      onPress={() => {
+                                        setShowTmuxSessions(false);
+                                        const task = tasks.find(t => t.id === pane.taskId);
+                                        if (task) setSelectedTask(task);
+                                      }}
+                                    >
+                                      <Text style={[s.tmuxActionText, { color: c.accent }]}>View</Text>
+                                    </Pressable>
+                                    <Pressable
+                                      style={[s.tmuxPaneActionBtn, { backgroundColor: "#ef444418" }]}
+                                      onPress={() => {
+                                        Alert.alert(
+                                          "Detach Runner",
+                                          `Remove ${paneRunner} ${pane.paneId} from Tasks? The tmux pane and runner keep running.`,
+                                          [
+                                            { text: "Cancel", style: "cancel" },
+                                            { text: "Detach", style: "destructive", onPress: () => pane.taskId && handleDetachTmuxSession(pane.taskId) },
+                                          ]
+                                        );
+                                      }}
+                                    >
+                                      <Text style={[s.tmuxActionText, { color: "#ef4444" }]}>Detach</Text>
+                                    </Pressable>
+                                    <Pressable
+                                      style={[s.tmuxPaneActionBtn, { backgroundColor: "#f9731618" }]}
+                                      onPress={() => {
+                                        Alert.alert(
+                                          "Close Runner",
+                                          `Send exit and close only ${paneRunner} ${pane.paneId}? Other panes in ${session.name} keep running.`,
+                                          [
+                                            { text: "Cancel", style: "cancel" },
+                                            { text: "Close", style: "destructive", onPress: () => pane.taskId && handleCloseTmuxTask(pane.taskId) },
+                                          ]
+                                        );
+                                      }}
+                                    >
+                                      <Text style={[s.tmuxActionText, { color: "#f97316" }]}>Close</Text>
+                                    </Pressable>
+                                  </View>
+                                </View>
+                              ) : (
+                                <Pressable
+                                  key={pane.paneId}
+                                  style={[s.tmuxActionBtn, { backgroundColor: "#8b5cf618" }, busy && s.submitButtonDisabled]}
+                                  onPress={() => handleAdoptTmuxSession(session.name, pane.paneId)}
+                                  disabled={busy}
+                                >
+                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                    {busy ? <ActivityIndicator size="small" color="#8b5cf6" /> : null}
+                                    <Text style={[s.tmuxActionText, { color: "#8b5cf6" }]} numberOfLines={1}>
+                                      Adopt {paneRunner} · {session.id || session.name} · {pane.paneId}
+                                    </Text>
+                                    <Text style={{ color: tone, fontSize: 11 }}>{pane.status}</Text>
+                                  </View>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : alreadyAdopted ? (
                           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
                             <Pressable
                               style={[s.tmuxActionBtn, { backgroundColor: c.accent + "18", flex: 1 }]}
@@ -6388,13 +6505,11 @@ export default function TasksScreen() {
                               onPress={() => {
                                 Alert.alert(
                                   "Detach Session",
-                                  `Stop monitoring "${session.name}"? The tmux session will keep running.`,
+                                  `Remove "${session.name}" from Tasks? The tmux pane and runner keep running.`,
                                   [
                                     { text: "Cancel", style: "cancel" },
                                     { text: "Detach", style: "destructive", onPress: () => {
                                       if (session.taskId) handleDetachTmuxSession(session.taskId);
-                                      // Refresh list
-                                      handleOpenTmuxSessions();
                                     }},
                                   ]
                                 );
@@ -6402,35 +6517,23 @@ export default function TasksScreen() {
                             >
                               <Text style={[s.tmuxActionText, { color: "#ef4444" }]}>Detach</Text>
                             </Pressable>
-                          </View>
-                        ) : session.relationship !== "forked-by-yaver" && (session.panes?.length ?? 0) > 1 ? (
-                          // A split window is several agents, so offer one row
-                          // each rather than a single "Adopt Session" that
-                          // silently picks whichever pane is active.
-                          <View style={{ marginTop: 10, gap: 6 }}>
-                            {session.panes!.map((pane) => {
-                              const paneKey = `${session.name}#${pane.paneId}`;
-                              const busy = isAdopting === paneKey;
-                              const tone = pane.status === "awaiting-input" ? "#f59e0b"
-                                : pane.status === "working" ? "#22c55e"
-                                : pane.status === "no-agent" ? "#a1a1aa" : c.textMuted;
-                              return (
-                                <Pressable
-                                  key={pane.paneId}
-                                  style={[s.tmuxActionBtn, { backgroundColor: "#8b5cf618" }, busy && s.submitButtonDisabled]}
-                                  onPress={() => handleAdoptTmuxSession(session.name, pane.paneId)}
-                                  disabled={busy || !!pane.taskId}
-                                >
-                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                                    {busy ? <ActivityIndicator size="small" color="#8b5cf6" /> : null}
-                                    <Text style={[s.tmuxActionText, { color: "#8b5cf6" }]} numberOfLines={1}>
-                                      {pane.taskId ? "Adopted" : "Adopt"} {pane.agent || "shell"} · {pane.paneId}
-                                    </Text>
-                                    <Text style={{ color: tone, fontSize: 11 }}>{pane.status}</Text>
-                                  </View>
-                                </Pressable>
-                              );
-                            })}
+                            <Pressable
+                              style={[s.tmuxActionBtn, { backgroundColor: "#f9731618" }]}
+                              onPress={() => {
+                                Alert.alert(
+                                  "Close Runner",
+                                  `Send exit and close only this runner pane in "${session.name}"? Other panes in the tmux session keep running.`,
+                                  [
+                                    { text: "Cancel", style: "cancel" },
+                                    { text: "Close Runner", style: "destructive", onPress: () => {
+                                      if (session.taskId) handleCloseTmuxTask(session.taskId);
+                                    }},
+                                  ]
+                                );
+                              }}
+                            >
+                              <Text style={[s.tmuxActionText, { color: "#f97316" }]}>Close</Text>
+                            </Pressable>
                           </View>
                         ) : session.relationship !== "forked-by-yaver" ? (
                           <Pressable
@@ -6843,6 +6946,9 @@ const s = StyleSheet.create({
   tmuxPreviewText: { fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 16 },
   tmuxActionBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, alignItems: "center" },
   tmuxActionText: { fontSize: 13, fontWeight: "600" },
+  tmuxPaneActionRow: { borderWidth: 1, borderRadius: 8, padding: 8, gap: 8 },
+  tmuxPaneLabel: { fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+  tmuxPaneActionBtn: { paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, alignItems: "center" },
 });
 
 // Markdown styles

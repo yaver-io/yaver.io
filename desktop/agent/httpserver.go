@@ -804,6 +804,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/tmux/sessions", s.auth(s.handleTmuxSessions))
 	mux.HandleFunc("/tmux/adopt", s.auth(s.handleTmuxAdopt))
 	mux.HandleFunc("/tmux/detach", s.auth(s.handleTmuxDetach))
+	mux.HandleFunc("/tmux/close", s.auth(s.handleTmuxClose))
 	mux.HandleFunc("/tmux/input", s.auth(s.handleTmuxInput))
 
 	// Notifications
@@ -18713,6 +18714,31 @@ func (s *HTTPServer) handleTmuxDetach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "detached"})
+}
+
+// POST /tmux/close — stop the adopted runner, then close only its tmux pane.
+func (s *HTTPServer) handleTmuxClose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tmuxMgr := s.taskMgr.TmuxMgr
+	if tmuxMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tmux not available"})
+		return
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TaskID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing taskId"})
+		return
+	}
+	if err := tmuxMgr.CloseAdoptedTask(body.TaskID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }
 
 // POST /tmux/input — send keyboard input to an adopted tmux session

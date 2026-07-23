@@ -1693,7 +1693,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		RedactPII:                   opts.RedactPII,
 		ResumeLast:                  opts.ResumeLast,
 		SessionID:                   opts.ResumeSessionID,
-		Turns: initialTurns,
+		Turns:                       initialTurns,
 	}
 	if len(verbosityCtx) > 0 && verbosityCtx[0] != nil {
 		task.TaskVerbosity = verbosityCtx[0]
@@ -3704,13 +3704,21 @@ func (tm *TaskManager) DeleteTask(id string) error {
 		return fmt.Errorf("task %s not found", id)
 	}
 	isRunning := task.Status == TaskStatusRunning || task.Status == TaskStatusQueued
+	isAdoptedTmux := task.IsAdopted && task.TmuxSession != "" && tm.TmuxMgr != nil
 	tm.mu.RUnlock()
 
 	// Auto-stop running tasks before deleting
 	if isRunning {
-		log.Printf("[task %s] Stopping running task before delete", id)
-		if err := tm.StopTask(id); err != nil {
-			log.Printf("[task %s] Stop failed during delete: %v", id, err)
+		if isAdoptedTmux {
+			log.Printf("[task %s] Closing adopted tmux runner before delete", id)
+			if err := tm.TmuxMgr.CloseAdoptedTask(id); err != nil {
+				log.Printf("[task %s] Tmux close failed during delete: %v", id, err)
+			}
+		} else {
+			log.Printf("[task %s] Stopping running task before delete", id)
+			if err := tm.StopTask(id); err != nil {
+				log.Printf("[task %s] Stop failed during delete: %v", id, err)
+			}
 		}
 		// Wait briefly for process cleanup
 		select {

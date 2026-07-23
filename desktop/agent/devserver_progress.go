@@ -117,6 +117,15 @@ var (
 	)
 	// "Starting Metro Bundler" — phase change
 	rxStartingMetro = regexp.MustCompile(`(?i)Starting\s+Metro\s+Bundler`)
+
+	// Flutter web (`flutter run -d web-server`) stage markers. Flutter emits
+	// no percentages, so we surface SUMMARIZED phases only — pub get →
+	// compiling → launching → serving — which is exactly what the mobile
+	// preview shows while it waits ("Running pub get", "Compiling", …).
+	rxFlutterPubGet    = regexp.MustCompile(`(?i)(Running .flutter pub get|Resolving dependencies|Got dependencies)`)
+	rxFlutterLaunching = regexp.MustCompile(`(?i)Launching .* on (Web Server|Chrome)`)
+	rxFlutterCompiling = regexp.MustCompile(`(?i)(Compiling .* for the Web|Waiting for connection from debug service)`)
+	rxFlutterServed    = regexp.MustCompile(`(?i)is being served at`)
 )
 
 // progressTracker is owned by a baseDevServer; it parses log lines as
@@ -164,6 +173,31 @@ func newProgressTracker(emit func(DevServerEvent), framework, topic, surface str
 // snapshot every 5s anyway for ground truth.
 func (p *progressTracker) FeedLine(line string) {
 	if line == "" {
+		return
+	}
+
+	// ── Flutter web summarized stages (no percentages) ──
+	// pub get → launching → compiling → serving. These are the ONLY signals
+	// Flutter emits, and they map 1:1 to what the mobile preview shows.
+	if rxFlutterServed.MatchString(line) {
+		p.transitionPhase("ready")
+		p.mu.Lock()
+		p.currentPct = 100
+		p.currentSrc = "exact"
+		p.mu.Unlock()
+		p.emitProgress(true /*force*/)
+		return
+	}
+	if rxFlutterCompiling.MatchString(line) {
+		p.transitionPhase("compiling")
+		return
+	}
+	if rxFlutterLaunching.MatchString(line) {
+		p.transitionPhase("launching")
+		return
+	}
+	if rxFlutterPubGet.MatchString(line) {
+		p.transitionPhase("installing_deps")
 		return
 	}
 
