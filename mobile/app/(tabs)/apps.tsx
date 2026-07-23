@@ -34,6 +34,7 @@ import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
+import { isWebServedStatus } from "../../src/lib/devLane";
 import { applyPreviewCapabilities, guardYaverSelfDevelopmentActions, isHermesMobileFramework } from "../../src/lib/mobileProjectActions";
 import { runtimeSurfaceClient } from "../../src/lib/runtimeSurfaceClient";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
@@ -470,6 +471,24 @@ export default function AppsScreen() {
   const [deepShuffleStep, setDeepShuffleStep] = useState("");
   const [projectsDiscovering, setProjectsDiscovering] = useState(false);
   const webViewRef = useRef<WebView>(null);
+  // Browser-preview cold-start retry budget (see the WebView onError/onHttpError
+  // below). A web dev server can take up to a minute to compile on first open.
+  const webPreviewRetryRef = useRef(0);
+  const webPreviewErroredRef = useRef(false);
+  const webPreviewRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (webPreviewRetryTimer.current) clearTimeout(webPreviewRetryTimer.current); }, []);
+  const scheduleWebPreviewRetry = useCallback(() => {
+    webPreviewErroredRef.current = true;
+    setWebViewLoading(false);
+    if (webPreviewRetryRef.current >= 30) {
+      setShowWebView(false);
+      Alert.alert("Dev server didn't come up", "The web dev server didn't start in time. Check the machine is reachable and the project builds.");
+      return;
+    }
+    webPreviewRetryRef.current += 1;
+    if (webPreviewRetryTimer.current) clearTimeout(webPreviewRetryTimer.current);
+    webPreviewRetryTimer.current = setTimeout(() => setWebViewKey((k) => k + 1), 2500);
+  }, []);
 
   // Remote Box switch — clear stale per-box state immediately, then
   // kick a fresh scan ONCE the new device's QuicClient is actually
@@ -595,6 +614,20 @@ export default function AppsScreen() {
     const projectPath = selectedProject?.path || "";
     const isRunning = !!projectPath && devStatus?.workDir === projectPath;
     if (isRunning) {
+      // BROWSER LANE FIRST: a web-served dev server (Browser Reload → the agent
+      // serves the web target, devMode="web") opens the WebView preview — for
+      // ANY framework, including Flutter over relay. Previously a running Flutter
+      // server fell through to handleFlushMobile (a LAN flush BUILD) whenever the
+      // connection wasn't direct, so "Browser Reload" of e-mobile over relay tried
+      // to LAN-flush and did nothing useful. The browser lane has no LAN coupling.
+      if (isWebServedStatus({ platform: devStatus?.platform, devMode: devStatus?.devMode })) {
+        webPreviewRetryRef.current = 0;
+
+        setWebViewKey((k) => k + 1);
+        setWebViewLoading(true);
+        setShowWebView(true);
+        return;
+      }
       if (isHermesMobileFramework(devStatus?.framework)) {
         handleOpenNative(devStatus!.workDir!, devStatus?.framework);
       } else if (devStatus?.framework === "flutter") {
@@ -821,11 +854,17 @@ export default function AppsScreen() {
         });
         // Rendering is NOT a task. Do NOT spawn a coding task or navigate to
         // Tasks — the agent starts the dev server directly (it handles flutter
-        // web / expo web itself), and DevPreview polls /dev/status and renders
-        // the preview inline with a loading state ("Starting … dev server").
-        // The old fallback spawned an OpenCode task and jumped to Tasks, which
-        // is exactly the "goes to a new widget" behaviour we don't want.
+        // web / expo web itself). Open the full-screen browser preview RIGHT HERE
+        // so the user sees the remote runtime come up (WebView + loading bar +
+        // Reload), instead of the action sheet closing to a blank Projects list
+        // with the progress hidden on the Tasks tab. The WebView auto-retries
+        // while the web server is still compiling (onError below).
         setActionSheet(null);
+        webPreviewRetryRef.current = 0;
+
+        setWebViewKey((k) => k + 1);
+        setWebViewLoading(true);
+        setShowWebView(true);
       } catch (e) {
         const err = e as Error & {
           kind?: "missing-runtime";
@@ -1604,11 +1643,13 @@ export default function AppsScreen() {
                 <Text style={[s.cardMeta, { color: "#86efac" }]}>
                   mode · {devServerBuilding
                     ? "build in progress"
-                    : isHermesMobileFramework(devStatus.framework)
-                      ? (devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver")
-                      : devStatus.framework === "flutter"
-                        ? "LAN app reload (second class)"
-                        : "native mobile flow"}
+                    : isWebServedStatus({ platform: devStatus.platform, devMode: devStatus.devMode })
+                      ? "browser preview"
+                      : isHermesMobileFramework(devStatus.framework)
+                        ? (devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver")
+                        : devStatus.framework === "flutter"
+                          ? "LAN app reload (second class)"
+                          : "native mobile flow"}
                 </Text>
                 {devStatus.iosInstallReason ? (
                   <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
@@ -2500,8 +2541,32 @@ export default function AppsScreen() {
             key={webViewKey}
             source={{ uri: bundleUrl }}
             style={{ flex: 1, backgroundColor: c.bg }}
-            onLoadEnd={() => setWebViewLoading(false)}
-            onError={() => setWebViewLoading(false)}
+            onLoadStart={() => { webPreviewErroredRef.current = false; }}
+            onLoadEnd={() => {
+              setWebViewLoading(false);
+              if (!webPreviewErroredRef.current) webPreviewRetryRef.current = 0;
+            }}
+            // Cold start: a Flutter/expo/vite web server takes 10-60s to compile
+            // and bind. Until then the agent's /dev/ proxy returns 503
+            // {status:"starting"} or refuses the connection. Auto-retry (up to
+            // ~30×2.5s ≈ 75s) instead of leaving a dead error page — same policy
+            // as DevPreview's browser lane, so both surfaces behave identically.
+            onHttpError={(e) => {
+              if (e.nativeEvent.statusCode >= 500) scheduleWebPreviewRetry();
+            }}
+            onError={() => scheduleWebPreviewRetry()}
+            startInLoadingState
+            renderLoading={() => (
+              <View style={s.webPreviewStarting}>
+                <ActivityIndicator size="large" color={c.accent} />
+                <Text style={[s.webPreviewStartingText, { color: c.textPrimary }]}>
+                  Starting {devStatus?.framework || "web"} dev server…
+                </Text>
+                <Text style={[s.webPreviewStartingSub, { color: c.textMuted }]}>
+                  First web compile can take up to a minute — retrying automatically.
+                </Text>
+              </View>
+            )}
             javaScriptEnabled
             domStorageEnabled
             allowsInlineMediaPlayback
@@ -2517,6 +2582,9 @@ export default function AppsScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1 },
   container: { flex: 1 },
+  webPreviewStarting: { flex: 1, justifyContent: "center", alignItems: "center", gap: 10, padding: 24 },
+  webPreviewStartingText: { fontSize: 15, fontWeight: "600", textAlign: "center" },
+  webPreviewStartingSub: { fontSize: 12, textAlign: "center", lineHeight: 17 },
 
   // Repos row (monorepo roots + standalone repos)
   reposSection: { marginTop: 12, marginBottom: 4 },
