@@ -337,6 +337,12 @@ function Section({ title, children, c, s, empty }: { title: string; children?: R
   );
 }
 
+const ROLE_BLURB: Record<"dev" | "normie" | "viewer", string> = {
+  dev: "Codes, pushes to a feature branch, opens PRs, can deploy.",
+  normie: "Codes with AI on their own branch. Cannot deploy.",
+  viewer: "Observes only — no code changes.",
+};
+
 function Choice({ label, active, onPress, c, s }: { label: string; active: boolean; onPress: () => void; c: ThemeColors; s: any }) {
   return (
     <Pressable onPress={onPress} style={[s.choice, { borderColor: active ? c.accent : c.border, backgroundColor: active ? c.accentSoft : "transparent" }]}>
@@ -386,6 +392,10 @@ function OwnedCard({ share, c, s, busy, act }: { share: OwnedProjectShare; c: Th
           <Choice key={r} label={r} active={role === r} onPress={() => setRole(r)} c={c} s={s} />
         ))}
       </View>
+      {/* Mirrors web CollabView's ROLE_BLURB. Keep both to what the agent
+          actually enforces (desktop/agent/guest_project_role.go) — the role
+          picker shipped for months with no enforcement behind it at all. */}
+      <Text style={[s.sub, { color: c.textMuted, marginTop: 6 }]}>{ROLE_BLURB[role]}</Text>
 
       {others.map((m) => (
         <View key={m.userId || m.email} style={[s.memberRow, { borderTopColor: c.borderSubtle }]}>

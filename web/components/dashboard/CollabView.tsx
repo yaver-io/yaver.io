@@ -41,10 +41,17 @@ function friendlyError(e: unknown): string {
   return msg;
 }
 
+// Keep these strings to what the agent ACTUALLY enforces
+// (desktop/agent/guest_project_role.go). Until 2026-07-23 "normie" promised
+// "No deploy, no main" while nothing role-shaped ever reached the agent — the
+// role was purely decorative and a normie was a full teammate. Deploy is now
+// enforced; branch-pin and PR-only are carried on the grant but not yet
+// honored by the git seam, so they are described as intent ("works on their
+// own branch") rather than as a restriction the product guarantees.
 const ROLE_BLURB: Record<ProjectRole, string> = {
   owner: "Full control.",
   dev: "Codes, pushes to a feature branch, opens PRs, can deploy.",
-  normie: "Codes with AI on their own branch, opens PRs. No deploy, no main.",
+  normie: "Codes with AI on their own branch. Cannot deploy.",
   viewer: "Observes only — no code changes.",
 };
 
