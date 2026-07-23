@@ -8,11 +8,11 @@ import "testing"
 // progress bar back to stuck-at-0%.
 func TestRxMetroPctMatchesModernAndLegacyFormats(t *testing.T) {
 	cases := []struct {
-		name        string
-		line        string
-		wantPct     string
-		wantDone    string
-		wantTotal   string
+		name         string
+		line         string
+		wantPct      string
+		wantDone     string
+		wantTotal    string
 		wantPlatform string // matched group 0 covers prefix; the regex itself doesn't capture platform separately
 	}{
 		{
@@ -94,4 +94,65 @@ func TestRxBundleCompleteMatchesModernAndLegacy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFlutterWebStagesEmitSummarizedPhases is a closed-loop check that Flutter's
+// stdout (which has NO percentages) is translated into the summarized phase
+// progression the mobile preview shows: pub get → launching → compiling →
+// serving(ready). It locks the "black screen with no signal" incident shut:
+// before this, Flutter output produced ZERO phase events, so the phone had
+// nothing to show while `flutter run -d web-server` compiled for ~30s.
+func TestFlutterWebStagesEmitSummarizedPhases(t *testing.T) {
+	var phases []string
+	emit := func(e DevServerEvent) {
+		if e.Type == "phase" && e.Phase != "" {
+			phases = append(phases, e.Phase)
+		}
+	}
+	tr := newProgressTracker(emit, "flutter", "dev/start", "web-reload")
+	// Verbatim lines from a real `flutter run -d web-server` session.
+	for _, l := range []string{
+		`Running "flutter pub get" in e-mobile...`,
+		`Launching lib/main.dart on Web Server in debug mode...`,
+		`Compiling lib/main.dart for the Web...`,
+		`Waiting for connection from debug service on Web Server...`, // still compiling; must NOT double-emit
+		`lib/main.dart is being served at http://127.0.0.1:9100`,
+	} {
+		tr.FeedLine(l)
+	}
+	want := []string{"installing_deps", "launching", "compiling", "ready"}
+	if !isSubsequence(phases, want) {
+		t.Fatalf("flutter phases = %v, want it to contain subsequence %v", phases, want)
+	}
+	// "ready" must be the terminal phase.
+	if phases[len(phases)-1] != "ready" {
+		t.Fatalf("last flutter phase = %q, want \"ready\"", phases[len(phases)-1])
+	}
+}
+
+// TestFlutterServedIsRecognizedAcrossPorts guards the readiness marker — the
+// exact line Flutter prints when the web build is finally available.
+func TestFlutterServedIsRecognizedAcrossPorts(t *testing.T) {
+	for _, l := range []string{
+		`lib/main.dart is being served at http://127.0.0.1:9100`,
+		`lib/main.dart is being served at http://localhost:8080`,
+	} {
+		if !rxFlutterServed.MatchString(l) {
+			t.Fatalf("rxFlutterServed did not match served line: %q", l)
+		}
+	}
+	// A compile-error line must NOT be mistaken for "served".
+	if rxFlutterServed.MatchString(`No file or variants found for asset: .env.`) {
+		t.Fatal("rxFlutterServed matched a compile-error line")
+	}
+}
+
+func isSubsequence(haystack, needle []string) bool {
+	i := 0
+	for _, h := range haystack {
+		if i < len(needle) && h == needle[i] {
+			i++
+		}
+	}
+	return i == len(needle)
 }

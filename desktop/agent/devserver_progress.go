@@ -46,15 +46,22 @@ import (
 // Regex bank — match what the actual tools emit.
 //
 // Metro (Expo SDK 51+) prints during a bundle, e.g.
-//   "iOS Bundling 67.3% (1247/2390)"
-//   "Web Bundling 24% (300/1234)"
-//   "Web Bundling complete 5678ms"
+//
+//	"iOS Bundling 67.3% (1247/2390)"
+//	"Web Bundling 24% (300/1234)"
+//	"Web Bundling complete 5678ms"
+//
 // Bare React Native CLI emits
-//   "Bundling: [============>            ]  68% (1547/2274)"
+//
+//	"Bundling: [============>            ]  68% (1547/2274)"
+//
 // Webpack-via-Expo-Web emits
-//   "  ⠼ Compiling 42 of 1234 modules"
+//
+//	"  ⠼ Compiling 42 of 1234 modules"
+//
 // Hermesc with --profile emits
-//   "Generating bytecode: 5384192 bytes / 7842816 bytes"
+//
+//	"Generating bytecode: 5384192 bytes / 7842816 bytes"
 //
 // We intentionally accept multiple shapes and converge on a single
 // canonical Progress event — the consumer sees one shape regardless
@@ -134,10 +141,10 @@ var (
 // idle (no progress lines for >2s), it stops emitting deltas — but
 // the manager's 5s snapshot loop still keeps the consumer informed.
 type progressTracker struct {
-	emit       func(DevServerEvent)
-	framework  string
-	topic      string // "dev/start" | "webview/build" | "hermes/compile"
-	surface    string // "hot-reload" | "web-reload"
+	emit      func(DevServerEvent)
+	framework string
+	topic     string // "dev/start" | "webview/build" | "hermes/compile"
+	surface   string // "hot-reload" | "web-reload"
 
 	mu              sync.Mutex
 	currentPhase    string
