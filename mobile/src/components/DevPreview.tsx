@@ -475,11 +475,15 @@ export function DevPreview() {
   const metaLine = [frameworkLabel, portLabel, hotReloadLabel].filter(Boolean).join(" · ");
   const modeLine = status.building
     ? "build in progress"
-    : (status.iosInstallMethod === "native"
-        ? "native install"
-        : frameworkLabel.toLowerCase() === "flutter"
-          ? "LAN app reload"
-          : "Hermes bundle in Yaver");
+    // Browser lane (web-served): the preview is the web target in a WebView,
+    // not a native/Hermes install. Label it as such instead of "native install".
+    : String(status.platform || "").toLowerCase() === "web"
+      ? "browser preview"
+      : (status.iosInstallMethod === "native"
+          ? "native install"
+          : frameworkLabel.toLowerCase() === "flutter"
+            ? "LAN app reload"
+            : "Hermes bundle in Yaver");
   const targetLabel = status.targetDeviceName || "this device";
   const isBusy = !!status.building || nativeLoading;
   const openLabel = status.building

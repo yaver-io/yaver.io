@@ -2196,22 +2196,8 @@ export default function AppsScreen() {
               </Text>
             ) : null}
             <ScrollView style={s.actionSheetScroll}>
-              <Pressable
-                key="project-tests"
-                style={[s.actionSheetItem, { borderColor: c.border }]}
-                onPress={() => {
-                  const project = actionSheet?.project ?? "";
-                  const path = actionSheet?.path ?? "";
-                  setActionSheet(null);
-                  router.navigate({ pathname: "/project-tests", params: { project, path } } as any);
-                }}
-              >
-                <Text style={s.actionSheetIcon}>{"🧪"}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.actionSheetLabel, { color: c.textPrimary }]}>Tests</Text>
-                  <Text style={[s.actionSheetMeta, { color: c.textMuted }]}>run web suite on a remote PC · highlights · self-grow</Text>
-                </View>
-              </Pressable>
+              {/* Tapping a project is only about rendering it — the reload lanes.
+                  Tests (and build/deploy) are driven by vibing text to the agent. */}
               {actionSheet?.actions.map((action, i) => {
                 const disabled = action.supported === false;
                 return (

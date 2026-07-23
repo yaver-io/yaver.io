@@ -7961,7 +7961,19 @@ export class QuicClient {
 
   /** Get the full URL for the dev server bundle (through relay if needed). */
   getDevServerBundleUrl(bundlePath: string): string {
-    return `${this.baseUrl}${bundlePath}`;
+    let url = `${this.baseUrl}${bundlePath}`;
+    // A WebView cannot send an Authorization header, so authenticate via query
+    // params exactly like remoteDesktopFrameUrl / captureFrameUrl do: the agent
+    // promotes ?token= to a bearer, and the RELAY validates ?__rp=. Without
+    // these, loading the browser-lane preview through relay fails with
+    // "Unauthorized: relay password missing — sign in again to fetch it" — the
+    // relay drops the unauthenticated request before it ever reaches the agent.
+    const sep = url.includes("?") ? "&" : "?";
+    url += `${sep}token=${encodeURIComponent(this.token || "")}`;
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
   }
 
   // ── Container Sandbox ───────────────────────────────────────────────
