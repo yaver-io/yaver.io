@@ -2220,6 +2220,32 @@ export default function TasksScreen() {
     return () => clearInterval(interval);
   }, [fetchTasks, hasRunningTask]);
 
+  // Auto-discover live terminal (tmux) sessions on connect, so a running runner
+  // session — including the tmux pane driving THIS very thread — surfaces in the
+  // Tasks list without the user hunting for the tmux button. Silent (no modal);
+  // it feeds the "live sessions" banner below. Older agents / unreachable boxes
+  // just leave the list empty and the banner hidden.
+  useEffect(() => {
+    let alive = true;
+    const discover = async () => {
+      if (!quicClient.isConnected) return;
+      try {
+        const sessions = await quicClient.listTmuxSessions();
+        if (alive) setTmuxSessions(sessions);
+      } catch { /* not reachable — banner stays hidden */ }
+    };
+    discover();
+    const interval = setInterval(discover, 15000);
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  // Live runner sessions worth surfacing: a real coding agent (not a bare shell)
+  // that Yaver hasn't already adopted into a task. These are what the banner
+  // offers to attach.
+  const liveRunnerSessions = tmuxSessions.filter(
+    (sn) => !!sn.agentType && sn.agentType !== "shell" && sn.relationship !== "adopted",
+  );
+
   // Listen for streaming output — buffer updates to avoid UI freezing
   const outputBufferRef = useRef<Record<string, string[]>>({});
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4377,7 +4403,9 @@ export default function TasksScreen() {
               )}
               {isEffectivelyConnected && (
                 <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleOpenTmuxSessions}>
-                  <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
+                  <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>
+                    Tmux{liveRunnerSessions.length ? ` · ${liveRunnerSessions.length}` : ""}
+                  </Text>
                 </Pressable>
               )}
               <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={() => setShowLogs(true)}>
@@ -4396,6 +4424,24 @@ export default function TasksScreen() {
             </ScrollView>
             <View pointerEvents="none" style={[s.actionBarFade, { backgroundColor: c.bg }]} />
           </View>
+        )}
+
+        {/* Live terminal-session discovery. Auto-populated on connect (effect
+            above), this surfaces runner sessions — including the tmux pane
+            driving THIS thread — so the user doesn't have to hunt for the Tmux
+            button. Tap → the tmux sheet to attach/adopt one as a task. */}
+        {isEffectivelyConnected && liveRunnerSessions.length > 0 && (
+          <Pressable
+            onPress={handleOpenTmuxSessions}
+            style={[s.liveSessionsBanner, { backgroundColor: "#8b5cf618", borderColor: "#8b5cf655" }]}
+          >
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#22c55e" }} />
+            <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600", flex: 1 }} numberOfLines={1}>
+              {liveRunnerSessions.length} live coding session{liveRunnerSessions.length !== 1 ? "s" : ""}
+              {liveRunnerSessions[0]?.agentType ? ` · ${[...new Set(liveRunnerSessions.map((sn) => sn.agentType))].join(", ")}` : ""}
+            </Text>
+            <Text style={{ color: "#8b5cf6", fontSize: 13, fontWeight: "700" }}>Attach ›</Text>
+          </Pressable>
         )}
 
         <FlatList
@@ -6591,6 +6637,17 @@ const s = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     justifyContent: "center",
+  },
+  liveSessionsBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
   },
 
   // New task modal
