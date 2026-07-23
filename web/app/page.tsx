@@ -939,7 +939,10 @@ function CloudInfraSection() {
 
         <div className="grid gap-4 md:grid-cols-3">
           {plans.map((plan) => (
-            <div key={plan.name} className={`rounded-2xl border p-5 ${plan.tone}`}>
+            <div
+              key={plan.name}
+              className={`flex h-full flex-col rounded-2xl border p-5 ${plan.tone}`}
+            >
               <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-lg font-bold text-surface-50">{plan.name}</p>
@@ -963,7 +966,7 @@ function CloudInfraSection() {
               </ul>
               <Link
                 href="/dashboard?cloud=1"
-                className="inline-flex w-full items-center justify-center rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-semibold text-surface-950 transition-colors hover:bg-white"
+                className="mt-auto inline-flex w-full items-center justify-center rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-semibold text-surface-950 transition-colors hover:bg-white"
               >
                 {plan.cta}
               </Link>
