@@ -1,33 +1,20 @@
 // devLane.ts — the browser-vs-Hermes reload-lane rules, in ONE testable place.
 //
-// These encode two real dogfood bugs so they can't regress:
+// This encodes a real dogfood bug so it can't regress:
 //
-//  1. Flutter (and Swift/Kotlin/web) were told to "start Metro … load the JS
-//     bundle via Hermes push" — a React-Native-only instruction. Metro and
-//     Hermes do not exist for those stacks. devStartInstruction() returns a
-//     framework-correct instruction.
+//  "Browser Reload" silently became a Hermes native build for expo/RN, because
+//  the phone dev-start hardcoded caller:"mobile" (Hermes-only) and DevPreview
+//  forced the native path for any expo/RN status. Hermes couples to the guest
+//  app's native modules (sfmg dies on `expo-gl`), is meaningless for Flutter,
+//  and is blocked for Yaver-self-dev. browserLaneStartBody() carries the
+//  web-lane intent so the agent serves the web target instead.
 //
-//  2. "Browser Reload" silently became a Hermes native build for expo/RN,
-//     because the phone dev-start hardcoded caller:"mobile" (Hermes-only) and
-//     DevPreview forced the native path for any expo/RN status. Hermes couples
-//     to the guest app's native modules (sfmg dies on `expo-gl`), is meaningless
-//     for Flutter, and is blocked for Yaver-self-dev. browserLaneStart() carries
-//     the web-lane intent so the agent serves the web target instead.
-
-/** Framework-correct instruction for a `POST /dev/start` coding task. */
-export function devStartInstruction(framework: string | undefined, targetPath: string): string {
-  const fw = (framework || "").toLowerCase();
-  if (fw === "flutter") {
-    return `Call POST /dev/start with workDir=${targetPath} framework=flutter to start the Flutter web dev server (flutter run -d web-server). DO NOT run 'flutter build', native builds, xcodebuild, or gradlew — the preview renders the Flutter web build in the browser/WebRTC lane. Flutter has no Metro and no Hermes.`;
-  }
-  if (fw === "expo" || fw === "react-native") {
-    return `Call POST /dev/start with workDir=${targetPath} to start Metro. DO NOT run 'expo run:ios', 'expo run:android', 'xcodebuild', 'gradlew', or any native build — the mobile app loads the JS bundle via Hermes push (/dev/build-native). Only Metro is needed.`;
-  }
-  if (fw === "swift" || fw === "kotlin") {
-    return `Call POST /dev/start with workDir=${targetPath} framework=${fw}. This is a native ${fw} app — it previews over the WebRTC lane (simulator/emulator on the box). Do NOT expect Metro or a Hermes bundle; there is no JS runtime to load one into.`;
-  }
-  return `Call POST /dev/start with workDir=${targetPath}${fw ? ` framework=${fw}` : ""} to start the web dev server. No native builds. The browser/WebRTC lane renders the dev server output.`;
-}
+// NOTE: Browser Reload is NOT a coding task — the mobile handler calls
+// quicClient.startDevServer() directly and DevPreview renders the result. There
+// is deliberately NO "instruction string" that describes /dev/start to an AI
+// agent; an earlier devStartInstruction() helper (which told a Flutter project
+// it "has no Metro and no Hermes") was removed because rendering must never be
+// dispatched through the task/runner system.
 
 /**
  * The body override that turns a dev-start into the BROWSER lane: the agent

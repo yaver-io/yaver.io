@@ -36,7 +36,6 @@ import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureT
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
 import { applyPreviewCapabilities, guardYaverSelfDevelopmentActions, isHermesMobileFramework } from "../../src/lib/mobileProjectActions";
 import { runtimeSurfaceClient } from "../../src/lib/runtimeSurfaceClient";
-import { devStartInstruction } from "../../src/lib/devLane";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -1897,12 +1896,14 @@ export default function AppsScreen() {
           });
           const categoryOrder = ["mobile", "web", "other"] as const;
           const categoryLabels: Record<string, string> = { mobile: "Mobile", web: "Web", other: "Other" };
-          const visibleCategories = categoryOrder.filter((c) => categories.has(c));
-          // No projects yet → suppress the filter row entirely. A
-          // single "All (0)" chip with a zero count was visible
-          // dead UI between the search bar and the empty state.
+          // Always show the three category filters (Mobile / Web / Other) so the
+          // user can pivot even when the current box only has one kind — the
+          // labels are a persistent segmented control, defaulting to Mobile. The
+          // count suffix (0 included) doubles as "you have N of these here", so a
+          // zero is informative, not dead UI. Only the fully-empty pre-discovery
+          // state hides the row.
+          const visibleCategories = categoryOrder;
           if (!search.trim() && projects.length === 0) return null;
-          if (visibleCategories.length <= 1) return null;
           return (
             <View style={s.filterWrap}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
@@ -1938,7 +1939,7 @@ export default function AppsScreen() {
                     >
                       <Text style={[s.filterChipText, { color: activeFilter === cat ? chipColor : c.textSecondary }]}>
                         {categoryLabels[cat]}
-                        <Text style={{ color: c.textMuted }}>{` · ${categories.get(cat)}`}</Text>
+                        <Text style={{ color: c.textMuted }}>{` · ${categories.get(cat) ?? 0}`}</Text>
                       </Text>
                     </Pressable>
                   );

@@ -5,49 +5,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  devStartInstruction,
   browserLaneStartBody,
   hermesLaneStartBody,
   isWebServedStatus,
   mustUseNativePreview,
 } from "./devLane.ts";
 
-// ── Bug 1: Flutter must NOT be told to start Metro / push a Hermes bundle ──
-
-test("Flutter dev-start says Flutter web server, never Metro/Hermes", () => {
-  const s = devStartInstruction("flutter", "/p/e-mobile");
-  assert.match(s, /Flutter web dev server/);
-  // The bug was Flutter being INSTRUCTED to start Metro / push a Hermes bundle.
-  // Saying "Flutter has no Metro and no Hermes" is correct, so assert on the
-  // harmful directives, not the mere words.
-  assert.ok(!/start Metro/.test(s), `Flutter told to start Metro: ${s}`);
-  assert.ok(!/Hermes push/.test(s), `Flutter told to push a Hermes bundle: ${s}`);
-});
-
-test("expo/react-native keep the Metro + Hermes instruction", () => {
-  for (const fw of ["expo", "react-native"]) {
-    const s = devStartInstruction(fw, "/p/app");
-    assert.match(s, /Metro/);
-    assert.match(s, /Hermes push/);
-  }
-});
-
-test("native swift/kotlin get the WebRTC-lane instruction, no Metro/Hermes", () => {
-  for (const fw of ["swift", "kotlin"]) {
-    const s = devStartInstruction(fw, "/p/native");
-    assert.match(s, /WebRTC lane/);
-    assert.ok(!/start Metro/.test(s));
-    assert.ok(!/Hermes push/.test(s));
-  }
-});
-
-test("unknown/web stack gets a generic web dev-server instruction", () => {
-  const s = devStartInstruction("nextjs", "/p/web");
-  assert.match(s, /web dev server/);
-  assert.ok(!/Metro/.test(s));
-});
-
-// ── Bug 2: Browser Reload must serve the web target, not a Hermes build ──
+// Browser Reload must serve the web target, not a Hermes build. (The old
+// devStartInstruction() helper + its tests were removed — rendering is never a
+// coding task, so there is no /dev/start instruction string to test.)
 
 test("browser lane body routes to the web target (caller web-ui, platform web)", () => {
   const b = browserLaneStartBody();

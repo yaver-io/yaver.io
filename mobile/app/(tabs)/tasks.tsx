@@ -894,6 +894,29 @@ function ChatBubbleImpl({
   const winWidth = Dimensions.get("window").width;
   const userBubbleCap = { maxWidth: Math.min(winWidth * 0.8, 640) };
 
+  // RULES OF HOOKS: every hook MUST run on every render, BEFORE any early
+  // return. This block used to sit AFTER the `if (isUser) return` below, so a
+  // user bubble ran 0 hooks while an assistant bubble ran 5 — and the moment a
+  // list slot flipped role (or React re-rendered the same slot), it crashed the
+  // whole app with "Rendered fewer hooks than expected. This may be caused by an
+  // accidental early return statement." Hooks now run unconditionally; the user
+  // branch simply ignores these assistant-only values (the extra work is a cheap
+  // memoized string transform).
+  //
+  // preview: cleaned markdown so the bubble looks like real claude-code / codex
+  // output. jsonResponse: whole-response-is-JSON detection (errors / structured
+  // payloads) → clean message + pretty block instead of raw JSON through
+  // Markdown. showRaw: long-press toggles the verbatim stream. collapsedMarkdown:
+  // summary + activity bullets when the response is long.
+  const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
+  const jsonResponse = useMemo(() => detectJsonResponse(turn.content), [turn.content]);
+  const [showRaw, setShowRaw] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const collapsedMarkdown = useMemo(() => {
+    if (preview.activity.length === 0) return preview.summary;
+    return `${preview.summary}\n\n${preview.activity.map((item) => `- ${item}`).join("\n")}`;
+  }, [preview]);
+
   if (isUser) {
     return (
       <View style={s.userRow}>
@@ -904,30 +927,7 @@ function ChatBubbleImpl({
     );
   }
 
-  // Assistant: render the cleaned markdown directly so the bubble looks
-  // like real claude-code / codex output (prose with inline-code highlights
-  // and bordered code blocks). The previous "Update / Show details" gate
-  // hid the polished frame behind a tap; users want to see it inline.
-  const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
-  // Whole-response-is-JSON detection (errors, structured payloads) — when
-  // matched we render a clean message + pretty block instead of feeding
-  // raw JSON to Markdown. Null → normal markdown/raw path. Long-press
-  // (showRaw) still reveals the verbatim content.
-  const jsonResponse = useMemo(() => detectJsonResponse(turn.content), [turn.content]);
-  // Long-press anywhere on the assistant frame to toggle the raw
-  // stream view. Hidden by default — the cleaned MD render is the
-  // canonical surface and the prior "Show raw stream" link gave the
-  // assistant frame a redundant second body that read identical to
-  // the rendered MD on most successful runs. Power users / debugging
-  // can still get to it via long-press; CLAUDE.md's "Logs" link
-  // remains the structured fallback.
-  const [showRaw, setShowRaw] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const totalTokens = tokens ? tokens.input + tokens.output : 0;
-  const collapsedMarkdown = useMemo(() => {
-    if (preview.activity.length === 0) return preview.summary;
-    return `${preview.summary}\n\n${preview.activity.map((item) => `- ${item}`).join("\n")}`;
-  }, [preview]);
   const renderedMarkdown = showRaw
     ? turn.content
     : (expanded || !preview.shouldCollapse ? preview.cleaned : collapsedMarkdown);

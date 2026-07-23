@@ -322,6 +322,19 @@ export default function TabLayout() {
     return unsubscribe;
   }, [isConnected, devices]);
 
+  // Startup tab preference. Defaults to Projects (see startupScreen.ts).
+  // MUST stay ABOVE the auth gate below: these are the last hooks in the
+  // component, and the `if (!isAuthenticated) return <Redirect/>` gate would
+  // otherwise SKIP them on sign-out — dropping the render's hook count and
+  // crashing the whole tab shell with "Rendered fewer hooks than expected."
+  // (That crash is exactly what the gate's own comment promised to avoid.)
+  const [startupRoute, setStartupRoute] = useState<string>(STARTUP_SCREEN_ROUTES[DEFAULT_STARTUP_SCREEN]);
+  useEffect(() => {
+    let alive = true;
+    getStartupRoute().then((r) => { if (alive) setStartupRoute(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   // Re-gate after every hook has run (keeps hook order stable). Any auth
   // loss while inside the tabs routes back to sign-in instead of stranding
   // the user on a tokenless shell. `authLoading` guards the boot window so
@@ -329,14 +342,6 @@ export default function TabLayout() {
   if (!authLoading && !isAuthenticated) {
     return <Redirect href="/login" />;
   }
-
-  // Startup tab preference. Defaults to Projects (see startupScreen.ts).
-  const [startupRoute, setStartupRoute] = useState<string>(STARTUP_SCREEN_ROUTES[DEFAULT_STARTUP_SCREEN]);
-  useEffect(() => {
-    let alive = true;
-    getStartupRoute().then((r) => { if (alive) setStartupRoute(r); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
 
   return (
     <Tabs
