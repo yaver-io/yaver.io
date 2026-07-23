@@ -624,8 +624,11 @@ export default function AppsScreen() {
                   const ln = String(event.message).trim();
                   if (ln) setWebPreviewLogs((p) => (p[p.length - 1] === ln ? p : [...p, ln].slice(-40)));
                 } else if (event.type === "error") {
+                  // The agent packs the real tail into the message (newlines) —
+                  // split it so the failure panel reads like a log, not one blob.
                   const em = String(event.message || "Dev server failed to start").trim();
-                  setWebPreviewLogs((p) => [...p, `ERROR: ${em}`].slice(-40));
+                  const lines = em.split("\n").map((l) => l.trimEnd()).filter(Boolean);
+                  setWebPreviewLogs((p) => [...p, ...lines].slice(-60));
                   setWebPreviewFailed(true);
                 }
               } catch {}
@@ -2565,8 +2568,21 @@ export default function AppsScreen() {
                       <Pressable onPress={() => { resetWebPreview(); setWebViewLoading(true); setWebViewKey((k) => k + 1); }} style={[s.previewBtn, { backgroundColor: "#1a2e1a" }]}>
                         <Text style={[s.previewBtnText, { color: "#22c55e" }]}>Retry</Text>
                       </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          const proj = (runningProject || devStatus?.framework || "the app").split(" / ")[0];
+                          const logs = webPreviewLogs.slice(-40).join("\n");
+                          void quicClient.sendTask(
+                            `Fix ${proj} preview (${devStatus?.framework || "app"})`,
+                            `The ${devStatus?.framework || "app"} dev server / browser preview for ${proj} (workDir: ${devStatus?.workDir || "?"}) failed to build or render. Diagnose the ROOT cause from the output below and fix it so the app builds and serves in the browser lane. Common causes: a missing asset declared in config (e.g. a Flutter pubspec asset that isn't on disk), a missing dependency, or a bad import.\n\n--- dev server output ---\n${logs}`,
+                          ).then(() => { setShowWebView(false); router.navigate("/(tabs)/tasks" as any); }).catch(() => {});
+                        }}
+                        style={[s.previewBtn, { backgroundColor: "#2e1f3a" }]}
+                      >
+                        <Text style={[s.previewBtnText, { color: "#c084fc" }]}>Fix in Yaver</Text>
+                      </Pressable>
                       <Pressable onPress={handleReload} style={[s.previewBtn, { backgroundColor: "#1a1a2e" }]}>
-                        <Text style={[s.previewBtnText, { color: "#818cf8" }]}>Restart server</Text>
+                        <Text style={[s.previewBtnText, { color: "#818cf8" }]}>Restart</Text>
                       </Pressable>
                     </View>
                   </>

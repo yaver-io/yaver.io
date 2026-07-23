@@ -299,9 +299,11 @@ export function DevPreview() {
                   pushLog(event.logLine);
                   setLastByteAt(Date.now());
                 } else if (event.type === "error") {
-                  const em = event.message || "Dev server failed to start";
-                  setLastLogLine(em);
-                  pushLog(`ERROR: ${em}`);
+                  const em = String(event.message || "Dev server failed to start");
+                  setLastLogLine(em.split("\n")[0]);
+                  // The agent packs the real output tail into the message —
+                  // split so the failure panel reads like a log.
+                  em.split("\n").map((l) => l.trimEnd()).filter(Boolean).forEach(pushLog);
                   setPreviewFailed(true);
                   setLastByteAt(Date.now());
                 }
@@ -881,8 +883,21 @@ export function DevPreview() {
                         >
                           <Text style={[styles.previewBtnText, { color: "#22c55e" }]}>Retry</Text>
                         </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            const proj = projectLabel || frameworkLabel || "the app";
+                            const logs = logLines.slice(-40).join("\n");
+                            void quicClient.sendTask(
+                              `Fix ${proj} preview (${frameworkLabel})`,
+                              `The ${frameworkLabel} dev server / browser preview for ${proj} (workDir: ${status?.workDir || "?"}) failed to build or render. Diagnose the ROOT cause from the output below and fix it so the app builds and serves in the browser lane. Common causes: a missing asset declared in config (e.g. a Flutter pubspec asset not on disk), a missing dependency, or a bad import.\n\n--- dev server output ---\n${logs}`,
+                            ).then(() => setShowPreview(false)).catch(() => {});
+                          }}
+                          style={[styles.previewBtn, { backgroundColor: "#2e1f3a" }]}
+                        >
+                          <Text style={[styles.previewBtnText, { color: "#c084fc" }]}>Fix in Yaver</Text>
+                        </Pressable>
                         <Pressable onPress={handleReload} style={[styles.previewBtn, { backgroundColor: "#1a1a2e" }]}>
-                          <Text style={[styles.previewBtnText, { color: "#818cf8" }]}>Restart server</Text>
+                          <Text style={[styles.previewBtnText, { color: "#818cf8" }]}>Restart</Text>
                         </Pressable>
                       </View>
                     </>
