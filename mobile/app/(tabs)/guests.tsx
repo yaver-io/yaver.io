@@ -21,6 +21,7 @@ import { QuicClient, quicClient } from "../../src/lib/quic";
 import {
   acceptGuestByCode,
   acceptGuestInvitation,
+  deleteGuest,
   findInviteByCode,
   inviteGuest,
   listGuests,
@@ -129,6 +130,7 @@ export default function GuestsScreen() {
   const [inviting, setInviting] = useState(false);
   const [lastCode, setLastCode] = useState<string | null>(null);
   const [lastTarget, setLastTarget] = useState<string | null>(null);
+  const [showInviteAdvanced, setShowInviteAdvanced] = useState(false);
 
   // Only show own (non-guest) devices in the picker.
   const ownDevices = useMemo(() => devices.filter((d) => !d.isGuest), [devices]);
@@ -256,6 +258,42 @@ export default function GuestsScreen() {
               loadGuests();
             } catch (e: any) {
               Alert.alert("Couldn't Revoke Access", `Yaver couldn't revoke this guest's access. Check your connection and try again.\n\n${e?.message || String(e)}`);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function deleteGuestRow(g: GuestInfo) {
+    const label = g.fullName || g.email || `user ${g.userId ?? ""}`;
+    Alert.alert(
+      "Delete guest?",
+      `${label} will disappear from this list. Any live access is revoked first, and you can invite them again later.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            if (!token) return;
+            try {
+              await deleteGuest(token, {
+                inviteId: g.inviteId,
+                email: g.email,
+                userId: g.userId,
+              });
+              setGuests((prev) =>
+                prev.filter((item) => {
+                  if (g.inviteId && item.inviteId === g.inviteId) return false;
+                  if (!g.inviteId && g.userId && item.userId === g.userId) return false;
+                  if (!g.inviteId && g.email && item.email === g.email) return false;
+                  return true;
+                }),
+              );
+              loadGuests();
+            } catch (e: any) {
+              Alert.alert("Couldn't Delete Guest", `Yaver couldn't delete this guest row. Check your connection and try again.\n\n${e?.message || String(e)}`);
             }
           },
         },
@@ -459,235 +497,250 @@ export default function GuestsScreen() {
         {mode === "my-guests" ? (
           <>
             <View style={[card(c), { gap: 10 }]}>
-              <Text style={sectionLabel as any}>Invite a guest</Text>
-
-              {/* Choose email vs userId */}
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <ChipToggle
-                  c={c}
-                  label="By email"
-                  active={inviteKind === "email"}
-                  onPress={() => {
-                    setInviteKind("email");
-                    setInviteTarget("");
-                    setInviteLookup(null);
-                  }}
-                />
-                <ChipToggle
-                  c={c}
-                  label="By user ID"
-                  active={inviteKind === "user-id"}
-                  onPress={() => {
-                    setInviteKind("user-id");
-                    setInviteTarget("");
-                    setInviteLookup(null);
-                  }}
-                />
+              <View style={{ gap: 4 }}>
+                <Text style={sectionLabel as any}>Add guest</Text>
+                <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "800" }}>
+                  Share Yaver in 3 steps
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 17 }}>
+                  Invite a teammate or tester. Yaver creates a short code, and you can tighten machine/project access later if needed.
+                </Text>
               </View>
 
+              <StepLabel c={c} n={1} title="Their email" />
               <TextInput
                 value={inviteTarget}
                 onChangeText={setInviteTarget}
-                placeholder={inviteKind === "email" ? "email@example.com" : "user id (ask them to copy from Settings)"}
+                placeholder={inviteKind === "email" ? "email@example.com" : "user id from Settings"}
                 placeholderTextColor={c.textMuted}
                 autoCapitalize="none"
                 keyboardType={inviteKind === "email" ? "email-address" : "default"}
                 autoCorrect={false}
                 style={[inputStyle(c), { fontFamily: "Menlo" }]}
               />
-
-              {/* Resolved user preview */}
-              {inviteKind === "user-id" && inviteLookup && (
-                <Text style={{ color: c.textMuted, fontSize: 12 }}>
-                  → {inviteLookup.fullName} ({inviteLookup.email})
-                </Text>
-              )}
-              {inviteKind === "user-id" && inviteLookupErr && (
-                <Text style={{ color: "#ef4444", fontSize: 12 }}>{inviteLookupErr}</Text>
-              )}
-
-                <View style={{ gap: 6 }}>
-                  <Text style={sectionLabel as any}>Access tier</Text>
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                  <ChipToggle
-                    c={c}
-                    label="Yaver full"
-                    active={inviteScope === "full"}
-                    onPress={() => {
-                      setInviteScope("full");
-                      setInviteCanVibe(false);
-                    }}
-                  />
-                  <ChipToggle
-                    c={c}
-                    label="Feedback SDK"
-                    active={inviteScope === "feedback-only"}
-                    onPress={() => {
-                      setInviteScope("feedback-only");
-                      setInviteCanVibe(false);
-                    }}
-                  />
-                  <ChipToggle
-                    c={c}
-                    label="Tester"
-                    active={inviteScope === "sdk-project"}
-                    onPress={() => setInviteScope("sdk-project")}
-                  />
-                </View>
-                <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  Full = tasks, vibing, projects, remote coding. Feedback SDK = feedback, blackbox, voice only. Tester = run your pre-release app on their device + feedback, narrowed to selected projects.
-                </Text>
-
-                {/* Tester-only: let the friend improve the app with AI. */}
-                {inviteScope === "sdk-project" && (
-                  <Pressable
-                    onPress={() => setInviteCanVibe((v) => !v)}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 10,
-                      marginTop: 4,
-                      padding: 10,
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: inviteCanVibe ? c.accent : c.border,
-                      backgroundColor: inviteCanVibe ? c.accent + "15" : "transparent",
-                    }}
-                  >
-                    <Text style={{ fontSize: 16 }}>{inviteCanVibe ? "✅" : "⬜️"}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>
-                        Let them improve it with AI (vibe)
-                      </Text>
-                      <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                        Runs sandboxed on GLM/BYO — never your Claude/Codex plan. Changes commit straight to your branch.
-                      </Text>
-                    </View>
-                  </Pressable>
-                )}
+              <StepLabel c={c} n={2} title="What can they do?" />
+              <View style={{ gap: 8 }}>
+                <AccessCard
+                  c={c}
+                  title="Tester"
+                  desc="Run your pre-release app, send feedback, blackbox, and voice notes."
+                  active={inviteScope === "sdk-project"}
+                  onPress={() => setInviteScope("sdk-project")}
+                />
+                <AccessCard
+                  c={c}
+                  title="Full Yaver"
+                  desc="Tasks, vibing, projects, and remote coding on the machines you share."
+                  active={inviteScope === "full"}
+                  onPress={() => {
+                    setInviteScope("full");
+                    setInviteCanVibe(false);
+                  }}
+                />
+                <AccessCard
+                  c={c}
+                  title="Feedback only"
+                  desc="Feedback SDK, blackbox, and voice notes. No coding access."
+                  active={inviteScope === "feedback-only"}
+                  onPress={() => {
+                    setInviteScope("feedback-only");
+                    setInviteCanVibe(false);
+                  }}
+                />
               </View>
 
-              {/* Machine picker */}
-              {ownDevices.length > 0 && (
-                <View style={{ gap: 6 }}>
-                  <Text style={sectionLabel as any}>Share which machines?</Text>
-                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                    Leave all unchecked to propose all of your machines. The guest can trim further when they accept.
+              {inviteScope === "sdk-project" && (
+                <Pressable
+                  onPress={() => setInviteCanVibe((v) => !v)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: inviteCanVibe ? c.accent : c.border,
+                    backgroundColor: inviteCanVibe ? c.accent + "15" : c.bg,
+                  }}
+                >
+                  <Text style={{ color: inviteCanVibe ? c.accent : c.textMuted, fontSize: 17, fontWeight: "800" }}>
+                    {inviteCanVibe ? "✓" : "+"}
                   </Text>
-                  {activeOwnDevice ? (
-                    <Pressable
-                      onPress={() => setInviteProposedDeviceIds([activeOwnDevice.id])}
-                      style={{
-                        alignSelf: "flex-start",
-                        paddingHorizontal: 12,
-                        paddingVertical: 7,
-                        borderRadius: 8,
-                        backgroundColor: c.accent + "15",
-                        borderWidth: 1,
-                        borderColor: c.accent,
-                      }}
-                    >
-                      <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>
-                        Use current remote box: {activeOwnDevice.name}
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                  {ownDevices.map((d) => {
-                    const selected = inviteProposedDeviceIds.includes(d.id);
-                    return (
-                      <Pressable
-                        key={d.id}
-                        onPress={() => toggleProposedDevice(d.id)}
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          padding: 8,
-                          borderRadius: 8,
-                          backgroundColor: selected ? c.accent + "15" : c.bg,
-                          borderWidth: 1,
-                          borderColor: selected ? c.accent : c.border,
-                          gap: 10,
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: 4,
-                            borderWidth: 2,
-                            borderColor: selected ? c.accent : c.border,
-                            backgroundColor: selected ? c.accent : "transparent",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          {selected && <Text style={{ color: "#fff", fontSize: 12 }}>✓</Text>}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: c.textPrimary, fontSize: 13 }}>{d.name}</Text>
-                          <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Menlo" }}>
-                            {d.id} · {d.os}
-                          </Text>
-                          <Text style={{ color: c.textMuted, fontSize: 10 }}>
-                            {inviteProjects.length > 0
-                              ? `Project slice: ${inviteProjects.join(", ")}`
-                              : inviteProjectChoices.length > 0
-                                ? "Projects loaded for this machine. Pick the ones to share below."
-                                : "Load this machine's projects to narrow the share by project."}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    );
-                  })}
-                </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 13 }}>
+                      Let them vibe fixes too
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Uses sandboxed Yaver/BYO inference, not your Claude/Codex plan.
+                    </Text>
+                  </View>
+                </Pressable>
               )}
 
-              {inviteSelectedDevices.length > 0 && (
-                <View style={{ gap: 8 }}>
-                  <Text style={sectionLabel as any}>Project slice</Text>
-                  <Pressable
-                    onPress={loadInviteProjects}
-                    disabled={inviteProjectsLoading}
-                    style={[actionBtn(c), {
-                      backgroundColor: c.accent + "15",
-                      borderColor: c.accent,
-                      borderWidth: 1,
-                      opacity: inviteProjectsLoading ? 0.6 : 1,
-                    }]}
-                  >
-                    {inviteProjectsLoading ? (
-                      <ActivityIndicator color={c.accent} />
-                    ) : (
-                      <Text style={{ color: c.accent, fontWeight: "700" }}>
-                        Load projects from selected machine{inviteSelectedDevices.length === 1 ? "" : "s"}
-                      </Text>
-                    )}
-                  </Pressable>
-                  {inviteProjectsSource ? (
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                      Source: {inviteProjectsSource}
-                    </Text>
-                  ) : null}
-                  {inviteProjectsError ? (
-                    <Text style={{ color: inviteProjectChoices.length > 0 ? "#f59e0b" : "#ef4444", fontSize: 11 }}>
-                      {inviteProjectsError}
-                    </Text>
-                  ) : (
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                      Selected projects are stored on the invite and enforced as the guest's project slice.
+              <StepLabel c={c} n={3} title="Access scope" />
+              <Pressable
+                onPress={() => setShowInviteAdvanced((v) => !v)}
+                style={{
+                  padding: 12,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: showInviteAdvanced ? c.accent : c.border,
+                  backgroundColor: showInviteAdvanced ? c.accent + "12" : c.bg,
+                  gap: 4,
+                }}
+              >
+                <Text style={{ color: c.textPrimary, fontWeight: "800", fontSize: 14 }}>
+                  {inviteSelectedDevices.length === 0 ? "All my machines" : `${inviteSelectedDevices.length} machine${inviteSelectedDevices.length === 1 ? "" : "s"}`}
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                  {inviteProjects.length > 0
+                    ? `${inviteProjects.length} project${inviteProjects.length === 1 ? "" : "s"} selected. Tap to edit.`
+                    : "Default is simple. Tap to narrow by machine or project."}
+                </Text>
+              </Pressable>
+
+              {showInviteAdvanced && (
+                <View style={{ gap: 10 }}>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <ChipToggle
+                      c={c}
+                      label="Email"
+                      active={inviteKind === "email"}
+                      onPress={() => {
+                        setInviteKind("email");
+                        setInviteTarget("");
+                        setInviteLookup(null);
+                      }}
+                    />
+                    <ChipToggle
+                      c={c}
+                      label="User ID"
+                      active={inviteKind === "user-id"}
+                      onPress={() => {
+                        setInviteKind("user-id");
+                        setInviteTarget("");
+                        setInviteLookup(null);
+                      }}
+                    />
+                  </View>
+
+                  {inviteKind === "user-id" && inviteLookup && (
+                    <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                      → {inviteLookup.fullName} ({inviteLookup.email})
                     </Text>
                   )}
-                  {inviteProjectChoices.length > 0 && (
-                    <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                      {inviteProjectChoices.map((project) => (
-                        <ChipToggle
-                          key={project}
-                          c={c}
-                          label={project}
-                          active={inviteProjects.includes(project)}
-                          onPress={() => toggleInviteProject(project)}
-                        />
-                      ))}
+                  {inviteKind === "user-id" && inviteLookupErr && (
+                    <Text style={{ color: "#ef4444", fontSize: 12 }}>{inviteLookupErr}</Text>
+                  )}
+
+                  {ownDevices.length > 0 && (
+                    <View style={{ gap: 6 }}>
+                      <Text style={sectionLabel as any}>Machines</Text>
+                      {activeOwnDevice ? (
+                        <Pressable
+                          onPress={() => setInviteProposedDeviceIds([activeOwnDevice.id])}
+                          style={{
+                            alignSelf: "flex-start",
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                            borderRadius: 8,
+                            backgroundColor: c.accent + "15",
+                            borderWidth: 1,
+                            borderColor: c.accent,
+                          }}
+                        >
+                          <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>
+                            Use current remote box
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                      {ownDevices.map((d) => {
+                        const selected = inviteProposedDeviceIds.includes(d.id);
+                        return (
+                          <Pressable
+                            key={d.id}
+                            onPress={() => toggleProposedDevice(d.id)}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              padding: 10,
+                              borderRadius: 8,
+                              backgroundColor: selected ? c.accent + "15" : c.bg,
+                              borderWidth: 1,
+                              borderColor: selected ? c.accent : c.border,
+                              gap: 10,
+                            }}
+                          >
+                            <View
+                              style={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: 4,
+                                borderWidth: 2,
+                                borderColor: selected ? c.accent : c.border,
+                                backgroundColor: selected ? c.accent : "transparent",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              {selected && <Text style={{ color: "#fff", fontSize: 12 }}>✓</Text>}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: c.textPrimary, fontSize: 13 }} numberOfLines={1}>{d.name}</Text>
+                              <Text style={{ color: c.textMuted, fontSize: 10 }} numberOfLines={1}>
+                                {d.os || "machine"}
+                              </Text>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {inviteSelectedDevices.length > 0 && (
+                    <View style={{ gap: 8 }}>
+                      <Text style={sectionLabel as any}>Projects</Text>
+                      <Pressable
+                        onPress={loadInviteProjects}
+                        disabled={inviteProjectsLoading}
+                        style={[actionBtn(c), {
+                          backgroundColor: c.accent + "15",
+                          borderColor: c.accent,
+                          borderWidth: 1,
+                          opacity: inviteProjectsLoading ? 0.6 : 1,
+                        }]}
+                      >
+                        {inviteProjectsLoading ? (
+                          <ActivityIndicator color={c.accent} />
+                        ) : (
+                          <Text style={{ color: c.accent, fontWeight: "700" }}>
+                            Load projects
+                          </Text>
+                        )}
+                      </Pressable>
+                      {inviteProjectsSource ? (
+                        <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                          Source: {inviteProjectsSource}
+                        </Text>
+                      ) : null}
+                      {inviteProjectsError ? (
+                        <Text style={{ color: inviteProjectChoices.length > 0 ? "#f59e0b" : "#ef4444", fontSize: 11 }}>
+                          {inviteProjectsError}
+                        </Text>
+                      ) : null}
+                      {inviteProjectChoices.length > 0 && (
+                        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                          {inviteProjectChoices.map((project) => (
+                            <ChipToggle
+                              key={project}
+                              c={c}
+                              label={project}
+                              active={inviteProjects.includes(project)}
+                              onPress={() => toggleInviteProject(project)}
+                            />
+                          ))}
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
@@ -708,7 +761,7 @@ export default function GuestsScreen() {
                 )}
               </Pressable>
               <Text style={{ color: c.textMuted, fontSize: 10 }}>
-                Max 5 guests. Codes expire in 2 days. Full guests can code through Yaver but still cannot touch vault, sessions, or raw exec.
+                Max 5 guests. Codes expire in 2 days. Guests cannot touch vault, sessions, or raw exec.
               </Text>
             </View>
 
@@ -755,15 +808,22 @@ export default function GuestsScreen() {
             )}
 
             <Text style={[sectionLabel as any, { marginTop: 4 }]}>
-              Active guests {guests.length > 0 && `(${guests.length}/5)`}
+              Guests {guests.length > 0 && `(${guests.filter((g) => g.status === "pending" || g.status === "accepted").length}/5 active)`}
             </Text>
+            {guests.length > 0 ? (
+              <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                Long-press a guest to delete the row after revoking access.
+              </Text>
+            ) : null}
             {loading && <ActivityIndicator color={c.accent} />}
             {!loading && guests.length === 0 && (
               <Text style={{ color: c.textMuted, fontSize: 12 }}>No active guests.</Text>
             )}
             {guests.map((g, idx) => (
-              <View
-                key={g.email || g.userId || String(idx)}
+              <Pressable
+                key={g.inviteId || g.email || g.userId || String(idx)}
+                onLongPress={() => deleteGuestRow(g)}
+                delayLongPress={450}
                 style={[card(c), { flexDirection: "row", alignItems: "center" }]}
               >
                 <View style={{ flex: 1 }}>
@@ -784,7 +844,7 @@ export default function GuestsScreen() {
                 <Pressable onPress={() => revoke(g)}>
                   <Text style={{ color: "#ef4444", fontSize: 12 }}>Revoke</Text>
                 </Pressable>
-              </View>
+              </Pressable>
             ))}
           </>
         ) : (
@@ -1140,6 +1200,73 @@ function ChipToggle({ c, label, active, onPress }: { c: any; label: string; acti
       <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 12, fontWeight: "600" }}>
         {label}
       </Text>
+    </Pressable>
+  );
+}
+
+function StepLabel({ c, n, title }: { c: any; n: number; title: string }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 }}>
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: c.accent + "20",
+          borderWidth: 1,
+          borderColor: c.accent + "55",
+        }}
+      >
+        <Text style={{ color: c.accent, fontSize: 11, fontWeight: "800" }}>{n}</Text>
+      </View>
+      <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "800" }}>{title}</Text>
+    </View>
+  );
+}
+
+function AccessCard({
+  c,
+  title,
+  desc,
+  active,
+  onPress,
+}: {
+  c: any;
+  title: string;
+  desc: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        padding: 12,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: active ? c.accent : c.border,
+        backgroundColor: active ? c.accent + "14" : c.bg,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      <View
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9,
+          borderWidth: 2,
+          borderColor: active ? c.accent : c.border,
+          backgroundColor: active ? c.accent : "transparent",
+        }}
+      />
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "800" }}>{title}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 15 }}>{desc}</Text>
+      </View>
     </Pressable>
   );
 }

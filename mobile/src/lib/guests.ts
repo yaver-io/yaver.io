@@ -68,6 +68,7 @@ export interface GuestHostsResponse {
 }
 
 export interface GuestInfo {
+  inviteId?: string;
   email: string;
   status: "pending" | "accepted" | "revoked" | "expired";
   fullName?: string;
@@ -382,6 +383,29 @@ export async function revokeGuest(
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || "Failed to revoke guest");
+  }
+}
+
+/**
+ * Delete/hide a guest row from host-facing lists. The backend revokes any live
+ * access first, then tombstones matching invite rows so the same guest can be
+ * invited again later.
+ */
+export async function deleteGuest(
+  token: string,
+  target: { inviteId?: string; email?: string; userId?: string }
+): Promise<void> {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/delete`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(target),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to delete guest");
   }
 }
 

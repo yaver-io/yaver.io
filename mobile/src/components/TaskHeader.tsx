@@ -26,6 +26,9 @@ export interface TaskHeaderProps {
   /** Model display name (e.g. "GPT-5.4"). Paired with runnerLabel in
    *  the same chip. Renders only when runnerLabel is also present. */
   modelLabel?: string;
+  /** Tmux session name/id for troubleshooting a live task from mobile. */
+  tmuxSession?: string;
+  tmuxSessionId?: string;
   /** Tap "Logs" — already wired in tasks.tsx. */
   onOpenLogs?: () => void;
   onBack: () => void;
@@ -43,6 +46,8 @@ export function TaskHeader({
   deviceName,
   runnerLabel,
   modelLabel,
+  tmuxSession,
+  tmuxSessionId,
   onOpenLogs,
   onBack,
   primaryAction,
@@ -196,31 +201,58 @@ export function TaskHeader({
           running this task" without forcing the user to expand
           Agent context. Replaces the redundant ThinkingBubble pill
           that used to render the same info inside the chat. */}
-      {runnerLabel ? (
+      {runnerLabel || tmuxSession || tmuxSessionId ? (
         <View style={styles.chipRow}>
-          <View
-            style={[
-              styles.runnerChip,
-              {
-                backgroundColor: c.surfaceElevated,
-                borderColor: c.border,
-              },
-            ]}
-          >
-            <View style={[styles.runnerChipDot, { backgroundColor: palette.dot }]} />
-            <Text
-              style={[styles.runnerChipText, { color: c.textPrimary }]}
-              numberOfLines={1}
+          {runnerLabel ? (
+            <View
+              style={[
+                styles.runnerChip,
+                {
+                  backgroundColor: c.surfaceElevated,
+                  borderColor: c.border,
+                },
+              ]}
             >
-              {runnerLabel}
-              {modelLabel ? (
-                <Text style={{ color: c.textTertiary }}>
-                  {"  ·  "}
-                  {modelLabel}
-                </Text>
-              ) : null}
-            </Text>
-          </View>
+              <View style={[styles.runnerChipDot, { backgroundColor: palette.dot }]} />
+              <Text
+                style={[styles.runnerChipText, { color: c.textPrimary }]}
+                numberOfLines={1}
+              >
+                {runnerLabel}
+                {modelLabel ? (
+                  <Text style={{ color: c.textTertiary }}>
+                    {"  ·  "}
+                    {modelLabel}
+                  </Text>
+                ) : null}
+              </Text>
+            </View>
+          ) : null}
+          {tmuxSession || tmuxSessionId ? (
+            <View
+              style={[
+                styles.runnerChip,
+                {
+                  backgroundColor: c.surfaceElevated,
+                  borderColor: c.border,
+                },
+              ]}
+            >
+              <Ionicons name="terminal-outline" size={11} color={c.textTertiary} />
+              <Text
+                style={[styles.runnerChipText, styles.tmuxChipText, { color: c.textSecondary }]}
+                numberOfLines={1}
+              >
+                {tmuxSession || "tmux"}
+                {tmuxSessionId ? (
+                  <Text style={{ color: c.textTertiary }}>
+                    {"  ·  "}
+                    {tmuxSessionId}
+                  </Text>
+                ) : null}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -358,6 +390,8 @@ const styles = StyleSheet.create({
   chipRow: {
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
     paddingHorizontal: 4,
     marginTop: 2,
   },
@@ -381,5 +415,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     letterSpacing: 0.2,
     flexShrink: 1,
+  },
+  tmuxChipText: {
+    fontFamily: "Menlo",
   },
 });

@@ -1,0 +1,36 @@
+tables:
+  - name: users
+    columns:
+      - name: id
+        type: text
+        primary: true
+      - name: email
+        type: text
+        required: true
+        unique: true
+      - name: name
+        type: text
+  - name: todos
+    columns:
+      - name: id
+        type: text
+        primary: true
+        default: uuid
+      - name: title
+        type: text
+        required: true
+      - name: done
+        type: bool
+        default: "false"
+      - name: owner_id
+        type: text
+      - name: created_at
+        type: timestamp
+        default: now
+    indexes:
+      - columns: [owner_id]
+      - columns: [done]
+relations:
+  - from: todos.owner_id
+    to: users.id
+    onDelete: cascade

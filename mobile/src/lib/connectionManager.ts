@@ -43,6 +43,7 @@ export interface PooledClientSnapshot {
 
 class ConnectionManager {
   private clients = new Map<string, QuicClient>();
+  private clientStateUnsubs = new Map<string, Array<() => void>>();
   private focusedId: string | null = null;
   // Stable QuicClient used by the Proxy when no device is focused yet —
   // e.g. during cold start, before refreshDevices has run, or after the
@@ -127,8 +128,32 @@ class ConnectionManager {
       try { fresh.setRelayRepairHook(this.relayRepairHook); } catch {}
     }
     this.clients.set(id, fresh);
+    this.watchClientState(id, fresh);
     this.notify();
     return fresh;
+  }
+
+  private watchClientState(deviceId: string, client: QuicClient): void {
+    const notify = () => this.notify();
+    const unsubs = [
+      client.on("connectionState", notify),
+      client.on("connectionMode", notify),
+      client.on("reconnectAttempt", notify),
+    ];
+    this.clientStateUnsubs.set(deviceId, unsubs);
+  }
+
+  private unwatchClientState(deviceId: string): void {
+    const unsubs = this.clientStateUnsubs.get(deviceId);
+    if (!unsubs) return;
+    for (const unsub of unsubs) {
+      try {
+        unsub();
+      } catch {
+        // ignore listener cleanup failures; the client is being removed
+      }
+    }
+    this.clientStateUnsubs.delete(deviceId);
   }
 
   private relayRepairHook: (() => Promise<void>) | null = null;
@@ -203,6 +228,7 @@ class ConnectionManager {
     } catch {
       // Tearing down a half-open client can throw; we just want it gone.
     }
+    this.unwatchClientState(id);
     this.clients.delete(id);
     if (this.focusedId === id) {
       this.focusedId = null;
@@ -219,6 +245,9 @@ class ConnectionManager {
       } catch {
         // ignore; we're nuking the pool
       }
+    }
+    for (const id of Array.from(this.clientStateUnsubs.keys())) {
+      this.unwatchClientState(id);
     }
     this.clients.clear();
     this.focusedId = null;

@@ -1,0 +1,7 @@
+personas:
+  - id: alice
+    email: alice@example.com
+    name: Alice
+  - id: bob
+    email: bob@example.com
+    name: Bob

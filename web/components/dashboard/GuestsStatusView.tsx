@@ -7,6 +7,7 @@ import { AgentClient, agentClient, type GuestConfigEntry } from "@/lib/agent-cli
 import {
   acceptGuestByCode,
   acceptGuestInvitation,
+  deleteGuest,
   fetchGuestHosts,
   findInviteByCode,
   inviteGuest,
@@ -478,6 +479,28 @@ export default function GuestsStatusView() {
     }
   }
 
+  async function handleDeleteGuest(guest: GuestInfo) {
+    if (!token) return;
+    const label = guest.fullName || guest.email || `user ${guest.userId ?? ""}`;
+    if (!window.confirm(`Delete ${label} from your guest list? Any live access is revoked first. You can invite them again later.`)) {
+      return;
+    }
+    setBusy(`delete:${guest.inviteId || guest.email || guest.userId}`);
+    setErr(null);
+    try {
+      await deleteGuest(token, {
+        inviteId: guest.inviteId,
+        email: guest.email,
+        userId: guest.userId,
+      });
+      await load();
+    } catch (e) {
+      setErr(friendlyGuestError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleScopeUpdate(email: string, scope: Scope, allowedProjects: string[]) {
     setBusy(`policy:${email}`);
     setErr(null);
@@ -869,6 +892,14 @@ export default function GuestsStatusView() {
                     className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] text-red-700 dark:text-red-200 disabled:opacity-40"
                   >
                     Revoke
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteGuest(g)}
+                    disabled={busy === `delete:${g.inviteId || g.email || g.userId}`}
+                    className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-[11px] text-surface-400 hover:bg-surface-800 disabled:opacity-40"
+                  >
+                    Delete
                   </button>
                 </div>
 

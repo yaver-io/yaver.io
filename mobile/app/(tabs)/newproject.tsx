@@ -351,6 +351,9 @@ const PRESETS: Preset[] = [
       include_mobile: "true",
       include_backend: "true",
       include_landing: "true",
+      backend: "sqlite",
+      mobile_stack: "expo-rn",
+      git_provider: "github",
       mobile_data_collection: "minimal",
       audience_children: "false",
       mobile_account_deletion: "true",
@@ -372,6 +375,9 @@ const PRESETS: Preset[] = [
       include_mobile: "false",
       include_backend: "true",
       include_landing: "true",
+      backend: "sqlite",
+      mobile_stack: "expo-rn",
+      git_provider: "github",
       oauth_google: "true",
       oauth_microsoft: "true",
       oauth_email: "true",
@@ -395,6 +401,9 @@ const PRESETS: Preset[] = [
       include_mobile: "true",
       include_backend: "true",
       include_landing: "true",
+      backend: "sqlite",
+      mobile_stack: "expo-rn",
+      git_provider: "github",
       mobile_permission_camera: "true",
       mobile_permission_photos: "true",
       mobile_permission_notifications: "true",
@@ -419,6 +428,9 @@ const PRESETS: Preset[] = [
       include_mobile: "false",
       include_backend: "true",
       include_landing: "false",
+      backend: "sqlite",
+      mobile_stack: "expo-rn",
+      git_provider: "github",
       oauth_google: "true",
       oauth_email: "true",
       mobile_data_collection: "none",
@@ -428,6 +440,23 @@ const PRESETS: Preset[] = [
 ];
 
 const QUICK_COLOR_SWATCHS = ["#4F46E5", "#0EA5E9", "#14B8A6", "#F97316", "#F59E0B", "#111827"];
+
+async function applyYaverProjectDefaults(targetSession: WizardSession): Promise<WizardSession> {
+  const defaults: Record<string, string> = {
+    include_mobile: "true",
+    include_backend: "true",
+    mobile_stack: "expo-rn",
+    backend: "sqlite",
+    git_provider: "github",
+  };
+  let currentSession = targetSession;
+  for (const [qid, ans] of Object.entries(defaults)) {
+    if (currentSession.answers?.[qid]) continue;
+    const res = await quicClient.wizardAnswer(currentSession.id, qid, ans);
+    if (res?.session) currentSession = res.session;
+  }
+  return currentSession;
+}
 
 // --- visibility mirror -----------------------------------------------------
 //
@@ -543,8 +572,9 @@ export default function NewProjectScreen() {
       setError("Could not start the wizard. The agent may be offline.");
       return;
     }
+    const defaultedSession = await applyYaverProjectDefaults(startRes.session);
     setQuestions(allQuestions ?? []);
-    setSession(startRes.session);
+    setSession(defaultedSession);
     setQuestion(startRes.question);
     setInput(buildInitialInput(startRes.question));
   }, []);

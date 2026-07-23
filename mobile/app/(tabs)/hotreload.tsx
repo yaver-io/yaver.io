@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import {
@@ -73,6 +73,50 @@ const DEV_FRAMEWORKS = ["expo", "flutter", "nextjs", "vite", "react-native", "re
 // brand colors \u2014 see mobile/src/components/FrameworkIcon.tsx.
 
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
+const PROJECT_CACHE_PREFIX = "@yaver/projects/mobile/";
+
+function projectCacheKey(deviceId?: string | null): string | null {
+  const id = String(deviceId || "").trim();
+  return id ? `${PROJECT_CACHE_PREFIX}${id}` : null;
+}
+
+function normalizeMobileProject(raw: any): ProjectItem {
+  return {
+    name: raw?.name ?? "",
+    path: raw?.path ?? "",
+    branch: raw?.branch,
+    framework: raw?.framework,
+    executionMode: raw?.executionMode,
+    primarySurface: raw?.primarySurface,
+    monorepoRoot: raw?.monorepoRoot,
+    monorepoApp: raw?.monorepoApp,
+    tags: Array.isArray(raw?.tags)
+      ? raw.tags
+      : [raw?.framework, raw?.primarySurface].filter(Boolean),
+  };
+}
+
+async function loadCachedMobileProjects(deviceId?: string | null): Promise<ProjectItem[]> {
+  const key = projectCacheKey(deviceId);
+  if (!key) return [];
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const projects: unknown[] = Array.isArray(parsed?.projects) ? parsed.projects : [];
+    return projects.map(normalizeMobileProject).filter((p) => p.name && p.path);
+  } catch {
+    return [];
+  }
+}
+
+async function cacheMobileProjects(deviceId: string | undefined, projects: ProjectItem[]): Promise<void> {
+  const key = projectCacheKey(deviceId);
+  if (!key) return;
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify({ cachedAt: Date.now(), projects }));
+  } catch {}
+}
 
 function isHermesMobileFramework(framework?: string): boolean {
   return framework === "expo" || framework === "react-native";
@@ -142,6 +186,7 @@ const VIEW_MODE_KEY = "@yaver/tablet/view_mode";
 export default function HotReloadScreen() {
   const c = useColors();
   const { isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
@@ -209,6 +254,7 @@ export default function HotReloadScreen() {
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [agentInfo, setAgentInfo] = useState<RemoteAgentInfo | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [projectsFromCache, setProjectsFromCache] = useState(false);
   const [projectsScanning, setProjectsScanning] = useState(false);
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
@@ -321,6 +367,7 @@ export default function HotReloadScreen() {
     // so the user doesn't see a Mac mini's hostname next to a Linux
     // box's project paths during the gap before the new poll lands.
     setProjects([]);
+    setProjectsFromCache(false);
     setScanStopping(false);
     setDevStatus(null);
     setWorkerSession(null);
@@ -350,6 +397,12 @@ export default function HotReloadScreen() {
     // for up to 15s after switching, which makes the auto-scan look
     // like it didn't fire. The next poll reconciles scanning back to
     // false once the agent reports the scan finished.
+    void loadCachedMobileProjects(activeDevice.id).then((cached) => {
+      if (cached.length) {
+        setProjects(cached);
+        setProjectsFromCache(true);
+      }
+    });
     if (isConnected) {
       setProjectsScanning(true);
       void quicClient.refreshMobileProjects().catch(() => {
@@ -443,17 +496,10 @@ export default function HotReloadScreen() {
         const data = await res.json();
         if (mounted && data.ok && data.projects) {
           setProjectsScanning(!!data.scanning);
-          setProjects(data.projects.map((p: any) => ({
-            name: p.name,
-            path: p.path,
-            branch: p.branch,
-            framework: p.framework,
-            executionMode: p.executionMode,
-            primarySurface: p.primarySurface,
-            monorepoRoot: p.monorepoRoot,
-            monorepoApp: p.monorepoApp,
-            tags: [p.framework, p.primarySurface].filter(Boolean),
-          })));
+          const nextProjects = data.projects.map(normalizeMobileProject);
+          setProjects(nextProjects);
+          setProjectsFromCache(false);
+          void cacheMobileProjects(targetId, nextProjects);
         }
       } catch {}
     };
@@ -1457,6 +1503,31 @@ export default function HotReloadScreen() {
             )
           }
         />
+        {projectsFromCache && projectsScanning ? (
+          <View pointerEvents="none" style={[s.cacheBanner, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]}>
+            <ActivityIndicator size="small" color={c.accent} />
+            <Text style={[s.cacheBannerText, { color: c.textMuted }]}>Updating project scan...</Text>
+          </View>
+        ) : null}
+        {activeDevice ? (
+          <Pressable
+            hitSlop={12}
+            style={({ pressed }) => [
+              s.projectFab,
+              {
+                backgroundColor: c.accent,
+                bottom: Math.max(insets.bottom + 16, 24),
+                shadowColor: c.shadowMd,
+              },
+              pressed && s.projectFabPressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Create new project"
+            onPress={() => router.push("/(tabs)/newproject" as any)}
+          >
+            <Ionicons name="add" size={30} color="#ffffff" />
+          </Pressable>
+        ) : null}
       </View>
 
       <RemoteBoxPickerModal
@@ -1586,6 +1657,36 @@ const s = StyleSheet.create({
   // Yaver" / Stop) was trapped behind the bar and looked unscrollable. 128 lifts
   // it fully into view.
   listContent: { paddingBottom: 128 },
+  cacheBanner: {
+    position: "absolute",
+    left: 16,
+    right: 88,
+    bottom: 28,
+    minHeight: 44,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  cacheBannerText: { fontSize: 12, fontWeight: "600" },
+  projectFab: {
+    position: "absolute",
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 12,
+    zIndex: 41,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+  },
+  projectFabPressed: { opacity: 0.92, transform: [{ scale: 0.96 }] },
   targetChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   targetHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   targetStatePill: {

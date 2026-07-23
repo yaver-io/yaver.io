@@ -3790,11 +3790,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   // Background "warm the pool" pass. After the focused auto-connect
   // above settles, this effect quietly opens additional connections
-  // for every other online + authed + non-guest device the user has,
-  // so the multi-target wizard and Tasks tab can route to siblings
-  // without a cold-connect penalty. The user explicitly asked for
-  // "at opening app try to connect both" — without this, only the
-  // single focused box came up at boot.
+  // only for the active/primary/secondary devices. Warming every online
+  // box looked useful on paper, but with stale LAN/Tailscale addresses it
+  // produced a reconnect storm across old machines and made the primary
+  // look broken even when relay had answered.
   //
   // Implementation: walk devices each time they refresh, pick the
   // ones that look healthy AND aren't already pooled, and ensure
@@ -3804,7 +3803,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // existing focused-auto-connect logic owns that.
   useEffect(() => {
     if (!token || !relaysReady || userDisconnected) return;
+    const warmIds = new Set(
+      [activeDevice?.id, primaryDeviceId, secondaryDeviceId].filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+    if (warmIds.size === 0) return;
     const candidates = devices.filter((d) =>
+      warmIds.has(d.id) &&
       d.online &&
       !d.needsAuth &&
       !d.isGuest &&
@@ -3840,7 +3844,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [devices, token, relaysReady, userDisconnected, connectedDeviceIds, unreachableSet]);
+  }, [activeDevice?.id, devices, primaryDeviceId, secondaryDeviceId, token, relaysReady, userDisconnected, connectedDeviceIds, unreachableSet]);
 
   // Trigger immediate reconnection on network change (WiFi↔cellular roaming,
   // Wi-Fi → Wi-Fi roam between APs (same SSID, new IP), VPN/Tailscale toggle).

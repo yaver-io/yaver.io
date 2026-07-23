@@ -1,0 +1,22 @@
+{
+  "todos": [
+    {
+      "id": "t1",
+      "title": "Buy milk",
+      "done": false,
+      "owner_id": "alice"
+    },
+    {
+      "id": "t2",
+      "title": "Learn Yaver Serverless",
+      "done": true,
+      "owner_id": "alice"
+    },
+    {
+      "id": "t3",
+      "title": "Ship portable Todo demo",
+      "done": false,
+      "owner_id": "bob"
+    }
+  ]
+}

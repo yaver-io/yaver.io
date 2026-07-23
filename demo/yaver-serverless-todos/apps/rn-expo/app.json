@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Yaver Serverless Todo",
+    "slug": "todo-rn-yaver-serverless",
+    "scheme": "yavertodoserverless",
+    "plugins": ["expo-router"],
+    "ios": {
+      "bundleIdentifier": "io.yaver.todoserverless.rn"
+    },
+    "android": {
+      "package": "io.yaver.todoserverless.rn"
+    }
+  }
+}

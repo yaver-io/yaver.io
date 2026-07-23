@@ -2936,7 +2936,6 @@ export default function MoreScreen() {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   const insets = useSafeAreaInsets();
-  const handleHotReload = useCallback(() => router.navigate("/(tabs)/hotreload" as any), [router]);
   const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
   const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
@@ -3124,31 +3123,22 @@ export default function MoreScreen() {
               shadowColor: c.accent,
             },
           ]}
-          onPress={() => router.navigate("/phone-projects" as any)}
+          onPress={() => router.navigate("/(tabs)/newproject" as any)}
         >
           <View style={[s.heroIconWrap, { backgroundColor: c.accent + "18", borderColor: c.accent + "35" }]}>
             <Text style={[s.heroIcon, { color: c.accent }]}>{"\u26A1"}</Text>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[s.eyebrow, { color: c.accent }]}>Start here</Text>
-            <Text style={[s.heroLabel, { color: c.textPrimary }]}>Mobile Sandbox</Text>
+            <Text style={[s.heroLabel, { color: c.textPrimary }]}>Start Project</Text>
             <Text style={[s.heroDesc, { color: c.textMuted }]} numberOfLines={2}>
-              Create a phone-first app, then move it to your agent or cloud later.
+              Describe it; Yaver creates the RN/TS app, Serverless backend, git, and runner task.
             </Text>
           </View>
           <Text style={{ color: c.accent, fontSize: 20, fontWeight: "700" }}>{"\u203A"}</Text>
         </Pressable>
 
         <View style={s.quickGrid}>
-          <Pressable
-            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={handleHotReload}
-          >
-            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u21BB"}</Text>
-            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Hot Reload</Text>
-            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Reload mobile projects</Text>
-          </Pressable>
-
           <Pressable
             style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={openPair}

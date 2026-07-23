@@ -56,6 +56,7 @@ export interface GuestHostsResponse {
 }
 
 export interface GuestInfo {
+  inviteId?: string;
   email: string;
   status: "pending" | "accepted" | "revoked" | "expired";
   fullName?: string;
@@ -243,6 +244,21 @@ export async function revokeGuest(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await parseError(res, "Failed to revoke guest"));
+}
+
+export async function deleteGuest(
+  token: string,
+  target: { inviteId?: string; email?: string; userId?: string },
+): Promise<void> {
+  const res = await fetch(`${CONVEX_URL}/guests/delete`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(target),
+  });
+  if (!res.ok) throw new Error(await parseError(res, "Failed to delete guest"));
 }
 
 /**

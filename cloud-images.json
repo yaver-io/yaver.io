@@ -39,6 +39,17 @@
         "arm64": "t2a-standard-1",
         "amd64": "e2-small"
       }
+    },
+    "azure": {
+      "images": {
+        "amd64": null,
+        "arm64": null
+      },
+      "defaultLocation": "westeurope",
+      "defaultVMSize": {
+        "arm64": "Standard_D2ps_v5",
+        "amd64": "Standard_D2s_v5"
+      }
     }
   },
   "artifacts": {

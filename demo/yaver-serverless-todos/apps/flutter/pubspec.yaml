@@ -1,0 +1,19 @@
+name: yaver_serverless_todo_flutter
+description: Flutter Todo app backed by Yaver Serverless Lite.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

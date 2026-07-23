@@ -1,0 +1,33 @@
+name: YaverServerlessTodo
+options:
+  bundleIdPrefix: io.yaver.serverlesstodo
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  YaverServerlessTodo:
+    type: application
+    platform: iOS
+    sources:
+      - YaverServerlessTodo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.serverlesstodo.ios
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: "Yaver Serverless Todo"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: "YES"
+        SWIFT_VERSION: "5.0"
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "0.1.0"
+
+  YaverServerlessTodoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - YaverServerlessTodoTests
+    dependencies:
+      - target: YaverServerlessTodo
