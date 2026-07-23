@@ -616,7 +616,8 @@ run_unit_tests() {
     info "Running Convex policy unit tests..."
     if command -v node &>/dev/null; then
         if (cd "$ROOT_DIR/backend" && node --experimental-strip-types --test \
-              convex/accessSigPolicy.test.mts > "$TEST_DIR/convex-policy-test.log" 2>&1); then
+              convex/accessSigPolicy.test.mts \
+              convex/wakeOnRequestPolicy.test.mts > "$TEST_DIR/convex-policy-test.log" 2>&1); then
             pass "Convex policy unit tests passed"
         else
             fail "Convex policy unit tests failed"

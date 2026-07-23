@@ -1842,6 +1842,21 @@ export default defineSchema({
     allowDesktopControl: v.optional(v.boolean()),
     allowBrowserControl: v.optional(v.boolean()),
     allowTunnelForward: v.optional(v.boolean()),
+    // Wake-on-request: may THIS grantee's inbound request bring a parked box
+    // back up? Default OFF, like every other allow* flag here, because a wake
+    // spends the OWNER's metered money (parked means the server was DELETED and
+    // must be recreated — Hetzner bills stopped ones).
+    //
+    // This is a permission and not an ownership rule on purpose. "Only the
+    // owner may wake" would make scale-to-zero useless for the thing it exists
+    // for: a small app's actual users could never reach it. The owner decides,
+    // per grant, whose traffic is worth waking for — and can revoke it.
+    // Enforced via wakeOnRequestPolicy.ts::classifyWakeTarget.
+    allowWake: v.optional(v.boolean()),
+    // Optional owner-set ceiling on automatic wakes per rolling 24h for this
+    // grant. Absent = no cap. This is the spend control that makes allowWake
+    // safe to hand out; nothing in code picks a number on the owner's behalf.
+    wakeDailyLimit: v.optional(v.number()),
     requireIsolation: v.optional(v.boolean()),
     cpuLimitPercent: v.optional(v.number()),
     ramLimitMb: v.optional(v.number()),
