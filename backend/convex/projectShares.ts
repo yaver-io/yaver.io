@@ -5,10 +5,34 @@ import { Id } from "./_generated/dataModel";
 
 // Shared projects — a thin wrapper that binds {repo, host, roster, roles}
 // into one object you can "ask someone to join". Accepting a membership
-// MATERIALIZES an infraAccessGrant + guestAccess + allowedProjects via the
-// same path guests.accept uses. No new enforcement engine: the role is a
-// preset that fills in scope/allowedProjects; branch-pin / PR-only /
-// deploy-gate for "normie" are enforced agent-side off membership.role.
+// MATERIALIZES an infraAccessGrant + guestAccess + allowedProjects + the
+// per-project role, via the same path guests.accept uses.
+//
+// Enforcement split, and it is worth being precise because this comment used
+// to lie (fixed 2026-07-23):
+//
+//   * scope + allowedProjects — enforced in the agent's auth middleware
+//     (desktop/agent/guest_scope.go). This part always worked.
+//   * per-project capabilities — enforced in
+//     desktop/agent/guest_project_role.go. This part did NOT work: nothing
+//     role-shaped was ever sent to the agent. scopeForRole() collapses "dev"
+//     and "normie" onto the same scope="full", so the agent had no field that
+//     could tell a restricted collaborator from an unrestricted one, and the
+//     "normie" restrictions this comment promised were unenforceable. A host
+//     who picked "normie" in the UI got a full teammate.
+//
+// The role is a PRESET, not the policy. roleCapabilityPreset() below turns a
+// role into explicit capability flags at materialize time; those flags are
+// what travel and what the agent enforces. Nothing maps a role name to a
+// permission inside the agent binary — otherwise one opinion of what "normie"
+// means would be frozen into every install, and widening it for a single host
+// would require an agent release.
+//
+// Enforced today: canDeploy. Carried but NOT yet enforced: canPush,
+// requirePullRequest, pinnedBranch — they are wired end-to-end and read by the
+// agent, and the git seam that would honor them is listed as an explicit TODO
+// in guest_project_role.go. Do not claim enforcement here without a test that
+// fails when the enforcement is removed.
 
 type Role = "owner" | "dev" | "normie" | "viewer";
 
@@ -16,7 +40,65 @@ type Role = "owner" | "dev" | "normie" | "viewer";
 function scopeForRole(role: Role): "full" | "feedback-only" {
   // dev/normie code (full agent surface, narrowed to the one project).
   // viewer only observes (feedback-only is the hardened read-ish tier).
+  //
+  // NOTE: this is lossy on purpose — scope is a coarse path allow-list and
+  // cannot express "may code but may not deploy". The role travels separately
+  // on guestAccess.projectRoles; do not try to encode more of it here.
   return role === "viewer" ? "feedback-only" : "full";
+}
+
+/** One member's effective permissions on one shared project. */
+type ProjectRoleEntry = {
+  project: string;
+  role: Role;
+  canDeploy?: boolean;
+  canPush?: boolean;
+  requirePullRequest?: boolean;
+  pinnedBranch?: string;
+};
+
+/**
+ * Default capabilities for a role. This is the ONLY place a role name becomes
+ * a permission, and it runs server-side — so a host (or a future per-share
+ * override UI) can change what "normie" means without anyone shipping a new
+ * agent binary.
+ *
+ *   owner  — unrestricted.
+ *   dev    — trusted teammate: codes, pushes, deploys.
+ *   normie — non-technical collaborator: codes, but changes land as a PR on
+ *            their own branch and they cannot deploy.
+ *   viewer — observes only (scope="feedback-only" already blocks the rest;
+ *            the flags are set anyway so enforcement never depends on scope
+ *            and role agreeing).
+ */
+function roleCapabilityPreset(role: Role): Omit<ProjectRoleEntry, "project" | "role"> {
+  switch (role) {
+    case "owner":
+      return { canDeploy: true, canPush: true, requirePullRequest: false };
+    case "dev":
+      return { canDeploy: true, canPush: true, requirePullRequest: false };
+    case "normie":
+      return { canDeploy: false, canPush: true, requirePullRequest: true };
+    case "viewer":
+      return { canDeploy: false, canPush: false, requirePullRequest: true };
+  }
+}
+
+/**
+ * Merge one project's entry into an existing projectRoles list.
+ * Last write wins per project, order-stable, so a setRole on project A never
+ * disturbs the member's permissions on project B.
+ */
+function mergeProjectRole(
+  existing: unknown,
+  entry: ProjectRoleEntry,
+): ProjectRoleEntry[] {
+  const list: ProjectRoleEntry[] = Array.isArray(existing)
+    ? (existing as ProjectRoleEntry[]).filter((e) => e && typeof e.project === "string" && e.project)
+    : [];
+  const out = list.filter((e) => e.project.toLowerCase() !== entry.project.toLowerCase());
+  out.push(entry);
+  return out;
 }
 
 function generateShareCode(): string {
@@ -73,6 +155,8 @@ async function materializeProjectGrant(
   guestUserDocId: Id<"users">,
   role: Role,
   now: number,
+  /** The member's assigned working branch, when the membership has one. */
+  membershipBranch?: string,
 ): Promise<Id<"infraAccessGrants"> | undefined> {
   const scope = scopeForRole(role);
 
@@ -85,6 +169,15 @@ async function materializeProjectGrant(
     )
     .filter((q: any) => q.eq(q.field("revokedAt"), undefined))
     .first();
+  // The role's capability preset, resolved once and stored explicitly. The
+  // agent enforces these flags; it never maps a role name to a permission.
+  const roleEntry: ProjectRoleEntry = {
+    project: share.slug,
+    role,
+    ...roleCapabilityPreset(role),
+    ...(membershipBranch ? { pinnedBranch: membershipBranch } : {}),
+  };
+
   if (!existing) {
     await ctx.db.insert("guestAccess", {
       hostUserId: share.ownerUserId,
@@ -92,6 +185,7 @@ async function materializeProjectGrant(
       grantedAt: now,
       scope,
       allowedProjects: [share.slug],
+      projectRoles: [roleEntry],
     });
   } else {
     // Already a guest of this owner (another shared project). Union this
@@ -105,6 +199,9 @@ async function materializeProjectGrant(
     await ctx.db.patch(existing._id, {
       ...(shouldMerge ? { allowedProjects: [...current, share.slug] } : {}),
       ...(widenScope ? { scope: "full" } : {}),
+      // Per-project, so widening scope for project A never silently grants
+      // project B's permissions.
+      projectRoles: mergeProjectRole(existing.projectRoles, roleEntry),
     });
   }
 
@@ -304,7 +401,7 @@ export const accept = mutation({
 
     const now = Date.now();
     const role = membership.role as Role;
-    const grantId = await materializeProjectGrant(ctx, share, me, role, now);
+    const grantId = await materializeProjectGrant(ctx, share, me, role, now, membership.branch);
 
     await ctx.db.patch(membership._id, {
       userId: me,
@@ -357,7 +454,14 @@ export const setRole = mutation({
     // If active, swap the grant scope by revoking + re-materializing.
     if (membership.status === "active") {
       await revokeGrant(ctx, membership.grantId, now);
-      const grantId = await materializeProjectGrant(ctx, share, member._id, args.role, now);
+      const grantId = await materializeProjectGrant(
+        ctx,
+        share,
+        member._id,
+        args.role,
+        now,
+        membership.branch,
+      );
       await ctx.db.patch(membership._id, grantId ? { grantId } : { grantId: undefined });
     }
     return { ok: true };
@@ -395,6 +499,22 @@ export const revokeMember = mutation({
       .first();
     if (access && Array.isArray(access.allowedProjects) && access.allowedProjects.length === 1 && access.allowedProjects[0] === share.slug) {
       await ctx.db.patch(access._id, { revokedAt: now });
+    } else if (access) {
+      // The grant survives because this member is on OTHER shared projects of
+      // the same host. Drop only this project's slug + permissions — leaving
+      // the entry would keep a removed member's capabilities addressable if
+      // the slug were ever re-shared.
+      const slugs = Array.isArray(access.allowedProjects) ? access.allowedProjects : [];
+      const roles = Array.isArray(access.projectRoles) ? access.projectRoles : [];
+      await ctx.db.patch(access._id, {
+        ...(slugs.length > 0
+          ? { allowedProjects: slugs.filter((s: string) => s !== share.slug) }
+          : {}),
+        projectRoles: roles.filter(
+          (e: { project?: string }) =>
+            (e?.project ?? "").toLowerCase() !== String(share.slug).toLowerCase(),
+        ),
+      });
     }
     return { ok: true };
   },

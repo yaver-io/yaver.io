@@ -4,9 +4,11 @@ import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import {
   getLegacyGuestAccess,
+  guestCanReachSpecificHostDevice,
   listGrantedDeviceIdsForGrant,
   listVisibleInfraGrantsForGuest,
 } from "./access";
+import { resolveSigReach } from "./accessSigPolicy";
 import { recommendPlacement } from "./edgePlacement";
 import { isMachineWakeable } from "./cloudMachines";
 import {
@@ -2557,15 +2559,40 @@ export const seedAutoPublicUrls = internalMutation({
  *  (docs/yaver-relay-asymmetric-auth.md). Given the SIGNER device (whose key
  *  signed the request) and the TARGET device it wants to reach, return the
  *  signer's ed25519 signing pubkey (so the relay can verify the signature) and
- *  whether the signer's owner also owns the target — the same-user mesh rule.
- *  ok=false when either device is unknown, the signer has no sign key, or the
- *  owners differ. Internal: the /relay/resolve-sig HTTP route (relay-auth, no
- *  user session) calls it; it exposes only a PUBLIC key + a userId, never a
- *  secret. */
+ *  whether the signer is allowed to address the target at all.
+ *
+ *  Two ways to be allowed, and only two (resolveSigReach in access.ts):
+ *
+ *    1. same-owner   — the classic same-user mesh: my phone → my Mac.
+ *    2. access-graph — two DIFFERENT accounts joined by an ACTIVE
+ *       infraAccessGrant that covers this specific target device (guest,
+ *       host-share, project-share, support link).
+ *
+ *  Case 2 was missing until 2026-07-23, and its absence was a latent outage,
+ *  not a missing feature: every cross-account session (guest / host-share /
+ *  support) was silently falling through to the LEGACY shared-password path,
+ *  because the signature path denied it. The password path is slated to be
+ *  turned off once the migration metric looks clean (see sigFailReason in
+ *  relay/server.go) — and that metric could not see the difference, so the
+ *  cutover would have killed every guest session at once and presented as
+ *  "the relay is broken". The relay now counts access-graph reaches
+ *  separately (authViaSigGrant) precisely so the cutover decision can see
+ *  them.
+ *
+ *  This does NOT widen what a guest can do — reaching the tunnel is not
+ *  entering the box. The agent still authenticates the caller's bearer token
+ *  and enforces its own scope allow-lists (desktop/agent/guest_scope.go).
+ *  The relay stays pass-through; this only stops it from refusing to carry
+ *  ciphertext for a relationship the owner explicitly created.
+ *
+ *  ok=false when either device is unknown, the signer has no sign key, or no
+ *  relationship exists. Internal: the /relay/resolve-sig HTTP route
+ *  (relay-auth, no user session) calls it; it exposes only a PUBLIC key + a
+ *  userId, never a secret. */
 export const resolveDeviceSig = internalQuery({
   args: { signerDeviceId: v.string(), targetDeviceId: v.optional(v.string()) },
   handler: async (ctx, { signerDeviceId, targetDeviceId }) => {
-    const deny = { ok: false as const, userId: "", signerPublicKey: "" };
+    const deny = { ok: false as const, userId: "", signerPublicKey: "", viaGrant: false };
     const signer = await ctx.db
       .query("devices")
       .withIndex("by_deviceId", (q) => q.eq("deviceId", signerDeviceId))
@@ -2581,13 +2608,32 @@ export const resolveDeviceSig = internalQuery({
         : signer;
     if (!target) return deny;
 
-    // The signer's owner must own the target too (same-user mesh).
-    if (String(signer.userId) !== String(target.userId)) return deny;
+    const sameOwner = String(signer.userId) === String(target.userId);
+    // Only pay for the grant lookup when the owners actually differ.
+    const grantCoversTarget = sameOwner
+      ? false
+      : await guestCanReachSpecificHostDevice(
+          ctx,
+          target.userId,   // host = who owns the device being reached
+          signer.userId,   // guest = who is calling
+          target.deviceId,
+        );
+
+    const reach = resolveSigReach({
+      signerUserId: String(signer.userId),
+      targetUserId: String(target.userId),
+      grantCoversTarget,
+    });
+    if (reach === "deny") return deny;
 
     return {
       ok: true as const,
+      // The CALLER's userId, deliberately: the relay keys its per-user rate
+      // limit on this (proxy-user:<id>), and a guest's traffic must count
+      // against the guest, never against the host they were invited to.
       userId: String(signer.userId),
       signerPublicKey: signer.signPublicKey,
+      viaGrant: reach === "access-graph",
     };
   },
 });

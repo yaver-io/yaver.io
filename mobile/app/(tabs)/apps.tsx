@@ -2531,7 +2531,7 @@ export default function AppsScreen() {
               onError={() => scheduleWebPreviewRetry()}
               // Confirm real paint before hiding the overlay (Flutter index.html
               // 200s then renders black while CanvasKit boots / assets 404).
-              injectedJavaScript={`(function(){try{var s=false;function ok(){if(s)return true;var f=document.querySelector('flutter-view,flt-glass-pane,flt-scene-host');var b=document.body;var d=b&&(b.children.length>1||((b.innerText||'').trim().length>0));if(f||d){s=true;if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({t:'yaver-rendered'}));return true;}return false;}if(!ok()){var n=0,iv=setInterval(function(){n++;if(ok()||n>120)clearInterval(iv);},500);}}catch(e){}return true;})();`}
+              injectedJavaScript={`(function(){try{var s=false;function ok(){if(s)return true;var b=document.body;var bt=(b&&b.innerText||'').trim();if(bt.indexOf('"status":"starting"')>=0||bt.indexOf('did not become ready')>=0){return false;}var f=document.querySelector('flutter-view,flt-glass-pane,flt-scene-host');var d=b&&(b.children.length>1||bt.length>0);if(f||d){s=true;if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({t:'yaver-rendered'}));return true;}return false;}if(!ok()){var n=0,iv=setInterval(function(){n++;if(ok()||n>120)clearInterval(iv);},500);}}catch(e){}return true;})();`}
               onMessage={(e) => {
                 try {
                   const m = JSON.parse(e.nativeEvent.data);

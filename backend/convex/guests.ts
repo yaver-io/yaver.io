@@ -1278,6 +1278,16 @@ export const getGuestConfig = query({
       guestName: string;
       scope: "full" | "feedback-only" | "sdk-project" | "support";
       allowedProjects?: string[];
+      // Per-project capability flags from projectShares. The agent enforces
+      // these; it does not map role names to permissions itself.
+      projectRoles?: Array<{
+        project: string;
+        role: "owner" | "dev" | "normie" | "viewer";
+        canDeploy?: boolean;
+        canPush?: boolean;
+        requirePullRequest?: boolean;
+        pinnedBranch?: string;
+      }>;
       canVibe?: boolean;
       dailyTokenLimit?: number;
       allowedRunners?: string[];
@@ -1315,6 +1325,7 @@ export const getGuestConfig = query({
         // without re-inviting existing teammates doesn't silently downgrade them.
         scope: access.scope ?? "full",
         allowedProjects: access.allowedProjects,
+        projectRoles: access.projectRoles,
         canVibe: access.canVibe,
         dailyTokenLimit: access.dailyTokenLimit,
         allowedRunners: grant?.allowedRunners ?? access.allowedRunners,

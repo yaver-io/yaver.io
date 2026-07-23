@@ -8,6 +8,10 @@
     "allowJs": true,
     "strict": true,
     "moduleResolution": "Bundler",
+    /* Unit tests (*.test.mts) import policy modules by their real .ts path so
+     * `node --experimental-strip-types --test` can execute them. Safe here
+     * because noEmit is on — nothing is compiled from this config. */
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,

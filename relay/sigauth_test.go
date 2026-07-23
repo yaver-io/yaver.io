@@ -118,7 +118,7 @@ func TestAuthorizeProxyViaSig_OversizedChunkedBodyIsNotTruncatedIntoFallback(t *
 	req.Header.Set("X-Yaver-Sig", "v1")
 	req.Header.Set("X-Yaver-Device", "device1234")
 
-	if _, ok := s.authorizeProxyViaSig(req, "device1234"); ok {
+	if _, ok, _ := s.authorizeProxyViaSig(req, "device1234"); ok {
 		t.Fatal("oversized body must not authenticate via signature")
 	}
 

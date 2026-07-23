@@ -4973,8 +4973,10 @@ http.route({
 /** POST /relay/resolve-sig — the relay's asymmetric-auth resolver. Given the
  *  SIGNER device and the TARGET device, returns the signer's ed25519 signing
  *  PUBLIC key (so the relay verifies the signature locally) and whether the
- *  signer's owner owns the target. No user auth (relay-auth); returns only
- *  public material + a userId, never a secret. docs/yaver-relay-asymmetric-auth.md */
+ *  signer may address the target — either same-owner or via an active
+ *  cross-account access grant (`viaGrant: true`). No user auth (relay-auth);
+ *  returns only public material + a userId, never a secret.
+ *  docs/yaver-relay-asymmetric-auth.md */
 http.route({
   path: "/relay/resolve-sig",
   method: "POST",
@@ -4990,7 +4992,12 @@ http.route({
           typeof body.targetDeviceId === "string" ? body.targetDeviceId : undefined,
       });
       if (!res.ok) return jsonResponse({ ok: false }, 401);
-      return jsonResponse({ ok: true, userId: res.userId, signerPublicKey: res.signerPublicKey });
+      return jsonResponse({
+        ok: true,
+        userId: res.userId,
+        signerPublicKey: res.signerPublicKey,
+        viaGrant: res.viaGrant === true,
+      });
     } catch {
       return jsonResponse({ ok: false, error: "internal error" }, 500);
     }

@@ -604,6 +604,28 @@ run_unit_tests() {
         print_go_failure_log "$TEST_DIR/mcp-test.log"
     fi
 
+    # Convex policy units. These are pure-function tests (no db, no deploy) for
+    # rules that decide access — the kind that must not drift silently.
+    #
+    # They run under `node --experimental-strip-types`, which requires the test
+    # to import its subject by real .ts path. Convex's older *.test.mts files
+    # import a nonexistent `./x.js` and have therefore NEVER been executable —
+    # written, committed, and never once run. If you add a policy test, import
+    # `./thing.ts` (see accessSigPolicy.test.mts) and add it here, or it is
+    # decoration.
+    info "Running Convex policy unit tests..."
+    if command -v node &>/dev/null; then
+        if (cd "$ROOT_DIR/backend" && node --experimental-strip-types --test \
+              convex/accessSigPolicy.test.mts > "$TEST_DIR/convex-policy-test.log" 2>&1); then
+            pass "Convex policy unit tests passed"
+        else
+            fail "Convex policy unit tests failed"
+            tail -30 "$TEST_DIR/convex-policy-test.log"
+        fi
+    else
+        skip "Convex policy unit tests" "node missing"
+    fi
+
     if command -v bun &>/dev/null && [ -d "$ROOT_DIR/mobile-headless" ]; then
         info "Running mobile-headless dogfood preference tests..."
         if (cd "$ROOT_DIR/mobile-headless" && bun test test/more-menu-preferences.test.ts > "$TEST_DIR/mobile-headless-more-menu.log" 2>&1); then

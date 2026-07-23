@@ -192,6 +192,17 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		// Per-project collaboration role (projectShares). Being allowed to
+		// REACH a project is not being allowed to SHIP it: a "normie"
+		// collaborator codes on their own branch but does not deploy. The
+		// flag is carried on the grant; nothing here maps a role name to a
+		// permission (guest_project_role.go explains why).
+		if s.guestConfigMgr != nil {
+			if ok, reason := s.guestConfigMgr.GuestCanDeployProject(guestUID, body.App); !ok {
+				jsonReply(w, http.StatusForbidden, map[string]string{"error": reason})
+				return
+			}
+		}
 	}
 
 	// Resolve stack + path (shared across all targets of the same app).

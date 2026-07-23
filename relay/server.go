@@ -128,6 +128,15 @@ type RelayServer struct {
 	// /authmix (admin-authed).
 	authViaSig atomic.Uint64
 	authViaPw  atomic.Uint64
+	// Subset of authViaSig that crossed accounts — a guest / host-share /
+	// support peer reaching a device its own account does not own, allowed by
+	// an active infraAccessGrant (backend/convex/devices.ts::resolveDeviceSig).
+	// Counted separately because these are the sessions the cutover is most
+	// likely to break: until 2026-07-23 the signature path denied them outright
+	// and they were carried ONLY by the password, invisibly. A cutover reading
+	// "100% signature" while this counter is 0 and cross-account sessions exist
+	// means they are still riding the password — check before flipping.
+	authViaSigGrant atomic.Uint64
 	// Attributable signature failures, by reason. authViaPw alone cannot tell
 	// "never migrated" from "migrated but silently failing" — both fall back to
 	// the password. Without this split the cutover is a guess. See sigFailReason.
@@ -397,6 +406,7 @@ func (s *RelayServer) handleAuthMix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sig := s.authViaSig.Load()
+	sigGrant := s.authViaSigGrant.Load()
 	pw := s.authViaPw.Load()
 	total := sig + pw
 	sigPct := 0.0
@@ -435,14 +445,22 @@ func (s *RelayServer) handleAuthMix(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"authViaSig":      sig,
-		"authViaPassword": pw,
-		"total":           total,
-		"sigPercent":      sigPct,
-		"sigFailures":     failTotal,
-		"sigFailByReason": fails,
-		"safeToCutOver":   safe,
-		"note":            note,
+		"authViaSig": sig,
+		// Cross-account reaches (guest / host-share / project-share / support)
+		// carried by a signature rather than the password. Before 2026-07-23 the
+		// signature path denied these outright, so they were carried invisibly by
+		// the password and this number would have been 0 forever — a cutover
+		// would have taken every one of them down. Read it alongside sigPercent:
+		// if you know cross-account sessions exist and this is 0, they are still
+		// on the password and the cutover is NOT safe regardless of sigPercent.
+		"authViaSigCrossAccount": sigGrant,
+		"authViaPassword":        pw,
+		"total":                  total,
+		"sigPercent":             sigPct,
+		"sigFailures":            failTotal,
+		"sigFailByReason":        fails,
+		"safeToCutOver":          safe,
+		"note":                   note,
 	})
 }
 
@@ -675,12 +693,16 @@ func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token s
 }
 
 // resolveSigViaConvex fetches the SIGNER device's ed25519 signing public key
-// and confirms its owner also owns the TARGET device. Returns
-// (userId, signerPubKeyBase64, ok). The relay holds no secret — it receives
-// only public material and verifies the signature itself (verifyDeviceSig).
-func (s *RelayServer) resolveSigViaConvex(signerDeviceID, targetDeviceID string) (string, string, bool) {
+// and confirms the signer may address the TARGET device — either because the
+// same account owns both, or because an active cross-account access grant
+// links them (viaGrant). Returns (userId, signerPubKeyBase64, ok, viaGrant).
+// The relay holds no secret — it receives only public material and verifies
+// the signature itself (verifyDeviceSig). Authorization to actually DO
+// anything still happens at the agent; this only decides whether the relay
+// will carry the bytes.
+func (s *RelayServer) resolveSigViaConvex(signerDeviceID, targetDeviceID string) (string, string, bool, bool) {
 	if s.convexURL == "" {
-		return "", "", false
+		return "", "", false, false
 	}
 	url := strings.TrimRight(s.convexURL, "/") + "/relay/resolve-sig"
 	body, _ := json.Marshal(map[string]string{
@@ -690,18 +712,19 @@ func (s *RelayServer) resolveSigViaConvex(signerDeviceID, targetDeviceID string)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
 	if err != nil {
-		return "", "", false
+		return "", "", false, false
 	}
 	defer resp.Body.Close()
 	var result struct {
 		OK              bool   `json:"ok"`
 		UserID          string `json:"userId"`
 		SignerPublicKey string `json:"signerPublicKey"`
+		ViaGrant        bool   `json:"viaGrant"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", false
+		return "", "", false, false
 	}
-	return result.UserID, result.SignerPublicKey, result.OK
+	return result.UserID, result.SignerPublicKey, result.OK, result.ViaGrant
 }
 
 // sigFailReason names WHY a device-signature auth attempt failed. Every one of
@@ -740,50 +763,51 @@ func (s *RelayServer) noteSigFail(reason sigFailReason) {
 }
 
 // authorizeProxyViaSig tries the asymmetric per-device signature path for a
-// /d/<targetDeviceID>/ proxy request. On success it returns the resolved userId
-// and true; on ANY failure it returns false so the caller falls back to the
-// password path — this can never lock out a client that hasn't migrated. It
-// buffers the request body (only when a signature is present) so it can hash it
-// for verification AND still forward it downstream.
+// /d/<targetDeviceID>/ proxy request. On success it returns the resolved userId,
+// true, and whether the reach crossed accounts via an access grant; on ANY
+// failure it returns false so the caller falls back to the password path — this
+// can never lock out a client that hasn't migrated. It buffers the request body
+// (only when a signature is present) so it can hash it for verification AND
+// still forward it downstream.
 //
 // Every failure path is counted by reason (see sigFailReason) so the fallback
 // stays non-fatal WITHOUT being invisible.
-func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID string) (string, bool) {
+func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID string) (string, bool, bool) {
 	signerDeviceID := strings.TrimSpace(r.Header.Get("X-Yaver-Device"))
 	if signerDeviceID == "" {
 		s.noteSigFail(sigFailNoSigner)
-		return "", false
+		return "", false, false
 	}
 	var body []byte
 	if r.Body != nil {
 		b, err := readBodyForSignature(r, s.abuseGuard.cfg.MaxRequestBodyBytes)
 		if err != nil {
 			s.noteSigFail(sigFailBodyRead)
-			return "", false
+			return "", false, false
 		}
 		body = b
 		r.Body = io.NopCloser(bytes.NewReader(body)) // let the downstream proxy re-read it
 	}
-	userID, pubB64, ok := s.resolveSigViaConvex(signerDeviceID, targetDeviceID)
+	userID, pubB64, ok, viaGrant := s.resolveSigViaConvex(signerDeviceID, targetDeviceID)
 	if !ok {
 		s.noteSigFail(sigFailUnresolved)
-		return "", false
+		return "", false, false
 	}
 	pub := decodeSignPubKey(pubB64)
 	if pub == nil {
 		s.noteSigFail(sigFailBadPubKey)
-		return "", false
+		return "", false, false
 	}
 	signed, ok := verifyDeviceSig(r, body, pub, s.sigNonces)
 	if !ok {
 		s.noteSigFail(sigFailBadSignature)
-		return "", false
+		return "", false, false
 	}
 	if !sigDeviceMatches(signed, signerDeviceID) {
 		s.noteSigFail(sigFailDeviceMismatch)
-		return "", false
+		return "", false, false
 	}
-	return userID, true
+	return userID, true, viaGrant
 }
 
 func readBodyForSignature(r *http.Request, limit int64) ([]byte, error) {
@@ -1703,9 +1727,12 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	var authed bool
 	var relayPaid bool
 	if hasDeviceSig(r) {
-		if uid, sigOK := s.authorizeProxyViaSig(r, deviceID); sigOK {
+		if uid, sigOK, viaGrant := s.authorizeProxyViaSig(r, deviceID); sigOK {
 			userID, authed = uid, true
 			s.authViaSig.Add(1)
+			if viaGrant {
+				s.authViaSigGrant.Add(1)
+			}
 		}
 	}
 	if !authed {

@@ -2394,7 +2394,25 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 	// shell PID leaks them and the dev port stays bound until reboot).
 	setProcGroup(cmd)
 
+	// Feed Flutter's stdout into the progress tracker so it becomes SUMMARIZED
+	// phase events (pub get → compiling → launching → serving) on /dev/events —
+	// what the mobile preview shows while it waits. We deliberately do NOT emit a
+	// "log" event per line (the phone wants a summary, not a raw firehose); on
+	// failure the returned error carries logWriter.Tail(...), which the manager
+	// broadcasts as an "error" event, so the real logs still reach the phone.
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", f.name)}
+	{
+		tracker := f.tracker
+		recordLogFn := f.recordLogFn
+		logWriter.onLogLine = func(line string) {
+			if recordLogFn != nil {
+				recordLogFn(line)
+			}
+			if tracker != nil {
+				tracker.FeedLine(line)
+			}
+		}
+	}
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
 
@@ -2414,6 +2432,12 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 	f.startedAt = time.Now()
 	f.mu.Unlock()
 
+	// Abort the instant the process dies (e.g. a Flutter compile error such as a
+	// missing pubspec asset) instead of blocking the whole 180s, and bubble up
+	// the output tail so the user sees the REAL reason, not a blank timeout.
+	exitCh := make(chan error, 1)
+	go func() { exitCh <- cmd.Wait() }()
+
 	// Wait for dev server to become ready
 	deadline := time.After(180 * time.Second) // Flutter web first build can take 3+ min
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -2423,7 +2447,17 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case waitErr := <-exitCh:
+			tail := logWriter.Tail(25)
+			if waitErr != nil {
+				return fmt.Errorf("%s exited before becoming ready: %v\n%s", name, waitErr, tail)
+			}
+			return fmt.Errorf("%s exited before becoming ready\n%s", name, tail)
 		case <-deadline:
+			tail := logWriter.Tail(25)
+			if tail != "" {
+				return fmt.Errorf("%s did not become ready within 180s\n%s", name, tail)
+			}
 			return fmt.Errorf("%s did not become ready within 180s", name)
 		case <-ticker.C:
 			resp, err := http.Get(readyURL)

@@ -797,6 +797,11 @@ type GuestConfig struct {
 	// Empty = all projects. Enforced on /feedback list filtering, /feedback fix
 	// triggering, and /tasks workDir gating.
 	AllowedProjects []string `json:"allowedProjects,omitempty"`
+	// ProjectRoles carries per-project collaboration permissions materialized
+	// from projectShares (backend/convex/projectShares.ts). See
+	// guest_project_role.go for how they are enforced — and for why the agent
+	// reads FLAGS rather than mapping role names to permissions itself.
+	ProjectRoles []GuestProjectRole `json:"projectRoles,omitempty"`
 	// CanVibe opts an sdk-project (tester) grant into the AI-improve surface
 	// (/vibing). Default nil/false — vibe is explicit opt-in at invite time.
 	// A tester's vibe task is always force-isolated + routed to a GLM/BYO

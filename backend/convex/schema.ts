@@ -1730,6 +1730,46 @@ export default defineSchema({
     //   - /feedback/{id}/fix: reject if the feedback's project is not in the list
     //   - /tasks: pin workDir to a project in the list; reject attempts to escape
     allowedProjects: v.optional(v.array(v.string())),
+    // Per-project collaboration permissions, materialized from projectShares
+    // (projectShares.ts::materializeProjectGrant).
+    //
+    // A LIST, not a single field, because one guest can hold different roles on
+    // different shared projects of the same host — "dev" on the API repo,
+    // "normie" on the marketing site. Keyed by the same project slug that
+    // allowedProjects uses.
+    //
+    // Why this exists: scope cannot express role. scopeForRole() maps BOTH
+    // "dev" and "normie" to scope="full", so before 2026-07-23 the agent could
+    // not tell them apart and the documented normie restrictions were
+    // unenforceable — the Convex comment claimed agent-side enforcement that
+    // had no field to enforce on. A host who picked "normie" got a full
+    // teammate.
+    //
+    // `role` is a LABEL (for UI + as the preset the capabilities came from).
+    // The booleans are what the agent actually enforces. They are deliberately
+    // separate: baking "normie ⇒ no deploy" into the agent binary would freeze
+    // one opinion of what a role means into every user's install, and changing
+    // it would need an agent release. The host owns the policy; the agent just
+    // reads it. Absent flag = not restricted (legacy rows keep today's
+    // behavior rather than being silently downgraded).
+    projectRoles: v.optional(
+      v.array(
+        v.object({
+          project: v.string(),
+          role: v.union(
+            v.literal("owner"),
+            v.literal("dev"),
+            v.literal("normie"),
+            v.literal("viewer"),
+          ),
+          canDeploy: v.optional(v.boolean()),
+          canPush: v.optional(v.boolean()),
+          requirePullRequest: v.optional(v.boolean()),
+          // Pin this member's work to one branch. Empty/absent = no pin.
+          pinnedBranch: v.optional(v.string()),
+        }),
+      ),
+    ),
     // canVibe opts a tester (sdk-project) grant into /vibing. Inherited from the
     // invitation on accept; toggleable later via updateGuestConfig. Absent/false
     // = test-only. Agent enforces it only for scope="sdk-project", and a tester's
