@@ -56,8 +56,20 @@ const browserLaneReadyPredicateJS = `function yaverPreviewReady(doc){
     // without this guard the error page itself reads as "rendered".
     if (bt.indexOf('"status":"starting"') >= 0) return false;
     if (bt.indexOf('did not become ready') >= 0) return false;
-    // 1. Flutter — unchanged from the original probe.
+    // 1. Flutter — the engine has attached. Unchanged from the original probe.
     if (doc.querySelector('flutter-view,flt-glass-pane,flt-scene-host')) return true;
+    // 1b. Flutter is BOOTING: its bootstrap page is up but no engine marker yet.
+    // Measured against a live "flutter run -d web-server" (e-mobile, 2026-07-24):
+    // NOTE: this text is mirrored verbatim into a Go raw string
+    // (doctor_browser_lane.go) — never use a backtick in this block.
+    // the body is <picture id="splash"> + <script>, i.e. children.length === 2,
+    // so branch 3 below returned TRUE and the overlay lifted onto a page the
+    // engine had not touched. Flutter never has a #root, so the SPA branch
+    // could not catch it either. Nobody reported it because a splash IS visible
+    // content — the failure looks like a loading state instead of a blank void,
+    // and a Flutter app that never boots then sits on its splash forever with
+    // the overlay already gone and no error shown.
+    if (doc.getElementById('splash') || doc.querySelector('script[src*="flutter"]')) return false;
     // 2. SPA mount point: present is not the same as painted.
     var mount = doc.getElementById ? (doc.getElementById('root') || doc.getElementById('app')) : null;
     if (mount) return mount.children.length > 0;

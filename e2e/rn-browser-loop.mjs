@@ -16,7 +16,7 @@ import path from "node:path";
 
 const root = process.argv[2];
 const label = process.argv[3] || path.basename(root);
-if (!root) { console.error("usage: node rn-browser-loop.mjs <export-dir> [label]"); process.exit(2); }
+if (!root) { console.error("usage: node rn-browser-loop.mjs <export-dir|http-url> [label]"); process.exit(2); }
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
   ".ico": "image/x-icon", ".png": "image/png", ".ttf": "font/ttf", ".css": "text/css" };
@@ -62,13 +62,17 @@ const probe = async (page) => page.evaluate(({ oldSrc, newSrc }) => {
     neu: !!newFn(document),
     bodyChildren: document.body ? document.body.children.length : -1,
     rootChildren: mount ? mount.children.length : -1,
+    flutterMarker: !!document.querySelector("flutter-view,flt-glass-pane,flt-scene-host"),
     visibleText: (document.body?.innerText || "").trim().slice(0, 60),
   };
 }, { oldSrc: OLD, newSrc: NEW });
 
-await new Promise((r) => server.listen(0, "127.0.0.1", r));
-const port = server.address().port;
-const url = `http://127.0.0.1:${port}/`;
+// `root` may be a directory to serve, or a live URL (e.g. a running Flutter
+// `web-server` dev server) to measure in place. The Flutter lane cannot be
+// exported the way an Expo target can, so measuring it at all requires this.
+const liveURL = /^https?:\/\//.test(root) ? root : null;
+if (!liveURL) await new Promise((r) => server.listen(0, "127.0.0.1", r));
+const url = liveURL || `http://127.0.0.1:${server.address().port}/`;
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -89,7 +93,8 @@ let t1;
 try {
   await page.waitForFunction(() => {
     const m = document.getElementById("root");
-    return m && m.children.length > 0;
+    if (m && m.children.length > 0) return true;
+    return !!document.querySelector("flutter-view,flt-glass-pane,flt-scene-host");
   }, { timeout: 45000 });
   t1 = await probe(page);
   console.log(`t1  (react mounted)                 body=${t1.bodyChildren} #root=${t1.rootChildren}  OLD=${t1.old}  NEW=${t1.neu}  text=${JSON.stringify(t1.visibleText)}`);
@@ -106,20 +111,28 @@ await page.screenshot({ path: shot });
 // observable depends on how fast the app mounts, so "the old probe is wrong"
 // is reported as an observation, not asserted — an app that mounts before the
 // probe runs simply never had the bug.
-const caughtPreMount = t0.rootChildren === 0;
+// "Mounted" differs by framework: an SPA has a populated #root, Flutter has an
+// engine marker and NO #root at all. Asserting rootChildren>0 against Flutter
+// fails an app that is rendering perfectly well.
+const isFlutter = t1.rootChildren === -1 && (t1.flutterMarker || t0.flutterMarker);
+const mountedAt = (s) => (isFlutter ? s.flutterMarker : s.rootChildren > 0);
+// Pre-mount = we caught the page before it painted. For an SPA that is an empty
+// #root; for Flutter it is "no engine marker yet".
+const caughtPreMount = !mountedAt(t0);
 const results = [];
-results.push(["NEW never claims rendered on an empty #root", !(t0.rootChildren === 0 && t0.neu === true)]);
-results.push(["NEW reports rendered once mounted",           t1.neu === true && t1.rootChildren > 0]);
-results.push(["NEW is never worse than OLD after mount",     !(t1.old === true && t1.neu === false)]);
+results.push(["NEW never claims rendered before mount", !(caughtPreMount && t0.neu === true)]);
+results.push(["NEW reports rendered once mounted",      t1.neu === true && mountedAt(t1)]);
+results.push(["NEW is never worse than OLD after mount", !(t1.old === true && t1.neu === false)]);
 
 let ok = true;
 console.log("");
 for (const [name, pass] of results) { console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}`); if (!pass) ok = false; }
+console.log(`  NOTE  framework=${isFlutter ? "flutter (no #root; engine marker is the mount signal)" : "spa (#root)"}`);
 console.log(caughtPreMount
-  ? `  NOTE  pre-mount window observed: OLD=${t0.old} (would lift the overlay onto an empty #root), NEW=${t0.neu}`
+  ? `  NOTE  pre-mount window observed: OLD=${t0.old}, NEW=${t0.neu} — a true here lifts the overlay onto an unpainted page`
   : `  NOTE  app mounted before the probe ran — no pre-mount window on this app`);
 console.log(`\nscreenshot: ${shot}`);
 
 await browser.close();
-server.close();
+if (!liveURL) server.close();
 process.exit(ok ? 0 : 1);
