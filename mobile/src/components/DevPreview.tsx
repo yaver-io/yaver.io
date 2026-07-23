@@ -51,6 +51,17 @@ function currentYaverConsumerContract() {
   };
 }
 
+// The exact command Yaver runs to serve the web target, per framework — shown
+// in the "starting" loader so the user sees what's happening.
+function devServerSteps(framework: string): string {
+  const fw = (framework || "").toLowerCase();
+  if (fw === "flutter") return "flutter run -d web-server";
+  if (fw.includes("expo") || fw.includes("react-native")) return "expo start --web (Metro web target)";
+  if (fw.includes("next")) return "next dev";
+  if (fw.includes("vite")) return "vite";
+  return "starting the web dev server";
+}
+
 function projectLabelFromStatus(status: DevServerStatus | null): string {
   const workDir = String(status?.workDir || "").trim();
   if (workDir) {
@@ -69,8 +80,31 @@ export function DevPreview() {
   const [showPreview, setShowPreview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [webViewKey, setWebViewKey] = useState(0);
+  const [webStarting, setWebStarting] = useState(false);
+  const webRetryCount = useRef(0);
+  const webRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webErroredThisLoad = useRef(false);
   const wasRunning = useRef(false);
   const webViewRef = useRef<WebView>(null);
+
+  // Auto-retry the WebView while the framework's web server is still compiling
+  // (agent returns 503 {status:"starting"} or refuses the connection). Up to
+  // ~30 tries × 2.5s ≈ 75s, which covers a cold Flutter/expo web compile.
+  const scheduleWebRetry = useCallback(() => {
+    setLoading(false);
+    if (webRetryCount.current >= 30) {
+      setWebStarting(false);
+      Alert.alert("Dev server didn't come up", "The web dev server didn't start in time. Check the task logs on your machine.");
+      return;
+    }
+    webRetryCount.current += 1;
+    setWebStarting(true);
+    if (webRetryTimer.current) clearTimeout(webRetryTimer.current);
+    webRetryTimer.current = setTimeout(() => setWebViewKey((k) => k + 1), 2500);
+  }, []);
+
+  // Reset the retry budget whenever a fresh preview opens or the WebView loads.
+  useEffect(() => () => { if (webRetryTimer.current) clearTimeout(webRetryTimer.current); }, []);
 
   // Poll dev server status every 3s
   useEffect(() => {
@@ -737,12 +771,24 @@ export function DevPreview() {
                 key={webViewKey}
                 source={{ uri: bundleUrl }}
                 style={styles.webview}
-                onLoadStart={() => setLoading(true)}
-                onLoadEnd={() => setLoading(false)}
-                onError={(e) => {
+                onLoadStart={() => { setLoading(true); webErroredThisLoad.current = false; }}
+                onLoadEnd={() => {
                   setLoading(false);
-                  Alert.alert("Load Error", e.nativeEvent.description || "Could not load the app");
+                  // A clean load (no 503/refusal this cycle) means the app is up.
+                  if (!webErroredThisLoad.current) {
+                    setWebStarting(false);
+                    webRetryCount.current = 0;
+                  }
                 }}
+                // The framework's web server can take up to a minute to compile
+                // on a cold start — until then the agent returns a structured
+                // 503 {status:"starting"} (onHttpError) or the connection is
+                // refused (onError). Show a "starting" loader with the exact
+                // command and AUTO-RETRY instead of a dead error page.
+                onHttpError={(e) => {
+                  if (e.nativeEvent.statusCode >= 500) { webErroredThisLoad.current = true; scheduleWebRetry(); }
+                }}
+                onError={() => { webErroredThisLoad.current = true; scheduleWebRetry(); }}
                 javaScriptEnabled
                 domStorageEnabled
                 allowsInlineMediaPlayback
@@ -760,6 +806,18 @@ export function DevPreview() {
                   </View>
                 )}
               />
+              {webStarting ? (
+                <View style={styles.loadingContainer} pointerEvents="none">
+                  <ActivityIndicator size="large" color="#22c55e" />
+                  <Text style={styles.loadingText}>
+                    Starting {frameworkLabel} dev server…
+                  </Text>
+                  <Text style={styles.loadingSubtext}>{devServerSteps(frameworkLabel)}</Text>
+                  <Text style={[styles.loadingSubtext, { marginTop: 4 }]}>
+                    First web compile can take up to a minute — retrying…
+                  </Text>
+                </View>
+              ) : null}
               {loading && (
                 <View style={styles.loadingBar}>
                   <View style={styles.loadingBarFill} />
