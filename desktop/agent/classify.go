@@ -21,11 +21,11 @@ const (
 
 // ClassifyResult holds the classification of a user message.
 type ClassifyResult struct {
-	Intent       MessageIntent `json:"intent"`
-	TodoID       string        `json:"todoId,omitempty"`       // for continuation: which item it continues
-	Description  string        `json:"description"`            // cleaned description
-	IsImmediate  bool          `json:"isImmediate"`            // true if should be executed now
-	Confidence   float64       `json:"confidence"`             // 0.0-1.0
+	Intent      MessageIntent `json:"intent"`
+	TodoID      string        `json:"todoId,omitempty"` // for continuation: which item it continues
+	Description string        `json:"description"`      // cleaned description
+	IsImmediate bool          `json:"isImmediate"`      // true if should be executed now
+	Confidence  float64       `json:"confidence"`       // 0.0-1.0
 }
 
 // ClassifyMessage determines if a user's chat message is a todo item (bug/issue to record),
@@ -161,10 +161,10 @@ func findContinuation(msg string, items []*TodoItem) string {
 type ProjectInfo struct {
 	Name      string    `json:"name"`                // directory name
 	Path      string    `json:"path"`                // full path
-	GitBranch string    `json:"gitBranch,omitempty"`  // current git branch
-	GitRemote string    `json:"gitRemote,omitempty"`  // origin URL (sanitized)
-	Framework string    `json:"framework,omitempty"`  // detected framework
-	Stack     RepoStack `json:"stack,omitempty"`      // full stack detection
+	GitBranch string    `json:"gitBranch,omitempty"` // current git branch
+	GitRemote string    `json:"gitRemote,omitempty"` // origin URL (sanitized)
+	Framework string    `json:"framework,omitempty"` // detected framework
+	Stack     RepoStack `json:"stack,omitempty"`     // full stack detection
 }
 
 // DetectProjectInfo extracts project metadata from a working directory.
@@ -284,11 +284,28 @@ func hasFeedbackSDK(dir string) bool {
 
 // detectFramework checks common framework indicators.
 func detectFramework(dir string) string {
+	// Flutter first, but read pubspec.yaml content — a bare pubspec.yaml can be
+	// a plain Dart package (CLI/server), not a Flutter app. A Flutter project
+	// declares the flutter SDK (`sdk: flutter` / a `flutter:` section), and has
+	// a lib/ with dart sources. Detecting Flutter from its dart project markers
+	// rather than mere file presence stops a Dart backend being labelled
+	// "flutter" and routed to the mobile preview lanes.
+	if data, err := readSmallFile(filepath.Join(dir, "pubspec.yaml")); err == nil {
+		body := string(data)
+		if strings.Contains(body, "sdk: flutter") ||
+			strings.Contains(body, "flutter:") ||
+			strings.Contains(body, "cupertino_icons") ||
+			fileExists(filepath.Join(dir, "lib", "main.dart")) {
+			return "flutter"
+		}
+		// pubspec present but no Flutter markers → a plain Dart package. Fall
+		// through to the other checks rather than mislabelling it flutter.
+	}
+
 	checks := []struct {
 		file      string
 		framework string
 	}{
-		{"pubspec.yaml", "flutter"},
 		{"next.config.ts", "nextjs"},
 		{"next.config.js", "nextjs"},
 		{"vite.config.ts", "vite"},

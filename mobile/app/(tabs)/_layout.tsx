@@ -289,13 +289,33 @@ export default function TabLayout() {
       }
 
       if (command === "capture_screenshot") {
-        await quicClient.pushBlackBoxEvents(resolved.id, [{
-          type: "state",
-          level: "info",
-          message: "preview_worker_capture_requested",
-          timestamp: Date.now(),
-          metadata: { supported: false, reason: "screenshot-capture-not-wired-yet" },
-        }]);
+        // Phone remote-control / closed-loop testing: snapshot our own screen
+        // and POST it back so the agent's device_screenshot verb can return it.
+        // captureScreen grabs the whole native view hierarchy (the Hermes-loaded
+        // guest app, the WebView preview, etc.). See desktop/agent/blackbox_frame.go.
+        const turnId = typeof data.turnId === "string" ? data.turnId : undefined;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { captureScreen } = require("react-native-view-shot");
+          const base64: string = await captureScreen({ format: "jpg", quality: 0.6, result: "base64" });
+          const ok = await quicClient.uploadPhoneFrame(resolved.id, base64, "jpg", turnId);
+          await quicClient.pushBlackBoxEvents(resolved.id, [{
+            type: "state",
+            level: "info",
+            message: "preview_worker_capture_done",
+            timestamp: Date.now(),
+            metadata: { ...(turnId ? { turnId } : {}), ok, bytes: base64.length },
+          }]);
+        } catch (err: any) {
+          await quicClient.pushBlackBoxEvents(resolved.id, [{
+            type: "error",
+            level: "error",
+            message: `preview_worker_capture_failed: ${err?.message || "capture failed"}`,
+            timestamp: Date.now(),
+            metadata: { ...(turnId ? { turnId } : {}) },
+          }]);
+        }
+        return;
       }
     });
 

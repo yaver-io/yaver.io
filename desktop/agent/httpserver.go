@@ -915,6 +915,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/blackbox/stream", s.authSDK(s.handleBlackBoxStream))
 	mux.HandleFunc("/blackbox/command-stream", s.authSDK(s.handleBlackBoxCommandStream))
 	mux.HandleFunc("/blackbox/events", s.authSDK(s.handleBlackBoxEvents))
+	mux.HandleFunc("/blackbox/frame", s.authSDK(s.handleBlackBoxFrame))
 	mux.HandleFunc("/blackbox/logs", s.authSDK(s.handleBlackBoxLogs))
 	mux.HandleFunc("/blackbox/subscribe", s.authSDK(s.handleBlackBoxSubscribe))
 	mux.HandleFunc("/blackbox/context", s.authSDK(s.handleBlackBoxContext))

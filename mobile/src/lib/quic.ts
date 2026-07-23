@@ -7356,6 +7356,27 @@ export class QuicClient {
     } catch { return false; }
   }
 
+  /**
+   * Upload a single captured screen frame to the agent (phone remote-control /
+   * closed-loop testing). The agent stores it per-device and returns it via the
+   * device_screenshot verb. See desktop/agent/blackbox_frame.go.
+   */
+  async uploadPhoneFrame(deviceId: string, dataBase64: string, format = "jpg", turnId?: string): Promise<boolean> {
+    if (!this.isConnected && !this.hasConnectionInfo) return false;
+    try {
+      const res = await fetch(`${this.baseUrl}/blackbox/frame`, {
+        method: "POST",
+        headers: {
+          ...this.authHeaders,
+          "Content-Type": "application/json",
+          "X-Device-ID": deviceId,
+        },
+        body: JSON.stringify({ deviceId, format, dataBase64, turnId }),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
   /** Subscribe to commands for a mobile worker over the existing blackbox SSE path. */
   streamBlackBoxCommands(
     deviceId: string,
