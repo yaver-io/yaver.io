@@ -2181,22 +2181,31 @@ func (f *FlutterDevServer) Start(ctx context.Context, opts DevServerOpts) error 
 		f.port = 9100
 	}
 
-	// Find a real mobile device (iOS/Android) for native hot reload.
-	// Flutter is a mobile framework — run natively, not as web.
 	deviceID := opts.Platform
 	preferredPlatform := ""
 	switch deviceID {
 	case "ios", "android":
 		preferredPlatform = deviceID
 		deviceID = ""
+	case "web", "chrome", "web-server":
+		// BROWSER LANE: always serve `-d web-server`, never a detected device.
+		//
+		// The old code called detectFlutterMobileDevice even for an explicit web
+		// request and used whatever it found — so with a paired iPhone connected,
+		// the browser lane ran Flutter NATIVELY on the phone (a full iOS build)
+		// and never bound the web port. The preview then 503'd forever
+		// ("dev server unavailable" / "still starting"). A web request means web.
+		log.Printf("[dev:flutter] browser lane requested (%q) — serving -d web-server on :%d, skipping mobile-device detection", deviceID, f.port)
+		deviceID = "web-server"
 	}
-	if deviceID == "" || deviceID == "web" || deviceID == "chrome" || deviceID == "web-server" {
+	if deviceID == "" {
+		// No explicit platform — pick a real mobile device for native hot
+		// reload, else fall back to web-server.
 		detected := detectFlutterMobileDevice(ctx, preferredPlatform, opts.Target)
 		if detected != "" {
 			deviceID = detected
 		} else {
-			// No mobile device found — fall back to web-server
-			log.Printf("[dev:flutter] No mobile device found, falling back to web-server")
+			log.Printf("[dev:flutter] no mobile device found, falling back to web-server")
 			deviceID = "web-server"
 		}
 	}
