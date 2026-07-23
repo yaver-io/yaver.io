@@ -151,6 +151,65 @@ requires `#root`/`#app` to have a **child** (react-dom committed), Flutter keeps
 its markers, plain-web keeps the old heuristic. It also ignores the agent's own
 `{"status":"starting"}` 503 body so the placeholder never reads as "rendered".
 
+## Flutter has the SAME premature-ready bug — it just wears a splash (2026-07-24)
+
+The RN section above says "Flutter keeps its markers", which reads as *Flutter is
+handled*. It is not. Walk the predicate against a **live** Flutter web page
+(fetched from `flutter run -d web-server`, e-mobile on :9100):
+
+```html
+<body>
+  <picture id="splash"> … </picture>                      ← element child 1
+  <script> _flutter.loader.loadEntrypoint(…) </script>     ← element child 2
+</body>
+```
+
+At document-end, in order:
+
+1. `flutter-view` / `flt-glass-pane` / `flt-scene-host` — **absent**. The engine
+   creates those only after `main.dart.js` downloads and CanvasKit boots.
+2. `#root` / `#app` — **absent**. Flutter has no SPA mount point, so the branch
+   that fixes RN never applies to it.
+3. Legacy fallback → `body.children.length > 1` → **2 > 1 → TRUE**.
+
+So Flutter fires "rendered" prematurely by exactly the same mechanism as
+Expo-web did. The `#root` fix does not cover it, because there is no `#root`.
+
+**Why nobody filed it:** Flutter ships a splash. Lifting the overlay early
+reveals the app's own splash image rather than a blank void, so it reads as a
+plausible loading state. That makes it less severe than the RN case, not absent —
+two consequences survive:
+
+- A Flutter app that fails to boot **shows its splash forever**: the predicate
+  latched on the splash, the overlay is gone, the page returned 200 so the retry
+  counter never increments, and no error is ever shown. Same dead end as RN, just
+  prettier. This is very likely what "never leaves its splash" in the FCM note
+  above actually looks like to a user.
+- Yaver's own progress UI — startup steps, %, live logs, the failure panel with
+  Retry — is dismissed before the app starts, so for Flutter it is never seen.
+
+**The fix, when the Flutter owner wants it** (one line in branch 3 — deliberately
+NOT applied here, because it changes Flutter behaviour and this lane is owned
+elsewhere):
+
+```js
+// still booting: a splash is up and the engine has not attached yet
+if (doc.getElementById('splash') || doc.querySelector('#flutter_service_worker')) return false;
+```
+
+**Measure before shipping it.** If a project removes or replaces its splash,
+`children.length` can drop to 1 and the fallback flips to the *opposite* failure
+(overlay never lifts) — which is the bug the Flutter side has presumably already
+been fighting. `e2e/rn-browser-loop.mjs` takes any export directory and prints
+the `t0`/`t1` `body=` / `#root=` / `OLD=` / `NEW=` numbers directly, so a Flutter
+export can be measured the same way the three RN projects were:
+
+```
+sfmg   t0  body=3 #root=0  OLD=true  NEW=false
+talos  t0  body=3 #root=0  OLD=true  NEW=false
+yaver  t0  body=3 #root=0  OLD=true  NEW=false
+```
+
 ## Decision guide
 
 - App is a **web-ready** Flutter/RN/Next/Vite app → **Browser lane**. Fast, no

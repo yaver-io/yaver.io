@@ -1477,6 +1477,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// `doctor-transport` verb reaches so agentic self-heal can learn why the data
 	// path is down and act (see doctor_transport.go + ssh_session_cmd.go).
 	mux.HandleFunc("/doctor/transport", s.auth(s.handleDoctorTransport))
+	// Browser-lane render probe: drives a real headless browser against the
+	// exact URL the phone's WebView loads. The only check that can catch a
+	// "dev server is up, 200 OK, page paints nothing" blank screen — every
+	// inventory-style check stays green through that failure.
+	mux.HandleFunc("/doctor/browser-lane", s.auth(s.handleDoctorBrowserLane))
 	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
 	mux.HandleFunc("/deploy/capabilities", s.auth(s.handleDeployCapabilities))
 	mux.HandleFunc("/mobile/platform-matrix", s.auth(s.handleMobilePlatformMatrix))

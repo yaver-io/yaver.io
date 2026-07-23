@@ -30,6 +30,7 @@ import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, isBundleLoaderAvailable, loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
+import { PREVIEW_READY_SCRIPT } from "../../src/lib/previewReadyScript";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
@@ -891,6 +892,17 @@ export default function AppsScreen() {
         // while the web server is still compiling (onError below).
         setActionSheet(null);
         resetWebPreview();
+
+        // Pull status BEFORE opening. bundleUrl is derived from devStatus, and
+        // devStatus otherwise only arrives on an independent 3s poll — so the
+        // WebView would mount with uri:"" and issue no request at all. That is
+        // silent: no request means no onError/onHttpError, so the retry counter
+        // never increments and the failure panel is unreachable. The user gets
+        // an overlay that never lifts. Cheap call, removes a whole dead end.
+        try {
+          const st = await quicClient.getDevServerStatus();
+          if (isActiveDevServerStatus(st)) setDevStatus(st);
+        } catch { /* the poll will catch up; the empty-url guard below covers us */ }
 
         setWebViewKey((k) => k + 1);
         setWebViewLoading(true);
@@ -2515,6 +2527,17 @@ export default function AppsScreen() {
             <View style={[s.loadingBar, { backgroundColor: c.accent }]} />
           )}
           <View style={{ flex: 1 }}>
+            {/* An empty bundleUrl means devStatus has not reported yet. Mounting
+                a WebView on uri:"" issues no request, so nothing can ever fail
+                or retry — it just sits blank. Render an explicit waiting state
+                instead; treat an empty url as a bug, never as a value. */}
+            {!bundleUrl ? (
+              <View style={s.previewOverlay}>
+                <Text style={[s.previewSubtle, { color: c.textMuted }]}>
+                  Waiting for the dev server to report its address…
+                </Text>
+              </View>
+            ) : (
             <WebView
               ref={webViewRef}
               key={webViewKey}
@@ -2528,13 +2551,44 @@ export default function AppsScreen() {
               // Cold start: a Flutter/expo/vite web server takes 10-60s to compile
               // and bind. Until then the agent's /dev/ proxy returns 503 or refuses
               // the connection. Auto-retry (~30×2.5s ≈ 75s) instead of a dead page.
+              // Every non-2xx is a signal. This used to retry only on >=500,
+              // which meant 401/403/404 did nothing at all: no retry, no
+              // failure panel, overlay forever. 401 is the common one — the
+              // WebView URL carries ?token= and &__rp= because a WebView
+              // cannot set an Authorization header, so a missing relay
+              // password produces a silent 401 that no header-authenticated
+              // status check can see.
               onHttpError={(e) => {
-                if (e.nativeEvent.statusCode >= 500) scheduleWebPreviewRetry();
+                const code = e.nativeEvent.statusCode;
+                if (code === 401 || code === 403) {
+                  // Terminal: retrying cannot fix credentials. Name the cause.
+                  setWebPreviewLogs((prev) => [...prev, `HTTP ${code} — the preview URL was rejected. The relay credential is missing or stale; reconnect to this box to refetch it.`]);
+                  setWebPreviewFailed(true);
+                  setWebViewLoading(false);
+                  return;
+                }
+                if (code === 404) {
+                  setWebPreviewLogs((prev) => [...prev, "HTTP 404 — the dev server is up but is not serving a web target at this path. Confirm the project has a web build (react-native-web + react-dom)."]);
+                  setWebPreviewFailed(true);
+                  setWebViewLoading(false);
+                  return;
+                }
+                if (code >= 400) scheduleWebPreviewRetry();
               }}
               onError={() => scheduleWebPreviewRetry()}
-              // Confirm real paint before hiding the overlay (Flutter index.html
-              // 200s then renders black while CanvasKit boots / assets 404).
-              injectedJavaScript={`(function(){try{var s=false;function ok(){if(s)return true;var b=document.body;var bt=(b&&b.innerText||'').trim();if(bt.indexOf('"status":"starting"')>=0||bt.indexOf('did not become ready')>=0){return false;}var f=document.querySelector('flutter-view,flt-glass-pane,flt-scene-host');var d=b&&(b.children.length>1||bt.length>0);if(f||d){s=true;if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({t:'yaver-rendered'}));return true;}return false;}if(!ok()){var n=0,iv=setInterval(function(){n++;if(ok()||n>120)clearInterval(iv);},500);}}catch(e){}return true;})();`}
+              // Confirm real paint before hiding the overlay. Lives in
+              // src/lib/previewReadyScript.ts so the single most failure-prone
+              // piece of this lane is testable — e2e/rn-browser-loop.mjs runs
+              // the exact string below against a real Chromium.
+              //
+              // The inline version this replaced accepted `body.children > 1`,
+              // which every Expo Web page satisfies at document-end (noscript +
+              // div#root + script = 3 children) BEFORE react mounts. It lifted
+              // the overlay onto an empty #root — the RN browser-lane blank
+              // screen — and latched, so a slow or failed 7 MB bundle stayed
+              // blank with no error and no retry. Verified against sfmg and
+              // talos/mobile exports: t0 #root=0, old probe said "rendered".
+              injectedJavaScript={PREVIEW_READY_SCRIPT}
               onMessage={(e) => {
                 try {
                   const m = JSON.parse(e.nativeEvent.data);
@@ -2549,7 +2603,8 @@ export default function AppsScreen() {
               domStorageEnabled
               allowsInlineMediaPlayback
             />
-            {!webPreviewContentLoaded && (
+            )}
+            {bundleUrl && !webPreviewContentLoaded && (
               <View style={s.previewOverlay}>
                 {webPreviewFailed ? (
                   <>
