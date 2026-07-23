@@ -7,6 +7,7 @@ import {
   Modal,
   NativeModules,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -82,6 +83,23 @@ export function DevPreview() {
   const [loading, setLoading] = useState(false);
   const [webViewKey, setWebViewKey] = useState(0);
   const [webStarting, setWebStarting] = useState(false);
+  // True once the WebView has ACTUAL rendered content (a real DOM / flutter-view),
+  // not merely a 200 on index.html. Flutter web returns 200 for a page that then
+  // renders black while CanvasKit boots or if assets 404 through the proxy — so
+  // onLoadEnd alone is a false "ready". We keep the progress overlay up until an
+  // injected probe confirms visible content, so the user never stares at black.
+  const [webContentLoaded, setWebContentLoaded] = useState(false);
+  // Terminal failure: the web server never came up within the retry budget, or
+  // the agent streamed an error. Drives the failure panel (with logs) instead of
+  // an endless spinner or a black page.
+  const [previewFailed, setPreviewFailed] = useState(false);
+  // Rolling tail of dev-server log lines, for the starting + failure panels.
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const pushLog = useCallback((line: string) => {
+    const t = (line || "").trim();
+    if (!t) return;
+    setLogLines((prev) => (prev[prev.length - 1] === t ? prev : [...prev, t].slice(-40)));
+  }, []);
   const webRetryCount = useRef(0);
   const webRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const webErroredThisLoad = useRef(false);
@@ -94,14 +112,26 @@ export function DevPreview() {
   const scheduleWebRetry = useCallback(() => {
     setLoading(false);
     if (webRetryCount.current >= 30) {
+      // Give up quietly into the failure panel (which shows the logs + a Retry
+      // button) rather than an Alert that dismisses to a black WebView.
       setWebStarting(false);
-      Alert.alert("Dev server didn't come up", "The web dev server didn't start in time. Check the task logs on your machine.");
+      setPreviewFailed(true);
       return;
     }
     webRetryCount.current += 1;
     setWebStarting(true);
     if (webRetryTimer.current) clearTimeout(webRetryTimer.current);
     webRetryTimer.current = setTimeout(() => setWebViewKey((k) => k + 1), 2500);
+  }, []);
+
+  // Reset the preview's progress/failure state for a fresh open or manual retry.
+  const resetPreviewProgress = useCallback(() => {
+    webRetryCount.current = 0;
+    webErroredThisLoad.current = false;
+    setPreviewFailed(false);
+    setWebContentLoaded(false);
+    setWebStarting(false);
+    setLogLines([]);
   }, []);
 
   // Reset the retry budget whenever a fresh preview opens or the WebView loads.
@@ -262,12 +292,17 @@ export function DevPreview() {
                   setLastByteAt(Date.now());
                 } else if (event.type === "building") {
                   setLastLogLine(event.message || "Building...");
+                  pushLog(event.message || "Building...");
                   setLastByteAt(Date.now());
                 } else if (event.type === "log" && event.logLine) {
                   setLastLogLine(event.logLine);
+                  pushLog(event.logLine);
                   setLastByteAt(Date.now());
                 } else if (event.type === "error") {
-                  setLastLogLine(event.message || "Build failed");
+                  const em = event.message || "Dev server failed to start";
+                  setLastLogLine(em);
+                  pushLog(`ERROR: ${em}`);
+                  setPreviewFailed(true);
                   setLastByteAt(Date.now());
                 }
               } catch {}
@@ -476,10 +511,11 @@ export function DevPreview() {
       return;
     }
     // Web mode: open in WebView
+    resetPreviewProgress();
     setShowPreview(true);
     setLoading(true);
     setWebViewKey(k => k + 1);
-  }, [mustUseNativePreview, handleRunInYaver]);
+  }, [mustUseNativePreview, handleRunInYaver, resetPreviewProgress]);
 
   const handleReload = useCallback(async () => {
     if (reloadLoading || nativeLoading) return;
@@ -788,7 +824,8 @@ export function DevPreview() {
               )}
             </View>
           ) : (
-            /* Web mode: load app in WebView */
+            /* Web mode: load app in WebView, with a progress/failure overlay
+               that stays until REAL content is confirmed (see webContentLoaded). */
             <>
               <WebView
                 ref={webViewRef}
@@ -796,55 +833,89 @@ export function DevPreview() {
                 source={{ uri: bundleUrl }}
                 style={styles.webview}
                 onLoadStart={() => { setLoading(true); webErroredThisLoad.current = false; }}
-                onLoadEnd={() => {
-                  setLoading(false);
-                  // A clean load (no 503/refusal this cycle) means the app is up.
-                  if (!webErroredThisLoad.current) {
-                    setWebStarting(false);
-                    webRetryCount.current = 0;
-                  }
-                }}
-                // The framework's web server can take up to a minute to compile
-                // on a cold start — until then the agent returns a structured
-                // 503 {status:"starting"} (onHttpError) or the connection is
-                // refused (onError). Show a "starting" loader with the exact
-                // command and AUTO-RETRY instead of a dead error page.
+                onLoadEnd={() => { setLoading(false); }}
                 onHttpError={(e) => {
                   if (e.nativeEvent.statusCode >= 500) { webErroredThisLoad.current = true; scheduleWebRetry(); }
                 }}
                 onError={() => { webErroredThisLoad.current = true; scheduleWebRetry(); }}
+                // Confirm the page actually PAINTED something (real DOM or a
+                // flutter-view) before we hide the progress overlay — a bare 200
+                // on Flutter's index.html renders black while CanvasKit boots or
+                // if assets 404 through the proxy. Poll for up to 60s.
+                injectedJavaScript={`(function(){try{var s=false;function ok(){if(s)return true;var f=document.querySelector('flutter-view,flt-glass-pane,flt-scene-host');var b=document.body;var d=b&&(b.children.length>1||((b.innerText||'').trim().length>0));if(f||d){s=true;if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({t:'yaver-rendered'}));return true;}return false;}if(!ok()){var n=0,iv=setInterval(function(){n++;if(ok()||n>120)clearInterval(iv);},500);}}catch(e){}return true;})();`}
+                onMessage={(e) => {
+                  try {
+                    const m = JSON.parse(e.nativeEvent.data);
+                    if (m && m.t === "yaver-rendered") {
+                      setWebContentLoaded(true);
+                      setWebStarting(false);
+                      setPreviewFailed(false);
+                      webRetryCount.current = 0;
+                    }
+                  } catch { /* not our message */ }
+                }}
                 javaScriptEnabled
                 domStorageEnabled
                 allowsInlineMediaPlayback
                 originWhitelist={["*"]}
-                startInLoadingState
-                renderLoading={() => (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#818cf8" />
-                    <Text style={styles.loadingText}>
-                      Loading {status.workDir?.split("/").pop() || "app"}...
-                    </Text>
-                    <Text style={styles.loadingSubtext}>
-                      Through {(quicClient as any)._connectionMode === "relay" ? "relay" : "direct"} connection
-                    </Text>
-                  </View>
-                )}
               />
-              {webStarting ? (
-                <View style={styles.loadingContainer} pointerEvents="none">
-                  <ActivityIndicator size="large" color="#22c55e" />
-                  <Text style={styles.loadingText}>
-                    Starting {frameworkLabel} dev server…
-                  </Text>
-                  <Text style={styles.loadingSubtext}>{devServerSteps(frameworkLabel)}</Text>
-                  <Text style={[styles.loadingSubtext, { marginTop: 4 }]}>
-                    First web compile can take up to a minute — retrying…
-                  </Text>
-                </View>
-              ) : null}
-              {loading && (
-                <View style={styles.loadingBar}>
-                  <View style={styles.loadingBarFill} />
+              {!webContentLoaded && (
+                <View style={styles.previewOverlay}>
+                  {previewFailed ? (
+                    <>
+                      <Ionicons name="alert-circle-outline" size={40} color="#ef4444" />
+                      <Text style={styles.previewFailTitle}>Dev server didn't come up</Text>
+                      <Text style={styles.previewStepCmd}>{devServerSteps(frameworkLabel)}</Text>
+                      <Text style={styles.previewSubtle}>
+                        The {frameworkLabel} web server never started serving. Recent output:
+                      </Text>
+                      <ScrollView style={styles.previewLogBox} contentContainerStyle={{ padding: 10 }}>
+                        {(logLines.length ? logLines : [lastLogLine || "No output captured — the server may have exited immediately."]).slice(-40).map((ln, i) => (
+                          <Text key={i} style={styles.previewLogLine}>{ln}</Text>
+                        ))}
+                      </ScrollView>
+                      <View style={styles.previewFailBtns}>
+                        <Pressable
+                          onPress={() => { resetPreviewProgress(); setLoading(true); setWebViewKey((k) => k + 1); }}
+                          style={[styles.previewBtn, { backgroundColor: "#1a2e1a" }]}
+                        >
+                          <Text style={[styles.previewBtnText, { color: "#22c55e" }]}>Retry</Text>
+                        </Pressable>
+                        <Pressable onPress={handleReload} style={[styles.previewBtn, { backgroundColor: "#1a1a2e" }]}>
+                          <Text style={[styles.previewBtnText, { color: "#818cf8" }]}>Restart server</Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <ActivityIndicator size="large" color="#22c55e" />
+                      <Text style={styles.previewStartTitle}>
+                        Starting {frameworkLabel} dev server…
+                      </Text>
+                      <Text style={styles.previewStepCmd}>{devServerSteps(frameworkLabel)}</Text>
+                      {progressState && progressState.pct > 0 ? (
+                        <View style={styles.previewProgressTrack}>
+                          <View style={[styles.previewProgressFill, { width: `${Math.min(100, progressState.pct)}%` }]} />
+                        </View>
+                      ) : null}
+                      <Text style={styles.previewSubtle}>
+                        {progressState
+                          ? `${progressState.phase || "compiling"}${progressState.pct ? ` · ${Math.round(progressState.pct)}%` : ""}${progressState.currentFile ? ` · ${progressState.currentFile}` : ""}`
+                          : webStarting
+                            ? "First web compile can take up to a minute — retrying…"
+                            : `Serving over ${(quicClient as any)._connectionMode === "relay" ? "relay" : "direct"} connection`}
+                      </Text>
+                      {logLines.length > 0 ? (
+                        <ScrollView style={styles.previewLogBox} contentContainerStyle={{ padding: 10 }}>
+                          {logLines.slice(-40).map((ln, i) => (
+                            <Text key={i} style={styles.previewLogLine}>{ln}</Text>
+                          ))}
+                        </ScrollView>
+                      ) : lastLogLine ? (
+                        <Text style={styles.previewSubtle} numberOfLines={2}>{lastLogLine}</Text>
+                      ) : null}
+                    </>
+                  )}
                 </View>
               )}
             </>
@@ -1190,4 +1261,49 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
   },
+  previewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#050508",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: 24,
+  },
+  previewStartTitle: { fontSize: 16, fontWeight: "700", color: "#e4e4e7", textAlign: "center" },
+  previewFailTitle: { fontSize: 17, fontWeight: "700", color: "#ef4444", textAlign: "center" },
+  previewStepCmd: {
+    fontFamily: monoFamily,
+    fontSize: 12,
+    color: "#22c55e",
+    backgroundColor: "#0f1a0f",
+    borderColor: "#22c55e33",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    overflow: "hidden",
+  },
+  previewSubtle: { fontSize: 12, color: "#94a3b8", textAlign: "center", lineHeight: 17 },
+  previewProgressTrack: {
+    width: "80%",
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#1f2937",
+    overflow: "hidden",
+    marginTop: 2,
+  },
+  previewProgressFill: { height: "100%", backgroundColor: "#22c55e", borderRadius: 3 },
+  previewLogBox: {
+    maxHeight: 180,
+    width: "100%",
+    marginTop: 6,
+    borderRadius: 10,
+    backgroundColor: "#0a0a0f",
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  previewLogLine: { fontFamily: monoFamily, fontSize: 10.5, color: "#9ca3af", lineHeight: 15 },
+  previewFailBtns: { flexDirection: "row", gap: 12, marginTop: 8 },
+  previewBtn: { paddingHorizontal: 22, paddingVertical: 11, borderRadius: 10 },
+  previewBtnText: { fontSize: 14, fontWeight: "700" },
 });

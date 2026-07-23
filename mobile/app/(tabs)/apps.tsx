@@ -249,6 +249,17 @@ function formatBuildTimestamp(value?: string): string {
   return date.toLocaleString();
 }
 
+// The exact command Yaver runs to serve the web target, per framework — shown
+// in the preview's "starting" panel so the user sees what's happening.
+function devServerStepsFor(framework?: string): string {
+  const fw = (framework || "").toLowerCase();
+  if (fw === "flutter") return "flutter run -d web-server";
+  if (fw.includes("expo") || fw.includes("react-native")) return "expo start --web";
+  if (fw.includes("next")) return "next dev";
+  if (fw.includes("vite")) return "vite";
+  return "starting the web dev server";
+}
+
 function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
   if (!framework) return "other";
   if (MOBILE_FRAMEWORKS.includes(framework) || SECOND_CLASS_MOBILE_FRAMEWORKS.includes(framework)) return "mobile";
@@ -476,13 +487,27 @@ export default function AppsScreen() {
   const webPreviewRetryRef = useRef(0);
   const webPreviewErroredRef = useRef(false);
   const webPreviewRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True once the WebView paints REAL content (a flutter-view / non-empty DOM),
+  // not just a 200 on index.html — keeps the progress overlay up so a Flutter
+  // page that renders black while CanvasKit boots never shows as a blank void.
+  const [webPreviewContentLoaded, setWebPreviewContentLoaded] = useState(false);
+  const [webPreviewFailed, setWebPreviewFailed] = useState(false);
+  const [webPreviewLogs, setWebPreviewLogs] = useState<string[]>([]);
   useEffect(() => () => { if (webPreviewRetryTimer.current) clearTimeout(webPreviewRetryTimer.current); }, []);
+  const resetWebPreview = useCallback(() => {
+    webPreviewRetryRef.current = 0;
+    webPreviewErroredRef.current = false;
+    setWebPreviewContentLoaded(false);
+    setWebPreviewFailed(false);
+    setWebPreviewLogs([]);
+  }, []);
   const scheduleWebPreviewRetry = useCallback(() => {
     webPreviewErroredRef.current = true;
     setWebViewLoading(false);
     if (webPreviewRetryRef.current >= 30) {
-      setShowWebView(false);
-      Alert.alert("Dev server didn't come up", "The web dev server didn't start in time. Check the machine is reachable and the project builds.");
+      // Fall into the failure panel (logs + Retry), not an Alert that dismisses
+      // the preview to nothing.
+      setWebPreviewFailed(true);
       return;
     }
     webPreviewRetryRef.current += 1;
@@ -592,6 +617,16 @@ export default function AppsScreen() {
                 if (event.type === "reload" || event.type === "ready") {
                   setWebViewKey(k => k + 1);
                   setWebViewLoading(true);
+                } else if (event.type === "log" && event.logLine) {
+                  const ln = String(event.logLine).trim();
+                  if (ln) setWebPreviewLogs((p) => (p[p.length - 1] === ln ? p : [...p, ln].slice(-40)));
+                } else if (event.type === "building" && event.message) {
+                  const ln = String(event.message).trim();
+                  if (ln) setWebPreviewLogs((p) => (p[p.length - 1] === ln ? p : [...p, ln].slice(-40)));
+                } else if (event.type === "error") {
+                  const em = String(event.message || "Dev server failed to start").trim();
+                  setWebPreviewLogs((p) => [...p, `ERROR: ${em}`].slice(-40));
+                  setWebPreviewFailed(true);
                 }
               } catch {}
             }
@@ -621,7 +656,7 @@ export default function AppsScreen() {
       // connection wasn't direct, so "Browser Reload" of e-mobile over relay tried
       // to LAN-flush and did nothing useful. The browser lane has no LAN coupling.
       if (isWebServedStatus({ platform: devStatus?.platform, devMode: devStatus?.devMode })) {
-        webPreviewRetryRef.current = 0;
+        resetWebPreview();
 
         setWebViewKey((k) => k + 1);
         setWebViewLoading(true);
@@ -860,7 +895,7 @@ export default function AppsScreen() {
         // with the progress hidden on the Tasks tab. The WebView auto-retries
         // while the web server is still compiling (onError below).
         setActionSheet(null);
-        webPreviewRetryRef.current = 0;
+        resetWebPreview();
 
         setWebViewKey((k) => k + 1);
         setWebViewLoading(true);
@@ -2519,58 +2554,106 @@ export default function AppsScreen() {
       <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
         <View style={[s.safe, { backgroundColor: c.bg }]}>
           <AppScreenHeader
-            title={runningProject || "Preview"}
+            title={(runningProject || "Preview").split(" / ")[0]}
             onBack={() => setShowWebView(false)}
             style={{ paddingTop: insets.top + 8 }}
             right={
               <View style={s.webViewHeaderActions}>
-                <Pressable onPress={handleReload}>
+                <Pressable onPress={handleReload} hitSlop={8}>
                   <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Reload</Text>
                 </Pressable>
-                <Pressable onPress={handleStop}>
+                <Pressable onPress={handleStop} hitSlop={8}>
                   <Text style={{ color: c.error, fontSize: 14, fontWeight: "600", marginLeft: 16 }}>Stop</Text>
                 </Pressable>
               </View>
             }
           />
-          {webViewLoading && (
+          {webViewLoading && !webPreviewContentLoaded && (
             <View style={[s.loadingBar, { backgroundColor: c.accent }]} />
           )}
-          <WebView
-            ref={webViewRef}
-            key={webViewKey}
-            source={{ uri: bundleUrl }}
-            style={{ flex: 1, backgroundColor: c.bg }}
-            onLoadStart={() => { webPreviewErroredRef.current = false; }}
-            onLoadEnd={() => {
-              setWebViewLoading(false);
-              if (!webPreviewErroredRef.current) webPreviewRetryRef.current = 0;
-            }}
-            // Cold start: a Flutter/expo/vite web server takes 10-60s to compile
-            // and bind. Until then the agent's /dev/ proxy returns 503
-            // {status:"starting"} or refuses the connection. Auto-retry (up to
-            // ~30×2.5s ≈ 75s) instead of leaving a dead error page — same policy
-            // as DevPreview's browser lane, so both surfaces behave identically.
-            onHttpError={(e) => {
-              if (e.nativeEvent.statusCode >= 500) scheduleWebPreviewRetry();
-            }}
-            onError={() => scheduleWebPreviewRetry()}
-            startInLoadingState
-            renderLoading={() => (
-              <View style={s.webPreviewStarting}>
-                <ActivityIndicator size="large" color={c.accent} />
-                <Text style={[s.webPreviewStartingText, { color: c.textPrimary }]}>
-                  Starting {devStatus?.framework || "web"} dev server…
-                </Text>
-                <Text style={[s.webPreviewStartingSub, { color: c.textMuted }]}>
-                  First web compile can take up to a minute — retrying automatically.
-                </Text>
+          <View style={{ flex: 1 }}>
+            <WebView
+              ref={webViewRef}
+              key={webViewKey}
+              source={{ uri: bundleUrl }}
+              style={{ flex: 1, backgroundColor: c.bg }}
+              onLoadStart={() => { webPreviewErroredRef.current = false; }}
+              onLoadEnd={() => {
+                setWebViewLoading(false);
+                if (!webPreviewErroredRef.current) webPreviewRetryRef.current = 0;
+              }}
+              // Cold start: a Flutter/expo/vite web server takes 10-60s to compile
+              // and bind. Until then the agent's /dev/ proxy returns 503 or refuses
+              // the connection. Auto-retry (~30×2.5s ≈ 75s) instead of a dead page.
+              onHttpError={(e) => {
+                if (e.nativeEvent.statusCode >= 500) scheduleWebPreviewRetry();
+              }}
+              onError={() => scheduleWebPreviewRetry()}
+              // Confirm real paint before hiding the overlay (Flutter index.html
+              // 200s then renders black while CanvasKit boots / assets 404).
+              injectedJavaScript={`(function(){try{var s=false;function ok(){if(s)return true;var f=document.querySelector('flutter-view,flt-glass-pane,flt-scene-host');var b=document.body;var d=b&&(b.children.length>1||((b.innerText||'').trim().length>0));if(f||d){s=true;if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({t:'yaver-rendered'}));return true;}return false;}if(!ok()){var n=0,iv=setInterval(function(){n++;if(ok()||n>120)clearInterval(iv);},500);}}catch(e){}return true;})();`}
+              onMessage={(e) => {
+                try {
+                  const m = JSON.parse(e.nativeEvent.data);
+                  if (m && m.t === "yaver-rendered") {
+                    setWebPreviewContentLoaded(true);
+                    setWebPreviewFailed(false);
+                    webPreviewRetryRef.current = 0;
+                  }
+                } catch { /* not ours */ }
+              }}
+              javaScriptEnabled
+              domStorageEnabled
+              allowsInlineMediaPlayback
+            />
+            {!webPreviewContentLoaded && (
+              <View style={s.previewOverlay}>
+                {webPreviewFailed ? (
+                  <>
+                    <Ionicons name="alert-circle-outline" size={40} color={c.error} />
+                    <Text style={[s.previewFailTitle, { color: c.error }]}>Dev server didn't come up</Text>
+                    <Text style={s.previewStepCmd}>{devServerStepsFor(devStatus?.framework)}</Text>
+                    <Text style={[s.previewSubtle, { color: c.textMuted }]}>
+                      The {devStatus?.framework || "web"} server never served content. Recent output:
+                    </Text>
+                    <ScrollView style={s.previewLogBox} contentContainerStyle={{ padding: 10 }}>
+                      {(webPreviewLogs.length ? webPreviewLogs : ["No output captured — the server may have exited immediately, or was never started."]).slice(-40).map((ln, i) => (
+                        <Text key={i} style={s.previewLogLine}>{ln}</Text>
+                      ))}
+                    </ScrollView>
+                    <View style={s.previewFailBtns}>
+                      <Pressable onPress={() => { resetWebPreview(); setWebViewLoading(true); setWebViewKey((k) => k + 1); }} style={[s.previewBtn, { backgroundColor: "#1a2e1a" }]}>
+                        <Text style={[s.previewBtnText, { color: "#22c55e" }]}>Retry</Text>
+                      </Pressable>
+                      <Pressable onPress={handleReload} style={[s.previewBtn, { backgroundColor: "#1a1a2e" }]}>
+                        <Text style={[s.previewBtnText, { color: "#818cf8" }]}>Restart server</Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <ActivityIndicator size="large" color={c.accent} />
+                    <Text style={[s.previewStartTitle, { color: c.textPrimary }]}>
+                      Starting {devStatus?.framework || "web"} dev server…
+                    </Text>
+                    <Text style={s.previewStepCmd}>{devServerStepsFor(devStatus?.framework)}</Text>
+                    <Text style={[s.previewSubtle, { color: c.textMuted }]}>
+                      {loadingStatus || "First web compile can take up to a minute — retrying automatically."}
+                    </Text>
+                    {webPreviewLogs.length > 0 ? (
+                      <ScrollView style={s.previewLogBox} contentContainerStyle={{ padding: 10 }}>
+                        {webPreviewLogs.slice(-40).map((ln, i) => (
+                          <Text key={i} style={s.previewLogLine}>{ln}</Text>
+                        ))}
+                      </ScrollView>
+                    ) : bundlerLine ? (
+                      <Text style={[s.previewSubtle, { color: c.textMuted }]} numberOfLines={2}>{bundlerLine}</Text>
+                    ) : null}
+                  </>
+                )}
               </View>
             )}
-            javaScriptEnabled
-            domStorageEnabled
-            allowsInlineMediaPlayback
-          />
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -2585,6 +2668,27 @@ const s = StyleSheet.create({
   webPreviewStarting: { flex: 1, justifyContent: "center", alignItems: "center", gap: 10, padding: 24 },
   webPreviewStartingText: { fontSize: 15, fontWeight: "600", textAlign: "center" },
   webPreviewStartingSub: { fontSize: 12, textAlign: "center", lineHeight: 17 },
+  previewOverlay: {
+    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: "#050508",
+    alignItems: "center", justifyContent: "center", gap: 10, padding: 24,
+  },
+  previewStartTitle: { fontSize: 16, fontWeight: "700", textAlign: "center" },
+  previewFailTitle: { fontSize: 17, fontWeight: "700", textAlign: "center" },
+  previewStepCmd: {
+    fontFamily: "Menlo", fontSize: 12, color: "#22c55e",
+    backgroundColor: "#0f1a0f", borderColor: "#22c55e33", borderWidth: 1,
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden",
+  },
+  previewSubtle: { fontSize: 12, textAlign: "center", lineHeight: 17 },
+  previewLogBox: {
+    maxHeight: 180, width: "100%", marginTop: 6, borderRadius: 10,
+    backgroundColor: "#0a0a0f", borderWidth: 1, borderColor: "#333",
+  },
+  previewLogLine: { fontFamily: "Menlo", fontSize: 10.5, color: "#9ca3af", lineHeight: 15 },
+  previewFailBtns: { flexDirection: "row", gap: 12, marginTop: 8 },
+  previewBtn: { paddingHorizontal: 22, paddingVertical: 11, borderRadius: 10 },
+  previewBtnText: { fontSize: 14, fontWeight: "700" },
 
   // Repos row (monorepo roots + standalone repos)
   reposSection: { marginTop: 12, marginBottom: 4 },

@@ -39,8 +39,10 @@ export function AppScreenHeader({
         style,
       ]}
     >
-      <AppBackButton onPress={onBack} label={backLabel} />
-      <Text style={[styles.title, { color: c.textPrimary }]} numberOfLines={1}>
+      <View style={styles.sideLeft}>
+        <AppBackButton onPress={onBack} label={backLabel} />
+      </View>
+      <Text style={[styles.title, { color: c.textPrimary }]} numberOfLines={1} ellipsizeMode="tail">
         {title}
       </Text>
       <View style={styles.rightSlot}>{right}</View>
@@ -52,17 +54,27 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
+    gap: 8,
+  },
+  // Left/right side slots reserve symmetric space so the flexed title stays
+  // visually centred and NEVER collides with the Back button or the right
+  // actions (a long "project / subdir" title used to overrun both).
+  sideLeft: {
+    flexShrink: 0,
   },
   title: {
+    flex: 1,
     fontSize: 17,
     fontWeight: "700",
+    textAlign: "center",
   },
   rightSlot: {
-    minWidth: 50,
-    alignItems: "flex-end",
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
   },
 });
