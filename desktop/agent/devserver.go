@@ -667,7 +667,22 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", ds.Port()))
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "dev server unavailable", http.StatusBadGateway)
+			// The framework's dev server (127.0.0.1:port) refused the request.
+			// For a web-lane framework this is almost always "still compiling":
+			// flutter run -d web-server and expo web take 10-60s to bind their
+			// port on a cold start. Log it clearly for troubleshooting, and
+			// return a STRUCTURED 503 "starting" (not a bare 502 "unavailable")
+			// with Retry-After so the mobile WebView shows a loader and retries
+			// instead of painting a dead error page. See DevPreview.tsx.
+			log.Printf("[dev:proxy] %s target http://127.0.0.1:%d unreachable for %q: %v — signalling 'starting' (first compile can take ~1 min)",
+				ds.Name(), ds.Port(), r.URL.Path, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "2")
+			w.Header().Set("X-Yaver-DevServer", "starting")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"starting","framework":%q,"port":%d,"message":%q}`,
+				ds.Name(), ds.Port(),
+				ds.Name()+" dev server is still starting — the first web compile can take up to a minute")
 		}
 
 		m.mu.Lock()
