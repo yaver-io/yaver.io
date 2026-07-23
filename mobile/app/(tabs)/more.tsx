@@ -3158,16 +3158,19 @@ export default function MoreScreen() {
               {connected ? "Invite others" : "Setup and guides"}
             </Text>
           </Pressable>
-
-          <Pressable
-            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={handleSettings}
-          >
-            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u2699"}</Text>
-            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Settings</Text>
-            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Preferences</Text>
-          </Pressable>
         </View>
+
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={handleSettings}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699\ufe0f"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Settings</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Preferences</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+        </Pressable>
 
         <Pressable
           style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}

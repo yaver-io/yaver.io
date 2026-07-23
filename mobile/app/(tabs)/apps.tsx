@@ -100,6 +100,16 @@ function isSecondClassMobileFramework(framework?: string): boolean {
   return framework === "flutter" || framework === "swift" || framework === "kotlin";
 }
 
+// "carrotbet / mobile" → ["carrotbet", "mobile"]. The trailing "/ <subdir>"
+// reads as a clumsy path fragment in a title; we split it so the subdir can
+// render as a chip next to the framework tag. No " / " → [name, ""].
+function splitProjectName(name?: string): [string, string] {
+  const n = (name || "").trim();
+  const idx = n.lastIndexOf(" / ");
+  if (idx < 0) return [n, ""];
+  return [n.slice(0, idx).trim(), n.slice(idx + 3).trim()];
+}
+
 function agentFlowGuidance(_framework?: string, _feedbackSDKInstalled?: boolean): string | null {
   // Yaver's native overlay (shake → reload / back) already handles the
   // in-app feedback loop, so no extra banner text is needed.
@@ -622,124 +632,56 @@ export default function AppsScreen() {
           compatibility = null;
         }
       }
-      const projectAction = { label: "Project Overview", target: ".", type: "project", icon: "\u{1F4CB}", framework: "", platform: "", command: "" };
-      const previewManifestAction = { label: "Preview Manifest", target: ".", type: "preview-manifest", icon: "\u{1F9EA}", framework: hermesFramework || secondClassFramework || "", platform: Platform.OS, command: "" };
-      const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
-      const secondClassActions = isSecondClassMobileFramework(secondClassFramework) ? [{
-        label: secondClassFlushLabel(secondClassFramework),
-        target: ".",
-        type: "flush-mobile",
-        icon: secondClassFramework === "flutter" ? "\u{1F4A6}" : "\u{1F69A}",
-        framework: secondClassFramework,
-        platform: Platform.OS,
-        supported:
-          secondClassFramework === "flutter"
-            ? isDirectConnection
-            : secondClassFramework === "swift"
-              ? isDirectConnection && Platform.OS === "ios"
-              : isDirectConnection && Platform.OS === "android",
-        reason:
-          !isDirectConnection
-            ? "LAN only. Hermes is the only first-class mobile path that works over relay and 4G."
-            : secondClassFramework === "swift" && Platform.OS !== "ios"
-              ? "Swift flush targets iPhone only."
-              : secondClassFramework === "kotlin" && Platform.OS !== "android"
-                ? "Kotlin flush targets Android only."
-                : undefined,
-      }] : [];
-      // WebRTC is offered for RN/Expo too, not just native.
+      // ── Only VIBING / reload lanes ──────────────────────────────────────
+      // Build, deploy, tests, git-sync, project-overview and preview-manifest
+      // are all removed ON PURPOSE. Tapping a project is "how do you want to
+      // SEE it run", nothing else — the user drives building, deploying and
+      // testing by vibing text to the agent, so those never need a button here.
       //
-      // Native (swift/kotlin) has exactly one path, so tapping the project
-      // goes straight there. RN has TWO real paths and they are genuinely
-      // different products: Hermes loads the real bundle into the Yaver
-      // container on THIS phone, while WebRTC streams a simulator running on
-      // the dev box. Only the user knows which they want — Hermes for the true
-      // runtime and device APIs, WebRTC when the phone cannot build it or the
-      // app needs a platform this phone is not.
-      //
-      // Offering both is what makes "run it" a 3-tap flow for every stack:
-      // Projects -> project -> path. Native skips the choice because there is
-      // nothing to choose.
-      const remoteRuntimeFramework = secondClassFramework || hermesFramework;
-      const nativeRemoteRuntimeActions = (secondClassFramework === "swift" || secondClassFramework === "kotlin" || isHermesMobileFramework(hermesFramework)) ? [{
-        label: isHermesMobileFramework(hermesFramework) && !secondClassFramework
-          ? "Stream over WebRTC"
-          : "Remote Runtime",
-        target: ".",
-        type: "remote-runtime",
-        icon: "\u{1F4FA}",
-        framework: remoteRuntimeFramework,
-        platform: Platform.OS,
-        supported: true,
-      }] : [];
-      const hermesActions = isHermesMobileFramework(hermesFramework) ? [
-        {
-          label: "Open in Yaver",
-          target: ".",
-          type: "open-native",
-          icon: "\u{1F4F1}",
-          framework: hermesFramework,
-          platform: Platform.OS,
-          supported: compatibility?.compatible !== false,
-          reason: compatibility?.errors?.[0],
-        },
-        {
-          label: compileActionLabel(compatibility),
-          target: ".",
-          type: "compile-hermes",
-          icon: compatibility?.buildState === "ready" ? "\u21BB" : "\u2699",
-          framework: hermesFramework,
-          platform: Platform.OS,
-          supported: compatibility?.canBuildInYaver !== false,
-          reason: compatibility?.errors?.[0],
-        },
-      ] : [];
-      result.actions = result.actions.filter((a: any) => {
-        if (isSecondClassMobileFramework(a.framework) && a.type === "dev-server") return false;
-        if (a.type === "deploy" || a.label === "Deploy Backend") return false;
-        if (a.type === "vibing" || a.label === "Vibing") return false;
-        if (a.type === "agent" || a.label === "Agent Mode") return false;
-        if (a.type === "autotest" || a.label === "Auto Test" || a.label === "Agent Test") return false;
-        return true;
-      }).map((a: any) => {
-        const label = String(a?.label || "");
-        if (label.includes("TestFlight")) {
-          const blocker = devMachineDeployBlocker("testflight", activeDevice?.os);
-          if (blocker) {
-            return { ...a, supported: false, reason: blocker };
-          }
-        }
-        if (label.includes("Play Store")) {
-          const blocker = devMachineDeployBlocker("playstore", activeDevice?.os);
-          if (blocker) {
-            return { ...a, supported: false, reason: blocker };
-          }
-        }
-        return a;
+      // Three reload lanes, framework-gated:
+      //   Hermes Reload  — RN/Expo only (loads the real bundle into the Yaver
+      //                    container on THIS phone).
+      //   Browser Reload — RN web target, Flutter web, and plain web stacks.
+      //   WebRTC Reload  — universal: RN, Flutter, Swift/iOS, Kotlin/Android
+      //                    (streams the app from the dev box).
+      const fw = hermesFramework || secondClassFramework ||
+        result.actions.find((a: any) => a.framework)?.framework || "";
+      const isRN = isHermesMobileFramework(hermesFramework);
+
+      const reloadLanes: any[] = [];
+      if (isRN) {
+        reloadLanes.push({
+          label: "Hermes Reload", target: ".", type: "open-native", icon: "\u{1F4F1}",
+          framework: hermesFramework, platform: Platform.OS,
+          supported: compatibility?.compatible !== false, reason: compatibility?.errors?.[0],
+        });
+      }
+      if (isRN || secondClassFramework === "flutter" || (!!fw && !isSecondClassMobileFramework(fw))) {
+        reloadLanes.push({
+          label: "Browser Reload", target: ".", type: "dev-server", icon: "\u{1F310}",
+          framework: fw, platform: Platform.OS, supported: true,
+        });
+      }
+      reloadLanes.push({
+        label: "WebRTC Reload", target: ".", type: "remote-runtime", icon: "\u{1F4FA}",
+        framework: fw, platform: Platform.OS, supported: true,
       });
+
       let composed = guardYaverSelfDevelopmentActions(
-        [projectAction, previewManifestAction, ...hermesActions, ...nativeRemoteRuntimeActions, ...secondClassActions, gitSyncAction, ...result.actions],
-        projectName,
-        result.path || projectPath,
+        reloadLanes, projectName, result.path || projectPath,
       );
-      // The AGENT owns which options exist — it can see the project on disk.
-      // Without this, every surface keeps its own copy of the per-framework
-      // rules and they drift; concretely, a Hermes button could still be
-      // composed for a Flutter/Kotlin/Swift project, which has no React Native
-      // runtime to load a bundle into. Best-effort: an older box that doesn't
-      // know the verb leaves the composed list untouched.
+      // The AGENT owns which lanes actually apply — it can see the project on
+      // disk. This strips Hermes for a Flutter/Kotlin/Swift project (no RN
+      // runtime to load a bundle into) and orders by the fastest lane. An older
+      // box that doesn't know the verb leaves the composed lanes untouched.
       try {
         const caps: any = await runtimeSurfaceClient.projectPreviewOptions(
           activeDevice?.id,
-          {
-            workDir: result.path || projectPath,
-            projectName,
-            hasPairedDevice: true,
-          },
+          { workDir: result.path || projectPath, projectName, hasPairedDevice: true },
         );
         composed = applyPreviewCapabilities(composed, caps);
       } catch {
-        /* older agent — keep the locally composed sheet */
+        /* older agent — keep the locally composed lanes */
       }
       result.actions = composed;
       setActionSheet({ ...result, compatibility });
@@ -2063,14 +2005,32 @@ export default function AppsScreen() {
                     <FrameworkIcon framework={item.framework} size={22} />
                   </View>
                   <View style={s.cardTitleContainer}>
-                    <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
-                    {item.framework && (
-                      <View style={s.tagRow}>
-                        <View style={[s.tag, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle }]}>
-                          <Text style={[s.tagText, { color: c.textSecondary }]}>{item.framework}</Text>
-                        </View>
-                      </View>
-                    )}
+                    {(() => {
+                      // "carrotbet / mobile" reads as a clumsy path fragment in
+                      // the title. Split the trailing "/ <subdir>" out and show
+                      // it as a chip next to the framework — same visual weight
+                      // as the "expo"/"flutter" tag.
+                      const [repoTitle, subdir] = splitProjectName(item.name);
+                      return (
+                        <>
+                          <Text style={[s.projectName, { color: c.textPrimary }]}>{repoTitle}</Text>
+                          {(subdir || item.framework) && (
+                            <View style={s.tagRow}>
+                              {subdir ? (
+                                <View style={[s.tag, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle }]}>
+                                  <Text style={[s.tagText, { color: c.textSecondary }]}>{subdir}</Text>
+                                </View>
+                              ) : null}
+                              {item.framework ? (
+                                <View style={[s.tag, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle }]}>
+                                  <Text style={[s.tagText, { color: c.textSecondary }]}>{item.framework}</Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          )}
+                        </>
+                      );
+                    })()}
                     {/* No branch line. A card is name + framework + path;
                         the branch is the same on nearly every row, so it read
                         as noise rather than information. */}
