@@ -72,6 +72,11 @@ type VibePane struct {
 	Active      bool   `json:"active"`
 
 	Agent string `json:"agent,omitempty"` // claude | codex | opencode | shell
+	// Model is the model the running agent was launched with, read from its
+	// argv (--model / -m). Empty when not passed explicitly (the agent then
+	// uses its own default). Lets the mobile Tasks list show "claude · opus-4.8"
+	// per live session.
+	Model string `json:"model,omitempty"`
 	// AgentConfirmed is true only when a matching process was OBSERVED in the
 	// pane's tree. False means we are guessing from a name, and a guess is not
 	// good enough to type a prompt into — see runner_pty.go:367 for the
@@ -237,6 +242,9 @@ func ListVibePanes(ctx context.Context) ([]VibePane, error) {
 func enrichVibePane(ctx context.Context, p *VibePane) {
 	agent, confirmed := detectPaneAgent(ctx, p.PID)
 	p.Agent, p.AgentConfirmed = agent, confirmed
+	if confirmed {
+		p.Model = detectPaneModel(ctx, p.PID)
+	}
 
 	content := capturePaneTarget(ctx, p.PaneID, vibePreviewLines)
 	p.Preview = strings.TrimRight(content, "\n ")
@@ -327,6 +335,54 @@ func detectPaneAgent(ctx context.Context, pid int) (string, bool) {
 		frontier = next
 	}
 	return "", false
+}
+
+// detectPaneModel walks the pane's process tree (same bounded walk as
+// detectPaneAgent) and extracts the model the agent was launched with from its
+// argv — e.g. `claude --model claude-opus-4-8`, `opencode -m glm-5.2`,
+// `codex --model gpt-5.5`. Empty when no model flag was passed (the agent uses
+// its own default). Best-effort: argv is the reliable, runner-agnostic source
+// (reading each runner's private config would be far more fragile).
+func detectPaneModel(ctx context.Context, pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	frontier := []int{pid}
+	for depth := 0; depth < vibeAgentWalkDepth && len(frontier) > 0; depth++ {
+		var next []int
+		for _, p := range frontier {
+			if ctx.Err() != nil {
+				return ""
+			}
+			cmd := getProcessCommand(p)
+			if matchAgentCommand(cmd) != "" {
+				if m := extractModelFromArgv(cmd); m != "" {
+					return m
+				}
+			}
+			next = append(next, getChildPIDs(p)...)
+		}
+		frontier = next
+	}
+	return ""
+}
+
+// extractModelFromArgv pulls the value of --model / -m from a command line.
+func extractModelFromArgv(cmd string) string {
+	fields := strings.Fields(cmd)
+	for i, f := range fields {
+		switch {
+		case f == "--model" || f == "-m":
+			if i+1 < len(fields) {
+				return strings.TrimSpace(fields[i+1])
+			}
+		case strings.HasPrefix(f, "--model="):
+			return strings.TrimSpace(strings.TrimPrefix(f, "--model="))
+		case strings.HasPrefix(f, "-m="):
+			return strings.TrimSpace(strings.TrimPrefix(f, "-m="))
+		}
+	}
+	return ""
 }
 
 // spinner glyphs agents animate while they work. Braille is what Claude Code
