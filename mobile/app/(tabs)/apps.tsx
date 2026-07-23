@@ -495,13 +495,32 @@ export default function AppsScreen() {
   const [webPreviewFailed, setWebPreviewFailed] = useState(false);
   const [webPreviewLogs, setWebPreviewLogs] = useState<string[]>([]);
   useEffect(() => () => { if (webPreviewRetryTimer.current) clearTimeout(webPreviewRetryTimer.current); }, []);
+  // Elapsed + last-output heartbeat.
+  //
+  // A spinner that never changes reads as HUNG, and a first web compile can
+  // legitimately run for minutes. Users reported not knowing "whether it's
+  // going to load or not" — which is a trust problem, not a cosmetic one. The
+  // fix is to distinguish SLOW from STUCK, and the only honest signal for that
+  // is when the agent last said anything: output flowing = alive, output
+  // silent for a while = worth telling the user plainly.
+  const [webPreviewStartedAt, setWebPreviewStartedAt] = useState<number | null>(null);
+  const [webPreviewLastLogAt, setWebPreviewLastLogAt] = useState<number | null>(null);
+  const [previewNowTick, setPreviewNowTick] = useState(Date.now());
   const resetWebPreview = useCallback(() => {
     webPreviewRetryRef.current = 0;
     webPreviewErroredRef.current = false;
     setWebPreviewContentLoaded(false);
     setWebPreviewFailed(false);
     setWebPreviewLogs([]);
+    setWebPreviewStartedAt(Date.now());
+    setWebPreviewLastLogAt(null);
   }, []);
+  // 1s tick only while the overlay is actually up — never a background timer.
+  useEffect(() => {
+    if (!showWebView || webPreviewContentLoaded) return;
+    const id = setInterval(() => setPreviewNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [showWebView, webPreviewContentLoaded]);
   const scheduleWebPreviewRetry = useCallback(() => {
     webPreviewErroredRef.current = true;
     setWebViewLoading(false);
@@ -592,8 +611,18 @@ export default function AppsScreen() {
   }, [isConnected, projectsDiscovering, activeDevice?.id]);
 
   // SSE auto-reload
+  // Stream the agent's dev-server output into the preview overlay.
+  //
+  // This used to require devStatus.running, which is precisely backwards: while
+  // the overlay says "Starting flutter dev server…" the status is BUILDING, not
+  // running, so the stream never opened during the one phase where the user has
+  // nothing to look at but a spinner. The logs only ever appeared after the
+  // server was already up — or in the failure panel, after it was too late.
+  // The overlay below already renders webPreviewLogs; it was simply never fed.
+  // Gate on active (running OR building), the same predicate the status poll
+  // uses, so a first web compile narrates itself.
   useEffect(() => {
-    if (!showWebView || !devStatus?.running) return;
+    if (!showWebView || !isActiveDevServerStatus(devStatus)) return;
     const controller = new AbortController();
     const baseUrl = (quicClient as any).baseUrl;
     if (!baseUrl) return;
@@ -619,9 +648,11 @@ export default function AppsScreen() {
                   setWebViewKey(k => k + 1);
                   setWebViewLoading(true);
                 } else if (event.type === "log" && event.logLine) {
+                  setWebPreviewLastLogAt(Date.now());
                   const ln = String(event.logLine).trim();
                   if (ln) setWebPreviewLogs((p) => (p[p.length - 1] === ln ? p : [...p, ln].slice(-40)));
                 } else if (event.type === "building" && event.message) {
+                  setWebPreviewLastLogAt(Date.now());
                   const ln = String(event.message).trim();
                   if (ln) setWebPreviewLogs((p) => (p[p.length - 1] === ln ? p : [...p, ln].slice(-40)));
                 } else if (event.type === "error") {
@@ -640,7 +671,8 @@ export default function AppsScreen() {
     };
     listen();
     return () => controller.abort();
-  }, [showWebView, devStatus?.running]);
+  // building included: the stream must open during the compile, not after it.
+  }, [showWebView, devStatus?.running, devStatus?.building]);
 
   // Tap project → if dev server running, always use Hermes push (fast, ~10s).
   // This keeps iPhone testing working from Linux, WSL, and remote hosts.
@@ -2651,6 +2683,30 @@ export default function AppsScreen() {
                     <Text style={[s.previewSubtle, { color: c.textMuted }]}>
                       {loadingStatus || "First web compile can take up to a minute — retrying automatically."}
                     </Text>
+                    {/* Slow vs stuck. Elapsed proves time is passing; "last
+                        output" proves the agent is still talking. Silence is
+                        called out explicitly rather than left to the user to
+                        guess at, because guessing is what makes a long compile
+                        feel broken. */}
+                    {(() => {
+                      if (!webPreviewStartedAt) return null;
+                      const elapsed = Math.max(0, Math.floor((previewNowTick - webPreviewStartedAt) / 1000));
+                      const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
+                      const quiet = webPreviewLastLogAt
+                        ? Math.floor((previewNowTick - webPreviewLastLogAt) / 1000)
+                        : null;
+                      const stalled = quiet !== null && quiet >= 45;
+                      return (
+                        <Text style={[s.previewSubtle, { color: stalled ? "#f59e0b" : c.textMuted, marginTop: 4 }]}>
+                          {mmss} elapsed
+                          {quiet === null
+                            ? " · waiting for the first output from the box"
+                            : stalled
+                              ? ` · no output for ${quiet}s — the compile may be stalled, Stop and retry if this persists`
+                              : ` · last output ${quiet}s ago`}
+                        </Text>
+                      );
+                    })()}
                     {webPreviewLogs.length > 0 ? (
                       <ScrollView style={s.previewLogBox} contentContainerStyle={{ padding: 10 }}>
                         {webPreviewLogs.slice(-40).map((ln, i) => (
