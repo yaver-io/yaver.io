@@ -157,6 +157,21 @@ export class YaverFeedback {
       YaverFeedback.setupKeyboardShortcut(shortcut);
     }
 
+    // Shake-to-feedback from the Yaver host. When this web app is previewed in
+    // the Yaver mobile app's browser lane (a WebView), a phone shake can't reach
+    // a web page — the phone has the accelerometer, not the DOM. So the Yaver
+    // container forwards the shake IN by dispatching these events into the
+    // WebView (see mobile DevPreview.tsx). Open the report regardless of the
+    // configured trigger — a shake is an explicit "report this" gesture.
+    const launchOnShake = () => { try { YaverFeedback.startReport(); } catch { /* noop */ } };
+    window.addEventListener('yaver-feedback:launch', launchOnShake as EventListener);
+    window.addEventListener('message', (e: MessageEvent) => {
+      const t = (e?.data && typeof e.data === 'object') ? (e.data as { type?: string }).type : undefined;
+      if (t === 'yaver-feedback:launch') launchOnShake();
+    });
+    // Also expose a direct hook the host can call via injectJavaScript.
+    (window as unknown as { __yaverFeedbackLaunch?: (s?: string) => void }).__yaverFeedbackLaunch = launchOnShake;
+
     // Capture console errors
     const origError = console.error;
     console.error = (...args: unknown[]) => {

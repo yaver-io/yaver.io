@@ -12,6 +12,28 @@ const FEEDBACK_KEY_FALLBACK = "@yaver/feedback_config";
 let activeRemoteRuntimeSessionID: string | null = null;
 let cooldownUntil = 0;
 
+// The active preview lane. Set by DevPreview (browser) / remote-runtime (webrtc)
+// so a shake routes to the RIGHT place. In the Hermes lane the native container
+// owns the shake; in the browser lane the app lives in a WebView INSIDE Yaver,
+// so a shake must be forwarded INTO that WebView to open the guest's own web /
+// Flutter feedback SDK — the container overlay would be the wrong thing.
+type PreviewLane = "browser" | "webrtc" | null;
+let activePreviewLane: PreviewLane = null;
+const browserShakeListeners = new Set<() => void>();
+
+export function setActivePreviewLane(lane: PreviewLane): void {
+  activePreviewLane = lane;
+}
+
+/**
+ * DevPreview subscribes here; when a shake happens while a browser-lane preview
+ * is open, it injects a feedback-launch into the WebView.
+ */
+export function subscribeBrowserShake(cb: () => void): () => void {
+  browserShakeListeners.add(cb);
+  return () => browserShakeListeners.delete(cb);
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -56,12 +78,27 @@ async function maybeLaunchFeedbackFromShake(source: FeedbackLaunchSource, userId
   // For non-guest sources (a shake while standing on Yaver's own surfaces
   // with no guest active) we keep the toggle gate so the floating button
   // stays opt-in.
-  const isImplicitOptIn = source === "native-guest-shake" || source === "remote-runtime";
+  // A shake while ANY preview lane is active (browser WebView or webrtc stream)
+  // is the opt-in signal — the user is looking at their app inside Yaver and
+  // shook to report on it. Don't gate those on the standalone-app toggle, same
+  // reasoning as native-guest-shake / remote-runtime.
+  const isImplicitOptIn =
+    source === "native-guest-shake" || source === "remote-runtime" || activePreviewLane !== null;
   if (!isImplicitOptIn) {
     const cfg = await currentFeedbackConfig(userId);
     if (!cfg?.enabled || cfg.trigger !== "shake") return;
   }
   cooldownUntil = nowMs() + 2500;
+
+  // BROWSER LANE: the app runs in a WebView inside Yaver. Forward the shake INTO
+  // the WebView (a guest web app that embeds yaver-feedback-web opens its own
+  // overlay) AND fall through to Yaver's own container overlay below — because a
+  // flutter-web app can't run the Flutter SDK (dart:io) on web, so the container
+  // overlay (which captures the visible WebView) is the reliable, universal
+  // path. Either way a shake now opens feedback, matching the Hermes lane.
+  if (activePreviewLane === "browser") {
+    for (const cb of browserShakeListeners) { try { cb(); } catch { /* one bad listener mustn't block others */ } }
+  }
   // quicClient.isConnected checks the FOCUSED pool client only. The
   // remote-runtime session might be bound to a different (still
   // pooled) device — in that case the focused check would fail and

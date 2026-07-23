@@ -18,6 +18,7 @@ import { isBundleLoaded, loadAppIfChanged, onBundleEvent } from "../lib/bundleLo
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { isActiveDevServerStatus } from "../lib/devServerState";
 import { mustUseNativePreview as mustUseNativePreviewLane } from "../lib/devLane";
+import { setActivePreviewLane, subscribeBrowserShake } from "../lib/feedbackTrigger";
 import { useResponsiveLayout } from "../hooks/useResponsiveLayout";
 import { monoFamily } from "../theme/tokens";
 
@@ -105,6 +106,29 @@ export function DevPreview() {
 
   // Reset the retry budget whenever a fresh preview opens or the WebView loads.
   useEffect(() => () => { if (webRetryTimer.current) clearTimeout(webRetryTimer.current); }, []);
+
+  // Shake-to-feedback for the BROWSER lane. The app runs in a WebView inside
+  // Yaver, so a phone shake (caught by the global bridge in feedbackTrigger.ts)
+  // is forwarded IN HERE and injected into the WebView, opening the guest's own
+  // web / Flutter feedback SDK — the same "shake → feedback" the Hermes lane
+  // gets from the native container. Without this, shaking a Flutter/web preview
+  // did nothing (the native shake is gated to Hermes guests only).
+  useEffect(() => {
+    if (!showPreview) return;
+    setActivePreviewLane("browser");
+    const unsub = subscribeBrowserShake(() => {
+      // Dispatch every launch signal a guest SDK might listen for. The web SDK
+      // (sdk/feedback/web) and flutter SDK (sdk/feedback/flutter, web build)
+      // listen for the "yaver-feedback:launch" event / postMessage.
+      webViewRef.current?.injectJavaScript(`(function(){try{
+        var d={source:'shake',ts:Date.now()};
+        window.dispatchEvent(new CustomEvent('yaver-feedback:launch',{detail:d}));
+        window.postMessage({type:'yaver-feedback:launch',source:'shake'}, '*');
+        if(typeof window.__yaverFeedbackLaunch==='function'){window.__yaverFeedbackLaunch('shake');}
+      }catch(e){}})(); true;`);
+    });
+    return () => { unsub(); setActivePreviewLane(null); };
+  }, [showPreview]);
 
   // Poll dev server status every 3s
   useEffect(() => {
