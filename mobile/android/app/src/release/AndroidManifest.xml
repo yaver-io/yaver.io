@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+  <!-- Play form-factor validation is currently blocked until the Foreground
+       Service declaration is accepted in Console. Keep debug/dev builds
+       unchanged, but strip FGS-only surfaces from release artifacts so Android
+       TV / Auto / Wear internal testing can proceed. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" tools:node="remove"/>
+
+  <application>
+    <service android:name="io.yaver.mobile.sandbox.SandboxService" tools:node="remove"/>
+    <service android:name="expo.modules.location.services.LocationTaskService" tools:node="remove"/>
+    <service android:name="app.notifee.core.ForegroundService" tools:node="remove"/>
+  </application>
+</manifest>
