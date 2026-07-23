@@ -660,12 +660,18 @@ var tmuxSubmitDelay = 250 * time.Millisecond
 
 // sendTmuxKey types input literally with NO Enter. Used for menu answers,
 // where the keypress itself is the confirmation.
+//
+// Queued per target like sendTmuxLine: a menu answer is a single character
+// whose meaning depends entirely on WHICH prompt is on screen, so letting it
+// slip between another sender's text and Enter would answer the wrong question.
 func sendTmuxKey(target, input string) error {
 	key := strings.TrimSpace(input)
-	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "-l", "--", key).CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux send-keys (choice): %w: %s", err, string(out))
-	}
-	return nil
+	return submitTmuxInput(target, func() error {
+		if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "-l", "--", key).CombinedOutput(); err != nil {
+			return fmt.Errorf("tmux send-keys (choice): %w: %s", err, string(out))
+		}
+		return nil
+	})
 }
 
 // sendTmuxLine types input literally, waits, then presses Enter.
@@ -673,15 +679,23 @@ func sendTmuxKey(target, input string) error {
 // `-l` matters: without it tmux parses the argument as key names, so a prompt
 // containing words like "Enter", "Space" or "C-c" would be delivered as those
 // keystrokes instead of as text. `--` guards inputs that begin with a dash.
+//
+// The whole text→beat→Enter sequence runs as ONE queued unit per target
+// (tmux_input_queue.go). It is three separate tmux calls with a 250ms gap in
+// the middle, and without serialization a second sender's text lands inside
+// that gap — fusing two people's words into one prompt and submitting it,
+// while telling both senders it was sent. Never call the exec steps directly.
 func sendTmuxLine(target, input string) error {
-	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "-l", "--", input).CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux send-keys (text): %w: %s", err, string(out))
-	}
-	time.Sleep(tmuxSubmitDelay)
-	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "Enter").CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux send-keys (submit): %w: %s", err, string(out))
-	}
-	return nil
+	return submitTmuxInput(target, func() error {
+		if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "-l", "--", input).CombinedOutput(); err != nil {
+			return fmt.Errorf("tmux send-keys (text): %w: %s", err, string(out))
+		}
+		time.Sleep(tmuxSubmitDelay)
+		if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", target, "Enter").CombinedOutput(); err != nil {
+			return fmt.Errorf("tmux send-keys (submit): %w: %s", err, string(out))
+		}
+		return nil
+	})
 }
 
 // tmuxChoiceAnswerPattern matches a bare option number ("2", " 3 ") — the only
