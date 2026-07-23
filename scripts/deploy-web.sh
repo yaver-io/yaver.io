@@ -87,6 +87,20 @@ fi
 
 echo "Size OK. Building and deploying to Cloudflare..."
 
+# 1b. AASA shadow guard (incident 2026-07-23).
+# A physical file at public/.well-known/apple-app-site-association is served by
+# Cloudflare's static-assets binding BEFORE the Next rewrite reaches the route
+# handler that emits the correct JSON + application/json content-type. When it
+# last existed it also nested `webcredentials` inside `applinks`, which broke
+# in-app passkey / Face ID sign-in (web was unaffected). The canonical AASA is
+# web/app/api/apple-app-site-association/route.ts — never a static file.
+SHADOW_AASA="$DEPLOY_DIR/public/.well-known/apple-app-site-association"
+if [ -e "$SHADOW_AASA" ]; then
+  echo "ERROR: $SHADOW_AASA exists — it shadows the AASA route handler and breaks"
+  echo "       in-app passkey / Sign in with Apple. Delete it; the route serves the AASA."
+  exit 1
+fi
+
 # 2. Build and deploy
 cd "$DEPLOY_DIR"
 npm run deploy
