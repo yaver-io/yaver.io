@@ -60,10 +60,15 @@ test("hermes lane body stays caller mobile", () => {
 });
 
 test("a web-served status is browser mode, never native — even for expo/RN", () => {
-  assert.equal(isWebServedStatus("web"), true);
-  // The exact regression: expo project, but served as web → NOT native.
+  assert.equal(isWebServedStatus({ devMode: "web" }), true);
+  assert.equal(isWebServedStatus({ platform: "web" }), true);
+  assert.equal(isWebServedStatus({ devMode: "ios" }), false);
+  // The exact regression: expo project served as web → NOT native. The agent
+  // signals this with devMode="web" (platform stays empty — the bug was keying
+  // on platform).
+  assert.equal(mustUseNativePreview({ framework: "expo", devMode: "web" }), false);
   assert.equal(mustUseNativePreview({ framework: "expo", platform: "web" }), false);
-  assert.equal(mustUseNativePreview({ framework: "react-native", platform: "web" }), false);
+  assert.equal(mustUseNativePreview({ framework: "react-native", devMode: "web" }), false);
 });
 
 test("expo/RN WITHOUT web mode still takes the native Hermes path", () => {
@@ -80,5 +85,5 @@ test("Flutter is never native-preview (renders in the browser lane)", () => {
 test("dev-client mode forces native regardless of framework", () => {
   assert.equal(mustUseNativePreview({ framework: "expo", devMode: "dev-client" }), true);
   // ...unless it is explicitly web-served.
-  assert.equal(mustUseNativePreview({ framework: "expo", devMode: "dev-client", platform: "web" }), false);
+  assert.equal(mustUseNativePreview({ framework: "expo", devMode: "web" }), false);
 });

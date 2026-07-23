@@ -43,9 +43,19 @@ export function hermesLaneStartBody(): { caller: string } {
   return { caller: "mobile" };
 }
 
-/** True when a dev-server status is serving the web target (browser lane). */
-export function isWebServedStatus(platform: string | undefined): boolean {
-  return String(platform || "").toLowerCase() === "web";
+/**
+ * True when a dev-server status is serving the web target (browser lane).
+ *
+ * The agent signals this with `devMode: "web"` (verified live: a web-lane
+ * expo/flutter dev server reports devMode="web", NOT platform="web" — platform
+ * stays empty). We accept either so a future agent that sets platform also
+ * works. Keying only on `platform` was a real bug: the browser lane still
+ * forced Hermes because platform was empty.
+ */
+export function isWebServedStatus(status: { platform?: string; devMode?: string }): boolean {
+  const dm = String(status.devMode || "").toLowerCase();
+  const pf = String(status.platform || "").toLowerCase();
+  return dm === "web" || pf === "web";
 }
 
 /**
@@ -59,8 +69,9 @@ export function mustUseNativePreview(input: {
   devMode?: string;
   building?: boolean;
 }): boolean {
-  if (isWebServedStatus(input.platform)) return false;
+  if (isWebServedStatus(input)) return false;
   const fw = (input.framework || "").toLowerCase();
   const isHermes = fw.includes("expo") || fw.includes("react-native");
+  // dev-client is a native-runtime mode; but "web" devMode was already handled.
   return isHermes || input.devMode === "dev-client" || !!input.building;
 }

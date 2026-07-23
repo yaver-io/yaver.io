@@ -510,8 +510,8 @@ export function DevPreview() {
   const modeLine = status.building
     ? "build in progress"
     // Browser lane (web-served): the preview is the web target in a WebView,
-    // not a native/Hermes install. Label it as such instead of "native install".
-    : String(status.platform || "").toLowerCase() === "web"
+    // not a native/Hermes install. The agent signals this via devMode="web".
+    : (String(status.devMode || "").toLowerCase() === "web" || String(status.platform || "").toLowerCase() === "web")
       ? "browser preview"
       : (status.iosInstallMethod === "native"
           ? "native install"

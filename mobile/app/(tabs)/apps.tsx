@@ -130,21 +130,12 @@ function currentYaverConsumerContract() {
   };
 }
 
-function secondClassGuidance(framework?: string, isDirectConnection?: boolean): string | null {
-  if (!isSecondClassMobileFramework(framework)) return null;
-  if (!isDirectConnection) {
-    return "Second-class mobile flows are LAN-only. Hermes is still the only first-class path that works over LAN, relay, and 4G.";
-  }
-  switch (framework) {
-    case "flutter":
-      return "Flush to App wraps the Go agent's Flutter tooling and reloads the real Flutter app on your phone over LAN. It does not load inside Yaver.";
-    case "swift":
-      return "Flush Build to Phone wraps the Go agent's Xcode build/install flow over LAN. It does not load inside Yaver.";
-    case "kotlin":
-      return "Flush Build to Phone wraps the Go agent's Gradle build flow, then installs the APK on this phone over LAN. It does not load inside Yaver.";
-    default:
-      return null;
-  }
+function secondClassGuidance(_framework?: string, _isDirectConnection?: boolean): string | null {
+  // No LAN-only / Hermes-only guidance. None of the reload lanes are LAN-only —
+  // the browser lane works over relay (proven by the relay-auth fix), and Hermes
+  // is a React Native concept that never applied to Flutter/Swift/Kotlin. The
+  // sheet now shows only the reload lanes, which are self-explanatory.
+  return null;
 }
 
 function describeRuntimeDeployResult(result: any): string {
@@ -829,15 +820,13 @@ export default function AppsScreen() {
           targetDeviceName: selectedTarget?.name,
           targetDeviceClass: selectedTarget?.deviceClass,
         });
-        // Check if it started
-        const status = await quicClient.getDevServerStatus();
-        if (!status?.running) {
-          await quicClient.sendTask(
-            `Hot reload ${project} (${action.framework || "app"}) on my phone`,
-            devStartInstruction(action.framework, targetPath),
-          );
-          router.navigate("/(tabs)/tasks");
-        }
+        // Rendering is NOT a task. Do NOT spawn a coding task or navigate to
+        // Tasks — the agent starts the dev server directly (it handles flutter
+        // web / expo web itself), and DevPreview polls /dev/status and renders
+        // the preview inline with a loading state ("Starting … dev server").
+        // The old fallback spawned an OpenCode task and jumped to Tasks, which
+        // is exactly the "goes to a new widget" behaviour we don't want.
+        setActionSheet(null);
       } catch (e) {
         const err = e as Error & {
           kind?: "missing-runtime";
@@ -911,10 +900,11 @@ export default function AppsScreen() {
           );
           return;
         }
-        await sendTaskOrWarn(
-          `Hot reload ${project} on my phone`,
-          devStartInstruction(action.framework, targetPath),
-          `Hot reload for ${project}`,
+        // Genuine failure to start the preview — surface it inline, do NOT
+        // spawn a task. Rendering stays out of the task system.
+        Alert.alert(
+          "Couldn't start the preview",
+          e instanceof Error ? e.message : "The dev server didn't start. Check the machine is reachable.",
         );
       } finally {
         if (!deferStartingClear) setStartingProject(null);

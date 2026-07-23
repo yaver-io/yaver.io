@@ -2205,10 +2205,26 @@ func (f *FlutterDevServer) Start(ctx context.Context, opts DevServerOpts) error 
 
 	// Web-server needs port config; native devices don't
 	if deviceID == "web-server" || deviceID == "chrome" {
+		// A Flutter project can only be served with `-d web-server` if it has
+		// web support (a web/ dir). A mobile-only project created without it has
+		// none — `flutter run -d web-server` then errors and the browser-lane
+		// preview shows "dev server unavailable" forever (this is exactly what
+		// demo/mobile/todo-flutter and e-mobile hit: no web/ dir). Add web
+		// support idempotently first so the browser lane actually serves.
+		if _, statErr := os.Stat(filepath.Join(opts.WorkDir, "web")); os.IsNotExist(statErr) {
+			log.Printf("[dev:flutter] %s has no web/ dir — enabling web support (flutter create --platforms web .)", opts.WorkDir)
+			cre := exec.CommandContext(ctx, "flutter", "create", "--platforms", "web", ".")
+			cre.Dir = opts.WorkDir
+			if out, cerr := cre.CombinedOutput(); cerr != nil {
+				log.Printf("[dev:flutter] flutter create --platforms web failed: %v — %.300s", cerr, string(out))
+			} else {
+				log.Printf("[dev:flutter] web support added to %s", opts.WorkDir)
+			}
+		}
 		args = append(args, "--web-port", fmt.Sprintf("%d", f.port), "--web-hostname", "0.0.0.0")
 	}
 
-	log.Printf("[dev:flutter] Starting on device: %s", deviceID)
+	log.Printf("[dev:flutter] Starting on device: %s (workDir=%s, port=%d)", deviceID, opts.WorkDir, f.port)
 
 	if deviceID == "web-server" || deviceID == "chrome" {
 		// Web mode — wait for HTTP readiness
