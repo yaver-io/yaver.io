@@ -649,29 +649,18 @@ export default function AppsScreen() {
     const projectPath = selectedProject?.path || "";
     const isRunning = !!projectPath && devStatus?.workDir === projectPath;
     if (isRunning) {
-      // BROWSER LANE FIRST: a web-served dev server (Browser Reload → the agent
-      // serves the web target, devMode="web") opens the WebView preview — for
-      // ANY framework, including Flutter over relay. Previously a running Flutter
-      // server fell through to handleFlushMobile (a LAN flush BUILD) whenever the
-      // connection wasn't direct, so "Browser Reload" of e-mobile over relay tried
-      // to LAN-flush and did nothing useful. The browser lane has no LAN coupling.
-      if (isWebServedStatus({ platform: devStatus?.platform, devMode: devStatus?.devMode })) {
-        resetWebPreview();
-
-        setWebViewKey((k) => k + 1);
-        setWebViewLoading(true);
-        setShowWebView(true);
+      // Tapping the RUNNING project = SEE it. Open the browser preview for every
+      // stack (web-served or not) — except a Hermes RN bundle that loads natively
+      // into the container. No LAN flush: that path was removed entirely.
+      if (isHermesMobileFramework(devStatus?.framework)
+          && !isWebServedStatus({ platform: devStatus?.platform, devMode: devStatus?.devMode })) {
+        handleOpenNative(devStatus!.workDir!, devStatus?.framework);
         return;
       }
-      if (isHermesMobileFramework(devStatus?.framework)) {
-        handleOpenNative(devStatus!.workDir!, devStatus?.framework);
-      } else if (devStatus?.framework === "flutter") {
-        if (!isDirectConnection) {
-          handleFlushMobile(devStatus!.workDir!, "flutter");
-          return;
-        }
-        handleReload();
-      }
+      resetWebPreview();
+      setWebViewLoading(true);
+      setWebViewKey((k) => k + 1);
+      setShowWebView(true);
       return;
     }
 
@@ -707,6 +696,11 @@ export default function AppsScreen() {
         result.actions.find((a: any) => a.framework)?.framework || "";
       const isRN = isHermesMobileFramework(hermesFramework);
 
+      // Exactly three lanes, no Flush:
+      //   Hermes  — RN/Expo ONLY (loads the JS bundle into the container).
+      //   Browser — ALL stacks (serves the web target in a WebView). This is the
+      //             primary, universal vibing lane.
+      //   WebRTC  — ALL stacks (streams the app from the box).
       const reloadLanes: any[] = [];
       if (isRN) {
         reloadLanes.push({
@@ -715,12 +709,10 @@ export default function AppsScreen() {
           supported: compatibility?.compatible !== false, reason: compatibility?.errors?.[0],
         });
       }
-      if (isRN || secondClassFramework === "flutter" || (!!fw && !isSecondClassMobileFramework(fw))) {
-        reloadLanes.push({
-          label: "Browser Reload", target: ".", type: "dev-server", icon: "\u{1F310}",
-          framework: fw, platform: Platform.OS, supported: true,
-        });
-      }
+      reloadLanes.push({
+        label: "Browser Reload", target: ".", type: "dev-server", icon: "\u{1F310}",
+        framework: fw, platform: Platform.OS, supported: true,
+      });
       reloadLanes.push({
         label: "WebRTC Reload", target: ".", type: "remote-runtime", icon: "\u{1F4FA}",
         framework: fw, platform: Platform.OS, supported: true,
@@ -1672,32 +1664,8 @@ export default function AppsScreen() {
                 <Text style={s.cardTitle}>{runningProject}</Text>
                 <Text style={s.cardMeta}>
                   {devServerBuilding
-                    ? `${devStatus.framework} · compiling for device`
-                    : `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`}
-                </Text>
-                <Text style={[s.cardMeta, { color: "#86efac" }]}>
-                  mode · {devServerBuilding
-                    ? "build in progress"
-                    : isWebServedStatus({ platform: devStatus.platform, devMode: devStatus.devMode })
-                      ? "browser preview"
-                      : isHermesMobileFramework(devStatus.framework)
-                        ? (devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver")
-                        : devStatus.framework === "flutter"
-                          ? "LAN app reload (second class)"
-                          : "native mobile flow"}
-                </Text>
-                {devStatus.iosInstallReason ? (
-                  <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
-                    {devStatus.iosInstallReason}
-                  </Text>
-                ) : null}
-                {runningSecondClassGuidance ? (
-                  <Text style={[s.cardMeta, s.guidanceText, { color: "#cbd5e1" }]} numberOfLines={3}>
-                    {runningSecondClassGuidance}
-                  </Text>
-                ) : null}
-                <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
-                  target · {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
+                    ? `${devStatus.framework} · starting…`
+                    : `${devStatus.framework} · browser preview`}
                 </Text>
                 {workerSession?.hasTarget && (
                   <Text style={[s.cardMeta, { color: workerSession.workerOnline ? "#86efac" : "#fbbf24" }]}>
@@ -1706,59 +1674,31 @@ export default function AppsScreen() {
                 )}
               </View>
             </View>
-            {/* Running-banner buttons. For Flutter, both Open-like flush
-                and Reload need LAN. Rather than letting the user tap and hit
-                an Alert, we render the buttons untappable with an inline
-                caption when the action cannot possibly succeed. */}
-            {(() => {
-              const isFlutterRunning = devStatus.framework === "flutter";
-              const flutterBlocked = isFlutterRunning && !isDirectConnection;
-              const openDisabled = devServerBusy || flutterBlocked;
-              const reloadDisabled = devServerBusy || flutterBlocked;
-              const openLabel = isFlutterRunning ? "Flush to App" : "Open in Yaver";
-              return (
-                <>
-                  <View style={s.cardActions}>
-                    <Pressable
-                      style={[s.actionBtn, s.openBtn, openDisabled && { opacity: 0.4 }]}
-                      onPress={handleOpen}
-                      disabled={openDisabled}
-                    >
-                      {devServerBusy ? (
-                        <>
-                          <ActivityIndicator size="small" color="#000" />
-                          <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>
-                            {devServerBuilding && !nativeLoading ? "Compiling..." : "Building..."}
-                          </Text>
-                        </>
-                      ) : (
-                        <Text style={s.openBtnText}>{openLabel}</Text>
-                      )}
-                    </Pressable>
-                    <Pressable
-                      style={[s.actionBtn, s.reloadBtn, reloadDisabled && { opacity: 0.4 }]}
-                      onPress={handleReload}
-                      disabled={reloadDisabled}
-                    >
-                      <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
-                    </Pressable>
-                    {workerSession?.hasTarget && workerSession.workerOnline && (
-                      <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleRequestScreenshot}>
-                        <Text style={s.reloadBtnText}>Shot</Text>
-                      </Pressable>
-                    )}
-                    <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
-                      <Text style={s.stopBtnText}>Stop</Text>
-                    </Pressable>
-                  </View>
-                  {flutterBlocked && (
-                    <Text style={[s.cardMeta, { color: "#fbbf24", marginTop: 4 }]} numberOfLines={2}>
-                      Flush / Reload need the phone + dev machine on the same Wi-Fi. You're on {quicClient.connectionMode || "relay"} — move to LAN, or use the Apps list to ship this project to Play Store / TestFlight.
+            {/* Vibing = SEE the app. Exactly two actions: "Open in Yaver" opens
+                the browser preview (works for every stack — RN, Flutter, web —
+                it serves the web target, not a LAN flush), and "Stop". Flush /
+                Reload / Screenshots / Ship It were removed on purpose. */}
+            <View style={s.cardActions}>
+              <Pressable
+                style={[s.actionBtn, s.openBtn, { flex: 1 }, devServerBusy && { opacity: 0.5 }]}
+                onPress={() => { resetWebPreview(); setWebViewLoading(true); setWebViewKey((k) => k + 1); setShowWebView(true); }}
+                disabled={devServerBusy}
+              >
+                {devServerBusy ? (
+                  <>
+                    <ActivityIndicator size="small" color="#000" />
+                    <Text style={[s.openBtnText, { fontSize: 12, marginLeft: 6 }]}>
+                      {devServerBuilding && !nativeLoading ? "Starting…" : "Building…"}
                     </Text>
-                  )}
-                </>
-              );
-            })()}
+                  </>
+                ) : (
+                  <Text style={s.openBtnText}>Open in Yaver</Text>
+                )}
+              </Pressable>
+              <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
+                <Text style={s.stopBtnText}>Stop</Text>
+              </Pressable>
+            </View>
 
             {/* Build progress — two-line layout while HBC bundle is compiling.
                 Line 1 (loadingStatus): the high-level phase, e.g. "Building
