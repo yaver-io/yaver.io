@@ -30,6 +30,7 @@ import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, isBundleLoaderAvailable, loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
+import LaneStartupStatus from "../../src/components/LaneStartupStatus";
 import { PREVIEW_READY_SCRIPT } from "../../src/lib/previewReadyScript";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
@@ -2683,38 +2684,17 @@ export default function AppsScreen() {
                     <Text style={[s.previewSubtle, { color: c.textMuted }]}>
                       {loadingStatus || "First web compile can take up to a minute — retrying automatically."}
                     </Text>
-                    {/* Slow vs stuck. Elapsed proves time is passing; "last
-                        output" proves the agent is still talking. Silence is
-                        called out explicitly rather than left to the user to
-                        guess at, because guessing is what makes a long compile
-                        feel broken. */}
-                    {(() => {
-                      if (!webPreviewStartedAt) return null;
-                      const elapsed = Math.max(0, Math.floor((previewNowTick - webPreviewStartedAt) / 1000));
-                      const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
-                      const quiet = webPreviewLastLogAt
-                        ? Math.floor((previewNowTick - webPreviewLastLogAt) / 1000)
-                        : null;
-                      const stalled = quiet !== null && quiet >= 45;
-                      return (
-                        <Text style={[s.previewSubtle, { color: stalled ? "#f59e0b" : c.textMuted, marginTop: 4 }]}>
-                          {mmss} elapsed
-                          {quiet === null
-                            ? " · waiting for the first output from the box"
-                            : stalled
-                              ? ` · no output for ${quiet}s — the compile may be stalled, Stop and retry if this persists`
-                              : ` · last output ${quiet}s ago`}
-                        </Text>
-                      );
-                    })()}
-                    {webPreviewLogs.length > 0 ? (
-                      <ScrollView style={s.previewLogBox} contentContainerStyle={{ padding: 10 }}>
-                        {webPreviewLogs.slice(-40).map((ln, i) => (
-                          <Text key={i} style={s.previewLogLine}>{ln}</Text>
-                        ))}
-                      </ScrollView>
-                    ) : bundlerLine ? (
-                      <Text style={[s.previewSubtle, { color: c.textMuted }]} numberOfLines={2}>{bundlerLine}</Text>
+                    <LaneStartupStatus
+                      startedAt={webPreviewStartedAt}
+                      lastOutputAt={webPreviewLastLogAt}
+                      now={previewNowTick}
+                      lines={webPreviewLogs}
+                      maxLines={4}
+                      mutedColor={c.textMuted}
+                      stallHint="Stop and retry if this persists"
+                    />
+                    {webPreviewLogs.length === 0 && bundlerLine ? (
+                      <Text style={[s.previewSubtle, { color: c.textMuted }]} numberOfLines={1}>{bundlerLine}</Text>
                     ) : null}
                   </>
                 )}

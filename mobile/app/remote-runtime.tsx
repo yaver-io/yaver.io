@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { describeLaneProgress } from "../src/lib/laneProgress";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -27,6 +28,13 @@ export default function RemoteRuntimeScreen() {
   const [connectingTargetLabel, setConnectingTargetLabel] = useState<string | null>(null);
   const [connectingSince, setConnectingSince] = useState<number | null>(null);
   const [connectionLogs, setConnectionLogs] = useState<Array<{ id: string; text: string; tone: "neutral" | "success" | "error" }>>([]);
+  // The elapsed counter below used to read Date.now() inline during render, so
+  // it only advanced when some OTHER state change re-rendered the panel. During
+  // a quiet stretch (simulator booting, ICE gathering) it froze — the one piece
+  // of UI whose whole job is to prove time is passing stopped moving, which is
+  // exactly what makes a slow connect feel hung. Own the clock explicitly.
+  const [connectNowTick, setConnectNowTick] = useState(Date.now());
+  const [connectLastOutputAt, setConnectLastOutputAt] = useState<number | null>(null);
   const [connectionPhase, setConnectionPhase] = useState<string>("Preparing connection");
   const connectionTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const isCompact = width < 430;
@@ -37,7 +45,15 @@ export default function RemoteRuntimeScreen() {
     connectionTimers.current = [];
   }, []);
 
+  // 1s tick only while the connect panel is up.
+  useEffect(() => {
+    if (!connectingSince) return;
+    const id = setInterval(() => setConnectNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [connectingSince]);
+
   const pushConnectionLog = useCallback((text: string, tone: "neutral" | "success" | "error" = "neutral") => {
+    setConnectLastOutputAt(Date.now());
     setConnectionLogs((prev) => [
       ...prev.slice(-3),
       { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, tone },
@@ -87,6 +103,7 @@ export default function RemoteRuntimeScreen() {
     setBusyTargetId(target.id);
     setConnectingTargetLabel(target.label);
     setConnectingSince(Date.now());
+    setConnectLastOutputAt(null);
     setConnectionLogs([]);
     setConnectionPhase("Preparing connection");
     pushConnectionLog("Preparing connection");
@@ -366,7 +383,7 @@ export default function RemoteRuntimeScreen() {
               <Text style={[styles.connectTarget, { fontSize: isCompact ? 18 : 22, marginBottom: isCompact ? 10 : 12 }]} numberOfLines={2}>{connectingTargetLabel}</Text>
               <Text style={[styles.connectPhase, { fontSize: isCompact ? 17 : 20, lineHeight: isCompact ? 22 : 26 }]}>{connectionPhase}</Text>
               <Text style={[styles.connectElapsed, { fontSize: isCompact ? 13 : 15, marginTop: isCompact ? 6 : 8, marginBottom: isCompact ? 14 : 18 }]}>
-                {connectingSince ? `${Math.max(0, Math.round((Date.now() - connectingSince) / 1000))}s elapsed` : ""}
+                {describeLaneProgress({ startedAt: connectingSince, lastOutputAt: connectLastOutputAt, now: connectNowTick })?.text ?? ""}
               </Text>
               <View style={[styles.connectLogStack, { minHeight: isCompact ? 104 : 122 }]}>
                 {connectionLogs.map((entry, index) => (

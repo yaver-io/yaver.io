@@ -1,6 +1,9 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
+    // Unit tests import their subject by real .ts path so
+    // `node --experimental-strip-types` can execute them. Safe: noEmit.
+    "allowImportingTsExtensions": true,
     "strict": true,
     "paths": {
       "@/*": [
