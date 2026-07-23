@@ -7416,12 +7416,22 @@ export class QuicClient {
     targetDeviceId?: string;
     targetDeviceName?: string;
     targetDeviceClass?: string;
+    // web: true routes to the BROWSER lane — the agent serves the web target
+    // (expo web / Flutter web / plain web dev server) instead of building a
+    // Hermes native bundle. This is what "Browser Reload" needs: Hermes is
+    // coupled to the guest app's native modules (sfmg dies on expo-gl), has no
+    // meaning for Flutter, and is blocked for Yaver-self-dev — the web target
+    // has none of those dependencies. Default (undefined/false) keeps the
+    // Hermes/native path for the Hermes lane.
+    web?: boolean;
   }): Promise<DevServerStatus | null> {
-    // `caller: "mobile"` — explicit identity tag. The agent reads it
-    // and constrains itself to the Hermes / native bundle path: it
-    // will never pivot to a static web bundle for a mobile caller,
-    // even if the project also happens to have a web target.
-    const body = { ...opts, caller: "mobile" };
+    const { web, ...rest } = opts;
+    // caller "web-ui" + platform "web" is the browser lane; caller "mobile" is
+    // the Hermes/native lane (the agent never pivots a "mobile" caller to a web
+    // bundle even when the project has a web target).
+    const body = web
+      ? { ...rest, platform: "web", caller: "web-ui" }
+      : { ...rest, caller: "mobile" };
     const res = await fetch(`${this.baseUrl}/dev/start`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -10351,6 +10361,10 @@ export interface DevServerStatus {
   bundleUrl: string;
   deepLink?: string;
   devMode?: string;
+  // "ios" | "android" | "web". "web" means the agent is serving the web target
+  // (browser lane) rather than building a Hermes native bundle — DevPreview
+  // reads this to render the WebView even for an expo/RN project.
+  platform?: string;
   startedAt?: string;
   error?: string;
   pid?: number;

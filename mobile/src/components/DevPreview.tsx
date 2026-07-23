@@ -17,6 +17,7 @@ import { useColors } from "../context/ThemeContext";
 import { isBundleLoaded, loadAppIfChanged, onBundleEvent } from "../lib/bundleLoader";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { isActiveDevServerStatus } from "../lib/devServerState";
+import { mustUseNativePreview as mustUseNativePreviewLane } from "../lib/devLane";
 import { useResponsiveLayout } from "../hooks/useResponsiveLayout";
 import { monoFamily } from "../theme/tokens";
 
@@ -257,10 +258,18 @@ export function DevPreview() {
     const id = setInterval(() => setNowTick((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, []);
-  const mustUseNativePreview =
-    isHermesNativeFramework(status) ||
-    status?.devMode === "dev-client" ||
-    !!status?.building;
+  // When the dev server was started in the BROWSER lane (web:true → the agent
+  // serves the web target and reports platform:"web"), render the WebView even
+  // for an expo/RN project. Previously the phone was Hermes-ONLY: any expo/RN
+  // status forced the native bundle path regardless of the lane the user chose,
+  // so "Browser Reload" silently became a Hermes build (and died on missing
+  // native modules like expo-gl). The web target has no such native coupling.
+  const mustUseNativePreview = mustUseNativePreviewLane({
+    framework: status?.framework,
+    platform: status?.platform,
+    devMode: status?.devMode,
+    building: status?.building,
+  });
 
   // Listen for bundle unload events (user pressed "Back to Yaver")
   useEffect(() => {

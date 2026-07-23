@@ -36,6 +36,7 @@ import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureT
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
 import { applyPreviewCapabilities, guardYaverSelfDevelopmentActions, isHermesMobileFramework } from "../../src/lib/mobileProjectActions";
 import { runtimeSurfaceClient } from "../../src/lib/runtimeSurfaceClient";
+import { devStartInstruction } from "../../src/lib/devLane";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -819,7 +820,11 @@ export default function AppsScreen() {
         await quicClient.startDevServer({
           framework: action.framework || "",
           workDir: targetPath,
-          platform: action.platform || "",
+          // Browser Reload = the browser lane. Serve the web target, never a
+          // Hermes native bundle (Hermes needs the guest's native modules to
+          // match the container — sfmg dies on expo-gl — has no meaning for
+          // Flutter, and is blocked for Yaver-self-dev).
+          web: true,
           targetDeviceId: selectedTarget?.id,
           targetDeviceName: selectedTarget?.name,
           targetDeviceClass: selectedTarget?.deviceClass,
@@ -828,8 +833,8 @@ export default function AppsScreen() {
         const status = await quicClient.getDevServerStatus();
         if (!status?.running) {
           await quicClient.sendTask(
-            `Hot reload ${project} (${action.framework}) on my phone`,
-            `Call POST /dev/start with workDir=${targetPath} to start Metro. DO NOT run 'expo run:ios', 'expo run:android', 'xcodebuild', 'gradlew', or any native build — the mobile app loads the JS bundle via Hermes push (/dev/build-native). Only Metro is needed.`,
+            `Hot reload ${project} (${action.framework || "app"}) on my phone`,
+            devStartInstruction(action.framework, targetPath),
           );
           router.navigate("/(tabs)/tasks");
         }
@@ -881,7 +886,7 @@ export default function AppsScreen() {
                           await quicClient.startDevServer({
                             framework: action.framework || "",
                             workDir: targetPath,
-                            platform: action.platform || "",
+                            web: true,
                             targetDeviceId: selectedTarget?.id,
                             targetDeviceName: selectedTarget?.name,
                             targetDeviceClass: selectedTarget?.deviceClass,
@@ -908,7 +913,7 @@ export default function AppsScreen() {
         }
         await sendTaskOrWarn(
           `Hot reload ${project} on my phone`,
-          `Call POST /dev/start with workDir=${targetPath}. Metro only — no expo run:ios, no xcodebuild. Mobile loads via Hermes push.`,
+          devStartInstruction(action.framework, targetPath),
           `Hot reload for ${project}`,
         );
       } finally {
