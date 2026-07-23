@@ -274,7 +274,7 @@ export default function RuntimeTurnsScreen() {
             const busy = busyId === item.itemId;
             const test = testLine(item);
             return (
-              <View key={item.itemId} style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+              <View key={item.itemId} style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
                 <View style={styles.cardTop}>
                   <Text style={[styles.state, { color: stateColor(item.state, c) }]}>
                     {STATE_LABEL[item.state] || item.state}
