@@ -1674,7 +1674,16 @@ func (w *devLogWriter) Tail(n int) string {
 func (w *devLogWriter) Write(p []byte) (int, error) {
 	w.buf = append(w.buf, p...)
 	for {
-		idx := bytes.IndexByte(w.buf, '\n')
+		// Break on \r as well as \n.
+		//
+		// Flutter/Dart render compile progress as an in-place spinner
+		// terminated by CARRIAGE RETURN, not newline. Splitting only on \n
+		// meant that during the entire first web compile — the exact minutes
+		// the user is staring at a spinner — no line ever "completed", so no
+		// log event was emitted and the phone showed "waiting for the first
+		// output from the box" while the box was working hard and saying
+		// plenty. Treating \r as a line boundary surfaces that progress.
+		idx := bytes.IndexAny(w.buf, "\r\n")
 		if idx < 0 {
 			break
 		}
