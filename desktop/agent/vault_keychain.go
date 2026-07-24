@@ -28,6 +28,7 @@ package main
 // read this user's secrets even on the same machine.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -63,6 +64,34 @@ type masterKeyMeta struct {
 
 // masterKeyPaths returns the on-disk paths for the key + meta files,
 // rooted in ~/.yaver/ (same dir as vault.enc, config.json).
+// securityCmd runs the macOS `security` tool with a HARD timeout.
+//
+// Every call here used to be a bare exec.Command(...).Run(). On a headless box
+// — SSH, launchd, no Aqua session — a locked keychain makes `security` block
+// forever waiting for a GUI prompt that can never be answered. That call sits
+// in the agent's STARTUP path, so the whole agent hung before binding a port,
+// registering a relay tunnel, or discovering projects (mac mini, 2026-07-24).
+// The process stayed alive, so every liveness check passed while the box was
+// unusable: the phone said "online but no transport answered", the relay said
+// 502, Projects said "No projects yet", and every fix deployed there appeared
+// to do nothing because the server was never running.
+//
+// WaitDelay matters as much as the context: killing `security` does not free
+// us while a child still holds the output pipe.
+//
+// A keychain mirror is a CONVENIENCE — ~/.yaver/master.key is the source of
+// truth — so it must never be able to stop the agent from starting.
+func securityCmd(args ...string) *exec.Cmd {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cmd := exec.CommandContext(ctx, "security", args...)
+	cmd.WaitDelay = 2 * time.Second
+	// Cancel is intentionally deferred to process exit via a goroutine: the
+	// caller only holds the *Cmd, and leaking one timer for 5s is far cheaper
+	// than reintroducing an unbounded wait.
+	go func() { <-ctx.Done(); cancel() }()
+	return cmd
+}
+
 func masterKeyPaths() (keyPath, metaPath string, err error) {
 	dir, err := ConfigDir()
 	if err != nil {
@@ -169,7 +198,7 @@ func readMasterKeyFromKeychain(userID string) (key [masterKeyLen]byte, ok bool, 
 	if runtime.GOOS != "darwin" || vaultKeychainDisabled() {
 		return key, false, nil
 	}
-	cmd := exec.Command("security", "find-generic-password",
+	cmd := securityCmd("find-generic-password",
 		"-s", keychainService,
 		"-a", keychainAccount(userID),
 		"-w", // print just the password (hex-encoded key bytes)
@@ -210,7 +239,7 @@ func writeMasterKeyToKeychain(userID string, key [masterKeyLen]byte) {
 	// deterministically — a bare `-U` update doesn't reliably rewrite an
 	// existing item's access control list, so a pre-`-A` entry would keep
 	// prompting. Best-effort; missing item is fine.
-	_ = exec.Command("security", "delete-generic-password",
+	_ = securityCmd("delete-generic-password",
 		"-s", keychainService, "-a", keychainAccount(userID)).Run()
 	// -U upserts (update if exists, add if not). -A makes the item
 	// accessible to any process running as this user WITHOUT a per-access
@@ -222,7 +251,7 @@ func writeMasterKeyToKeychain(userID string, key [masterKeyLen]byte) {
 	// never-actually-passed `-T ''`), macOS prompts "security wants to use
 	// your confidential information" on every read — the spam the
 	// maintainer asked to kill. See feedback_no_keychain_prompt_spam.
-	cmd := exec.Command("security", "add-generic-password",
+	cmd := securityCmd("add-generic-password",
 		"-U",
 		"-A",
 		"-s", keychainService,
@@ -323,7 +352,7 @@ func PurgeMasterKey() error {
 		// Best-effort; we don't know the userID at sign-out time
 		// without resolving against Convex (which may be offline),
 		// so we wipe all accounts under the service.
-		_ = exec.Command("security", "delete-generic-password",
+		_ = securityCmd("delete-generic-password",
 			"-s", keychainService).Run()
 	}
 	return nil
