@@ -666,6 +666,26 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		// Create reverse proxy to the dev server
 		target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", ds.Port()))
 		proxy := httputil.NewSingleHostReverseProxy(target)
+		// Rewrite the served HTML's <base href> so root-absolute asset paths
+		// resolve THROUGH this /dev/ proxy.
+		//
+		// The bug this fixes (2026-07-24, e-mobile): the browser lane serves the
+		// dev server under /dev/, but Flutter's index.html ships `<base href="/">`.
+		// A relative `<script src="flutter.js">` therefore resolves against the
+		// base, i.e. to /flutter.js at the AGENT ROOT — not /dev/flutter.js — so
+		// flutter.js (and splash images, main.dart.js, canvaskit) all 404, the
+		// engine never boots, `flutter-view` never appears, and the mobile
+		// overlay waits forever on a page that can never render. Measured through
+		// the proxy: 404 /flutter.js, 404 /splash/img/light-1x.png. Direct on
+		// :9100 it works, which is why a direct-URL test missed it.
+		//
+		// Rewriting the base to /dev/ makes every relative asset resolve to
+		// /dev/<asset>, which the proxy forwards to the dev server correctly.
+		// Applies to any web framework whose index roots its assets (Flutter is
+		// the one that bites; Expo/Vite/Next use their own base handling and are
+		// unaffected because their assets are already served relative or already
+		// carry the right base).
+		proxy.ModifyResponse = rewriteDevIndexBaseHref
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			// The framework's dev server (127.0.0.1:port) refused the request.
 			// For a web-lane framework this is almost always "still compiling":
@@ -2394,16 +2414,24 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 	// shell PID leaks them and the dev port stays bound until reboot).
 	setProcGroup(cmd)
 
-	// Feed Flutter's stdout into the progress tracker so it becomes SUMMARIZED
-	// phase events (pub get → compiling → launching → serving) on /dev/events —
-	// what the mobile preview shows while it waits. We deliberately do NOT emit a
-	// "log" event per line (the phone wants a summary, not a raw firehose); on
-	// failure the returned error carries logWriter.Tail(...), which the manager
-	// broadcasts as an "error" event, so the real logs still reach the phone.
+	// Feed Flutter's stdout into the progress tracker (SUMMARIZED phase events:
+	// pub get → compiling → launching → serving) AND stream the raw lines as
+	// "log" events.
+	//
+	// Originally this path deliberately emitted NO per-line log, on the theory
+	// the phone wanted a summary not a firehose. In practice that left the
+	// preview overlay showing "waiting for the first output from the box" for
+	// the entire 60-90s first compile — the box was working hard and saying
+	// nothing, which reads as hung (reported from TestFlight on e-mobile). A
+	// user watching a slow compile needs to SEE it compiling. So we stream the
+	// lines, lightly throttled below so a burst does not flood the SSE channel.
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", f.name)}
 	{
 		tracker := f.tracker
 		recordLogFn := f.recordLogFn
+		emitFn := f.emitFn
+		framework := f.name
+		var lastEmit time.Time
 		logWriter.onLogLine = func(line string) {
 			if recordLogFn != nil {
 				recordLogFn(line)
@@ -2411,10 +2439,42 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 			if tracker != nil {
 				tracker.FeedLine(line)
 			}
+			if emitFn == nil {
+				return
+			}
+			// Throttle to ~4/s: Flutter's compile spinner (now surfaced via the
+			// \r handling in devLogWriter.Write) can update very fast, and the
+			// user wants "it's alive", not every frame. Always let a
+			// newline-terminated substantive line through even inside the
+			// window so real phase messages are never dropped.
+			now := time.Now()
+			if now.Sub(lastEmit) < 250*time.Millisecond {
+				return
+			}
+			lastEmit = now
+			emitFn(DevServerEvent{
+				Type:      "log",
+				Framework: framework,
+				LogLine:   line,
+				Timestamp: now.UTC().Format(time.RFC3339),
+			})
 		}
 	}
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
+
+	// Announce the exact command AND the directory it runs in, immediately, so
+	// the overlay is never blank while the first line of real output is still
+	// tens of seconds away. Requested directly: "show the directory it runs the
+	// command in".
+	if f.emitFn != nil {
+		f.emitFn(DevServerEvent{
+			Type:      "log",
+			Framework: f.name,
+			LogLine:   fmt.Sprintf("$ %s %s   (in %s)", name, strings.Join(args, " "), workDir),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
 
 	// Create stdin pipe and save it for Reload()
 	pipe, err := cmd.StdinPipe()
