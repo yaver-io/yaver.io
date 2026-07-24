@@ -47,15 +47,6 @@ const OWNER_ONLY_MORE_TOOLS = new Set<string>([
 import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { isOptionalMoreToolEnabled, normalizeOptionalMoreTools, type OptionalMoreToolId } from "../../src/lib/moreOptionalTools";
-import {
-  getSelectedAppPackages,
-  listPhoneApps,
-  reportPhoneInventory,
-  remoteAndroidAppQuery,
-  remoteAndroidAppStatus,
-  setSelectedAppPackages,
-  type PhoneInstalledApp,
-} from "../../src/lib/appSync";
 
 // ── Quality Gates types ────────────────────────────────────────────
 
@@ -2721,177 +2712,6 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   );
 }
 
-function MobileAppSyncSection({
-  c,
-  connected,
-  activeDeviceId,
-}: {
-  c: ReturnType<typeof useColors>;
-  connected: boolean;
-  activeDeviceId?: string;
-}) {
-  const [apps, setApps] = useState<PhoneInstalledApp[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [manualPackage, setManualPackage] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [busyPackage, setBusyPackage] = useState<string | null>(null);
-  const [result, setResult] = useState("");
-
-  const loadApps = useCallback(async () => {
-    setLoading(true);
-    setResult("");
-    try {
-      const [phoneApps, saved] = await Promise.all([listPhoneApps(), getSelectedAppPackages()]);
-      setApps(phoneApps);
-      setSelected(new Set(saved));
-      // Zero-friction: push this phone's app list up to the connected agent so it
-      // can mirror onto a clone (redroid / second-hand phone). Best-effort —
-      // never blocks the screen, never surfaces an error here.
-      if (connected && phoneApps.length > 0) {
-        reportPhoneInventory(phoneApps).catch(() => {});
-      }
-    } catch (e) {
-      setResult(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [connected]);
-
-  useEffect(() => {
-    loadApps();
-  }, [loadApps]);
-
-  const persistSelected = useCallback(async (next: Set<string>) => {
-    setSelected(next);
-    await setSelectedAppPackages(Array.from(next));
-  }, []);
-
-  const togglePackage = useCallback(async (pkg: string) => {
-    const next = new Set(selected);
-    if (next.has(pkg)) next.delete(pkg);
-    else next.add(pkg);
-    await persistSelected(next);
-  }, [persistSelected, selected]);
-
-  const addManualPackage = useCallback(async () => {
-    const pkg = manualPackage.trim();
-    if (!pkg) return;
-    const next = new Set(selected);
-    next.add(pkg);
-    setManualPackage("");
-    await persistSelected(next);
-  }, [manualPackage, persistSelected, selected]);
-
-  const checkPackage = useCallback(async (pkg: string) => {
-    if (!connected) {
-      setResult("Pick a remote device first.");
-      return;
-    }
-    setBusyPackage(pkg);
-    setResult("");
-    try {
-      const q = query.trim();
-      const res = q
-        ? await remoteAndroidAppQuery({ packageName: pkg, query: q, deviceId: activeDeviceId })
-        : await remoteAndroidAppStatus(pkg, activeDeviceId);
-      if (!res.ok) {
-        setResult(res.error || "Remote app check failed.");
-        return;
-      }
-      const body = (res.result ?? {}) as Record<string, unknown>;
-      const installed = body.installed === true ? "installed" : "not installed";
-      const found = body.found === true ? "match found" : q ? "no visible match" : "";
-      const needsUser = body.needsUser === true ? " · needs phone/user login" : "";
-      setResult(`${pkg}: ${installed}${found ? ` · ${found}` : ""}${needsUser}`);
-    } finally {
-      setBusyPackage(null);
-    }
-  }, [activeDeviceId, connected, query]);
-
-  const visibleApps = apps.slice(0, 12);
-  const selectedOnly = Array.from(selected)
-    .filter((pkg) => !visibleApps.some((app) => app.packageName === pkg))
-    .map((pkg) => ({ packageName: pkg, label: pkg }));
-  const rows = [...selectedOnly, ...visibleApps];
-
-  return (
-    <View style={[s.cardBlock, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A3"}</Text>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[s.label, { color: c.textPrimary }]}>Mobile App Sync</Text>
-          <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-            {Platform.OS === "android" ? `${apps.length} launchable apps visible` : "Manual package sync on iPhone"}
-          </Text>
-        </View>
-        <Pressable style={[s.actionBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]} onPress={loadApps} disabled={loading}>
-          {loading ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Refresh</Text>}
-        </Pressable>
-      </View>
-
-      <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-        <TextInput
-          value={manualPackage}
-          onChangeText={setManualPackage}
-          placeholder="com.example.app"
-          placeholderTextColor={c.textMuted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={[s.inlineInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
-        />
-        <Pressable style={[s.actionBtn, { backgroundColor: c.accent }]} onPress={addManualPackage}>
-          <Text style={[s.actionBtnText, { color: "#fff" }]}>Add</Text>
-        </Pressable>
-      </View>
-
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="optional visible text query"
-        placeholderTextColor={c.textMuted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={[s.inlineInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg, marginBottom: 8 }]}
-      />
-
-      {rows.length === 0 ? (
-        <Text style={{ color: c.textMuted, fontSize: 13 }}>
-          {Platform.OS === "android" ? "No launchable apps returned by Android package visibility." : "iOS does not expose installed-app inventory."}
-        </Text>
-      ) : (
-        rows.map((app) => {
-          const pkg = app.packageName;
-          const isSelected = selected.has(pkg);
-          return (
-            <View key={pkg} style={[s.appSyncRow, { borderTopColor: c.border }]}>
-              <Pressable
-                onPress={() => togglePackage(pkg)}
-                style={[s.checkbox, { borderColor: isSelected ? c.accent : c.border, backgroundColor: isSelected ? c.accent : "transparent" }]}
-              >
-                <Text style={{ color: "#fff", fontSize: 12, fontWeight: "800" }}>{isSelected ? "\u2713" : ""}</Text>
-              </Pressable>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{app.label || pkg}</Text>
-                <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={1}>{pkg}</Text>
-              </View>
-              <Pressable
-                onPress={() => checkPackage(pkg)}
-                disabled={busyPackage === pkg}
-                style={[s.actionBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}
-              >
-                {busyPackage === pkg ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Check</Text>}
-              </Pressable>
-            </View>
-          );
-        })
-      )}
-
-      {result ? <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 8 }}>{result}</Text> : null}
-    </View>
-  );
-}
-
 export default function MoreScreen() {
   const LEAN_MORE_SURFACE = true;
   const c = useColors();
@@ -2937,22 +2757,14 @@ export default function MoreScreen() {
 
   const insets = useSafeAreaInsets();
   const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
-  const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
-  const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
   const handleConnection = useCallback(() => router.navigate("/connection" as any), [router]);
   const handleMcpServers = useCallback(() => router.navigate("/mcp-servers" as any), [router]);
-  const handleHomeControl = useCallback(() => router.navigate("/home-control" as any), [router]);
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
-  const handleRuntimeTurns = useCallback(() => router.navigate("/runtime-turns" as any), [router]);
-  const handleStoreTesters = useCallback(() => router.navigate("/store-testers" as any), [router]);
-  const handleStores = useCallback(() => router.navigate("/stores" as any), [router]);
   const handleEvStations = useCallback(() => router.navigate("/ev-stations" as any), [router]);
-  const handleGatewayGates = useCallback(() => router.navigate("/gateway-gates" as any), [router]);
   const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
   const handleVibe = useCallback(() => router.navigate("/vibe" as any), [router]);
-  const handleDeployStatus = useCallback(() => router.navigate("/deploy-status" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleTwinMode = useCallback(() => router.navigate("/twin" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
@@ -3203,7 +3015,7 @@ export default function MoreScreen() {
         {/* A row in a list of rows, not a full-height hero.
             
             This was a centred EmptyState with an icon, a paragraph and two
-            buttons, wedged between MCP Servers and Home Control — it broke the
+            buttons, wedged between MCP Servers and the rest of the list — it broke the
             rhythm of the card list around it and pushed everything below the
             fold (2026-07-20). Pairing is one action; it gets one card, in the
             same shape as every other card here.
@@ -3230,8 +3042,6 @@ export default function MoreScreen() {
 
         {LEAN_MORE_SURFACE ? (
           <>
-            {connected ? <Text style={[s.inlineSectionTitle, { color: c.textMuted }]}>Core</Text> : null}
-
             {connected ? (
               <Pressable
                 style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
@@ -3242,46 +3052,6 @@ export default function MoreScreen() {
                   <Text style={[s.label, { color: c.textPrimary }]}>Devices</Text>
                   <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                     Manage your remote boxes and pairing
-                  </Text>
-                </View>
-                <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-              </Pressable>
-            ) : null}
-
-            {connected ? (
-              <MobileAppSyncSection
-                c={c}
-                connected={connected}
-                activeDeviceId={activeDevice?.id}
-              />
-            ) : null}
-
-            {connected ? (
-              <Pressable
-                style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                onPress={handleScreenlog}
-              >
-                <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83C\uDFA5"}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.label, { color: c.textPrimary }]}>Screen Monitor</Text>
-                  <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                    Local screen black box {"\u2014"} record, analyze, what a box spent time on
-                  </Text>
-                </View>
-                <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-              </Pressable>
-            ) : null}
-
-            {connected ? (
-              <Pressable
-                style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                onPress={handleNetwork}
-              >
-                <Text style={[s.icon, { color: c.textMuted }]}>{"\u26F6"}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.label, { color: c.textPrimary }]}>Yaver Mesh</Text>
-                  <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                    WireGuard overlay · exit nodes · access
                   </Text>
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
@@ -3304,23 +3074,6 @@ export default function MoreScreen() {
             </Pressable>
             ) : null}
 
-            {/* Home Control \u2014 the "single kumanda" universal remote + activities
-                (Apple TV / Mi Box / \u2026 via the home_* ops verbs). A separate Home
-                surface, never the coding tabs. Box-reachable, so always show it. */}
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={handleHomeControl}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83c\udfe0"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Home Control</Text>
-                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  {"Single kumanda \u2014 Apple TV / Mi Box / activities"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
-            </Pressable>
-
             {showOptionalTool("printer") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
@@ -3336,48 +3089,6 @@ export default function MoreScreen() {
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
             ) : null}
-
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={handleStores}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"🚀"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Publish to the stores</Text>
-                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  {"Account, keys, TestFlight, IAP, sign-in — guided + links"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
-            </Pressable>
-
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={handleStoreTesters}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"👥"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Store Testers</Text>
-                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  {"TestFlight + Play internal — invite testers, roll out builds"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
-            </Pressable>
-
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={handleRuntimeTurns}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"◷"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Runtime Turns</Text>
-                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  {"Ideas from watch, car, and TV — run them, test on device"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
-            </Pressable>
 
             {showOptionalTool("circuit") ? (
             <Pressable
@@ -3411,24 +3122,6 @@ export default function MoreScreen() {
             </Pressable>
             ) : null}
 
-            {/* Gateway Gates \u2014 resolve the gateway Auth Broker's pending human
-                gates (OAuth re-consent / 2FA / captcha / payment). Interactive
-                challenges embed a live remote view so you solve them on your
-                phone. Box-reachable, so always show it. */}
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={handleGatewayGates}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\udea6"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Gateway Gates</Text>
-                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  {"Approve paused tasks \u2014 2FA, captcha, payment, with live view"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
-            </Pressable>
-
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleVibe}
@@ -3438,20 +3131,6 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Vibe</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Talk to build — say “load me the app with Hermes” and keep vibing"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
-            </Pressable>
-
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={handleDeployStatus}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"🚀"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Deploy Status</Text>
-                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  {"Live: what's shipping now — build, stage, uploads-today vs cap"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
@@ -3580,8 +3259,6 @@ export default function MoreScreen() {
           </>
         ) : (
           <>
-        {connected ? <Text style={[s.inlineSectionTitle, { color: c.textMuted }]}>Developer Tools</Text> : null}
-
         {connected ? (
           <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>

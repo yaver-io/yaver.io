@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   Share,
@@ -131,6 +132,7 @@ export default function GuestsScreen() {
   const [lastCode, setLastCode] = useState<string | null>(null);
   const [lastTarget, setLastTarget] = useState<string | null>(null);
   const [showInviteAdvanced, setShowInviteAdvanced] = useState(false);
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
 
   // Only show own (non-guest) devices in the picker.
   const ownDevices = useMemo(() => devices.filter((d) => !d.isGuest), [devices]);
@@ -496,12 +498,31 @@ export default function GuestsScreen() {
       <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 40, gap: 12 }, tabletContent]}>
         {mode === "my-guests" ? (
           <>
-            <View style={[card(c), { gap: 10 }]}>
+            <Modal
+              visible={showInviteSheet}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setShowInviteSheet(false)}
+            >
+              <View style={[styles.inviteOverlay, { paddingTop: insets.top + 12 }]}>
+                <Pressable style={styles.inviteBackdrop} onPress={() => setShowInviteSheet(false)} />
+                <View style={[styles.inviteSheet, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <ScrollView contentContainerStyle={{ gap: 10, padding: 16, paddingBottom: 24 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={sectionLabel as any}>Add guest</Text>
+                        <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "800" }}>
+                          Share Yaver in 3 steps
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => setShowInviteSheet(false)}
+                        style={[styles.closeBtn, { backgroundColor: c.bg, borderColor: c.border }]}
+                      >
+                        <Text style={{ color: c.textPrimary, fontSize: 18, fontWeight: "800" }}>{"\u00d7"}</Text>
+                      </Pressable>
+                    </View>
               <View style={{ gap: 4 }}>
-                <Text style={sectionLabel as any}>Add guest</Text>
-                <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "800" }}>
-                  Share Yaver in 3 steps
-                </Text>
                 <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 17 }}>
                   Invite a teammate or tester. Yaver creates a short code, and you can tighten machine/project access later if needed.
                 </Text>
@@ -763,7 +784,6 @@ export default function GuestsScreen() {
               <Text style={{ color: c.textMuted, fontSize: 10 }}>
                 Max 5 guests. Codes expire in 2 days. Guests cannot touch vault, sessions, or raw exec.
               </Text>
-            </View>
 
             {lastCode && (
               <View
@@ -806,6 +826,10 @@ export default function GuestsScreen() {
                 </View>
               </View>
             )}
+                  </ScrollView>
+                </View>
+              </View>
+            </Modal>
 
             <Text style={[sectionLabel as any, { marginTop: 4 }]}>
               Guests {guests.length > 0 && `(${guests.filter((g) => g.status === "pending" || g.status === "accepted").length}/5 active)`}
@@ -1159,6 +1183,24 @@ export default function GuestsScreen() {
           </>
         )}
       </ScrollView>
+      {mode === "my-guests" ? (
+        <Pressable
+          onPress={() => setShowInviteSheet(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Add guest"
+          style={[
+            styles.fab,
+            {
+              right: 18,
+              bottom: insets.bottom + 86,
+              backgroundColor: c.accent,
+              shadowColor: "#000",
+            },
+          ]}
+        >
+          <Text style={styles.fabText}>{"+"}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -1310,5 +1352,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
+  },
+  inviteOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  inviteBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  inviteSheet: {
+    maxHeight: "86%",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderTopWidth: 1,
+    overflow: "hidden",
+  },
+  closeBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fab: {
+    position: "absolute",
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  fabText: {
+    color: "#fff",
+    fontSize: 34,
+    lineHeight: 38,
+    fontWeight: "600",
+    marginTop: -2,
   },
 });
