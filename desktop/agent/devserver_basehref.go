@@ -26,7 +26,15 @@ var devBaseHrefRe = regexp.MustCompile(`(?i)<base\s+href\s*=\s*["'](/?)["']\s*/?
 
 // devProxyBaseHref is where the browser lane is mounted. Kept as a const so the
 // rewrite and any future route change stay in lockstep.
-const devProxyBaseHref = "/dev/"
+// A RELATIVE base, deliberately — never an absolute path.
+//
+// "/dev/" was wrong the moment the request arrived over the relay: the page is
+// then served at /d/<deviceId>/dev/, so an absolute "/dev/" resolves to
+// relay-root + /dev/ and drops the device prefix, 404ing every asset again.
+// "./" resolves against the document's own directory, so it is correct for
+// localhost (/dev/), LAN, relay (/d/<id>/dev/) and any future prefix — nothing
+// about the transport is hardcoded.
+const devProxyBaseHref = "./"
 
 // rewriteDevIndexBaseHrefHTML rewrites a root <base href> to devProxyBaseHref.
 // Pure and content-only so it can be unit-tested without a live proxy.

@@ -20,8 +20,8 @@ func TestRewriteFlutterBaseHref(t *testing.T) {
   <script src="flutter.js" defer></script></head>
   <body><picture id="splash"></picture></body></html>`
 	out := rewriteDevIndexBaseHrefHTML(in)
-	if !strings.Contains(out, `<base href="/dev/">`) {
-		t.Fatalf("base href not rewritten to /dev/:\n%s", out)
+	if !strings.Contains(out, `<base href="./">`) {
+		t.Fatalf("base href not rewritten to ./:\n%s", out)
 	}
 	if strings.Contains(out, `<base href="/">`) {
 		t.Fatal("the root base href must be gone — assets would still 404")
@@ -42,7 +42,7 @@ func TestRewriteBaseHrefQuoteAndSpacingVariants(t *testing.T) {
 		`<BASE HREF="/">`,
 	} {
 		out := rewriteDevIndexBaseHrefHTML(in)
-		if !strings.Contains(out, `/dev/`) {
+		if !strings.Contains(out, `"./"`) {
 			t.Fatalf("variant not rewritten: %q -> %q", in, out)
 		}
 	}
@@ -92,7 +92,7 @@ func TestModifyResponseRewritesHTMLBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(got), `<base href="/dev/">`) {
+	if !strings.Contains(string(got), `<base href="./">`) {
 		t.Fatalf("HTML body was not rewritten:\n%s", got)
 	}
 	// Content-Length must match the new body or the client truncates/hangs.
