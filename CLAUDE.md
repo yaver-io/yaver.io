@@ -24,6 +24,39 @@ changing those.
 
 ## Hard rules
 
+- **THE SNOWBALL PRINCIPLE — fix the PRODUCT, never the machine.** This is
+  Yaver's development philosophy and it outranks finishing the immediate task.
+  When something is stuck — a box, a phone, a build, a variable, a piece of
+  state — the tempting move is to unstick *that instance* and move on. Don't.
+  Mutating one machine back to health teaches the product nothing and
+  guarantees the next user meets the same wall with no more help than you had.
+  Every stuck state is a product requirement you have not written yet.
+  The order is always:
+  1. **Resolve it first** — get the user unblocked, on the real box, now.
+  2. **Then ask: why did the product let this happen, and why didn't it say
+     so?** Almost always the answer is that something reported success, or
+     reported nothing, while the operation was impossible.
+  3. **Land the change that makes it impossible or self-evident next time** —
+     in the Go agent, the mobile app, the relay, the CLI, the web, and the
+     wiring between them. Not in a runbook, not in a doc, not in your memory.
+  4. **Prove the guard works** by breaking it: disable the fix and watch the
+     test fail. A guard you have not seen fail is a guess.
+  Worked example from 2026-07-24: a Mac mini looked "online" to the phone while
+  its relay said 502, Projects said "No projects yet", and every deployed fix
+  seemed to do nothing. Re-authing that one box would have "fixed" it in a
+  minute and taught the product nothing. The real deliverables were: `serve`
+  now logs one guaranteed line before anything that can fail (a silent serve is
+  unfalsifiable), bootstrap mode announces that it is NOT serving and names the
+  command that fixes it, the discovery walk is bounded from OUTSIDE the walk
+  (a deadline you can only check inside a callback is not a bound), and every
+  subprocess got a timeout plus `WaitDelay` (a context kill does not free you
+  while a grandchild holds the pipe). Those ship to every user; the re-auth
+  helped exactly one machine.
+  **Applies to the whole stack, equally.** A fix that lands in one of two
+  browser-preview implementations is not landed — the same drift shipped a
+  broken heartbeat, dropped SSE frames, and a dead shake gesture in `apps.tsx`
+  while `DevPreview.tsx` was fine. Cross-surface parity (below) is the same
+  rule wearing a different hat.
 - **Every incident must leave the product harder than it found it.** When you
   debug a real failure — yours, a user's, or a past session's — fixing the
   immediate symptom is only half the job. Before you call it done, ask: *"what

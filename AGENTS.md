@@ -33,6 +33,41 @@ After reading the docs, **grep the code for the symbols the docs name** before r
 - **Headless codesign (SSH / no GUI):** `CodeSign … errSecInternalComponent` means the signing **private key** is in a **locked** keychain, not that the cert is missing. The identity spans TWO keychains — `yaver-ci.keychain-db` (Apple Distribution) + `login.keychain-db` (Apple Development private keys) — so BOTH must be `unlock-keychain` + `set-key-partition-list`'d before archiving, or the archive dies at `CodeSign …/*.appex`. Full recipe in [`CLAUDE.md`](CLAUDE.md) → "Headless codesign". `launchctl asuser` does not help; only the passwords do.
 - **Local privileged secrets** (signing-keychain / login / sudo passwords) live in `~/.yaver/local-secrets.env` — `chmod 600`, owner-only, **never committed, never synced to any cloud/GH secret** (a macOS login/sudo password in GH secrets widens the attack surface). The yaver agent reads these to unlock keychains / run sudo headlessly. Canonical home is the encrypted `yaver vault`; the env file is the fallback. See [`CLAUDE.md`](CLAUDE.md) → "Local privileged credential store". Never echo these values into logs, commits, or docs.
 
+## The Snowball Principle — Yaver's development philosophy
+
+**Fix the PRODUCT, never the machine.** This outranks finishing the task in
+front of you.
+
+When something is stuck — a box, a phone, a build, a variable, a piece of
+state — the tempting move is to unstick *that instance* and move on. Don't.
+Mutating one machine back to health teaches the product nothing and guarantees
+the next user hits the same wall with no more help than you had. **Every stuck
+state is a product requirement nobody has written yet.**
+
+The order is always:
+
+1. **Resolve it first.** Get the user unblocked, on the real box, now.
+2. **Then ask: why did the product allow this, and why didn't it say so?**
+   Almost always the answer is that something reported success — or reported
+   nothing — while the operation was impossible.
+3. **Land the change that makes it impossible or self-evident next time**, in
+   the Go agent / mobile app / relay / CLI / web *and the wiring between them*.
+   Not in a runbook, not in a doc, not in your memory.
+4. **Prove the guard works by breaking it** — disable the fix, watch the test
+   fail, restore it. A guard you have not seen fail is a guess.
+
+The recurring shape to hunt for: **the inventory says yes, the operation says
+no.** A process is alive so liveness passes, while it binds no port. A dev
+server is "running" so status is green, while the page it serves cannot load an
+asset. A tool is on PATH but is a stub. If you can only learn the truth by
+attempting the operation, attempt the operation.
+
+**It applies to the whole stack, equally.** A fix that lands in one of two
+browser-preview implementations is not landed — that exact drift shipped a
+broken heartbeat, dropped SSE frames, and a dead shake gesture on one screen
+while the other was fine. Cross-surface parity is this same rule wearing a
+different hat.
+
 ## Hard safety rules (summarised from CLAUDE.md)
 
 - **Never push or commit without explicit user permission.**
