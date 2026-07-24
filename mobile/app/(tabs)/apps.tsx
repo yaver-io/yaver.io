@@ -30,6 +30,7 @@ import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, isBundleLoaderAvailable, loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
+import { setActivePreviewLane, subscribeBrowserShake } from "../../src/lib/feedbackTrigger";
 import LaneStartupStatus from "../../src/components/LaneStartupStatus";
 import { PREVIEW_READY_SCRIPT } from "../../src/lib/previewReadyScript";
 import { downloadArtifact } from "../../src/lib/builds";
@@ -619,6 +620,31 @@ export default function AppsScreen() {
   }, [isConnected, projectsDiscovering, activeDevice?.id]);
 
   // SSE auto-reload
+  // Shake -> feedback SDK, for the BROWSER lane.
+  //
+  // The native container's shake is gated to Hermes guests, so a shake while a
+  // Flutter/web app is previewed in a WebView did nothing. DevPreview.tsx had
+  // this bridge; this screen — the one the Projects tab actually opens — never
+  // did, so shake was dead here. Same drift as the startup heartbeat.
+  //
+  // Forward it INTO the WebView and dispatch every signal a guest SDK might be
+  // listening for: the web SDK (sdk/feedback/web) and the Flutter SDK's web
+  // build both watch for the CustomEvent / postMessage; __yaverFeedbackLaunch
+  // covers an app that registered a direct hook.
+  useEffect(() => {
+    if (!showWebView) return;
+    setActivePreviewLane("browser");
+    const unsub = subscribeBrowserShake(() => {
+      webViewRef.current?.injectJavaScript(`(function(){try{
+        var d={source:'shake',ts:Date.now()};
+        window.dispatchEvent(new CustomEvent('yaver-feedback:launch',{detail:d}));
+        window.postMessage({type:'yaver-feedback:launch',source:'shake'}, '*');
+        if(typeof window.__yaverFeedbackLaunch==='function'){window.__yaverFeedbackLaunch('shake');}
+      }catch(e){}})(); true;`);
+    });
+    return () => { unsub(); setActivePreviewLane(null); };
+  }, [showWebView]);
+
   // Stream the agent's dev-server output into the preview overlay.
   //
   // This used to require devStatus.running, which is precisely backwards: while
