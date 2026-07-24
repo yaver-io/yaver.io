@@ -2283,6 +2283,26 @@ var isDaemonProcess bool
 
 func runServe(args []string) {
 	isDaemonProcess = true
+
+	// FIRST LINE OF SERVE. Unconditional, before flags, config, auth or any
+	// path that can fail.
+	//
+	// A silent `serve` is unfalsifiable. On a Mac mini (2026-07-24) the process
+	// stayed resident, wrote ZERO bytes to stdout/stderr and bound no port —
+	// under launchd AND in a foreground --debug run. `yaver --version` printed
+	// fine and `yaver auth --headless` printed a full device-code flow, so the
+	// binary could obviously write; only serve was mute. With no output at all
+	// there was nothing to distinguish "crashed before logging", "forked into
+	// bootstrap", "hung on a syscall" or "wrong binary" — hours went into
+	// discovery and relay bugs that were downstream of a box whose agent was
+	// never serving in the first place.
+	//
+	// One guaranteed line makes every one of those distinguishable: if it is
+	// absent, serve never started; if it is present and nothing follows, the
+	// failure is after this point and the next log narrows it. Cheap
+	// insurance against a whole class of unfalsifiable outage.
+	log.Printf("[serve] starting — pid %d, version %s, args %v", os.Getpid(), version, args)
+
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	httpPort := fs.Int("port", 18080, "HTTP server port")
 	quicPort := fs.Int("quic-port", 4433, "QUIC server port (legacy)")
