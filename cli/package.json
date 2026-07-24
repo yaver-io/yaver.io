@@ -1,6 +1,6 @@
 {
   "name": "yaver-cli",
-  "version": "1.99.349",
+  "version": "1.99.350",
   "mcpName": "io.github.yaver-io/yaver",
   "description": "Unified npm bootstrap for the Yaver agent, SDK injection, and local-first developer runtime",
   "bin": {
