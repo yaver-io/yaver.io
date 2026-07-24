@@ -46,7 +46,7 @@ jobs:
               "root@$ip" 'bash -s' <<'REMOTE'
           set -euo pipefail
           before=$(yaver --version 2>/dev/null || echo unknown)
-          deb_url="$(curl -fsSL https://api.github.com/repos/kivanccakmak/yaver.io/releases/latest \
+          deb_url="$(curl -fsSL https://api.github.com/repos/yaver-io/yaver.io/releases/latest \
             | jq -r '.assets[]? | select(.name|test("_arm64\\.deb$")) | .browser_download_url' \
             | head -1)"
           if [ -z "${deb_url:-}" ] || [ "$deb_url" = "null" ]; then

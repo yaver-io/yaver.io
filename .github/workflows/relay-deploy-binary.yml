@@ -69,7 +69,7 @@ jobs:
       - name: Download release tarball
         run: |
           mkdir -p /tmp/relay-dl
-          curl -fsSL "https://github.com/kivanccakmak/yaver.io/releases/download/relay/v${RELAY_VERSION}/yaver-relay-linux-arm64.tar.gz" \
+          curl -fsSL "https://github.com/yaver-io/yaver.io/releases/download/relay/v${RELAY_VERSION}/yaver-relay-linux-arm64.tar.gz" \
             -o /tmp/relay-dl/relay.tar.gz
           tar -xzf /tmp/relay-dl/relay.tar.gz -C /tmp/relay-dl/
           ls -la /tmp/relay-dl/
