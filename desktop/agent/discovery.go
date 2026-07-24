@@ -369,7 +369,17 @@ func writeAvailableTools(sb *strings.Builder) bool {
 		version := ""
 		if t.versionCmd != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			out, err := exec.CommandContext(ctx, t.versionCmd[0], t.versionCmd[1:]...).CombinedOutput()
+			// WaitDelay is what makes the timeout REAL. CommandContext kills the
+			// child on expiry, but CombinedOutput keeps waiting on the output
+			// PIPE — and a grandchild that inherited it holds that pipe open, so
+			// the call blocks forever anyway. Seen on the mac mini (2026-07-24):
+			// discoverProjects sat in __wait4_nocancel at 0% CPU probing an
+			// unauthenticated `claude --version`, so PROJECTS.md was never
+			// written and the phone showed "No projects yet" on a box full of
+			// them. WaitDelay force-closes the pipes shortly after the kill.
+			vc := exec.CommandContext(ctx, t.versionCmd[0], t.versionCmd[1:]...)
+			vc.WaitDelay = 2 * time.Second
+			out, err := vc.CombinedOutput()
 			cancel()
 			if err == nil {
 				// Take first line only, trim whitespace.
@@ -501,8 +511,27 @@ type projectInfo struct {
 func gatherProjectInfo(repoDir string) projectInfo {
 	info := projectInfo{Path: repoDir}
 
+	// Every git call here is bounded.
+	//
+	// These used to be bare exec.Command with no timeout. A single hung git —
+	// a repo holding an index.lock, one mid-rebase, one on a stalled network
+	// mount — blocked discoverProjects FOREVER at ~0% CPU, so PROJECTS.md was
+	// never written, /projects stayed empty, and every request re-entered
+	// discovery. Observed on the mac mini (2026-07-24) with 30+ clones: the
+	// agent sat idle-blocked, which reads as "scanning forever" on the phone.
+	// One sick repo must cost that repo's metadata, never the whole scan.
+	gitOut := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		gc := exec.CommandContext(ctx, "git", append([]string{"-C", repoDir}, args...)...)
+		// Same reason as the version probes: without WaitDelay a killed git
+		// whose child still holds the pipe blocks Output() indefinitely.
+		gc.WaitDelay = 2 * time.Second
+		return gc.Output()
+	}
+
 	// Branch name
-	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	out, err := gitOut("rev-parse", "--abbrev-ref", "HEAD")
 	if err == nil {
 		info.Branch = strings.TrimSpace(string(out))
 	} else {
@@ -510,7 +539,7 @@ func gatherProjectInfo(repoDir string) projectInfo {
 	}
 
 	// Last commit message
-	out, err = exec.Command("git", "-C", repoDir, "log", "-1", "--pretty=%s").Output()
+	out, err = gitOut("log", "-1", "--pretty=%s")
 	if err == nil {
 		info.LastCommit = strings.TrimSpace(string(out))
 	} else {
@@ -518,7 +547,7 @@ func gatherProjectInfo(repoDir string) projectInfo {
 	}
 
 	// Languages by file extension (quick scan of tracked files)
-	out, err = exec.Command("git", "-C", repoDir, "ls-files").Output()
+	out, err = gitOut("ls-files")
 	if err == nil {
 		info.Languages = detectLanguages(string(out))
 	}

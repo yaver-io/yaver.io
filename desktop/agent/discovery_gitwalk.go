@@ -15,6 +15,7 @@ package main
 // hitting the deadline can only truncate the tail.
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,17 +50,16 @@ const discoveryGitWalkMaxDepth = 6
 // budget bounds the whole sweep. On expiry it returns what it has — never an
 // empty slice it "would have" filled, which is precisely the failure the
 // find(1) version had.
-func findGitRepoDirsForDiscovery(budget time.Duration) []string {
+func findGitRepoDirsWalk(budget time.Duration, emit func(string)) {
 	roots := projectDiscoveryRoots()
 	if len(roots) == 0 {
-		return nil
+		return
 	}
 	if budget <= 0 {
 		budget = 30 * time.Second
 	}
 	deadline := time.Now().Add(budget)
 
-	var repos []string
 	seen := map[string]bool{}
 	seenRoot := map[string]bool{}
 
@@ -94,7 +94,7 @@ func findGitRepoDirsForDiscovery(budget time.Duration) []string {
 				repoDir := filepath.Dir(path)
 				if !seen[repoDir] {
 					seen[repoDir] = true
-					repos = append(repos, repoDir)
+					emit(repoDir)
 				}
 				// Never descend into .git itself.
 				return filepath.SkipDir
@@ -115,5 +115,62 @@ func findGitRepoDirsForDiscovery(budget time.Duration) []string {
 			return nil
 		})
 	}
-	return repos
+}
+
+// findGitRepoDirsForDiscovery bounds the walk from OUTSIDE it.
+//
+// The in-callback deadline below is necessary but NOT sufficient, and that
+// distinction cost a real outage (mac mini, 2026-07-24). filepath.Walk blocks
+// inside readDirNames -> os.Open BEFORE it ever calls the callback, so a single
+// hung path — a stale network mount, a dead automount, an unresponsive FUSE
+// volume — wedges the walk in a syscall where no callback-based deadline can
+// ever fire. Goroutine stack from the box, captured via SIGQUIT:
+//
+//	syscall.Open -> os.OpenFile -> filepath.readDirNames -> filepath.walk
+//	  -> findGitRepoDirsForDiscovery -> writeProjects -> discoverProjects
+//
+// discoverProjects never returned, PROJECTS.md was never written, /projects
+// stayed empty forever, and the phone said "No projects yet" on a machine with
+// 30+ repos.
+//
+// So the walk runs in a goroutine that streams each repo through a channel, and
+// the CALLER holds the wall clock. If the walk hangs we return what arrived and
+// move on; the orphaned goroutine is blocked in the kernel and will exit if the
+// mount ever answers. Leaking one goroutine is strictly better than never
+// discovering projects again.
+//
+// General rule this encodes for any filesystem sweep in the agent: a depth
+// limit is not a bound, and neither is a deadline you can only check between
+// callbacks. Only an out-of-band timeout bounds wall-clock.
+func findGitRepoDirsForDiscovery(budget time.Duration) []string {
+	if budget <= 0 {
+		budget = 30 * time.Second
+	}
+	out := make(chan string, 512)
+	go func() {
+		defer close(out)
+		findGitRepoDirsWalk(budget, func(dir string) {
+			select {
+			case out <- dir:
+			default: // caller gave up; never block a walk on a dead reader
+			}
+		})
+	}()
+
+	var repos []string
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	for {
+		select {
+		case dir, ok := <-out:
+			if !ok {
+				return repos
+			}
+			repos = append(repos, dir)
+		case <-timer.C:
+			log.Printf("[discovery] git-repo walk exceeded %s (likely a stalled mount) — continuing with %d repos found",
+				budget, len(repos))
+			return repos
+		}
+	}
 }
