@@ -494,6 +494,12 @@ export default function AppsScreen() {
   // page that renders black while CanvasKit boots never shows as a blank void.
   const [webPreviewContentLoaded, setWebPreviewContentLoaded] = useState(false);
   const [webPreviewFailed, setWebPreviewFailed] = useState(false);
+  // Full-screen preview: hide the app bar so the previewed app gets the whole
+  // display. Requested directly — a phone-sized app rendered under a header is
+  // not what the app actually looks like, which is the point of the preview.
+  // Tap anywhere on the app to bring the bar back, so there is always a way out
+  // (a preview you cannot leave would be worse than a header you cannot hide).
+  const [previewFullScreen, setPreviewFullScreen] = useState(false);
   const [webPreviewLogs, setWebPreviewLogs] = useState<string[]>([]);
   useEffect(() => () => { if (webPreviewRetryTimer.current) clearTimeout(webPreviewRetryTimer.current); }, []);
   // Elapsed + last-output heartbeat.
@@ -508,6 +514,7 @@ export default function AppsScreen() {
   const [webPreviewLastLogAt, setWebPreviewLastLogAt] = useState<number | null>(null);
   const [previewNowTick, setPreviewNowTick] = useState(Date.now());
   const resetWebPreview = useCallback(() => {
+    setPreviewFullScreen(false);
     webPreviewRetryRef.current = 0;
     webPreviewErroredRef.current = false;
     setWebPreviewContentLoaded(false);
@@ -2541,13 +2548,17 @@ export default function AppsScreen() {
       {/* Full-screen WebView */}
       <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
         <View style={[s.safe, { backgroundColor: c.bg }]}>
+          {previewFullScreen ? null : (
           <AppScreenHeader
             title={(runningProject || "Preview").split(" / ")[0]}
             onBack={() => setShowWebView(false)}
             style={{ paddingTop: insets.top + 8 }}
             right={
               <View style={s.webViewHeaderActions}>
-                <Pressable onPress={handleReload} hitSlop={8}>
+                <Pressable onPress={() => setPreviewFullScreen(true)} hitSlop={8}>
+                  <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Full</Text>
+                </Pressable>
+                <Pressable onPress={handleReload} hitSlop={8} style={{ marginLeft: 16 }}>
                   <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Reload</Text>
                 </Pressable>
                 <Pressable onPress={handleStop} hitSlop={8}>
@@ -2556,6 +2567,19 @@ export default function AppsScreen() {
               </View>
             }
           />
+          )}
+          {/* Full-screen: a slim always-reachable exit. Without this the only
+              way back would be the OS gesture, and a preview you cannot leave
+              is worse than a header you cannot hide. */}
+          {previewFullScreen && (
+            <Pressable
+              onPress={() => setPreviewFullScreen(false)}
+              style={{ position: "absolute", top: insets.top + 4, right: 12, zIndex: 50,
+                       backgroundColor: "rgba(0,0,0,0.55)", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}
+            >
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "600" }}>Exit full screen</Text>
+            </Pressable>
+          )}
           {webViewLoading && !webPreviewContentLoaded && (
             <View style={[s.loadingBar, { backgroundColor: c.accent }]} />
           )}
