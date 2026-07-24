@@ -137,6 +137,10 @@ type RelayServer struct {
 	// "100% signature" while this counter is 0 and cross-account sessions exist
 	// means they are still riding the password — check before flipping.
 	authViaSigGrant atomic.Uint64
+	// Sub-resource requests authorized by the WebView cookie. Tracked so the
+	// password-cutover metric can tell browser asset traffic apart from clients
+	// that simply never migrated.
+	authViaCookie atomic.Uint64
 	// Attributable signature failures, by reason. authViaPw alone cannot tell
 	// "never migrated" from "migrated but silently failing" — both fall back to
 	// the password. Without this split the cutover is a guess. See sigFailReason.
@@ -1735,6 +1739,15 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// WebView sub-resource path: a browser cannot set a header, and a relative
+	// asset URL carries no query string, so an already-authorized page's assets
+	// arrive bare. A signature-valid, device-scoped, expiring cookie (minted
+	// below on the authorized parent request) authorizes exactly those.
+	// Carries no secret — see webview_cookie.go.
+	if !authed && webviewCookieAuthorizes(r, deviceID, s.password) {
+		authed = true
+		s.authViaCookie.Add(1)
+	}
 	if !authed {
 		uid, ok, authErr := s.validateRelayAccessE(relayPw, "proxy", deviceID, "")
 		if !ok {
@@ -1769,6 +1782,11 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		s.authViaPw.Add(1)
 		s.abuseGuard.clearInvalidAuth(s.abuseGuard.clientIP(r))
 	}
+	// Hand the browser a scoped cookie so the assets this page is about to
+	// request can authenticate themselves. Only ever on an ALREADY-authorized
+	// request, so this widens nothing.
+	setWebviewAuthCookie(w, r, deviceID, s.password)
+
 	if userID != "" && !s.abuseGuard.allow("proxy-user:"+userID, s.abuseGuard.cfg.ProxyPerUserPerMin, s.abuseGuard.cfg.ProxyBurstPerUser) {
 		s.abuseGuard.logLimited("proxy-user", userID)
 		writeRelayError(w, http.StatusTooManyRequests, "free relay user rate limit exceeded")
