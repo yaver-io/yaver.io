@@ -2431,6 +2431,32 @@ func runServe(args []string) {
 	// user can close the terminal and the box stays reachable.
 	bootstrapCfg, bootstrapErr := LoadConfig()
 	if needsBootstrap(bootstrapCfg, bootstrapErr) {
+		// SAY SO. Loudly, before doing anything else.
+		//
+		// This branch silently replaced the normal agent with a bootstrap
+		// server: it forked to the background and returned, so the process
+		// stayed resident, bound no agent port, registered no relay tunnel and
+		// ran no project discovery — while printing NOTHING. On a Mac mini
+		// whose token had expired (2026-07-24) that produced four symptoms at
+		// once, none of which named the cause: the phone showed the box
+		// "online but no transport answered", the relay answered 502, Projects
+		// said "No projects yet", and every fix deployed to it appeared to do
+		// nothing because the server was never running to begin with. Hours
+		// went into chasing discovery and relay bugs that were downstream of
+		// one expired token.
+		//
+		// An agent that cannot authenticate must announce it, not fork into
+		// silence. This is the same false-green class as the rest: the process
+		// is alive, so every liveness check says yes, while the operation says
+		// no.
+		reason := "no usable auth token"
+		if bootstrapErr != nil {
+			reason = "config could not be loaded: " + bootstrapErr.Error()
+		}
+		log.Printf("[BOOTSTRAP] NOT starting the normal agent — %s.", reason)
+		log.Printf("[BOOTSTRAP] This box will NOT serve the agent API, register a relay tunnel, or discover projects until it is signed in.")
+		log.Printf("[BOOTSTRAP] Fix: run `yaver auth --headless` on this machine and approve the code, then restart the agent.")
+
 		// On Android the SandboxService supervises THIS process and holds the
 		// foreground "Yaver sandbox running" notification. Forking the bootstrap
 		// server to the background makes the parent exit → the service sees
