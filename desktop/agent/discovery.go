@@ -404,49 +404,63 @@ func writeProjects(sb *strings.Builder) {
 		return
 	}
 
-	// Run find with 30s timeout — deeper scan to catch nested monorepo projects.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Find git repos with an IN-PROCESS walk, not `find`.
+	//
+	// This used to shell out to `find <roots> -name .git … ` with a 30s
+	// timeout. It failed silently and completely on the mac mini (2026-07-24):
+	// /projects returned [] while the parallel scanMobileProjects found 213 on
+	// the same box. Cause: the mini's home holds 30+ full yaver monorepo
+	// clones, so `find` — which also walked `home` (a discovery root) — took
+	// minutes (measured >120s), and the 30s context kill arrived before find's
+	// BLOCK-BUFFERED pipe stdout ever flushed. The Workspace repos it had
+	// already found sat unflushed in find's stdio buffer and were LOST with the
+	// killed process, so `cmd.Output()` returned empty → "_No projects found._".
+	// The laptop's smaller home let find finish, which is why it "worked there."
+	//
+	// An in-process filepath.Walk cannot lose partial results: every repo is
+	// appended the instant it's seen, so a deadline hit keeps everything found
+	// so far. It also drops the external-binary + PATH dependency entirely.
+	repoDirs := findGitRepoDirsForDiscovery(20 * time.Second)
 
-	args := append([]string{}, roots...)
-	args = append(args,
-		"-name", ".git", "-maxdepth", "6", "-type", "d",
-		"-not", "-path", "*/node_modules/*",
-		"-not", "-path", "*/.cache/*",
-		"-not", "-path", "*/Library/*",
-		"-not", "-path", "*/.local/*",
-		"-not", "-path", "*/.cargo/*",
-		"-not", "-path", "*/Pods/*",
-		"-not", "-path", "*/.Trash/*",
-		"-not", "-path", "*/AppData/*",
-	)
-	cmd := exec.CommandContext(ctx, "find", args...)
-	out, err := cmd.Output()
-	if err != nil {
-		// find may return non-zero if some dirs are inaccessible — that's OK
-		// as long as we got some output.
-		if len(out) == 0 {
-			sb.WriteString("_No projects found._\n")
-			return
-		}
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	// Bound the ENRICHMENT loop too, not just the walk.
+	//
+	// gatherProjectInfo shells out to git several times per repo (branch, last
+	// commit, languages, tree). That was invisible while the find(1) walk was
+	// returning nothing — a zero-length loop finishes instantly, which is
+	// exactly how the mini looked "fast" while reporting no projects. The
+	// moment the walk started returning the real 30+ repos, this loop became
+	// dozens of git subprocesses on a small box and discoverProjects stopped
+	// completing at all: PROJECTS.md was never written, so every /projects hit
+	// re-entered discovery and they piled up.
+	//
+	// Same rule as the walk: run out of time and you get LESS, never NOTHING.
+	enrichDeadline := time.Now().Add(25 * time.Second)
 	var projects []projectInfo
 	seenRepos := map[string]bool{}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// line is /path/to/project/.git — get parent
-		repoDir := filepath.Dir(line)
+	truncated := 0
+	for _, repoDir := range repoDirs {
 		if seenRepos[repoDir] {
 			continue
 		}
 		seenRepos[repoDir] = true
-		info := gatherProjectInfo(repoDir)
-		projects = append(projects, info)
+		if time.Now().After(enrichDeadline) {
+			truncated++
+			// Still list the repo — a path with no git metadata is far more
+			// useful than omitting the project entirely.
+			projects = append(projects, projectInfo{
+				Path: repoDir, Branch: "unknown", LastCommit: "unknown",
+			})
+			continue
+		}
+		projects = append(projects, gatherProjectInfo(repoDir))
+	}
+	if truncated > 0 {
+		log.Printf("[discovery] enrichment deadline hit — %d/%d repos listed without git metadata",
+			truncated, len(projects))
+	}
+	if len(projects) == 0 {
+		sb.WriteString("_No projects found._\n")
+		return
 	}
 
 	// Sort by path for consistent output.
