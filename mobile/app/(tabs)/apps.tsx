@@ -644,11 +644,25 @@ export default function AppsScreen() {
         const reader = res.body?.getReader();
         if (!reader) return;
         const decoder = new TextDecoder();
+        let sseBuffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const text = decoder.decode(value);
-          for (const line of text.split("\n")) {
+          // Buffer across chunk boundaries.
+          //
+          // A network read is NOT a line. An SSE frame can arrive split, e.g.
+          //   chunk 1: 'data: {"type":"log","log'
+          //   chunk 2: 'Line":"Compiling..."}\n\n'
+          // Splitting each chunk on "\n" in isolation dropped BOTH halves, so
+          // over the relay — where chunking is most aggressive — log events
+          // silently vanished and the overlay sat on "waiting for the first
+          // output from the box" while the agent was streaming fine.
+          // DevPreview.tsx already buffered; this path did not. Keep the
+          // trailing partial and prepend it to the next read.
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          sseBuffer = lines.pop() ?? "";
+          for (const line of lines) {
             if (line.startsWith("data: ")) {
               try {
                 const event = JSON.parse(line.slice(6));

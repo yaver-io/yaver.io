@@ -1606,6 +1606,8 @@ export default function TasksScreen() {
   const [openCodeConfigStartInAdd, setOpenCodeConfigStartInAdd] = useState(false);
   const [openCodeConfigTarget, setOpenCodeConfigTarget] = useState<string | null>(null);
   const [showTmuxSessions, setShowTmuxSessions] = useState(false);
+  // Long-press target for the per-session action sheet (close/kill).
+  const [tmuxActionsFor, setTmuxActionsFor] = useState<string | null>(null);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
   const [isAdopting, setIsAdopting] = useState<string | null>(null); // session name being adopted
@@ -6324,6 +6326,61 @@ export default function TasksScreen() {
             </View>
           </View>
         </Modal>
+        {/* Per-session actions, opened by long-press.
+            Closing a tmux session KILLS whatever is running in it — an agent
+            mid-task included — so it asks first and names the session. A
+            destructive action reached by accident is worse than one extra tap. */}
+        <Modal visible={!!tmuxActionsFor} transparent animationType="fade" onRequestClose={() => setTmuxActionsFor(null)}>
+          <Pressable
+            style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" }}
+            onPress={() => setTmuxActionsFor(null)}
+          >
+            <Pressable style={{ backgroundColor: c.bgCard, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 18, paddingBottom: 34 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700", marginBottom: 2 }}>
+                tmux-session-{tmuxActionsFor}
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 14 }}>
+                Closing kills everything running in this session.
+              </Text>
+              <Pressable
+                onPress={() => {
+                  const target = tmuxActionsFor;
+                  setTmuxActionsFor(null);
+                  if (!target) return;
+                  Alert.alert(
+                    "Close session?",
+                    `tmux-session-${target} and anything running inside it will be terminated.`,
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Close session",
+                        style: "destructive",
+                        onPress: async () => {
+                          try {
+                            await quicClient.closeTmuxSessions(target);
+                            // Refresh the list so the closed session disappears
+                            // instead of lingering as a card that does nothing.
+                            const sessions = await quicClient.listTmuxSessions();
+                            setTmuxSessions(sessions);
+                          } catch (e) {
+                            Alert.alert("Could not close", e instanceof Error ? e.message : String(e));
+                          }
+                        },
+                      },
+                    ],
+                  );
+                }}
+                style={{ paddingVertical: 13, borderRadius: 10, backgroundColor: "#ef444422", alignItems: "center", marginBottom: 8 }}
+              >
+                <Text style={{ color: "#ef4444", fontSize: 14, fontWeight: "600" }}>Close session</Text>
+              </Pressable>
+              <Pressable onPress={() => setTmuxActionsFor(null)} style={{ paddingVertical: 13, alignItems: "center" }}>
+                <Text style={{ color: c.textMuted, fontSize: 14 }}>Cancel</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
         {/* ── Tmux Sessions Modal ────────────────────────────────── */}
         <Modal visible={showTmuxSessions} animationType="slide" transparent onDismiss={flushAfterDismiss} onRequestClose={() => setShowTmuxSessions(false)}>
           <View style={[s.logsModalOverlay, { backgroundColor: c.bg }]}>
@@ -6370,8 +6427,18 @@ export default function TasksScreen() {
                         style={[s.tmuxCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
                       >
                         <View style={s.tmuxCardHeader}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[s.tmuxName, { color: c.textPrimary }]}>{session.name}</Text>
+                          <Pressable
+                            style={{ flex: 1 }}
+                            onLongPress={() => setTmuxActionsFor(session.name)}
+                            delayLongPress={400}
+                          >
+                            {/* Name the card by what tmux actually calls it, so
+                                what the phone shows matches what `tmux ls` and
+                                `tmux attach -t` expect. A bare index ("0") is
+                                ambiguous the moment there are several boxes. */}
+                            <Text style={[s.tmuxName, { color: c.textPrimary }]}>
+                              tmux-session-{session.id || session.name}
+                            </Text>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
                               <View style={[s.statusBadge, { backgroundColor: runnerLabel ? "#22c55e22" : "#a1a1aa22" }]}>
                                 <Text style={[s.statusText, { color: runnerLabel ? "#22c55e" : "#a1a1aa" }]}>{runnerLabel || "shell"}</Text>
@@ -6387,7 +6454,10 @@ export default function TasksScreen() {
                                 .join(" · ")}
                               {session.windowName ? ` · ${session.windowName}` : ""}
                             </Text>
-                          </View>
+                            <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>
+                              long-press for actions
+                            </Text>
+                          </Pressable>
                           {alreadyAdopted ? (
                             <View style={[s.statusBadge, { backgroundColor: "#8b5cf622" }]}>
                               <Text style={[s.statusText, { color: "#8b5cf6" }]}>adopted</Text>
