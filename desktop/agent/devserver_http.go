@@ -2867,6 +2867,25 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 
 	proxy := s.devServerMgr.Proxy()
 	if proxy == nil {
+		// An active session that has not bound yet is STARTING, not absent.
+		// /dev/status answers "building":true the whole cold-start window, while
+		// this bare 503 named "no dev server running" — a false negative on
+		// every first trial, exactly the load that bit the SFMG first-trial
+		// preview (cold Metro compile on a 4 GB box: bundle took ~17s). Clients
+		// that retry on the 503 recovered anyway; the ones that read the body
+		// (web iframe, doctor probes, tests) were told a lie. Answer the same
+		// structured "starting" the ready-path ErrorHandler emits, with
+		// Retry-After, so every consumer agrees /dev/status and /dev/ are the
+		// same session.
+		if st := s.devServerMgr.Status(); st != nil && st.Building {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "2")
+			w.Header().Set("X-Yaver-DevServer", "starting")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"starting","framework":%q,"port":%d,"message":%q}`,
+				st.Framework, st.Port, st.ServingLabel)
+			return
+		}
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no dev server running"})
 		return
 	}

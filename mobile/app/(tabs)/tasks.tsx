@@ -1874,6 +1874,14 @@ export default function TasksScreen() {
   const insets = useSafeAreaInsets();
   const taskRouter = useRouter();
   const layout = useResponsiveLayout();
+  // Follow-up composer height cap. RN 0.81.5's Modal cannot compile
+  // softwareKeyboardLayoutMode (see the note above the task-detail Modal),
+  // so on Android behavior="height" shrank the sheet until the Send button
+  // hid behind the keyboard. A bounded, scrollable sheet keeps the bottom
+  // (Send) row reachable on every screen/keyboard and leaves part of the
+  // streaming console visible while typing a follow-up.
+  const winHeight = Dimensions.get("window").height;
+  const followUpComposerMaxHeight = Math.round(winHeight * 0.62);
   // "wide" (960pt) over "regular" (720pt) on tablet. The DevPreview
   // serving banner + filter chip row + task list all read better at
   // wider clamp on a tablet — at 720pt the chips wrapped to 2 lines
@@ -7882,7 +7890,8 @@ export default function TasksScreen() {
 
                 {/* Follow-up input: compact bar, expands to full card on tap */}
                 {followUpExpanded ? (
-                  <View style={[s.modalContent, { backgroundColor: c.bgCard, borderTopWidth: 1, borderTopColor: c.border, paddingBottom: Math.max(insets.bottom + 28, 72) }]}>
+                  <View style={[s.modalContent, { backgroundColor: c.bgCard, borderTopWidth: 1, borderTopColor: c.border, paddingBottom: Math.max(insets.bottom + 28, 72), maxHeight: followUpComposerMaxHeight }]}>
+                    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                     <View style={s.modalHeader}>
                       <Text style={[s.modalTitle, { color: c.textPrimary }]}>Follow Up</Text>
                       {/* Runtime agent switch — tap to open the same picker
@@ -8086,6 +8095,7 @@ export default function TasksScreen() {
                         </Pressable>
                       </View>
                     </View>
+                    </ScrollView>
                   </View>
                 ) : (
                   <View

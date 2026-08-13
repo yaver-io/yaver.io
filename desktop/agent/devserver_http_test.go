@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,4 +113,79 @@ func TestDefaultPackageManagerInstallSpec(t *testing.T) {
 	if got := defaultPackageManagerInstallSpec("pnpm"); got != "pnpm@latest" {
 		t.Fatalf("unexpected pnpm default spec: %s", got)
 	}
+}
+
+// stubDevServer implements DevServer with a caller-supplied Status so tests
+// can exercise the manager around a session that is building / ready / failed
+// without spawning any real process.
+type stubDevServer struct {
+	name string
+	st   DevServerStatus
+}
+
+func (s *stubDevServer) Name() string                               { return s.name }
+func (s *stubDevServer) Detect(string) bool                         { return true }
+func (s *stubDevServer) Start(context.Context, DevServerOpts) error { return nil }
+func (s *stubDevServer) Stop() error                                { return nil }
+func (s *stubDevServer) Port() int                                  { return s.st.Port }
+func (s *stubDevServer) BundleURL(string) string                    { return "/dev/" }
+func (s *stubDevServer) SupportsHotReload() bool                    { return true }
+func (s *stubDevServer) Reload() error                              { return nil }
+func (s *stubDevServer) PreStart(string, int, string)               {}
+func (s *stubDevServer) Status() DevServerStatus                    { return s.st }
+func (s *stubDevServer) Kind() DevServerKind                        { return DevServerKindHybrid }
+
+// TestDevServerProxyStartingVsAbsent: during the whole cold-start window
+// /dev/status answers building:true while /dev/ answered a bare
+// "no dev server running" 503 — the proxy is only installed when the server
+// binds. First trial of a preview on a cold box (SFMG, 4 GB machine: Metro
+// bundle took ~17s) hit exactly this false negative. The /dev/ lane must
+// distinguish "building" (truthful structured 503 + Retry-After) from
+// "no session at all" (the old bare 503).
+func TestDevServerProxyStartingVsAbsent(t *testing.T) {
+	makeMgr := func(active *devServerSession) *DevServerManager {
+		m := &DevServerManager{}
+		if active != nil {
+			m.mu.Lock()
+			m.active = active
+			m.mu.Unlock()
+		}
+		return m
+	}
+
+	t.Run("building session answers starting, not no-dev-server", func(t *testing.T) {
+		srv := &HTTPServer{devServerMgr: makeMgr(&devServerSession{
+			server: &stubDevServer{name: "expo", st: DevServerStatus{
+				Framework: "expo", Port: 8081, Building: true,
+				ServingLabel: "Starting expo preview…",
+			}},
+		})}
+		rec := httptest.NewRecorder()
+		srv.handleDevServerProxy(rec, httptest.NewRequest("GET", "/dev/", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 during cold start, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"status":"starting"`) || !strings.Contains(body, `"framework":"expo"`) {
+			t.Fatalf("cold-start /dev/ must say starting (truthful), got body: %s", body)
+		}
+		if rec.Header().Get("Retry-After") != "2" {
+			t.Errorf("expected Retry-After 2 on a starting 503, got %q", rec.Header().Get("Retry-After"))
+		}
+		if rec.Header().Get("X-Yaver-DevServer") != "starting" {
+			t.Errorf("expected X-Yaver-DevServer=starting, got %q", rec.Header().Get("X-Yaver-DevServer"))
+		}
+	})
+
+	t.Run("no session still answers no dev server running", func(t *testing.T) {
+		srv := &HTTPServer{devServerMgr: makeMgr(nil)}
+		rec := httptest.NewRecorder()
+		srv.handleDevServerProxy(rec, httptest.NewRequest("GET", "/dev/", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 with no session, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "no dev server running") {
+			t.Fatalf("expected bare 'no dev server running', got body: %s", rec.Body.String())
+		}
+	})
 }
