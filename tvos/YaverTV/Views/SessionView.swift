@@ -55,6 +55,10 @@ struct SessionView: View {
     @State private var selected: String?
     @State private var sessionsLoaded = false
 
+    /// Focus drives the mic cue: while the prompt holds focus the bar shows the
+    /// listening equalizer, telling the couch one Siri Remote mic press dictates.
+    @FocusState private var promptFocused: Bool
+
     /// When opened from the Tasks list, the tmux session to drive directly —
     /// skips the picker even if several runners are live.
     private let preselect: String?
@@ -239,7 +243,7 @@ struct SessionView: View {
             }
             Spacer()
             if loading {
-                ProgressView().scaleEffect(1.3)
+                EqualizerBars(barCount: 4, color: .blue, active: true)
             }
             // Only offered when there is actually another session to switch to —
             // a "Change" button on a box with one runner is a dead control.
@@ -280,6 +284,16 @@ struct SessionView: View {
                 .font(.system(size: 22))
                 .padding(.horizontal, 20).padding(.vertical, 14)
                 .background(.gray.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                .focused($promptFocused)
+            if promptFocused {
+                // YouTube-style "listening" cue — the field is focused, so one
+                // press of the Siri Remote mic starts dictation.
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.fill").foregroundStyle(.blue)
+                    EqualizerBars(barCount: 3, color: .blue, active: true)
+                }
+                .transition(.opacity)
+            }
             Button {
                 Task { await sendPrompt() }
             } label: {

@@ -155,7 +155,7 @@ struct TasksView: View {
 
     private func rowBody(_ t: TaskSummary) -> some View {
         HStack(spacing: 18) {
-            statusDot(t.status)
+            TaskStatusGlyph(status: t.status)
             VStack(alignment: .leading, spacing: 4) {
                 Text(t.safeTitle).font(.system(size: 22, weight: .medium)).lineLimit(2)
                 Text([t.runner, t.status].compactMap { $0 }.joined(separator: " · "))
@@ -163,21 +163,6 @@ struct TasksView: View {
             }
             Spacer()
             Image(systemName: "chevron.right").foregroundStyle(.secondary)
-        }
-    }
-
-    private func statusDot(_ s: String?) -> some View {
-        Circle().fill(color(for: s)).frame(width: 14, height: 14)
-    }
-
-    private func color(for s: String?) -> Color {
-        switch (s ?? "").lowercased() {
-        case "running": return .green
-        case "queued": return .blue
-        case "review": return .purple
-        case "completed": return .gray
-        case "failed", "stopped": return .red
-        default: return .secondary
         }
     }
 
