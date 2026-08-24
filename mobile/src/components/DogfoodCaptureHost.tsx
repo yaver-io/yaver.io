@@ -19,6 +19,7 @@ import {
   type DogfoodConfig,
   type DogfoodMode,
 } from "../lib/dogfoodConfig";
+import { isDogfoodModeUser } from "../lib/dogfoodAccess";
 import {
   dispatchDogfoodItems,
   stageDogfoodItem,
@@ -50,6 +51,7 @@ export function DogfoodCaptureHost() {
   const repoDir = config?.repoDir?.trim() || "";
   const connected = connectionStatus === "connected" && !!activeDevice;
   const vibeAvailable = !!repoDir && connected;
+  const dogfoodUser = isDogfoodModeUser(user?.email);
   // Auto-pick: prefer the user's last mode, but fall back to PR when Vibe
   // isn't possible (no repo dir / no connected box).
   const defaultMode: DogfoodMode = vibeAvailable ? config?.mode ?? "vibe" : "pr";
@@ -106,6 +108,7 @@ export function DogfoodCaptureHost() {
       breadcrumbs={pending?.breadcrumbs}
       defaultMode={defaultMode}
       vibeAvailable={vibeAvailable}
+      dogfoodUser={dogfoodUser}
       onCancel={() => setPending(null)}
       onConfirm={handleConfirm}
     />

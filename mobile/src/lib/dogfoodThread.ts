@@ -195,8 +195,8 @@ function modePreamble(mode: DogfoodMode, repoDir: string): string {
   const common =
     "You are improving the Yaver mobile app itself (this repo). The attached " +
     "screenshot(s) show the running Yaver UI. Make the change(s) the user describes. " +
-    "Prefer JS/TS-only changes so Hermes hot-reload can apply them instantly; keep " +
-    "the mobile app loadable in the Yaver container (no WebView for RN); match " +
+    "Prefer JS/TS-only changes so the browser lane / attached Yaver can rerender " +
+    "them instantly; keep the mobile app loadable in the Yaver container; match " +
     "surrounding code style and keep the diff small.";
   if (mode === "pr") {
     return (

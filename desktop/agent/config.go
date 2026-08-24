@@ -56,7 +56,13 @@ type Config struct {
 	// AutoUpdate is tri-state: nil ("operator never said") defaults to
 	// ON — see shouldAutoUpdate in auto_update_policy.go. Read it
 	// through that helper, never directly.
-	AutoUpdate        *bool               `json:"auto_update,omitempty"`
+	AutoUpdate *bool `json:"auto_update,omitempty"`
+	// AutoGrowTests gates the zero-touch post-task testkit grow hook
+	// (maybeGrowTestsAfterTask). Opt-in and default OFF — every grow
+	// task is a paid LLM run on the runner's subscription/API key, and
+	// the user who pays the bill must be the one to switch it on.
+	// nil means off (unlike AutoUpdate, which defaults on).
+	AutoGrowTests *bool `json:"auto_grow_tests,omitempty"`
 	HeadlessKeepAwake *bool               `json:"headless_keep_awake,omitempty"`
 	RelayPassword     string              `json:"relay_password,omitempty"`
 	RelayServers      []RelayServerConfig `json:"relay_servers,omitempty"`

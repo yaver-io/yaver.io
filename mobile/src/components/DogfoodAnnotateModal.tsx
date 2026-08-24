@@ -2,7 +2,7 @@
  * DogfoodAnnotateModal — Instagram-style markup over a caught screenshot.
  *
  * Pen-draw (multi-color) + undo on top of the image, a caption with hold-to-talk
- * voice dictation, a PR/Vibe mode switch, and Send-now / Add-to-batch actions.
+ * voice dictation, a PR/dogfood mode switch, and Send-now / Add-to-batch actions.
  * The marked-up image is flattened with react-native-view-shot and returned as
  * base64 so the caller can persist it + attach it to the coding task.
  */
@@ -50,6 +50,7 @@ export function DogfoodAnnotateModal({
   breadcrumbs,
   defaultMode,
   vibeAvailable,
+  dogfoodUser,
   onCancel,
   onConfirm,
 }: {
@@ -59,6 +60,7 @@ export function DogfoodAnnotateModal({
   breadcrumbs?: string;
   defaultMode: DogfoodMode;
   vibeAvailable: boolean;
+  dogfoodUser?: boolean;
   onCancel: () => void;
   onConfirm: (result: DogfoodAnnotateResult) => void;
 }) {
@@ -78,6 +80,7 @@ export function DogfoodAnnotateModal({
   const sttRef = React.useRef<{ stop: () => Promise<string> } | null>(null);
   const penColorRef = React.useRef(penColor);
   penColorRef.current = penColor;
+  const primaryModeLabel = dogfoodUser ? "Dogfood" : "Vibe";
 
   // Reset per-open.
   React.useEffect(() => {
@@ -330,8 +333,8 @@ export function DogfoodAnnotateModal({
             </Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
               <ModeChip
-                label="Vibe"
-                sub={vibeAvailable ? "edit + reload" : "no box w/ source"}
+                label={primaryModeLabel}
+                sub={vibeAvailable ? "edit + browser rerender" : "no box w/ source"}
                 active={mode === "vibe"}
                 onPress={() => setMode("vibe")}
                 c={c}
