@@ -35,6 +35,7 @@ export interface StreamEndInput {
   cancelled: boolean;
   /** Transport error text, when the platform gave us one. */
   error?: string | null;
+  /** HTTP response status when headers arrived. */
   httpStatus?: number;
 }
 
@@ -117,7 +118,7 @@ export function planStreamRecovery(input: {
     attempt: input.attempt,
     delayMs: reattachDelayMs(input.attempt),
     message: withCause(
-      `Live output interrupted · reconnecting ${input.attempt + 1}/${max}…`,
+      `Live output interrupted · reconnecting ${input.attempt + 1}/${max}… The task has not reported a failure.`,
       input.cause,
     ),
   };

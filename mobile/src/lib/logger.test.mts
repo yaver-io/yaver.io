@@ -19,7 +19,7 @@ test("runner connection diagnostics are bounded and redact credentials and accou
   assert.equal(rows.length, 2);
   assert.match(rows[0], /relay failed Authorization: \[REDACTED\] for \[REDACTED\]/);
   assert.match(rows[1], /access_token=\[REDACTED\]/);
-  assert.match(rows[1], /46\.224\.110\.38/);
+  assert.match(rows[1], /192\.0\.2\.38/);
   assert.doesNotMatch(rows.join("\n"), /very-secret|kivanc@example|abcdefghijklmnop/);
 });
 
