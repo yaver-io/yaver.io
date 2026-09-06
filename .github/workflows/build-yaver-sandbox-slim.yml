@@ -28,7 +28,7 @@ on:
       - ".github/workflows/build-yaver-sandbox-slim.yml"
 
 concurrency:
-  group: build-yaver-sandbox-slim
+  group: build-yaver-sandbox-slim-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

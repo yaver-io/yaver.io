@@ -7,6 +7,11 @@ android {
     namespace = "io.yaver.fixture.nativeandroid"
     compileSdk = 35
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     defaultConfig {
         applicationId = "io.yaver.fixture.nativeandroid"
         minSdk = 23
@@ -14,4 +19,8 @@ android {
         versionCode = 1
         versionName = "0.0.1"
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
