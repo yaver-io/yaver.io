@@ -57,24 +57,12 @@ struct TaskDetailView: View {
             }
             Spacer()
             if live {
-                // opencode-style working indicator — purple gradient orb while
-                // the model is thinking, so a streamed run reads as alive even
-                // between stdout bursts (2026-08-12, cross-surface parity with
-                // web's console orb).
+                // YouTube-style live indicator — the equalizer dances while the
+                // runner is working, so a streamed run reads as alive even
+                // between stdout bursts (replaces the static rotating orb,
+                // 2026-08-13).
                 HStack(spacing: 8) {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                AngularGradient(
-                                    gradient: Gradient(colors: [.purple, .pink, .purple]),
-                                    center: .center
-                                )
-                            )
-                            .rotationEffect(.degrees(live ? 360 : 0))
-                            .animation(.linear(duration: 1.4).repeatForever(autoreverses: false), value: live)
-                            .frame(width: 16, height: 16)
-                        Circle().fill(Color.black).frame(width: 10, height: 10)
-                    }
+                    EqualizerBars(barCount: 4, color: .green, active: true)
                     Text("live").font(.system(size: 14, weight: .semibold)).foregroundStyle(.green)
                 }
             }

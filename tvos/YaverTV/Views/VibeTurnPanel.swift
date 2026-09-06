@@ -86,9 +86,21 @@ struct VibeTurnPanel: View {
                         .disabled(sending || prompt.trimmingCharacters(in: .whitespaces).isEmpty)
                     Button("Close") { expanded = false }
                 }
-                Text("Press the mic button on the Siri Remote to dictate — the prompt is focused.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                if promptFocused {
+                    // YouTube-style listening cue while the prompt holds focus —
+                    // replaces the static hint so the cue is the only voice
+                    // guidance on screen.
+                    HStack(spacing: 10) {
+                        MicListeningIndicator(color: .blue)
+                        Text("Mic ready — one press of the Siri Remote mic dictates.")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity)
+                } else {
+                    Text("Press the mic button on the Siri Remote to dictate — the prompt is focused.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
                 HStack(spacing: 10) {
                     projectChip
                     mcpChip
@@ -252,7 +264,7 @@ struct VibeTurnPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             if sending {
                 HStack(spacing: 10) {
-                    ProgressView()
+                    EqualizerBars(barCount: 5, color: .blue, active: true)
                     Text("Working on \(currentProjectLabel)…").foregroundStyle(.secondary)
                 }
                 .font(.system(size: 16))

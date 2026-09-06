@@ -57,9 +57,27 @@ struct TaskComposerView: View {
                 .focused($promptFocused)
                 .onSubmit { create() }
 
-            Text("Press the mic button on the Siri Remote to dictate — or type with the remote's keyboard.")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+            if promptFocused && !creating {
+                // YouTube-style listening cue: the prompt is focused, so one
+                // press of the Siri Remote mic dictates immediately.
+                HStack(spacing: 14) {
+                    MicListeningIndicator(color: .blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Mic ready").font(.system(size: 16, weight: .semibold))
+                        Text("Press the mic button on the Siri Remote to dictate — one press starts dictation.")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    EqualizerBars(barCount: 5, color: .blue, active: true)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                .transition(.opacity)
+            } else {
+                Text("Press the mic button on the Siri Remote to dictate — or type with the remote's keyboard.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
 
             HStack(spacing: 10) {
                 projectChip
@@ -69,6 +87,9 @@ struct TaskComposerView: View {
             }
 
             HStack(spacing: 14) {
+                if creating {
+                    EqualizerBars(barCount: 4, color: .blue, active: true)
+                }
                 Button(creating ? "Starting…" : "Start vibe") {
                     create()
                 }
