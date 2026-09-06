@@ -207,7 +207,7 @@ func TestPublishAutorunStateUsesSlotLabelOnly(t *testing.T) {
 		t.Fatalf("retained events = %d, want 1", len(events))
 	}
 	evt := events[0]
-	if got, want := evt.Topic, autorunStateTopic(localDeviceID(), opts.Slot); got != want {
+	if got, want := evt.Topic, autorunStateTopic(b.deviceID, opts.Slot); got != want {
 		t.Fatalf("topic = %q, want %q", got, want)
 	}
 	if strings.Contains(evt.Topic, "/Users/") {

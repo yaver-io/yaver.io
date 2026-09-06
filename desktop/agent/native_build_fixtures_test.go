@@ -73,6 +73,12 @@ func startFixtureBuild(t *testing.T, fixtureDir string, platform BuildPlatform, 
 	for time.Now().Before(deadline) {
 		got, _ := bm.GetBuild(build.ID)
 		if got != nil && got.Status != BuildStatusRunning {
+			if got.Status != BuildStatusCompleted {
+				if session, ok := em.GetExec(got.ExecID); ok {
+					snapshot := session.Snapshot()
+					t.Logf("native fixture build output: stdout=%q stderr=%q", snapshot["stdout"], snapshot["stderr"])
+				}
+			}
 			return got
 		}
 		time.Sleep(2 * time.Second)

@@ -66,7 +66,7 @@ ok(/\$\{connectedDevice\?\.id \|\| ""\}\|\$\{normalizeRunnerId\(selectedRunner\)
 // NO FALSE RED: the dropdown itself must remain a plain controlled select.
 // If someone 'fixes' this by disabling the control, the user still cannot pick.
 const selectBlock = src.slice(src.indexOf("ref={modelSelectRef}"), src.indexOf("ref={modelSelectRef}") + 600);
-ok(/onChange=\{\(event\) => setSelectedModel\(event\.target\.value\)\}/.test(selectBlock),
+ok(/onChange=\{\(event\) => \{[\s\S]{0,360}?setSelectedModel\(nextId\);/.test(selectBlock),
   "the select still writes the user's choice straight through");
 ok(!/disabled/.test(selectBlock),
   "the model select is NOT disabled — a greyed-out control is the same dead end wearing a different hat");

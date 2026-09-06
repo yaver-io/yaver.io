@@ -13,6 +13,7 @@ func TestACPToolActivityLabelNamesUsefulWork(t *testing.T) {
 		want  string
 	}{
 		{name: "adapter title wins", title: "Inspecting theme tokens", input: `{"command":"rg theme"}`, want: "Inspecting theme tokens"},
+		{name: "shell title never reaches primary UI", title: "sed -n '8700,8735p' tasks.tsx; GOCACHE=/tmp go test ./...", input: `{"command":"sed -n '8700,8735p' tasks.tsx; GOCACHE=/tmp go test ./..."}`, want: "Running verification"},
 		{name: "git", input: `{"command":"git status --short"}`, want: "Checking Git state"},
 		{name: "search", input: `{"command":"rg -n background src"}`, want: "Searching the project"},
 		{name: "test", input: `{"command":"npm test -- colors"}`, want: "Running verification"},

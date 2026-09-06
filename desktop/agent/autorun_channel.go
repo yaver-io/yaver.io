@@ -55,7 +55,10 @@ func publishAutorunState(ctx context.Context, opts autorunOptions, runnerID, kin
 	if b == nil {
 		return
 	}
-	topic := autorunStateTopic(localDeviceID(), opts.Slot)
+	// The running bus already owns the authoritative process device identity.
+	// Re-reading config here made publication silently disappear when config
+	// was temporarily unreadable even though the bus itself was healthy.
+	topic := autorunStateTopic(b.deviceID, opts.Slot)
 	if topic == "" {
 		return
 	}

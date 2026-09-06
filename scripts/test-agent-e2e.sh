@@ -244,8 +244,15 @@ json.dump(d, open(p,'w'), indent=2)
 
   [ -s "$CDIR/merged.mp4" ] && pass "merged.mp4 exists ($(stat -c%s "$CDIR/merged.mp4" 2>/dev/null || stat -f%z "$CDIR/merged.mp4") bytes)" || fail "merged.mp4 missing"
 
-  curl -sf "$BASE/clips/$SID2" 2>/dev/null | grep -q "merged.mp4" \
-    && pass "Share page shows merged video" || fail "Share page missing merged.mp4"
+  DETAIL=$(api GET "/clips/private/$SID2")
+  echo "$DETAIL" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+assert d.get('videoFile') == 'merged.mp4'
+" 2>/dev/null && pass "Private clip detail selects merged video" || fail "Private clip detail missing merged.mp4"
+
+  VC=$(api_code GET "/clips/private/$SID2/merged.mp4")
+  [ "$VC" = "200" ] && pass "Private merged video streams" || fail "Private merged video returned $VC"
 else
   skip "ffmpeg not installed — merge test skipped"
 fi
@@ -301,8 +308,8 @@ TC=$(echo "$MCP_TOOLS" | python3 -c "import sys,json; print(len(json.load(sys.st
 echo "$MCP_TOOLS" | python3 -c "
 import sys,json
 names=[t['name'] for t in json.load(sys.stdin)['result']['tools']]
-assert 'clip_start' in names and 'clip_stop' in names
-" 2>/dev/null && pass "MCP has clip_start + clip_stop" || fail "MCP missing clip tools"
+assert 'ops' in names
+" 2>/dev/null && pass "MCP core profile has ops" || fail "MCP core profile missing ops"
 echo ""
 fi
 

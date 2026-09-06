@@ -83,16 +83,17 @@ test("web bundle preview URL preserves agent-minted signature in relay mode", ()
 // login that cannot run it. buildCreateTaskBody is the single funnel every web
 // dispatch passes through, so the request that leaves the browser must not
 // carry a model we have watched this runner refuse.
-// A model MEASURED as refused must be rewritten…
+// Seeded refusal evidence expires after the ledger TTL. Once it does, the
+// funnel must permit a fresh probe instead of permanently hiding a model.
 {
   const coerced = buildCreateTaskBody({
     title: "t", description: "d", runner: "codex", model: "gpt-5.3-codex",
   });
-  if (coerced.model !== "gpt-5.6-sol") {
-    console.error(`FAIL dispatch still sends a model the login cannot run: ${String(coerced.model)}`);
+  if (coerced.model !== "gpt-5.3-codex") {
+    console.error(`FAIL expired refusal evidence permanently rewrote the model: ${String(coerced.model)}`);
     process.exitCode = 1;
   } else {
-    console.log("ok   an observed-incompatible model is replaced before dispatch");
+    console.log("ok   expired refusal evidence permits a fresh model probe");
   }
 
   // NO FALSE RED: a model with no evidence against it is passed through

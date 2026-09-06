@@ -25,7 +25,7 @@ on:
       - ".github/workflows/build-yaver-cloud-image.yml"
 
 concurrency:
-  group: build-yaver-cloud-image
+  group: build-yaver-cloud-image-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -7,27 +7,17 @@ import (
 	"testing"
 )
 
-func stubHealthyTaskCapabilityResources(t *testing.T) {
-	t.Helper()
-	restore := probeHeadroomFn
-	testVolume := t.TempDir()
-	probeHeadroomFn = func(string) machineHeadroom {
-		return machineHeadroom{
-			Path:       testVolume,
-			FreeBytes:  80 * gib,
-			TotalBytes: 100 * gib,
-			RAMBytes:   16 * gib,
-			Measured:   true,
-		}
-	}
-	t.Cleanup(func() { probeHeadroomFn = restore })
-}
-
 // The wire shape of the 500. `error` must survive untouched (shipped clients
 // render it), and `capabilityGap` must be the SAME object the preview lane
 // ships, so mobile/src/lib/capabilityGap.ts parses it without a second parser.
 func TestTaskCreateFailureBodyCarriesTheRouteAndKeepsTheError(t *testing.T) {
-	stubHealthyTaskCapabilityResources(t)
+	// This test owns the Tasks HTTP wire contract, not the host running the
+	// suite. Pin enough headroom so a populated Go cache on the 4 GB dogfood
+	// worker cannot turn the expected install route into a disk-space route.
+	// capability_resources_test.go separately breaks the resource guard with a
+	// measured full disk and proves that the install button disappears there.
+	capabilityGapTestWithHeadroom(t)
+
 	raw := "failed to create task: runner not ready: claude not found in PATH or common locations"
 	body := taskCreateFailureBody("claude", raw)
 
@@ -85,7 +75,8 @@ func TestTaskCreateFailureBodyStaysQuietWhenTheRemedyIsNotAnInstall(t *testing.T
 // The 201-with-status-failed lane: the reason lives in task.Output and the
 // chat renders it. The tap goes next to it.
 func TestFailedTaskResponseCarriesTheRoute(t *testing.T) {
-	stubHealthyTaskCapabilityResources(t)
+	capabilityGapTestWithHeadroom(t)
+
 	resp := map[string]interface{}{"ok": true, "taskId": "t1", "status": TaskStatusFailed}
 	out := decorateTaskResponseWithGap(resp, "opencode",
 		"Could not start OpenCode: runner not ready: opencode not found in PATH or common locations\n")

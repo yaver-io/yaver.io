@@ -107,6 +107,13 @@ jobs:
             desktop/agent/go.sum
             relay/go.sum
             mcp/go.sum
+      # The native Kotlin fixture uses Android Gradle Plugin 8.7, whose
+      # supported toolchain is Gradle 8.9. ubuntu-latest now ships Gradle 9.x;
+      # leaving the ambient version unpinned turns a Go fixture test red when
+      # the hosted image changes underneath us.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Test CLI agent
@@ -176,6 +183,15 @@ jobs:
           node-version: "20"
       - name: Install tsx
         run: npm i -g tsx
+      # The guard sweep follows imports from the production modules it tests.
+      # Install both client graphs (and the sibling RN SDK graph included by
+      # mobile's tsconfig) so a clean runner exercises behavior instead of
+      # failing on missing React/Next/native packages.
+      - name: Install client dependencies
+        run: |
+          npm ci --prefix web
+          npm ci --prefix sdk/feedback/react-native
+          npm ci --prefix mobile
       # One guard is written against bun:test; without bun the sweep SKIPs it
       # loudly rather than passing over it in silence. Install it so the run is
       # complete rather than merely green.
@@ -254,6 +270,12 @@ jobs:
           cd mobile
           npm ci
           cd ..
+          # mobile/tsconfig.json intentionally includes the sibling feedback
+          # SDK sources. Install that package's own dependency graph too so
+          # TypeScript resolves its React Native peers from the source tree.
+          cd sdk/feedback/react-native
+          npm ci
+          cd ../../..
           node --test scripts/generate-sdk-manifest.test.mjs
           node scripts/generate-sdk-manifest.mjs --check
           cd mobile

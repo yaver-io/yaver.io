@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yaver",
     "slug": "yaver",
-    "version": "1.18.181",
+    "version": "1.18.182",
     "newArchEnabled": true,
     "orientation": "default",
     "scheme": "yaver",
@@ -52,7 +52,7 @@
         },
         "NSMicrophoneUsageDescription": "Yaver uses your microphone for voice input — send tasks by speaking instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Yaver uses speech recognition to transcribe your voice into task descriptions.",
-        "NSCameraUsageDescription": "Yaver uses your camera to scan machine pairing, TV sign-in, and encrypted secure-handoff QR codes, take photos for tasks, and provide camera access to apps you run for testing.",
+        "NSCameraUsageDescription": "Yaver uses your camera for private Silent Input lip reading, machine pairing and TV sign-in QR codes, secure handoff, task photos, and apps you run for testing. Silent Input records no audio and sends only mouth crops to your selected machine.",
         "NSFaceIDUsageDescription": "Yaver uses Face ID to confirm sensitive actions such as approving a TV sign-in.",
         "NSPhotoLibraryUsageDescription": "Yaver uses your photo library to attach screenshots and images to coding tasks.",
         "NSLocationWhenInUseUsageDescription": "Yaver provides location access to apps you run for testing.",
@@ -166,13 +166,13 @@
         "expo-image-picker",
         {
           "photosPermission": "Yaver needs photo access to attach images to tasks.",
-          "cameraPermission": "Yaver uses your camera to scan machine pairing, TV sign-in, and encrypted secure-handoff QR codes, take photos for tasks, and provide camera access to apps you run for testing."
+          "cameraPermission": "Yaver uses your camera for private Silent Input lip reading, machine pairing and TV sign-in QR codes, secure handoff, task photos, and apps you run for testing. Silent Input records no audio and sends only mouth crops to your selected machine."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Yaver uses your camera to scan machine pairing, TV sign-in, and encrypted secure-handoff QR codes, take photos for tasks, and provide camera access to apps you run for testing."
+          "cameraPermission": "Yaver uses your camera for private Silent Input lip reading, machine pairing and TV sign-in QR codes, secure handoff, task photos, and apps you run for testing. Silent Input records no audio and sends only mouth crops to your selected machine."
         }
       ],
       [

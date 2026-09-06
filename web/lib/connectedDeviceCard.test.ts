@@ -189,11 +189,11 @@ test("the connected card is selected by deviceId, not name and not index", () =>
 
 test("the connection status line renders ONLY on the connected card", () => {
   const block = cardRenderBlock();
-  // The pill and its live dot must sit behind the id-derived guard, with the
-  // plain transport chip as the else-branch for every other card.
+  // The pill and its live dot must sit behind the id-derived guard. A selected
+  // card may narrate its connecting window before the plain transport fallback.
   assert.match(
     block,
-    /\{isConnectedCard && connectedLine \? \([\s\S]{0,900}?animate-live-pulse[\s\S]{0,400}?\) : \(\s*<TransportBadge device=\{device\} \/>\s*\)\}/,
+    /\{isConnectedCard && connectedLine \? \([\s\S]{0,900}?animate-live-pulse[\s\S]{0,900}?: isWorkspaceConnecting \? \([\s\S]{0,900}?: \(\s*<TransportBadge device=\{device\} \/>\s*\)\}/,
     "the connected status pill must be gated on isConnectedCard, with TransportBadge as the fallback",
   );
   // …and it must be the only place the sentence is produced.

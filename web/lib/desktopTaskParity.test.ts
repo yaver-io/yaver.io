@@ -27,8 +27,8 @@ test("desktop dashboard consumes task history and supports task selection", () =
 });
 
 test("ongoing and terminal tasks expose their real agent operations", () => {
-  assert.match(page, /await agentClient\.stopTask\(task\.id\)/);
-  assert.match(page, /await agentClient\.deleteTask\(task\.id\)/);
+  assert.match(page, /await taskClientFor\(task\)\.stopTask\(task\.id\)/);
+  assert.match(page, /await taskClientFor\(task\)\.deleteTask\(task\.id\)/);
   assert.match(page, /window\.confirm\(/, "delete must stay an explicit user action");
 });
 

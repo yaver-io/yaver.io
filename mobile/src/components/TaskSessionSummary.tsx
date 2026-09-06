@@ -90,7 +90,7 @@ export function TaskSessionSummary({
       testID="task-session-summary"
     >
       <View style={styles.header}>
-        <View style={[styles.statusIcon, { backgroundColor: `${accent}18` }]}>
+        <View style={[styles.statusIcon, compact && styles.compactStatusIcon, { backgroundColor: `${accent}18` }]}>
           <Ionicons
             name={
               view.state === "working" || view.state === "queued" ? "sparkles" :
@@ -98,31 +98,36 @@ export function TaskSessionSummary({
               view.state === "review" || view.state === "completed" ? "checkmark-circle" :
               view.state === "failed" ? "alert-circle" : "return-down-forward"
             }
-            size={20}
+            size={compact ? 17 : 20}
             color={accent}
           />
         </View>
         <View style={styles.headerText}>
           <Text style={[styles.eyebrow, { color: accent }]}>{view.eyebrow}</Text>
-          <Text style={[styles.title, { color: c.textPrimary }]}>{view.title}</Text>
+          <Text style={[styles.title, compact && styles.compactTitle, { color: c.textPrimary }]} numberOfLines={compact ? 1 : undefined}>{view.title}</Text>
         </View>
       </View>
 
-      <Text style={[styles.detail, { color: c.textSecondary }]}>{view.detail}</Text>
+      <Text
+        style={[styles.detail, compact && styles.compactDetail, { color: c.textSecondary }]}
+        numberOfLines={compact ? 3 : undefined}
+      >
+        {view.detail}
+      </Text>
 
       {coding && progress ? (
-        <Text style={[styles.progress, { color: progress.stalled ? c.warn : c.textMuted }]}>
+        <Text style={[styles.progress, compact && styles.compactProgress, { color: progress.stalled ? c.warn : c.textMuted }]} numberOfLines={compact ? 1 : undefined}>
           {progress.text}
         </Text>
       ) : null}
 
-      {rawBytes > 0 ? (
+      {!compact && rawBytes > 0 ? (
         <Text style={[styles.evidence, { color: c.textMuted }]}>
           {`Live console evidence available${evidenceLabel ? ` · ${evidenceLabel}` : ""}`}
         </Text>
       ) : null}
 
-      {steps.length > 0 ? (
+      {!compact && steps.length > 0 ? (
         <View style={[styles.activity, { borderTopColor: c.borderSubtle }]}>
           <Text style={[styles.activityTitle, { color: c.textMuted }]}>ACTIVITY</Text>
           {steps.map((step) => {
@@ -142,7 +147,7 @@ export function TaskSessionSummary({
         </View>
       ) : null}
 
-      {view.nextAction ? (
+      {!compact && view.nextAction ? (
         <View style={[styles.next, { backgroundColor: `${accent}0f`, borderColor: `${accent}33` }]}>
           <Text style={[styles.nextLabel, { color: accent }]}>NEXT</Text>
           <Text style={[styles.nextText, { color: c.textPrimary }]}>{view.nextAction}</Text>
@@ -160,14 +165,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 14,
   },
-  compactWrap: { marginHorizontal: 0, marginVertical: 8 },
+  compactWrap: { marginHorizontal: 0, marginVertical: 6, padding: 11, borderRadius: 12 },
   header: { flexDirection: "row", alignItems: "center", gap: 10 },
   statusIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  compactStatusIcon: { width: 30, height: 30, borderRadius: 15 },
   headerText: { flex: 1 },
   eyebrow: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
   title: { fontSize: 17, lineHeight: 22, fontWeight: "700", marginTop: 1 },
+  compactTitle: { fontSize: 15, lineHeight: 19 },
   detail: { fontSize: 14, lineHeight: 20, marginTop: 10 },
+  compactDetail: { fontSize: 13, lineHeight: 18, marginTop: 7 },
   progress: { fontSize: 12, lineHeight: 17, marginTop: 8, fontWeight: "600" },
+  compactProgress: { fontSize: 11, lineHeight: 15, marginTop: 5 },
   evidence: { fontSize: 11, lineHeight: 16, marginTop: 5 },
   activity: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 12, paddingTop: 10, gap: 9 },
   activityTitle: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8, marginBottom: 1 },

@@ -54,6 +54,24 @@ test("an active task exposes one Stop action in the fixed header", () => {
     "running task detail must route Stop through TaskHeader");
 });
 
+test("the latest human-readable task update stays outside the scrolling transcript", () => {
+  assert.match(
+    tasks,
+    /Keep the current human update outside the transcript[\s\S]{0,700}<TaskSessionSummary[\s\S]{0,500}<FlatList/,
+    "task status must remain visible when queued follow-ups push the active assistant turn up",
+  );
+  assert.doesNotMatch(
+    tasks,
+    /ListHeaderComponent=\{[\s\S]{0,240}<TaskSessionSummary/,
+    "the current task summary must not scroll away as a FlatList header",
+  );
+  assert.match(
+    tasks,
+    /\[selectedTask\?\.id, selectedTask\?\.presentation, selectedTask\?\.resultText, selectedTask\?\.status\]/,
+    "semantic presentation updates must drive conversation follow behavior",
+  );
+});
+
 test("bulk selection deletes only after each owning agent acknowledges", () => {
   assert.match(tasks, /accessibilityLabel="Select tasks"/);
   assert.match(tasks, /accessibilityLabel="Select all visible tasks"/);

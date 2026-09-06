@@ -78,7 +78,11 @@ assert.match(visionProject, /\.\.\/tvos\/YaverTV\/Views\/VibeTurnPanel\.swift/);
 
 const carSurface = source("mobile/app/car-voice-coding.tsx");
 assert.match(carSurface, /runtimeSurfaceClient\.runtimeTurn/);
-assert.match(carSurface, /Car dispatch leaves runner\/model empty/);
+assert.match(
+  carSurface,
+  /runtimeSurfaceClient\.runtimeTurn\(deviceId, \{[\s\S]{0,260}target: \{\s*deviceId,/,
+  "car/glass coding turns must let the shared runtime path resolve global runner/model defaults",
+);
 
 const runtimeTurn = source("desktop/agent/ops_runtime_turn.go");
 assert.match(

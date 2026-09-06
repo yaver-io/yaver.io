@@ -313,8 +313,14 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 	if req.Runner == "codex" && !row.AuthConfigured {
 		if boolOrDefault(req.AllowInstallOnly, false) && row.Installed {
 			result.Warning = "Codex was installed, but authentication is still required."
+			const authDetail = "Open the browser/device login flow to finish ChatGPT Plus/Pro plan OAuth for Codex."
 			if strings.TrimSpace(result.Detail) == "" {
-				result.Detail = "Open the browser/device login flow to finish ChatGPT Plus/Pro plan OAuth for Codex."
+				result.Detail = authDetail
+			} else if !strings.Contains(result.Detail, "ChatGPT Plus/Pro plan OAuth") {
+				// A host-specific readiness warning (for example a Linux
+				// user-namespace blocker) must not hide the action the user
+				// still needs to take to authenticate the installed CLI.
+				result.Detail = authDetail + " " + result.Detail
 			}
 			return result, nil
 		}

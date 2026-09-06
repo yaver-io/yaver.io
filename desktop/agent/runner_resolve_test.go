@@ -73,6 +73,26 @@ func TestResolveRunnerBinary_MissingReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestResolveRunnerBinary_NegativeCacheNoticesNewPathHit(t *testing.T) {
+	name := "yaver-test-runner-added-after-cache-miss"
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	runnerResolveCache = sync.Map{}
+	if got := resolveRunnerBinary(name); got != "" {
+		t.Fatalf("initial lookup = %q, want cached miss", got)
+	}
+
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	if got := resolveRunnerBinary(name); got != path {
+		t.Fatalf("lookup after PATH install = %q, want %q", got, path)
+	}
+}
+
 func TestRunnerCandidatePaths_IncludesWellKnownDirs(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

@@ -366,7 +366,7 @@ func RunBuildDoctor(target, project string, vs *VaultStore) (BuildDoctorReport, 
 	for _, tool := range t.Tools {
 		res := probeTool(tool)
 		report.Tools = append(report.Tools, res)
-		if tool.Required && !res.Found && !res.Skipped {
+		if tool.Required && (!res.Found || res.Skipped) {
 			report.OK = false
 		}
 	}

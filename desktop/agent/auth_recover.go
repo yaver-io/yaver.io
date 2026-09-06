@@ -592,11 +592,11 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		// in a browser with whichever provider they prefer
 		// (Apple / Google / Microsoft — all live behind the
 		// same yaver.io/auth/device page).
-		if cfg == nil || cfg.ConvexSiteURL == "" {
-			jsonError(w, http.StatusInternalServerError, "no convex URL configured")
-			return
+		convexURL := defaultConvexSiteURL
+		if cfg != nil && strings.TrimSpace(cfg.ConvexSiteURL) != "" {
+			convexURL = strings.TrimSpace(cfg.ConvexSiteURL)
 		}
-		dc, err := requestDeviceCodeFn(cfg.ConvexSiteURL)
+		dc, err := requestDeviceCodeFn(convexURL)
 		if err != nil {
 			jsonError(w, http.StatusBadGateway, "device-code request failed: "+err.Error())
 			return
@@ -620,7 +620,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		// caller doesn't need to hang — it can poll
 		// /auth/pair/info or the existing /agent/status to
 		// know when auth is live again.
-		go completeDeviceCodeInBackground(cfg.ConvexSiteURL, dc.DeviceCode, recovery, s)
+		go completeDeviceCodeInBackground(convexURL, dc.DeviceCode, recovery, s)
 
 		resp := RecoveryResponse{
 			OK:            true,

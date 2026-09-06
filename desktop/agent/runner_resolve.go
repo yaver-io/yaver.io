@@ -69,7 +69,18 @@ func resolveRunnerBinary(name string) string {
 	if v, ok := runnerResolveCache.Load(name); ok {
 		entry, _ := v.(runnerResolveEntry)
 		if time.Since(entry.at) < runnerResolveTTL {
-			return entry.path // "" is a valid, cached "not installed"
+			if entry.path != "" {
+				return entry.path
+			}
+			// A negative login-shell result is worth caching, but PATH lookup is
+			// cheap. Recheck it so a CLI installed or exposed after the last
+			// dashboard poll is usable immediately instead of falsely failing
+			// setup for the rest of the cache window.
+			if path, err := osexec.LookPath(name); err == nil {
+				storeResolvedRunnerBinary(name, path)
+				return path
+			}
+			return ""
 		}
 	}
 

@@ -136,6 +136,7 @@ import { gitContextForSlug, runAgenticCoding } from "../../src/lib/codingAgent/c
 import { gitNetForSlug, loadCodingConfig } from "../../src/lib/codingAgent/sandboxBinding";
 import { repoSandboxForSlug } from "../../src/lib/codingAgent/repoSandbox";
 import { isRepo } from "../../src/lib/codingAgent/sandboxGit";
+import { makeYaverReadOnlyCodingTools } from "../../src/lib/codingAgent/yaverReadTools";
 import { useRouteParamsCompat } from "../../src/lib/useRouteParamsCompat";
 import { restoreTurnSnapshot, type TurnSnapshot } from "../../src/lib/codingAgent/turnTransaction";
 import { redactProgressText, redactSecrets, redactValue } from "../../src/lib/codingAgent/secretRedaction";
@@ -179,7 +180,7 @@ import {
   notifySandboxTaskFinished,
   setSandboxTaskStatus,
 } from "../../src/lib/sandboxControl";
-import { notifyTaskNeedsReview, shouldNotifyTaskReview } from "../../src/lib/taskReviewNotification";
+import { notifyTaskReply, shouldNotifyTaskReply } from "../../src/lib/taskReviewNotification";
 import { MessageBubble } from "../../src/components/MessageBubble";
 import { openTaskBus } from "../../src/lib/runningTasksBus";
 import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
@@ -199,6 +200,9 @@ import { firstClassTaskConversationTurns } from "../../src/_core/taskConversatio
 import { taskRunnerControlForMessage } from "../../src/_core/taskRunnerControls";
 import { buildTaskConsolePreview } from "../../src/lib/taskConsolePreview";
 import { taskProjectExecutionSummary, workDirForTaskExecution } from "../../src/lib/taskProjectRouting";
+import { SilentInputModal } from "../../src/components/SilentInputModal";
+import { DEFAULT_SILENT_INPUT_CONFIG } from "../../src/lib/silentInput/types";
+import { loadSilentInputConfig } from "../../src/lib/silentInput/config";
 import {
   displayRunnerLabel,
   isModelCompatibleWithRunnerId,
@@ -2880,8 +2884,18 @@ export default function TasksScreen() {
     [runnerSelectionDeviceId],
   );
   const [newTaskText, setNewTaskText] = useState("");
+  const [showSilentInput, setShowSilentInput] = useState(false);
+  const [silentInputEnabled, setSilentInputEnabled] = useState(DEFAULT_SILENT_INPUT_CONFIG.enabled);
   const newTaskTextRef = useRef("");
   newTaskTextRef.current = newTaskText;
+
+  useEffect(() => {
+    let active = true;
+    void loadSilentInputConfig().then((config) => {
+      if (active) setSilentInputEnabled(config.enabled);
+    });
+    return () => { active = false; };
+  }, []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlightRef = useRef(false);
   const [taskSubmitError, setTaskSubmitError] = useState<string | null>(null);
@@ -3080,6 +3094,12 @@ export default function TasksScreen() {
   const [openCodeConfigTarget, setOpenCodeConfigTarget] = useState<string | null>(null);
 
   const chatScrollRef = useRef<FlatList>(null);
+  // Follow live replies only while the reader is already at the bottom. A
+  // semantic token stream can update many times per second; debounce it so we
+  // do not queue hundreds of animated scrolls or yank somebody away from an
+  // older message they deliberately opened.
+  const chatShouldFollowRef = useRef(true);
+  const chatFollowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOpenTaskRef = useRef<Task | null>(null);
   /** AbortController per in-flight yaver-agent run, keyed by synthetic
    *  task id. handleStopTask aborts the matching controller; the
@@ -3135,6 +3155,19 @@ export default function TasksScreen() {
       includeYaverMcp: snap.includeYaverMcp,
     });
   }, [activeDevice?.id, token]);
+  const phoneLocalYaverToolContext = useMemo<YaverAgentToolContext>(() => ({
+    devices: () => devices,
+    primaryDeviceId: () => primaryDeviceId,
+    secondaryDeviceId: () => secondaryDeviceId,
+    selectDevice: async (deviceId) => {
+      const d = devices.find((x) => x.id === deviceId);
+      if (d) await selectDevice(d);
+    },
+  }), [devices, primaryDeviceId, secondaryDeviceId, selectDevice]);
+  const phoneLocalAuditTools = useMemo(
+    () => makeYaverReadOnlyCodingTools(phoneLocalYaverToolContext),
+    [phoneLocalYaverToolContext],
+  );
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   // Transient inline status for the composer's ⚡ Hermes-reload action.
@@ -4506,12 +4539,26 @@ export default function TasksScreen() {
     return () => clearInterval(interval);
   }, [selectedTask?.id, selectedTask?.status]);
 
-  // Auto-scroll chat when output changes
+  // Follow semantic conversation updates, not the deprecated transcript
+  // buffer. Presentation is the human message lane now; watching only
+  // output/result/status meant a live agent reply could appear above queued
+  // follow-ups without moving the conversation at all.
   useEffect(() => {
-    if (selectedTask) {
-      setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
-    }
-  }, [selectedTask?.output.length, selectedTask?.resultText, selectedTask?.status]);
+    chatShouldFollowRef.current = true;
+  }, [selectedTask?.id]);
+
+  useEffect(() => {
+    if (!selectedTask || !chatShouldFollowRef.current) return;
+    if (chatFollowTimerRef.current) clearTimeout(chatFollowTimerRef.current);
+    chatFollowTimerRef.current = setTimeout(() => {
+      chatFollowTimerRef.current = null;
+      chatScrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+    return () => {
+      if (chatFollowTimerRef.current) clearTimeout(chatFollowTimerRef.current);
+      chatFollowTimerRef.current = null;
+    };
+  }, [selectedTask?.id, selectedTask?.presentation, selectedTask?.resultText, selectedTask?.status]);
 
   // Open-task intents from RunningTasksPill (rendered in the root
   // layout). The pill navigates to /tasks then publishes the id; we
@@ -4640,9 +4687,19 @@ export default function TasksScreen() {
       if (prev === t.status) continue;
       known.set(taskKey, t.status);
       const title = t.title || "Coding task";
-      if (shouldNotifyTaskReview(prev, t.status)) {
-        if (isSandboxSupported() && isPhoneLocalTask(t)) void notifySandboxTaskFinished(title, "review", t.id);
-        else void notifyTaskNeedsReview(title, { taskId: t.id, deviceId: t.deviceId });
+      if (shouldNotifyTaskReply(prev, t.status)) {
+        const assistantText = friendlyTaskPresentation(t.presentation)
+          .filter((message) => message.kind === "message" && message.role === "assistant")
+          .at(-1)?.text;
+        if (isSandboxSupported() && isPhoneLocalTask(t)) {
+          void notifySandboxTaskFinished(assistantText || title, t.status, t.id);
+        } else {
+          void notifyTaskReply(
+            title,
+            { taskId: t.id, deviceId: t.deviceId },
+            { status: t.status, assistantText },
+          );
+        }
         continue;
       }
       if (isSandboxSupported() && isPhoneLocalTask(t)) {
@@ -5128,6 +5185,7 @@ export default function TasksScreen() {
         prompt: promptText,
         config,
         mode: askModeEnabled ? "audit" : "vibe",
+        extraTools: askModeEnabled ? phoneLocalAuditTools : undefined,
         net: (await gitNetForSlug(slug)) ?? undefined,
         sandbox: repoSandboxForSlug(slug),
         signal: controller.signal,
@@ -5314,18 +5372,9 @@ export default function TasksScreen() {
       yaverAgentAbortersRef.current.set(taskId, controller);
 
       try {
-        const ctx: YaverAgentToolContext = {
-          devices: () => devices,
-          primaryDeviceId: () => primaryDeviceId,
-          secondaryDeviceId: () => null,
-          selectDevice: async (deviceId) => {
-            const d = devices.find((x) => x.id === deviceId);
-            if (d) await selectDevice(d);
-          },
-        };
         const result = await runYaverAgent({
           prompt: promptText,
-          ctx,
+          ctx: phoneLocalYaverToolContext,
           maxSteps: 6,
           signal: controller.signal,
           onProgress: (event) => {
@@ -6088,6 +6137,7 @@ export default function TasksScreen() {
           prompt: `Previous conversation:\n${prior}\n\nNew request:\n${promptText}`,
           config,
           mode: askModeEnabled ? "audit" : "vibe",
+          extraTools: askModeEnabled ? phoneLocalAuditTools : undefined,
           net: (await gitNetForSlug(slug)) ?? undefined,
           sandbox: repoSandboxForSlug(slug),
           signal: controller.signal,
@@ -6178,18 +6228,9 @@ export default function TasksScreen() {
       yaverAgentAbortersRef.current.set(taskId, controller);
 
       try {
-        const ctx: YaverAgentToolContext = {
-          devices: () => devices,
-          primaryDeviceId: () => primaryDeviceId,
-          secondaryDeviceId: () => null,
-          selectDevice: async (deviceId) => {
-            const d = devices.find((x) => x.id === deviceId);
-            if (d) await selectDevice(d);
-          },
-        };
         const result = await runYaverAgent({
           prompt: promptText,
-          ctx,
+          ctx: phoneLocalYaverToolContext,
           history,
           maxSteps: 6,
           signal: controller.signal,
@@ -8379,6 +8420,29 @@ export default function TasksScreen() {
                     >
                       <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
                     </Pressable>
+                    {silentInputEnabled && Platform.OS === "ios" ? (
+                      <Pressable
+                        style={({ pressed }) => [
+                          s.composerActionButton,
+                          { backgroundColor: c.bgCard },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          // iOS cannot present a native Modal above the task
+                          // composer Modal. Hand the surface off atomically;
+                          // the transcription returns to this same draft.
+                          setShowNewTask(false);
+                          setShowSilentInput(true);
+                        }}
+                        disabled={isSubmitting || isTranscribing || !runnerSelectionDeviceId}
+                        accessibilityRole="button"
+                        accessibilityLabel="Silent lip-reading input"
+                        testID="silent-input-button"
+                      >
+                        <Text style={{ color: c.textPrimary, fontSize: 20 }}>👄</Text>
+                      </Pressable>
+                    ) : null}
                     {(() => {
                       const isDisabled =
                         (!newTaskText.trim() && attachedImages.length === 0) ||
@@ -8443,6 +8507,25 @@ export default function TasksScreen() {
             </View>
           ) : null}
         </Modal>
+
+        {Platform.OS === "ios" && runnerSelectionDeviceId ? (
+          <SilentInputModal
+            visible={showSilentInput}
+            colors={c}
+            targetDeviceId={runnerSelectionDeviceId}
+            projectName={selectedComposerProject?.name || projectNameFromPath(projectDir) || undefined}
+            onCancel={() => {
+              setShowSilentInput(false);
+              setShowNewTask(true);
+            }}
+            onTranscription={(transcription) => {
+              newTaskTextRef.current = transcription;
+              setNewTaskText(transcription);
+              setInputFromSpeech(false);
+              setTaskSubmitError(null);
+            }}
+          />
+        ) : null}
 
         {/* Standalone picker Modal — ONLY when neither the New Task composer
             nor the task-detail Modal is up. Over any other Modal a second
@@ -9244,19 +9327,30 @@ export default function TasksScreen() {
                     the mobile app is chat-only. opencode's raw console
                     look renders inside the bubbles via AnsiConsoleText;
                     there is no terminal view to switch to. */}
+                {/* Keep the current human update outside the transcript's
+                    scroll container. Follow-ups may queue below the active
+                    assistant turn, so an in-list summary can be pushed off
+                    screen precisely when the user asks "what's the status?". */}
+                <View style={{ paddingHorizontal: 14 }}>
+                  <TaskSessionSummary
+                    task={selectedTask}
+                    commands={cmdCardsByTask[selectedTask.id]}
+                    pendingQuestion={agentQuestion?.taskId === selectedTask.id ? agentQuestion.prompt : undefined}
+                    rawBytes={rawSnapshot.length}
+                    lastOutputAt={rawLastAt}
+                    compact
+                  />
+                </View>
                 <FlatList
                     ref={chatScrollRef as any}
                     data={chatMessages}
                     keyExtractor={(item, idx) => `${idx}-${item.role}`}
-                    ListHeaderComponent={
-                      <TaskSessionSummary
-                        task={selectedTask}
-                        commands={cmdCardsByTask[selectedTask.id]}
-                        pendingQuestion={agentQuestion?.taskId === selectedTask.id ? agentQuestion.prompt : undefined}
-                        rawBytes={rawSnapshot.length}
-                        lastOutputAt={rawLastAt}
-                      />
-                    }
+                    onScroll={({ nativeEvent }) => {
+                      const distanceFromBottom = nativeEvent.contentSize.height -
+                        nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y;
+                      chatShouldFollowRef.current = distanceFromBottom < 56;
+                    }}
+                    scrollEventThrottle={100}
                     renderItem={({ item, index }) => (
                       <ChatBubble
                         turn={item}

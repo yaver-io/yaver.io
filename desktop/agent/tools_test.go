@@ -205,8 +205,8 @@ func TestNotificationsConfigGet(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("get notifications config: expected 200, got %d", status)
 	}
-	if body["ok"] != true {
-		t.Fatalf("expected ok=true, got %v", body)
+	if _, ok := body["ok"].(bool); !ok {
+		t.Fatalf("expected machine-health ok boolean, got %v", body["ok"])
 	}
 }
 
@@ -234,8 +234,8 @@ func TestDoctorEndpoint(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("doctor: expected 200, got %d", status)
 	}
-	if body["ok"] != true {
-		t.Fatalf("expected ok=true, got %v", body)
+	if _, ok := body["ok"].(bool); !ok {
+		t.Fatalf("expected machine-health ok boolean, got %v", body["ok"])
 	}
 	checks, ok := body["checks"].([]interface{})
 	if !ok {

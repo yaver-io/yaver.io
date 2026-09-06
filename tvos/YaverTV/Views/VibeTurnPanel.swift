@@ -141,6 +141,15 @@ struct VibeTurnPanel: View {
                         }
                         #endif
                 }
+                if panelFocus == .prompt {
+                    HStack(spacing: 10) {
+                        MicListeningIndicator(color: .blue)
+                        Text("Mic ready — one press of the Siri Remote mic dictates.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity)
+                }
                 // One context control, four selectors inside. Four adjacent
                 // native Menu capsules looked like a second toolbar and their
                 // intrinsic widths could not share a baseline cleanly. The

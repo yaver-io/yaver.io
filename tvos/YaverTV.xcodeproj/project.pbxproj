@@ -69,6 +69,7 @@
 		F6D6FD0612F8F2E9DD6D3A5C /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407EAB8C318A209F3AE94A17 /* SignInView.swift */; };
 		F7BEBB07F0E592CAFCFD739E /* VibeTurnPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED0118C15F635CF31061B51 /* VibeTurnPanel.swift */; };
 		F94318B025A3D905717E944B /* VibingPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13160FC9012BA60947E3FE74 /* VibingPlan.swift */; };
+		FA11D29B6E09A476F9120021 /* YouTubeAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA11D29B6E09A476F9120022 /* YouTubeAnimation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +99,7 @@
 		1E6E9B680E701DC27F124C4F /* yaver-login-wordmark-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "yaver-login-wordmark-light.png"; sourceTree = "<group>"; };
 		2168C1CC5D76DE846256CFAD /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		276D29BCA1F4A3A8DD33A6D3 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		FA11D29B6E09A476F9120022 /* YouTubeAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeAnimation.swift; sourceTree = "<group>"; };
 		2A900B18B742454D4D6C7359 /* YaverDictationField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YaverDictationField.swift; sourceTree = "<group>"; };
 		2F558EBFDD66510DEF9FEFB4 /* YaverTVUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = YaverTVUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		30B780D2E7490982C5B7E328 /* AgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentClient.swift; sourceTree = "<group>"; };
@@ -199,6 +201,7 @@
 				CCC27F01B0DAD177B10DAC04 /* YaverStore.swift */,
 				F305D583F562FDFA98285065 /* YaverTV.entitlements */,
 				053F14BB4784ACE0F6940C93 /* YaverTVApp.swift */,
+				FA11D29B6E09A476F9120022 /* YouTubeAnimation.swift */,
 				71282555B3437D21B4A181FA /* Views */,
 			);
 			path = YaverTV;
@@ -497,6 +500,7 @@
 				7BFF477EEDD5FEA7E3696C93 /* YaverNativeCatalog.swift in Sources */,
 				AD43610B33A8368A49E512B9 /* YaverStore.swift in Sources */,
 				18F7F25A9DC46548215628BB /* YaverTVApp.swift in Sources */,
+				FA11D29B6E09A476F9120021 /* YouTubeAnimation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

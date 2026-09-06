@@ -127,7 +127,7 @@ struct TaskDetailView: View {
             Spacer()
             if runnerCoding {
                 HStack(spacing: 8) {
-                    ProgressView()
+                    EqualizerBars(barCount: 4, color: .green, active: true)
                     Text("LIVE").font(.system(size: 14, weight: .bold)).foregroundStyle(.green)
                 }
             }
@@ -154,9 +154,21 @@ struct TaskDetailView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    if let summary = presentation.last(where: { $0.kind != "message" && !$0.text.isEmpty }) {
+                    // Keep the newest semantic narration prominent while the
+                    // runner works. Tool/status prose is the fallback; raw
+                    // terminal output remains behind Live console.
+                    if let summary = (runnerCoding
+                        ? presentation.last(where: { $0.kind == "message" && $0.role == "assistant" && !$0.text.isEmpty })
+                        : nil) ?? presentation.last(where: { $0.kind != "message" && !$0.text.isEmpty }) {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(summary.text).font(.system(size: 17, weight: .semibold))
+                            if summary.kind == "message" {
+                                Text("LATEST UPDATE FROM YAVER")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(summary.text)
+                                .font(.system(size: 17, weight: .semibold))
+                                .lineLimit(summary.kind == "message" ? 4 : 2)
                             let meta = [summary.machine, summary.platform, summary.runner, summary.project]
                                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
                             if !meta.isEmpty {

@@ -283,7 +283,7 @@ struct TasksView: View {
 
     private func rowBody(_ t: TaskSummary) -> some View {
         HStack(spacing: 18) {
-            statusDot(t.status)
+            TaskStatusGlyph(status: t.status)
             VStack(alignment: .leading, spacing: 4) {
                 Text(t.safeTitle).font(.system(size: 22, weight: .medium)).lineLimit(2)
                 Text([

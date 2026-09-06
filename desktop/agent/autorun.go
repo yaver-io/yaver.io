@@ -124,7 +124,7 @@ func readyAutorunRunners(workDir string, exclude map[string]bool) []RunnerConfig
 			continue
 		}
 		runner := GetRunnerConfig(id)
-		if err := CheckRunnerReady(runner, workDir); err == nil {
+		if err := autorunRunnerReady(runner, workDir); err == nil {
 			ready = append(ready, runner)
 		}
 	}
@@ -660,6 +660,11 @@ type autorunExecFunc func(context.Context, string, []string, string) autorunComm
 
 var autorunExec autorunExecFunc = runAutorunCommand
 
+// Test seam for host-dependent CLI readiness. Production always uses the real
+// readiness probe; closed-loop tests replace it because their runner turn is
+// already stubbed and CI intentionally has no subscription CLIs installed.
+var autorunRunnerReady = CheckRunnerReady
+
 func runAutorunCommand(ctx context.Context, name string, args []string, dir string) autorunCommandResult {
 	return runAutorunCommandEnv(ctx, name, args, dir, os.Environ())
 }
@@ -691,7 +696,7 @@ func runAutorunCommandEnv(ctx context.Context, name string, args []string, dir s
 // the CLI set — so a fallback swaps one signed-in CLI for another, or it fails.
 // It can never reach for a paid API key.
 func selectAutorunRunner(workDir, requested string) (RunnerConfig, error) {
-	return selectAutorunRunnerWith(workDir, requested, CheckRunnerReady)
+	return selectAutorunRunnerWith(workDir, requested, autorunRunnerReady)
 }
 
 // selectAutorunRunnerWith is selectAutorunRunner with the readiness probe passed

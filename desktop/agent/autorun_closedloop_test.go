@@ -32,6 +32,9 @@ type autorunTestRepo struct {
 
 func autorunIsolateHome(t *testing.T) string {
 	t.Helper()
+	previousReady := autorunRunnerReady
+	autorunRunnerReady = func(RunnerConfig, string) error { return nil }
+	t.Cleanup(func() { autorunRunnerReady = previousReady })
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)

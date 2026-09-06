@@ -117,3 +117,19 @@ test("task creation carries the exact mobile build and runtime mode", () => {
   });
   assert.deepEqual(body.sessionSettings, sessionSettings);
 });
+
+test("task creation carries bounded mobile connection evidence when supplied", () => {
+  const connectionDiagnostics = [
+    "2026-09-06T18:48:06.000Z warn: relay stream stopped forwarding",
+  ];
+  const body = buildSendTaskRequestBody({
+    title: "Fix connectivity",
+    description: "The phone disconnects after resume",
+    codeMode: true,
+    connectionDiagnostics,
+  });
+  assert.deepEqual(body.connectionDiagnostics, connectionDiagnostics);
+
+  const ordinary = buildSendTaskRequestBody({ title: "Change the header", description: "" });
+  assert.equal(Object.prototype.hasOwnProperty.call(ordinary, "connectionDiagnostics"), false);
+});

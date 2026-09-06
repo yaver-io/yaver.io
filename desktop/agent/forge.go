@@ -148,7 +148,9 @@ func resolveForgeHost(host string, kind ForgeKind) (ForgeHost, error) {
 		// Respect the same env var gh honors, so a box already configured
 		// for GHE needs no Yaver-specific setup.
 		if v := strings.TrimSpace(os.Getenv("GITHUB_API_URL")); v != "" && host != "github.com" {
-			fh.APIBase = strings.TrimSuffix(v, "/")
+			if parsed, err := url.Parse(v); err == nil && strings.EqualFold(parsed.Hostname(), host) {
+				fh.APIBase = strings.TrimSuffix(v, "/")
+			}
 		}
 	case ForgeGitLab:
 		fh.APIBase = "https://" + host + "/api/v4"

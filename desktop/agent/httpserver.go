@@ -67,6 +67,8 @@ type HTTPServer struct {
 	// locally rather than erroring — a client that names this box is asking for
 	// work this box can do.
 	localMux *http.ServeMux
+	vsrOnce     sync.Once
+	vsrSessions *vsrSessionStore
 
 	taskMgr           *TaskManager
 	errorStore        *ErrorStore // nil uses the process-wide Yaver error ledger
@@ -1611,6 +1613,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/runner/sandboxes/", s.auth(s.handleRunnerSandboxByID))
 	mux.HandleFunc("/runner/agent/sessions", s.auth(s.handleRunnerAgentSessions))
 	mux.HandleFunc("/runner/agent/sessions/", s.auth(s.handleRunnerAgentSessionByID))
+
+	// Silent Input stays on the existing authenticated peer transport. The
+	// phone sends normalized mouth crops only; sessions live in memory and are
+	// removed before inference returns.
+	mux.HandleFunc("/vsr/capabilities", s.auth(s.handleVSRCapabilities))
+	mux.HandleFunc("/vsr/session/start", s.auth(s.handleVSRSessionStart))
+	mux.HandleFunc("/vsr/session/", s.auth(s.handleVSRSession))
 
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))
@@ -4305,6 +4314,10 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			TTSProvider     string `json:"ttsProvider,omitempty"`
 			TTSMode         bool   `json:"ttsMode,omitempty"` // user "run tasks in TTS mode" setting
 		} `json:"speechContext,omitempty"`
+		// ConnectionDiagnostics is bounded, redacted evidence captured by the
+		// mobile client for connectivity-focused coding tasks. It is folded into
+		// PromptText only, so no surface renders it as user-authored conversation.
+		ConnectionDiagnostics []string `json:"connectionDiagnostics,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -4401,6 +4414,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	sessionSettings = mergeInferredClientSessionSettings(sessionSettings, firstNonEmpty(body.StartedFromSurface, sessionSurfaceFromRequest(r)), source)
 	sessionSettings = normalizeClientSessionSettings(sessionSettings, 1, time.Now())
 	briefing.WriteString(clientSessionSettingsBriefing(sessionSettings))
+	briefing.WriteString(connectionDiagnosticsBriefing(source, body.ConnectionDiagnostics))
 
 	// Feedback-source tasks (FeedbackOverlay typed message after a guest
 	// shake, SDK modal "Fix" button, etc.) get reshaped into the same

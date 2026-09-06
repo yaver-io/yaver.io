@@ -51,7 +51,7 @@ test("an interrupted stream is named, not swallowed", () => {
 
   const named = seen.filter((h) => h && h.kind === "reattaching");
   assert.equal(named.length, 1, "a dropped stream must produce a visible 'reattaching' state");
-  assert.match(String(named[0]!.message), /still running on the box/, "the user must be told the task survived the stream");
+  assert.match(String(named[0]!.message), /task has not reported a failure/, "the stream drop must not be presented as a task failure");
 });
 
 test("a finished stream says nothing", () => {
@@ -205,7 +205,7 @@ test("the raw opencode console lane is dispatched and consumed on web", () => {
     "web chat does not subscribe with rawSince+onRaw into a raw buffer",
   );
   assert.ok(
-    chat.includes("Live console") && chat.includes("AnsiConsoleText text={rawOutput"),
+    chat.includes("Runner details") && chat.includes("AnsiConsoleText text={summarizeRawConsole(rawOutput"),
     "web chat has no foldable raw console panel rendering the raw bytes",
   );
 });

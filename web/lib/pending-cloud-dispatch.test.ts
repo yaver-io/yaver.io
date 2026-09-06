@@ -435,7 +435,7 @@ eq(
 );
 eq(
   activationBlockReason({ ok: false, action: "wake_failed" }),
-  "Cloud Workspace wake failed before this task could run.",
+  "Remote machine wake failed before this task could run.",
   "wake_failed activation has an honest fallback blocker",
 );
 const createIntentBody = taskDispatchIntentCreateBody({

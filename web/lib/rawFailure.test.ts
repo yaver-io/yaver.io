@@ -129,7 +129,8 @@ test("POST /settings answers auth failures with a CORS-carrying 401", () => {
   const http = readFileSync(join(root, "../backend/convex/http.ts"), "utf8");
   const start = http.indexOf('path: "/settings",\n  method: "POST"');
   assert.ok(start > 0, "POST /settings route must exist");
-  const route = http.slice(start, start + 4000);
+  const nextRoute = http.indexOf("\nhttp.route({", start + 1);
+  const route = http.slice(start, nextRoute > start ? nextRoute : undefined);
   const catchAt = route.indexOf("} catch (err) {");
   assert.ok(catchAt > 0, "the runMutation call must be wrapped in try/catch");
   // The guard is the CATCH arm specifically: a thrown Unauthorized must become

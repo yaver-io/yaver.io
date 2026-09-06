@@ -16,6 +16,9 @@ import (
 )
 
 func TestForgeResolveHost(t *testing.T) {
+	// GitHub Actions injects the public API URL into every process. It must not
+	// redirect an explicitly selected Enterprise host back to github.com.
+	t.Setenv("GITHUB_API_URL", "https://api.github.com")
 	cases := []struct {
 		name    string
 		host    string
@@ -53,6 +56,17 @@ func TestForgeResolveHost(t *testing.T) {
 				t.Errorf("APIBase = %q, want %q", got.APIBase, tc.wantAPI)
 			}
 		})
+	}
+}
+
+func TestForgeResolveHostHonorsMatchingEnterpriseAPIURL(t *testing.T) {
+	t.Setenv("GITHUB_API_URL", "https://ghe.acme.com/custom/api")
+	got, err := resolveForgeHost("ghe.acme.com", ForgeGitHub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.APIBase != "https://ghe.acme.com/custom/api" {
+		t.Fatalf("APIBase = %q, want matching Enterprise override", got.APIBase)
 	}
 }
 

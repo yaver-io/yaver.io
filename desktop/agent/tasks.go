@@ -2579,6 +2579,10 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 	tm.tasks[id] = task
 	tm.persistAsync()
 	tm.mu.Unlock()
+	// Give every accepted task a conversational response immediately. Runner
+	// startup (credential refresh, clone/pull, ACP handshake) can take seconds;
+	// the user should never stare at raw commands or an empty chat meanwhile.
+	tm.present(task, taskAcceptedPresentation(task))
 
 	// Dummy mode: stream fake response without launching a real process.
 	if tm.DummyMode {
@@ -3022,7 +3026,7 @@ func (tm *TaskManager) runDummyTask(task *Task) {
 	task.LastActiveAt = finishNow
 	task.ResultText = output.String()
 	tm.presentLocked(task, taskPresentationInput{
-		ID: task.ID + "-assistant-1", Kind: "message", Role: "assistant",
+		ID: taskAssistantPresentationID(task), Kind: "message", Role: "assistant",
 		Text: task.ResultText, Phase: "complete", State: "completed",
 	})
 	task.Turns = append(task.Turns, ConversationTurn{
@@ -4174,7 +4178,7 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	var outputMu sync.Mutex
 	tm.mu.RLock()
 	output.WriteString(task.Output)
-	presentationMessageID := fmt.Sprintf("%s-assistant-%d", task.ID, len(task.Turns)+1)
+	presentationMessageID := taskAssistantPresentationID(task)
 	tm.mu.RUnlock()
 
 	// Per-runner stream rewriting. opencode's TUI ships ANSI escapes
@@ -4483,7 +4487,7 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 	var output strings.Builder
 	tm.mu.RLock()
 	output.WriteString(task.Output)
-	presentationMessageID := fmt.Sprintf("%s-assistant-%d", task.ID, len(task.Turns)+1)
+	presentationMessageID := taskAssistantPresentationID(task)
 	tm.mu.RUnlock()
 
 	// Track state for accumulating tool input JSON across deltas.
@@ -5136,6 +5140,10 @@ func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAtt
 // through essentially verbatim. See task_prompt_frame.go for the rule and for
 // what "essentially" leaves in (attachments, per-turn context, the boundary).
 func (tm *TaskManager) startResume(task *Task, prompt string) error {
+	// A follow-up is already accepted and present in Turns before this function
+	// runs. Publish its assistant slot before any runner/session handshake so
+	// every conversation turn receives an immediate first response.
+	tm.present(task, taskAcceptedPresentation(task))
 	// Use task's runner if set, otherwise fall back to global
 	runner := task.runner
 	if runner.Command == "" {

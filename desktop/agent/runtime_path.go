@@ -59,23 +59,24 @@ func augmentEnv(env []string) []string {
 		env = os.Environ()
 	}
 	extras := runtimeBinDirs()
-	if len(extras) == 0 {
-		return env
-	}
-	prepend := strings.Join(extras, string(os.PathListSeparator))
 	out := make([]string, 0, len(env)+1)
-	pathSet := false
-	for _, kv := range env {
-		if i := strings.IndexByte(kv, '='); i > 0 && strings.EqualFold(kv[:i], "PATH") {
-			existing := kv[i+1:]
-			out = append(out, "PATH="+prepend+string(os.PathListSeparator)+existing)
-			pathSet = true
-			continue
+	if len(extras) > 0 {
+		prepend := strings.Join(extras, string(os.PathListSeparator))
+		pathSet := false
+		for _, kv := range env {
+			if i := strings.IndexByte(kv, '='); i > 0 && strings.EqualFold(kv[:i], "PATH") {
+				existing := kv[i+1:]
+				out = append(out, "PATH="+prepend+string(os.PathListSeparator)+existing)
+				pathSet = true
+				continue
+			}
+			out = append(out, kv)
 		}
-		out = append(out, kv)
-	}
-	if !pathSet {
-		out = append(out, "PATH="+prepend+string(os.PathListSeparator)+os.Getenv("PATH"))
+		if !pathSet {
+			out = append(out, "PATH="+prepend+string(os.PathListSeparator)+os.Getenv("PATH"))
+		}
+	} else {
+		out = append(out, env...)
 	}
 	// Gradle and the Android tools locate the SDK through ANDROID_HOME /
 	// ANDROID_SDK_ROOT, not PATH. A launchd-started daemon inherits neither (the

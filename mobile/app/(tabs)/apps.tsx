@@ -154,6 +154,46 @@ type PreviewProbeState = {
   mediaCount?: number;
 };
 
+type VectorIconName = keyof typeof Ionicons.glyphMap;
+
+const TEXT_ICON_TO_IONICON: Record<string, VectorIconName> = {
+  "\u{1F310}": "globe-outline",
+  "\u{1F4F1}": "phone-portrait-outline",
+  "\u{1F4FA}": "tv-outline",
+  "\u{1F50C}": "flash-outline",
+  "\u{1F527}": "construct-outline",
+  "\u{1F680}": "rocket-outline",
+  "\u{1F4E6}": "cube-outline",
+  "\u{1F5C4}": "folder-open-outline",
+  "\u2699": "settings-outline",
+  "\u2699\uFE0F": "settings-outline",
+  "\u25B6": "play-outline",
+};
+
+function iconNameForGlyph(icon?: string | null): VectorIconName | null {
+  if (!icon) return null;
+  if (icon in Ionicons.glyphMap) return icon as VectorIconName;
+  return TEXT_ICON_TO_IONICON[icon] ?? null;
+}
+
+function GlyphIcon({
+  icon,
+  size,
+  color,
+  textStyle,
+}: {
+  icon?: string | null;
+  size: number;
+  color: string;
+  textStyle?: any;
+}) {
+  const name = iconNameForGlyph(icon);
+  if (name) {
+    return <Ionicons name={name} size={size} color={color} />;
+  }
+  return <Text style={textStyle}>{icon || "\u2022"}</Text>;
+}
+
 // Branded vector icons via mobile/src/components/FrameworkIcon.tsx \u2014 see
 // that file for the per-framework MaterialCommunityIcon + brand-color
 // mapping. Kept in sync with hotreload.tsx so the two surfaces render
@@ -3006,7 +3046,12 @@ export default function AppsScreen() {
                     style={[s.actionSheetItem, { borderColor: c.border }, disabled && { opacity: 0.4 }]}
                     onPress={() => handleExecuteAction(action)}
                   >
-                    <Text style={s.actionSheetIcon}>{action.icon || "▶"}</Text>
+                    <GlyphIcon
+                      icon={action.icon || "\u25B6"}
+                      size={22}
+                      color={action.supported === false ? c.textMuted : c.accent}
+                      textStyle={[s.actionSheetIcon, { color: action.supported === false ? c.textMuted : c.accent }]}
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={[s.actionSheetLabel, { color: disabled ? c.textMuted : c.textPrimary }]}>
                         {action.label}
@@ -3281,7 +3326,12 @@ export default function AppsScreen() {
                       );
                     }}
                   >
-                    <Text style={s.vibingFeatureIcon}>{sg.icon}</Text>
+                    <GlyphIcon
+                      icon={sg.icon}
+                      size={24}
+                      color={c.accent}
+                      textStyle={[s.vibingFeatureIcon, { color: c.accent }]}
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={[s.vibingFeatureLabel, { color: c.textPrimary }]}>{sg.label}</Text>
                       <Text style={[s.vibingFeatureDesc, { color: c.textMuted }]} numberOfLines={2}>{sg.desc}</Text>
@@ -3323,7 +3373,12 @@ export default function AppsScreen() {
                     } catch {}
                   }}
                 >
-                  <Text style={s.vibingGridIcon}>{qa.icon}</Text>
+                  <GlyphIcon
+                    icon={qa.icon}
+                    size={22}
+                    color={c.accent}
+                    textStyle={[s.vibingGridIcon, { color: c.accent }]}
+                  />
                   <Text style={[s.vibingGridLabel, { color: c.textPrimary }]}>{qa.label}</Text>
                 </Pressable>
               ))}

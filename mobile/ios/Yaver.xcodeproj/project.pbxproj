@@ -61,6 +61,8 @@
 		DDD2C5898B6F430A8D987B3D /* BoxLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADAB851FD3541E49AADD291 /* BoxLifecycle.swift */; };
 		DF60D00DD06F00D000000001 /* YaverDogfood.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF60D00DD06F00D000000003 /* YaverDogfood.swift */; };
 		DF60D00DD06F00D000000002 /* YaverDogfood.m in Sources */ = {isa = PBXBuildFile; fileRef = DF60D00DD06F00D000000004 /* YaverDogfood.m */; };
+		A11E17110000000100000001 /* YaverMouthCropper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E17110000000300000003 /* YaverMouthCropper.swift */; };
+		A11E17110000000200000002 /* YaverMouthCropper.m in Sources */ = {isa = PBXBuildFile; fileRef = A11E17110000000400000004 /* YaverMouthCropper.m */; };
 		E069D90A5DB54552BE827646 /* YaverLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02CEFAC6D08A417F8509F485 /* YaverLiveActivityBundle.swift */; };
 		E1A2B3C4D5E6F70100000001 /* YaverWatchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E6F70100000003 /* YaverWatchBridge.swift */; };
 		E1A2B3C4D5E6F70100000002 /* YaverWatchBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E6F70100000004 /* YaverWatchBridge.m */; };
@@ -194,6 +196,8 @@
 		DC73FC343E8A451D9833C645 /* ShareExtensionPreprocessor.js */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = unknown; name = ShareExtensionPreprocessor.js; path = ShareExtensionPreprocessor.js; sourceTree = "<group>"; };
 		DF60D00DD06F00D000000003 /* YaverDogfood.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverDogfood.swift; sourceTree = "<group>"; };
 		DF60D00DD06F00D000000004 /* YaverDogfood.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverDogfood.m; sourceTree = "<group>"; };
+		A11E17110000000300000003 /* YaverMouthCropper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverMouthCropper.swift; sourceTree = "<group>"; };
+		A11E17110000000400000004 /* YaverMouthCropper.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverMouthCropper.m; sourceTree = "<group>"; };
 		E061AB9F0596DBAFDCA8691A /* Pods-Yaver.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Yaver.debug.xcconfig"; path = "Target Support Files/Pods-Yaver/Pods-Yaver.debug.xcconfig"; sourceTree = "<group>"; };
 		E1A2B3C4D5E6F70100000003 /* YaverWatchBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverWatchBridge.swift; sourceTree = "<group>"; };
 		E1A2B3C4D5E6F70100000004 /* YaverWatchBridge.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverWatchBridge.m; sourceTree = "<group>"; };
@@ -266,6 +270,8 @@
 				D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */,
 				DF60D00DD06F00D000000003 /* YaverDogfood.swift */,
 				DF60D00DD06F00D000000004 /* YaverDogfood.m */,
+				A11E17110000000300000003 /* YaverMouthCropper.swift */,
+				A11E17110000000400000004 /* YaverMouthCropper.m */,
 				E1A2B3C4D5E6F70100000003 /* YaverWatchBridge.swift */,
 				E1A2B3C4D5E6F70100000004 /* YaverWatchBridge.m */,
 				3A027291C28B8C619D5DCBBC /* sdk-manifest.json */,
@@ -784,6 +790,8 @@
 				D0E1F2A3B4C5D6E7F8A9B0C2 /* YaverKeyboardRouter.m in Sources */,
 				DF60D00DD06F00D000000001 /* YaverDogfood.swift in Sources */,
 				DF60D00DD06F00D000000002 /* YaverDogfood.m in Sources */,
+				A11E17110000000100000001 /* YaverMouthCropper.swift in Sources */,
+				A11E17110000000200000002 /* YaverMouthCropper.m in Sources */,
 				F07CE48FD595B0ACD2F8B805 /* YaverBundleLoader.m in Sources */,
 				6D1B73A5432ABE301C3BD5FC /* YaverHTTPServer.swift in Sources */,
 				70A18B45D1C24F9BB4A10001 /* YaverGuestCrashReporter.swift in Sources */,
@@ -892,7 +900,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -926,7 +934,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -960,7 +968,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.activity;
 				PRODUCT_NAME = YaverActivity;
@@ -986,7 +994,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = "io.yaver.mobile.share-extension";
 				PRODUCT_NAME = ShareExtension;
@@ -1130,7 +1138,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.watch;
 				PRODUCT_NAME = YaverWatch;
@@ -1161,7 +1169,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = "io.yaver.mobile.share-extension";
 				PRODUCT_NAME = ShareExtension;
@@ -1191,7 +1199,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.watch;
 				PRODUCT_NAME = YaverWatch;
@@ -1217,7 +1225,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.181;
+				MARKETING_VERSION = 1.18.182;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.activity;
 				PRODUCT_NAME = YaverActivity;

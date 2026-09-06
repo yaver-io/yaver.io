@@ -47,6 +47,14 @@ import (
 	"time"
 )
 
+// Host-process seams keep the signed-in fast-path test from trying to launch
+// the Go test binary as `yaver serve`. Production uses the real probes.
+var (
+	lazySetupDaemonServing     = daemonServing
+	lazySetupWaitDaemonServing = waitDaemonServing
+	lazySetupStartDaemon       = safeStartDaemon
+)
+
 // LazySetupResult is the payload returned by yaver_lazy_setup.
 type LazySetupResult struct {
 	// Machine-readable state. One of:
@@ -194,14 +202,14 @@ func (out *LazySetupResult) applySignedIn(snap AuthStatusSnapshot) {
 		who = "your account"
 	}
 
-	serving := daemonServing()
+	serving := lazySetupDaemonServing()
 	if !serving {
 		// The fork that authFinalizeToken kicks off may have failed or
 		// never ran (e.g. the MCP server started cold and the human
 		// authed without `yaver serve` ever running). Try once, then
 		// give serve a moment to bind its port before judging.
-		safeStartDaemon()
-		serving = waitDaemonServing(6 * time.Second)
+		lazySetupStartDaemon()
+		serving = lazySetupWaitDaemonServing(6 * time.Second)
 	}
 	out.DaemonServing = serving
 

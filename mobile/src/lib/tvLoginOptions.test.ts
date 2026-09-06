@@ -74,7 +74,7 @@ test("Settings keeps dense utility rows concise and separates Docker status card
 
 test("native and generated iOS camera disclosures name TV QR sign-in", () => {
   const expected =
-    "Yaver uses your camera to scan machine pairing, TV sign-in, and encrypted secure-handoff QR codes, take photos for tasks, and provide camera access to apps you run for testing.";
+    "Yaver uses your camera for private Silent Input lip reading, machine pairing and TV sign-in QR codes, secure handoff, task photos, and apps you run for testing. Silent Input records no audio and sends only mouth crops to your selected machine.";
   const appJson = JSON.parse(source("../../app.json"));
   assert.equal(appJson.expo.ios.infoPlist.NSCameraUsageDescription, expected);
 

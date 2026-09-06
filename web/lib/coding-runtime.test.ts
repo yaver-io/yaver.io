@@ -8,6 +8,7 @@ async function check(name: string, fn: () => Promise<void>) {
   console.log(`ok ${name}`);
 }
 
+async function main() {
 await check("audit mode rejects writes", async () => {
   const oldFetch = globalThis.fetch;
   let turn = 0;
@@ -29,4 +30,10 @@ await check("provider errors redact the key", async () => {
   } catch (error) {
     if (String(error).includes("deep-key")) throw new Error("key leaked in provider error");
   } finally { globalThis.fetch = oldFetch; }
+});
+}
+
+void main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });

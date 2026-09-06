@@ -113,6 +113,9 @@ func TestYaverLazySetup_ResumesPending(t *testing.T) {
 // reports the "signed_in" state without any device-code flow.
 func TestYaverLazySetup_ReportsSignedInWithoutTouchingBackend(t *testing.T) {
 	withTempHome(t)
+	previousDaemonServing := lazySetupDaemonServing
+	lazySetupDaemonServing = func() bool { return true }
+	t.Cleanup(func() { lazySetupDaemonServing = previousDaemonServing })
 
 	// Stub Convex that accepts any Bearer and returns a valid user
 	// profile — that's all authStatusSnapshot needs to decide "signed in".

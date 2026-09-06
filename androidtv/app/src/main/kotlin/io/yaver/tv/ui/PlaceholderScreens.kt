@@ -275,9 +275,13 @@ fun TaskDetailScreen(store: TvStore, nav: NavHostController, taskId: String) {
                     TvTextButton("Exit", onClick = { openRunnerControl("exit") })
                 }
                 val presentation = io.yaver.tv.parseTaskPresentation(task!!.optJSONArray("presentation"))
-                presentation.lastOrNull { it.kind != "message" }?.let { summary ->
+                val primaryUpdate = if (status == "running" || status == "queued") {
+                    presentation.lastOrNull { it.kind == "message" && it.role == "assistant" }
+                } else null
+                (primaryUpdate ?: presentation.lastOrNull { it.kind != "message" })?.let { summary ->
                     Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth().background(TvColors.Card, RoundedCornerShape(14.dp)).padding(16.dp)) {
-                        Text(summary.text, color = TvColors.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        if (summary.kind == "message") Text("LATEST UPDATE FROM YAVER", color = TvColors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(summary.text, color = TvColors.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = if (summary.kind == "message") 4 else 2)
                         Text(listOfNotNull(summary.machine, summary.platform, summary.runner, summary.project).joinToString(" · "), color = TvColors.TextSecondary, fontSize = 14.sp)
                     }
                 }
@@ -397,7 +401,10 @@ private fun TaskCard(task: TaskRow, onClick: () -> Unit) {
                 color = statusColor(status),
                 fontSize = 17.sp,
             )
-            task.presentation.lastOrNull { it.kind != "message" }?.let { summary ->
+            val primaryUpdate = if (status == "running" || status == "queued") {
+                task.presentation.lastOrNull { it.kind == "message" && it.role == "assistant" }
+            } else null
+            (primaryUpdate ?: task.presentation.lastOrNull { it.kind != "message" })?.let { summary ->
                 Text(summary.text, color = TvColors.TextSecondary, fontSize = 16.sp, maxLines = 2)
             }
             val execution = listOfNotNull(

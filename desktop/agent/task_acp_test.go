@@ -153,7 +153,7 @@ func TestRunnerACPTaskStreamsAndCompletes(t *testing.T) {
 			assistant = append(assistant, message)
 		}
 	}
-	if len(assistant) != 1 || assistant[0].ID != task.ID+"-assistant-live" || assistant[0].Text != "PONG" {
+	if len(assistant) != 1 || assistant[0].ID != task.ID+"-assistant-1" || assistant[0].Text != "PONG" {
 		t.Fatalf("ACP narration did not finish as one primary assistant message: %#v", assistant)
 	}
 	foundTransport, foundAgentChunk := false, false

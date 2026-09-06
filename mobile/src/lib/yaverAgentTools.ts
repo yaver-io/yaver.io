@@ -17,10 +17,9 @@
  */
 
 import type { Device } from "../context/DeviceContext";
-import {
-  quicClient,
-  type YaverAgentDeviceAudit,
-  type YaverAgentRecommendation,
+import type {
+  YaverAgentDeviceAudit,
+  YaverAgentRecommendation,
 } from "./quic";
 
 // ── Tool argument + result types ────────────────────────────────────
@@ -245,6 +244,9 @@ const deviceAuditTool: YaverAgentTool<AuditDeviceArgs, AuditDeviceResult> = {
     }
     try {
       await ctx.selectDevice(summary.deviceId);
+      // Keep read-only/local tools usable without eagerly loading React Native's
+      // transport module (including in the embedded coding-agent test runtime).
+      const { quicClient } = await import("./quic");
       const audit = await quicClient.yaverAgentAudit(args.workDir ? { workDir: args.workDir } : undefined);
       return { device: summary, audit };
     } catch (e) {

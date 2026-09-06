@@ -62,6 +62,7 @@ import {
 } from "./unroutableCache";
 import { beaconListener } from "./beacon";
 import NetInfo, { type NetInfoState } from "@react-native-community/netinfo";
+import { recoverStaleConnectionOnForeground } from "./foregroundConnectionRecovery";
 import { withDeadline, ConnectAttemptGuard } from "./connectGuard";
 import { isRelayAuthFailure } from "./relayAuth";
 
@@ -94,6 +95,7 @@ import type { RemoteSandboxRequest, RemoteSandboxResponse } from "./llmRemote";
 import { decodeCloudWorkspaceRequiredError } from "./cloudWorkspaceRequired";
 import { classifyRunnerFetchOutcome, type CodingRunnersProbeState } from "./deviceStatusRunnerProbe";
 import { buildSendTaskRequestBody } from "./taskRequestBody";
+import { connectionDiagnosticsForCodingTask } from "./logger";
 import { mobileSessionSettings, type ClientSessionSettings } from "./appVersion";
 import { subscribeSse } from "./sseClient";
 export {
@@ -1873,6 +1875,11 @@ export class QuicClient {
   // Mirrored to AsyncStorage so it applies even before Settings is opened.
   private _ttsTaskMode = false;
   private _connectionState: ConnectionState = "disconnected";
+  // Invalidates an uncancellable connect attempt when disconnect() retires
+  // this client. Without this, a late relay /health response could resurrect
+  // an orphaned client and restart its poll/heartbeat timers after the pool
+  // had already replaced it.
+  private _clientEpoch = 0;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private _consecutiveHeartbeatFailures = 0;
@@ -1891,6 +1898,10 @@ export class QuicClient {
   private _reconnectAttempt = 0;
   private _reconnectStopped = false;
   private _isForeground = true;
+  // Monotonic AppState epoch. A /health result can arrive after the app has
+  // backgrounded again or a newer resume has started; only the current epoch
+  // may replace the active transport. See setForegroundState().
+  private _foregroundEpoch = 0;
   private readonly baseBackoffMs = 1000;
   // Flap detection. When a peer accepts a connection and then drops it seconds
   // later — the classic self-disconnecting-relay symptom — onConnected resets
@@ -2589,6 +2600,7 @@ export class QuicClient {
 
   /** Close the connection and stop all timers. */
   disconnect(): void {
+    this._clientEpoch++;
     this.clearTimers();
     this.setConnectionState("disconnected");
     this.setConnectionMode(null);
@@ -2725,7 +2737,10 @@ export class QuicClient {
     // timed out.)
     let res: Response;
     try {
-      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback, projectName, mcpServers, goal, includeYaverMcp, askMode, hideInitialPrompt, sessionStartedFrom, startedFromSurface, sessionSettings, reasoningEffort);
+      const connectionDiagnostics = codeMode
+        ? await connectionDiagnosticsForCodingTask(title, description)
+        : undefined;
+      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback, projectName, mcpServers, goal, includeYaverMcp, askMode, hideInitialPrompt, sessionStartedFrom, startedFromSurface, sessionSettings, reasoningEffort, connectionDiagnostics);
     } catch (e) {
       if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
         throw new Error(
@@ -2791,6 +2806,7 @@ export class QuicClient {
     startedFromSurface: string | undefined,
     sessionSettings: ClientSessionSettings | undefined,
     reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | undefined,
+    connectionDiagnostics: string[] | undefined,
   ): Promise<Response> {
     return this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
@@ -2822,6 +2838,7 @@ export class QuicClient {
         sessionStartedFrom,
         startedFromSurface,
         sessionSettings: sessionSettings ?? mobileSessionSettings({ surface: startedFromSurface }),
+        connectionDiagnostics,
       })),
     }, 30000);
   }
@@ -8242,6 +8259,7 @@ export class QuicClient {
   setForegroundState(isForeground: boolean): void {
     if (this._isForeground === isForeground) return;
     this._isForeground = isForeground;
+    const epoch = ++this._foregroundEpoch;
     if (!isForeground) {
       // Backgrounded — cancel the pending backoff. Do NOT mark as
       // stopped (that's the user-initiated signal) so we resume
@@ -8257,7 +8275,21 @@ export class QuicClient {
     // triggerReconnect separately; these are idempotent.
     if (!this.host || !this.port || !this.token) return;
     if (this._reconnectStopped) return;
-    if (this._connectionState === "connected") return;
+    if (this._connectionState === "connected") {
+      // iOS/Android may discard the real TCP/relay path while retaining this
+      // JS object and its `connected` flag. Prove the operation immediately on
+      // resume; if /health does not answer, run the complete direct/tunnel/
+      // relay ladder. Before this check the app trusted the stale flag and only
+      // a force-close/reopen recovered the remote Ubuntu session.
+      void recoverStaleConnectionOnForeground({
+        client: this,
+        isCurrent: () => this._isForeground && this._foregroundEpoch === epoch,
+        onStale: () => {
+          appLog("warn", "[lifecycle] foreground health probe failed — re-probing every transport");
+        },
+      });
+      return;
+    }
     if (this._connectGuard.busy) return;
     this.setReconnectAttempt(1);
     this.attemptConnect().catch(() => {});
@@ -8782,13 +8814,14 @@ export class QuicClient {
       );
     }
     try {
-      await this._doAttemptConnect();
+      const attemptEpoch = this._clientEpoch;
+      await this._doAttemptConnect(attemptEpoch);
     } finally {
       this._connectGuard.release(slot.id);
     }
   }
 
-  private async _doAttemptConnect(): Promise<void> {
+  private async _doAttemptConnect(attemptEpoch: number): Promise<void> {
     this.setConnectionState("connecting");
     this._lastTransportError = null;
     this.activeRelayUrl = null;
@@ -9035,6 +9068,12 @@ export class QuicClient {
         throw new Error(`Could not reach agent — ${legs.join("; ")}`);
       }
 
+      // disconnect() may have retired this client while a native fetch was in
+      // flight. Never let that late success turn the orphan green or restart
+      // its poll/heartbeat loops; the connection manager has already created
+      // a fresh owner for the next Retry.
+      if (attemptEpoch !== this._clientEpoch) return;
+
       // Flap check BEFORE resetting the attempt counter: if the previous
       // connection lasted less than flapWindowMs, this is a flapping peer — keep
       // a floor under the next backoff rather than dropping back to ~1s.
@@ -9061,6 +9100,10 @@ export class QuicClient {
       // the Vault screen still performs an explicit, user-visible vaultList.
       if (Platform.OS !== "web") void this.syncVault();
     } catch (e) {
+      // Same retirement guard on the failure path. In particular, do not let
+      // an old attempt overwrite `disconnected` with `error` after its client
+      // has been removed from the pool.
+      if (attemptEpoch !== this._clientEpoch) return;
       // Carry the DETAILED per-leg reason out to the caller. Previously this
       // `catch {}` swallowed the `Could not reach agent — <legs>` message the
       // ladder built, so connect() fell back to the generic

@@ -611,6 +611,7 @@ func TestNonCodexRunnersArePassThrough(t *testing.T) {
 // this, every surface that wants to branch on "expired" vs "never signed in" is
 // back to regexing prose — the drift that gave mobile three relay-auth matchers.
 func TestExpiredCredentialCarriesStructuredCode(t *testing.T) {
+	stubCodexLinuxSandboxPrereq(t, "")
 	ClearRunnerAuthInvalid("codex")
 	ClearRunnerAuthProven("codex")
 	t.Cleanup(func() { ClearRunnerAuthInvalid("codex") })

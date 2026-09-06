@@ -48,6 +48,8 @@ test("the attached checkout marker hides only Yaver's active checkout tree", () 
   assert.equal(isPathInsideAttachedDogfoodCheckout("/work/yaver.io/mobile", "/work/yaver.io"), true);
   assert.equal(isPathInsideAttachedDogfoodCheckout("/work/yaver.io-copy", "/work/yaver.io"), false);
   assert.equal(isPathInsideAttachedDogfoodCheckout("/work/another-app", "/work/yaver.io"), false);
+  assert.equal(isPathInsideAttachedDogfoodCheckout("file:///work/yaver.io/mobile?lane=browser", "/work/yaver.io"), true);
+  assert.equal(isPathInsideAttachedDogfoodCheckout("C:\\Workspace\\YAVER.IO\\mobile", "c:/workspace/yaver.io"), true);
   assert.equal(attachedDogfoodCheckout({
     localStorage: { getItem: (key: string) => key === "yaver.attach.checkout" ? "/work/yaver.io" : null },
     ReactNativeWebView: { postMessage: () => {} },

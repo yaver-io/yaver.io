@@ -56,10 +56,13 @@ export async function isRepo(o: SandboxGitOptions): Promise<boolean> {
     return true;
   } catch {
     // resolveRef throws on a repo with no commits too; fall back to checking for
-    // the .git dir via findRoot.
+    // the .git dir via findRoot. A sandbox project must own that repository:
+    // an unrelated .git in a parent temp/documents directory must not make an
+    // uninitialised child look like a repo (or commits target a missing HEAD).
     try {
       const root = await git.findRoot({ fs: o.fs, filepath: o.dir });
-      return !!root;
+      const normalize = (value: string) => value.replace(/[\\/]+$/, "");
+      return normalize(root) === normalize(o.dir);
     } catch {
       return false;
     }

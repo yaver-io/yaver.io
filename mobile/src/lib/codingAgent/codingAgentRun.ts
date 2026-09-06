@@ -50,6 +50,8 @@ export interface AgenticRunOptions {
   onProgress?: (e: CodingAgentProgress) => void;
   signal?: AbortSignal;
   maxSteps?: number;
+  /** Extra read-only tools to advertise for this run. */
+  extraTools?: CodingTool[];
   /** @deprecated Git checkpoints are no longer created by coding turns. */
   noCheckpoint?: boolean;
   /**
@@ -84,7 +86,7 @@ export async function runAgenticCoding(opts: AgenticRunOptions): Promise<Agentic
   const git = gitContextForSlug(opts.slug);
   const mode = opts.mode ?? "vibe";
   const transaction = createTurnTransaction(sandbox);
-  const advertised: CodingTool[] = [...CODING_TOOLS, ...makeGitTools(git, opts.net)];
+  const advertised: CodingTool[] = [...CODING_TOOLS, ...makeGitTools(git, opts.net), ...(opts.extraTools ?? [])];
   const tools = toolsForRun(advertised, mode);
   const lifecycleId = opts.lifecycleTaskId || `phone-code-${opts.slug}-${Date.now()}`;
   await beginRemotelessTask({

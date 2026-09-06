@@ -15,6 +15,23 @@ const assistant = [{
 }];
 
 assert.equal(remoteAgentConversationView({ status: 'running', presentation: assistant }).state, 'working');
+const liveUpdate = remoteAgentConversationView({
+  status: 'running',
+  presentation: [
+    { ...assistant[0], id: 'status', kind: 'status', role: undefined, text: 'Running verification.' },
+    { ...assistant[0], text: 'I found the missing message update and am fixing the task view now.' },
+  ],
+}, { latestActivity: 'Run tests' });
+assert.equal(liveUpdate.title, 'Latest update from the agent');
+assert.equal(liveUpdate.detail, 'I found the missing message update and am fixing the task view now.');
+assert.equal(liveUpdate.activity, 'Run tests');
+const longReply = 'Readable result '.repeat(80);
+const bounded = remoteAgentConversationView({
+  status: 'completed',
+  presentation: [{ ...assistant[0], text: longReply }],
+});
+assert.ok(bounded.detail.length <= 420, 'status-card summaries stay bounded');
+assert.equal(bounded.assistantText, longReply.trim(), 'the complete semantic reply remains available to conversation consumers');
 assert.equal(remoteAgentConversationView({ status: 'ready', presentation: assistant }).state, 'your_turn');
 assert.equal(remoteAgentConversationView({ status: 'ready', presentation: assistant }).canCompose, true);
 assert.equal(remoteAgentConversationView({ status: 'review', presentation: assistant }).title, 'The agent says the work is fully complete');

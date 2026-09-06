@@ -200,10 +200,13 @@ export function workspaceAppLanes(apps: WorkspaceAppRow[]): MobileProjectAction[
 }
 
 export function isYaverSelfDevelopmentProject(project?: string, path?: string, repoURL?: string): boolean {
-  const haystack = `${project || ""} ${path || ""} ${repoURL || ""}`.toLowerCase();
-  return haystack.includes("yaver.io") ||
-    haystack.includes("yaver-io/yaver") ||
-    haystack.includes("io.yaver.mobile");
+  const projectName = String(project || "").trim().toLowerCase();
+  const normalizedPath = String(path || "").trim().replace(/\\/g, "/").toLowerCase();
+  const normalizedRepo = String(repoURL || "").trim().replace(/\\/g, "/").toLowerCase();
+  return projectName === "yaver.io" ||
+    /(^|\/)yaver\.io(\/|$)/.test(normalizedPath) ||
+    /(^|[/:])yaver-io\/yaver(?:\.io)?(?:\.git)?$/.test(normalizedRepo) ||
+    /(^|[/.])io\.yaver\.mobile($|[/.])/.test(`${projectName} ${normalizedPath} ${normalizedRepo}`);
 }
 
 export function guardYaverSelfDevelopmentActions(
