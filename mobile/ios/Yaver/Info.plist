@@ -85,7 +85,7 @@
 	<key>NSCalendarsUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your calendars</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Yaver uses your camera to scan machine pairing, TV sign-in, and encrypted secure-handoff QR codes, take photos for tasks, and provide camera access to apps you run for testing.</string>
+	<string>Yaver uses your camera for private Silent Input lip reading, secure pairing and handoff QR codes, task photos, and apps you run for testing. Silent Input records no audio and sends only mouth crops to your selected machine.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your contacts</string>
 	<key>NSFaceIDUsageDescription</key>
