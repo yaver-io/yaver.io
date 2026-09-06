@@ -590,6 +590,157 @@ func yaverSSHKeyDir() string {
 	return filepath.Join(home, ".yaver", "ssh")
 }
 
+// yaverSSHKeyPaths returns the private/public key paths Yaver manages.
+func yaverSSHKeyPaths() (privPath, pubPath string) {
+	dir := yaverSSHKeyDir()
+	return filepath.Join(dir, "yaver_ed25519"), filepath.Join(dir, "yaver_ed25519.pub")
+}
+
+// currentYaverSSHPublicKey returns the managed public key line
+// ("ssh-ed25519 AAAA… label") if a key already exists, else "".
+func currentYaverSSHPublicKey() string {
+	_, pubPath := yaverSSHKeyPaths()
+	data, err := os.ReadFile(pubPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// sshPubKeyFingerprint returns the OpenSSH SHA256 fingerprint of a full
+// authorized_keys-style line ("ssh-ed25519 AAAA… label").
+func sshPubKeyFingerprint(pubLine string) string {
+	fields := strings.Fields(pubLine)
+	if len(fields) < 2 {
+		return ""
+	}
+	return sshKeyFingerprint(fields[1])
+}
+
+// handleGitProviderSSHKey serves the managed SSH key for the target machine.
+//
+//	GET  /git/provider/ssh-key?host=github.com → current key (exists, publicKey, fingerprint, uploaded)
+//	POST /git/provider/ssh-key {provider, host?, upload?} → generate/reuse the key, optionally
+//	     upload it to the provider account and register it in ~/.ssh/config.
+//
+// The private key never leaves the machine; only the public line + fingerprint
+// are returned so a surface can show a "Copy public key → paste into GitHub" UI.
+func (s *HTTPServer) handleGitProviderSSHKey(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGitProviderSSHKeyGet(w, r)
+	case http.MethodPost:
+		s.handleGitProviderSSHKeyPost(w, r)
+	default:
+		jsonError(w, http.StatusMethodNotAllowed, "use GET or POST")
+	}
+}
+
+func (s *HTTPServer) handleGitProviderSSHKeyGet(w http.ResponseWriter, r *http.Request) {
+	host := r.URL.Query().Get("host")
+	pubKey := currentYaverSSHPublicKey()
+	exists := pubKey != ""
+	uploaded := false
+	if host != "" {
+		if p := findProvider(host); p != nil {
+			uploaded = p.SSHKeyPath != ""
+		}
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":          true,
+		"host":        host,
+		"exists":      exists,
+		"publicKey":   pubKey,
+		"fingerprint": sshPubKeyFingerprint(pubKey),
+		"uploaded":    uploaded,
+	})
+}
+
+func (s *HTTPServer) handleGitProviderSSHKeyPost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"` // "github" or "gitlab"
+		Host     string `json:"host"`
+		Upload   bool   `json:"upload"` // add the key to the provider account
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if req.Provider == "" {
+		jsonError(w, http.StatusBadRequest, "provider is required (github or gitlab)")
+		return
+	}
+	host := req.Host
+	if host == "" {
+		switch req.Provider {
+		case "github":
+			host = "github.com"
+		case "gitlab":
+			host = "gitlab.com"
+		default:
+			jsonError(w, http.StatusBadRequest, "unknown provider — use 'github' or 'gitlab'")
+			return
+		}
+	}
+
+	existed := currentYaverSSHPublicKey() != ""
+	keyLabel := fmt.Sprintf("yaver-agent@%s", hostname())
+	privPath, pubKey, err := generateYaverSSHKey(keyLabel)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "SSH key generation failed: "+err.Error())
+		return
+	}
+
+	uploaded := false
+	uploadErr := ""
+	if req.Upload {
+		provider := findProvider(host)
+		if provider == nil || provider.Token == "" {
+			uploadErr = "no provider token configured for " + host + " — save a token first, or copy the public key manually"
+		} else {
+			title := fmt.Sprintf("Yaver Agent (%s)", hostname())
+			switch provider.Provider {
+			case "github":
+				err = addSSHKeyToGitHub(provider.Token, title, pubKey)
+			case "gitlab":
+				err = addSSHKeyToGitLab(host, provider.Token, title, pubKey)
+			}
+			if err != nil {
+				uploadErr = err.Error()
+			} else {
+				uploaded = true
+				provider.SSHKeyPath = privPath
+				provider.SSHKeyName = title
+				// Persist the SSH path on the stored provider row so
+				// /git/provider/status reflects hasSsh=true.
+				if all, err := loadGitProviders(); err == nil {
+					for i := range all {
+						if strings.EqualFold(all[i].Host, host) {
+							all[i] = *provider
+							break
+						}
+					}
+					_ = saveGitProviders(all)
+				}
+				_ = configureSSHForProvider(host, privPath)
+			}
+		}
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":          true,
+		"host":        host,
+		"provider":    req.Provider,
+		"created":     !existed,
+		"publicKey":   pubKey,
+		"fingerprint": sshPubKeyFingerprint(pubKey),
+		"keyPath":     privPath,
+		"uploaded":    uploaded,
+		"uploadError": uploadErr,
+	})
+}
+
 // generateYaverSSHKey creates an ed25519 SSH keypair for Yaver.
 // Returns (privatePath, publicKeyString, error).
 func generateYaverSSHKey(label string) (string, string, error) {

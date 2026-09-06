@@ -1259,6 +1259,19 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// PAT to call the provider API on their behalf + commit a
 	// yaver.workspace.yaml). Not opened to SDK or constrained companion tokens.
 	mux.HandleFunc("/git/provider/repo/create", s.auth(s.handleGitProviderRepoCreate))
+	// Remote repo browsing — the mobile git widget's detail endpoints.
+	// Register before the catch-all /git/provider/ remove handler below.
+	mux.HandleFunc("/git/provider/repo/branches", s.auth(s.handleGitProviderRepoBranches))
+	mux.HandleFunc("/git/provider/repo/commits", s.auth(s.handleGitProviderRepoCommits))
+	mux.HandleFunc("/git/provider/repo/tree", s.auth(s.handleGitProviderRepoTrees))
+	mux.HandleFunc("/git/provider/repo/file", s.auth(s.handleGitProviderRepoFile))
+	mux.HandleFunc("/git/provider/repo/readme", s.auth(s.handleGitProviderRepoReadme))
+	mux.HandleFunc("/git/provider/repo/audit", s.auth(s.handleGitProviderRepoAudit))
+	// Managed SSH key for git providers — view the current public key
+	// (to copy into GitHub/GitLab) or generate + optionally upload it.
+	// Specific route registered before the catch-all /git/provider/ remove
+	// handler below so it takes precedence.
+	mux.HandleFunc("/git/provider/ssh-key", s.auth(s.handleGitProviderSSHKey))
 	// Deploy-token onboarding (Convex / Cloudflare / npm / PyPI /
 	// TestFlight / Play). Vault-backed; values never sync to Convex.
 	// Owner-only — constrained credentials cannot enumerate or save deploy secrets.
