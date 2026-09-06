@@ -61,3 +61,26 @@ func TestTVScopedTaskCannotAnswerSecretQuestion(t *testing.T) {
 		t.Fatal("secret question was consumed even though the TV answer was refused")
 	}
 }
+
+func TestPeekTaskQuestionTreatsNoPendingQuestionAsEmptyState(t *testing.T) {
+	taskID := "question-empty-state"
+	globalQuestionRegistry.CancelTask(taskID)
+	t.Cleanup(func() { globalQuestionRegistry.CancelTask(taskID) })
+
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	tm.mu.Lock()
+	tm.tasks[taskID] = &Task{ID: taskID, Status: TaskStatusReady, eventCh: make(chan map[string]interface{}, 1)}
+	tm.mu.Unlock()
+	srv := &HTTPServer{taskMgr: tm}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/question", nil)
+
+	srv.handleTaskQuestion(w, req, taskID)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty question state returned %d: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"ok":true,"question":null}` {
+		t.Fatalf("empty question state body = %s", got)
+	}
+}

@@ -40,6 +40,9 @@ export type SendTaskRequestBodyArgs = {
   sessionStartedFrom?: "tasks" | "vibing" | "new-application" | "mobile-workspace";
   startedFromSurface?: string;
   sessionSettings?: ClientSessionSettings;
+  /** Bounded, redacted phone-side connection evidence for coding runners.
+   *  The agent places this in hidden runner briefing, never chat display. */
+  connectionDiagnostics?: string[];
 };
 
 export function buildSendTaskRequestBody(args: SendTaskRequestBodyArgs): Record<string, unknown> {
@@ -68,5 +71,6 @@ export function buildSendTaskRequestBody(args: SendTaskRequestBodyArgs): Record<
     ...(args.sessionStartedFrom ? { sessionStartedFrom: args.sessionStartedFrom } : {}),
     ...(args.startedFromSurface ? { startedFromSurface: args.startedFromSurface } : {}),
     ...(args.sessionSettings ? { sessionSettings: args.sessionSettings } : {}),
+    ...(args.connectionDiagnostics?.length ? { connectionDiagnostics: args.connectionDiagnostics } : {}),
   };
 }

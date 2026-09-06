@@ -4305,6 +4305,10 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			TTSProvider     string `json:"ttsProvider,omitempty"`
 			TTSMode         bool   `json:"ttsMode,omitempty"` // user "run tasks in TTS mode" setting
 		} `json:"speechContext,omitempty"`
+		// ConnectionDiagnostics is bounded, redacted evidence captured by the
+		// mobile client for connectivity-focused coding tasks. It is folded into
+		// PromptText only, so no surface renders it as user-authored conversation.
+		ConnectionDiagnostics []string `json:"connectionDiagnostics,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -4401,6 +4405,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	sessionSettings = mergeInferredClientSessionSettings(sessionSettings, firstNonEmpty(body.StartedFromSurface, sessionSurfaceFromRequest(r)), source)
 	sessionSettings = normalizeClientSessionSettings(sessionSettings, 1, time.Now())
 	briefing.WriteString(clientSessionSettingsBriefing(sessionSettings))
+	briefing.WriteString(connectionDiagnosticsBriefing(source, body.ConnectionDiagnostics))
 
 	// Feedback-source tasks (FeedbackOverlay typed message after a guest
 	// shake, SDK modal "Fix" button, etc.) get reshaped into the same

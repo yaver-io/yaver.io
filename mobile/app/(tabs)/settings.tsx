@@ -24,7 +24,7 @@ import * as WebBrowser from "expo-web-browser";
 import { OAUTH_REDIRECT } from "../../src/_core/constants";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
+import { customRelaysKey, customTunnelsKey, setDebugLogsEnabledRuntime } from "../../src/context/DeviceContext";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
@@ -4417,6 +4417,7 @@ export default function SettingsScreen() {
                 value={debugLogsEnabled}
                 onValueChange={(v) => {
                   setDebugLogsEnabled(v);
+                  setDebugLogsEnabledRuntime(v);
                   AsyncStorage.setItem("@yaver/debug_logs_enabled", v ? "true" : "false");
                 }}
                 trackColor={{ false: c.border, true: c.accent }}

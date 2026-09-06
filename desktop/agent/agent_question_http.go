@@ -11,7 +11,8 @@ package main
 //     cancelled. Response body is {answer:"..."} or {cancelled:true}.
 //
 //   GET /tasks/{id}/question — late-joining UI fetches the currently-
-//     pending question for this task, if any. Returns 404 when none.
+//     pending question for this task, if any. Returns 200 + question:null when
+//     none; an empty optional state is not an HTTP failure.
 //
 //   POST /tasks/{id}/answer — mobile/web/CLI delivers the human's
 //     answer. Body: {questionId, answer}. Resolves the parked
@@ -46,9 +47,10 @@ func (s *HTTPServer) handleTaskQuestion(w http.ResponseWriter, r *http.Request, 
 }
 
 // peekTaskQuestion lets a UI that just opened the task page fetch the
-// currently-pending question without re-subscribing to SSE. Returns 404
-// when no question is in flight — the UI then waits for a future SSE
-// `agent_question` event.
+// currently-pending question without re-subscribing to SSE. Returns a null
+// question when none is in flight — the UI then waits for a future SSE
+// `agent_question` event. A 404 here made every ordinary task-detail open emit
+// a failed browser request, burying real transport failures in expected noise.
 func (s *HTTPServer) peekTaskQuestion(w http.ResponseWriter, _ *http.Request, taskID string) {
 	if _, ok := s.taskMgr.GetTask(taskID); !ok {
 		jsonError(w, http.StatusNotFound, "task not found")
@@ -56,7 +58,7 @@ func (s *HTTPServer) peekTaskQuestion(w http.ResponseWriter, _ *http.Request, ta
 	}
 	q, ok := globalQuestionRegistry.Pending(taskID)
 	if !ok {
-		jsonError(w, http.StatusNotFound, "no pending question")
+		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "question": nil})
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "question": q})

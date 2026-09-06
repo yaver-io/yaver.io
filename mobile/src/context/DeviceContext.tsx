@@ -179,6 +179,11 @@ AsyncStorage.getItem("@yaver/debug_logs_enabled").then((val) => {
   _debugLogsEnabled = val === "true";
 });
 
+/** Keep opt-in telemetry forwarding in sync immediately when Settings changes. */
+export function setDebugLogsEnabledRuntime(enabled: boolean): void {
+  _debugLogsEnabled = enabled;
+}
+
 // Default per-runner model used when the user changes runner without
 // picking a specific model. Single source of truth — keep aligned with
 // web/components/dashboard/DevicesView.tsx::DEFAULT_MODEL_BY_RUNNER and

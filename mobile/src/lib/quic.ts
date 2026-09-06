@@ -95,6 +95,7 @@ import type { RemoteSandboxRequest, RemoteSandboxResponse } from "./llmRemote";
 import { decodeCloudWorkspaceRequiredError } from "./cloudWorkspaceRequired";
 import { classifyRunnerFetchOutcome, type CodingRunnersProbeState } from "./deviceStatusRunnerProbe";
 import { buildSendTaskRequestBody } from "./taskRequestBody";
+import { connectionDiagnosticsForCodingTask } from "./logger";
 import { mobileSessionSettings, type ClientSessionSettings } from "./appVersion";
 import { subscribeSse } from "./sseClient";
 export {
@@ -2736,7 +2737,10 @@ export class QuicClient {
     // timed out.)
     let res: Response;
     try {
-      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback, projectName, mcpServers, goal, includeYaverMcp, askMode, hideInitialPrompt, sessionStartedFrom, startedFromSurface, sessionSettings, reasoningEffort);
+      const connectionDiagnostics = codeMode
+        ? await connectionDiagnosticsForCodingTask(title, description)
+        : undefined;
+      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback, projectName, mcpServers, goal, includeYaverMcp, askMode, hideInitialPrompt, sessionStartedFrom, startedFromSurface, sessionSettings, reasoningEffort, connectionDiagnostics);
     } catch (e) {
       if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
         throw new Error(
@@ -2802,6 +2806,7 @@ export class QuicClient {
     startedFromSurface: string | undefined,
     sessionSettings: ClientSessionSettings | undefined,
     reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | undefined,
+    connectionDiagnostics: string[] | undefined,
   ): Promise<Response> {
     return this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
@@ -2833,6 +2838,7 @@ export class QuicClient {
         sessionStartedFrom,
         startedFromSurface,
         sessionSettings: sessionSettings ?? mobileSessionSettings({ surface: startedFromSurface }),
+        connectionDiagnostics,
       })),
     }, 30000);
   }

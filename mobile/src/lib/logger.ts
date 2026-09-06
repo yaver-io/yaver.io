@@ -1,3 +1,5 @@
+import { redactSecrets } from "./codingAgent/secretRedaction.ts";
+
 /**
  * Ring-buffer logger for connection diagnostics, with best-effort
  * persistence to disk.
@@ -25,6 +27,10 @@ export interface LogEntry {
 const MAX_ENTRIES = 200;
 const STORAGE_KEY = "yaver.connectionLogs.v1";
 const PERSIST_DEBOUNCE_MS = 1500;
+const RUNNER_DIAGNOSTIC_MAX_ENTRIES = 40;
+const RUNNER_DIAGNOSTIC_MAX_LINE_CHARS = 600;
+const RUNNER_DIAGNOSTIC_MAX_TOTAL_CHARS = 12_000;
+const CONNECTION_TASK_RE = /\b(connect(?:ion|ivity|ed|ing)?|disconnect(?:ed|ing|ion)?|reconnect(?:ed|ing|ion)?|network|offline|online|relay|tunnel|socket|websocket|quic|timeout|timed\s*out|internet|wi-?fi|dns|health\s*probe)\b|bağlant|bağlan|çevrimdışı|ağ\s+sorun|kesil(?:iyor|di)/i;
 
 const entries: LogEntry[] = [];
 const listeners: Array<() => void> = [];
@@ -76,6 +82,59 @@ export function appLog(level: LogEntry["level"], message: string) {
 
 export function getLogEntries(): LogEntry[] {
   return [...entries];
+}
+
+/**
+ * Produce a small, inert evidence bundle for a coding runner. Logs are
+ * untrusted diagnostic data, never prompt instructions. Keep IPs and transport
+ * names because they are useful for connectivity work, but remove credentials,
+ * emails and control characters before anything leaves the phone.
+ */
+export function buildRunnerConnectionDiagnostics(source: readonly LogEntry[] = entries): string[] {
+  const lines: string[] = [];
+  let totalChars = 0;
+  const newest = source.slice(-RUNNER_DIAGNOSTIC_MAX_ENTRIES);
+  for (let index = newest.length - 1; index >= 0; index -= 1) {
+    const entry = newest[index];
+    if (!entry || typeof entry.message !== "string" || typeof entry.timestamp !== "number") continue;
+    const message = redactSecrets(entry.message)
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .trim()
+      .slice(0, RUNNER_DIAGNOSTIC_MAX_LINE_CHARS);
+    if (!message) continue;
+    const timestamp = Number.isFinite(entry.timestamp)
+      ? new Date(entry.timestamp).toISOString()
+      : "unknown-time";
+    const line = `${timestamp} ${entry.level}: ${message}`;
+    if (totalChars + line.length > RUNNER_DIAGNOSTIC_MAX_TOTAL_CHARS) continue;
+    lines.unshift(line);
+    totalChars += line.length;
+  }
+  return lines;
+}
+
+export function isConnectivityCodingTask(title: string, description: string): boolean {
+  return CONNECTION_TASK_RE.test(`${title}\n${description}`);
+}
+
+/**
+ * Attach diagnostics when the user is explicitly asking about connectivity,
+ * or when they opted into Debug Logs in Settings. Reading the preference here
+ * (at send time) means toggling it takes effect immediately without a relaunch.
+ */
+export async function connectionDiagnosticsForCodingTask(title: string, description: string): Promise<string[] | undefined> {
+  const explicitConnectivityRequest = isConnectivityCodingTask(title, description);
+  let optedIn = false;
+  try {
+    const storage = await loadAsyncStorage();
+    optedIn = (await storage?.getItem("@yaver/debug_logs_enabled")) === "true";
+  } catch {
+    // The explicit request path remains available when storage is unavailable.
+  }
+  if (!explicitConnectivityRequest && !optedIn) return undefined;
+  const diagnostics = buildRunnerConnectionDiagnostics();
+  return diagnostics.length > 0 ? diagnostics : undefined;
 }
 
 export function clearLogEntries() {
