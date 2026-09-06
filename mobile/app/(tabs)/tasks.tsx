@@ -179,7 +179,7 @@ import {
   notifySandboxTaskFinished,
   setSandboxTaskStatus,
 } from "../../src/lib/sandboxControl";
-import { notifyTaskNeedsReview, shouldNotifyTaskReview } from "../../src/lib/taskReviewNotification";
+import { notifyTaskReply, shouldNotifyTaskReply } from "../../src/lib/taskReviewNotification";
 import { MessageBubble } from "../../src/components/MessageBubble";
 import { openTaskBus } from "../../src/lib/runningTasksBus";
 import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
@@ -3080,6 +3080,12 @@ export default function TasksScreen() {
   const [openCodeConfigTarget, setOpenCodeConfigTarget] = useState<string | null>(null);
 
   const chatScrollRef = useRef<FlatList>(null);
+  // Follow live replies only while the reader is already at the bottom. A
+  // semantic token stream can update many times per second; debounce it so we
+  // do not queue hundreds of animated scrolls or yank somebody away from an
+  // older message they deliberately opened.
+  const chatShouldFollowRef = useRef(true);
+  const chatFollowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOpenTaskRef = useRef<Task | null>(null);
   /** AbortController per in-flight yaver-agent run, keyed by synthetic
    *  task id. handleStopTask aborts the matching controller; the
@@ -4506,12 +4512,26 @@ export default function TasksScreen() {
     return () => clearInterval(interval);
   }, [selectedTask?.id, selectedTask?.status]);
 
-  // Auto-scroll chat when output changes
+  // Follow semantic conversation updates, not the deprecated transcript
+  // buffer. Presentation is the human message lane now; watching only
+  // output/result/status meant a live agent reply could appear above queued
+  // follow-ups without moving the conversation at all.
   useEffect(() => {
-    if (selectedTask) {
-      setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
-    }
-  }, [selectedTask?.output.length, selectedTask?.resultText, selectedTask?.status]);
+    chatShouldFollowRef.current = true;
+  }, [selectedTask?.id]);
+
+  useEffect(() => {
+    if (!selectedTask || !chatShouldFollowRef.current) return;
+    if (chatFollowTimerRef.current) clearTimeout(chatFollowTimerRef.current);
+    chatFollowTimerRef.current = setTimeout(() => {
+      chatFollowTimerRef.current = null;
+      chatScrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+    return () => {
+      if (chatFollowTimerRef.current) clearTimeout(chatFollowTimerRef.current);
+      chatFollowTimerRef.current = null;
+    };
+  }, [selectedTask?.id, selectedTask?.presentation, selectedTask?.resultText, selectedTask?.status]);
 
   // Open-task intents from RunningTasksPill (rendered in the root
   // layout). The pill navigates to /tasks then publishes the id; we
@@ -4640,9 +4660,19 @@ export default function TasksScreen() {
       if (prev === t.status) continue;
       known.set(taskKey, t.status);
       const title = t.title || "Coding task";
-      if (shouldNotifyTaskReview(prev, t.status)) {
-        if (isSandboxSupported() && isPhoneLocalTask(t)) void notifySandboxTaskFinished(title, "review", t.id);
-        else void notifyTaskNeedsReview(title, { taskId: t.id, deviceId: t.deviceId });
+      if (shouldNotifyTaskReply(prev, t.status)) {
+        const assistantText = friendlyTaskPresentation(t.presentation)
+          .filter((message) => message.kind === "message" && message.role === "assistant")
+          .at(-1)?.text;
+        if (isSandboxSupported() && isPhoneLocalTask(t)) {
+          void notifySandboxTaskFinished(assistantText || title, t.status, t.id);
+        } else {
+          void notifyTaskReply(
+            title,
+            { taskId: t.id, deviceId: t.deviceId },
+            { status: t.status, assistantText },
+          );
+        }
         continue;
       }
       if (isSandboxSupported() && isPhoneLocalTask(t)) {
@@ -9244,19 +9274,30 @@ export default function TasksScreen() {
                     the mobile app is chat-only. opencode's raw console
                     look renders inside the bubbles via AnsiConsoleText;
                     there is no terminal view to switch to. */}
+                {/* Keep the current human update outside the transcript's
+                    scroll container. Follow-ups may queue below the active
+                    assistant turn, so an in-list summary can be pushed off
+                    screen precisely when the user asks "what's the status?". */}
+                <View style={{ paddingHorizontal: 14 }}>
+                  <TaskSessionSummary
+                    task={selectedTask}
+                    commands={cmdCardsByTask[selectedTask.id]}
+                    pendingQuestion={agentQuestion?.taskId === selectedTask.id ? agentQuestion.prompt : undefined}
+                    rawBytes={rawSnapshot.length}
+                    lastOutputAt={rawLastAt}
+                    compact
+                  />
+                </View>
                 <FlatList
                     ref={chatScrollRef as any}
                     data={chatMessages}
                     keyExtractor={(item, idx) => `${idx}-${item.role}`}
-                    ListHeaderComponent={
-                      <TaskSessionSummary
-                        task={selectedTask}
-                        commands={cmdCardsByTask[selectedTask.id]}
-                        pendingQuestion={agentQuestion?.taskId === selectedTask.id ? agentQuestion.prompt : undefined}
-                        rawBytes={rawSnapshot.length}
-                        lastOutputAt={rawLastAt}
-                      />
-                    }
+                    onScroll={({ nativeEvent }) => {
+                      const distanceFromBottom = nativeEvent.contentSize.height -
+                        nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y;
+                      chatShouldFollowRef.current = distanceFromBottom < 56;
+                    }}
+                    scrollEventThrottle={100}
                     renderItem={({ item, index }) => (
                       <ChatBubble
                         turn={item}

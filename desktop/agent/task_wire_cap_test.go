@@ -107,6 +107,38 @@ func TestTaskRunningPresentationNamesModelInsteadOfRunnerBrand(t *testing.T) {
 	}
 }
 
+func TestTaskAcknowledgementIsImmediateAndFirstStreamChunkReplacesIt(t *testing.T) {
+	task := &Task{
+		ID: "ack", RunnerID: "codex", LastSurface: "yaver-mobile-app",
+		Turns: []ConversationTurn{{Role: "user", Content: "Fix it"}},
+	}
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+
+	tm.present(task, taskAcceptedPresentation(task))
+	if len(task.Presentation) != 1 || task.Presentation[0].State != "acknowledged" {
+		t.Fatalf("accepted task has no immediate acknowledgement: %#v", task.Presentation)
+	}
+	wantID := taskAssistantPresentationID(task)
+	if task.Presentation[0].ID != wantID || !strings.Contains(task.Presentation[0].Text, "I’m on it") {
+		t.Fatalf("acknowledgement = %#v, want assistant slot %q", task.Presentation[0], wantID)
+	}
+
+	first := tm.presentLocked(task, taskPresentationInput{
+		ID: wantID, Kind: "message", Role: "assistant", Text: "I found the issue.",
+		Phase: "responding", State: "streaming", Append: true,
+	})
+	if first.Op != "upsert" || len(task.Presentation) != 1 || task.Presentation[0].Text != "I found the issue." {
+		t.Fatalf("first streamed update did not replace acknowledgement: event=%#v rows=%#v", first, task.Presentation)
+	}
+	second := tm.presentLocked(task, taskPresentationInput{
+		ID: wantID, Kind: "message", Role: "assistant", Text: " Testing now.",
+		Phase: "responding", State: "streaming", Append: true,
+	})
+	if second.Op != "append" || task.Presentation[0].Text != "I found the issue. Testing now." {
+		t.Fatalf("later streamed update did not append: event=%#v rows=%#v", second, task.Presentation)
+	}
+}
+
 func TestTaskSemanticAssistantEvidenceRejectsRawCompatibilityText(t *testing.T) {
 	task := &Task{Presentation: []TaskPresentationMessage{
 		{ID: "state", Kind: "status", Text: "The runner is working."},

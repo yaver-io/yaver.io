@@ -61,10 +61,19 @@ func acpToolEvidence(rawInput, rawOutput, content, meta json.RawMessage) []strin
 // Commands remain in the folded raw console; this intentionally exposes only
 // the operation category in the primary status line.
 func acpToolActivityLabel(title string, rawInput json.RawMessage) string {
-	if title = strings.TrimSpace(title); title != "" {
+	title = strings.TrimSpace(title)
+	rawCommand := acpCommand(rawInput)
+	command := strings.ToLower(rawCommand)
+	// Adapter titles are normally excellent prose, but codex-acp can use the
+	// complete shell invocation as Title. That value previously became the
+	// largest text on the phone (for example a sed command followed by go
+	// test). Keep commands in raw/command evidence and derive a category here.
+	commandTitle := rawCommand != "" && (strings.Contains(strings.TrimPrefix(title, "$ "), rawCommand) ||
+		strings.ContainsAny(title, "\n;|") ||
+		strings.Contains(title, "&&"))
+	if title != "" && !commandTitle {
 		return title
 	}
-	command := strings.ToLower(acpCommand(rawInput))
 	switch {
 	case command == "":
 		return "Checking the next step"

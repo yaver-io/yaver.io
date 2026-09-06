@@ -1,11 +1,12 @@
 import { router } from "expo-router";
 import {
-  shouldNotifyTaskReview,
+  shouldNotifyTaskReply,
+  taskReplyNotificationCopy,
   taskReviewNotificationRoute,
   type TaskReviewNotificationData,
 } from "./taskReviewRoute";
 
-export { shouldNotifyTaskReview, taskReviewNotificationRoute } from "./taskReviewRoute";
+export { shouldNotifyTaskReply, shouldNotifyTaskReview, taskReviewNotificationRoute } from "./taskReviewRoute";
 
 export const TASK_REVIEW_NOTIFICATION_CHANNEL_ID = "yaver-task-review";
 
@@ -16,19 +17,15 @@ export type TaskReviewNotificationTarget = {
 
 let notificationHandlerInstalled = false;
 
-function reviewBody(title: string): string {
-  const text = String(title || "").trim();
-  return text || "A coding task is ready to review.";
-}
-
 /**
- * Task review is an exact conversation destination, never a generic alert.
+ * A task reply is an exact conversation destination, never a generic alert.
  * Keep the target in the native payload: the app can be launched cold and has
  * no in-memory task row to infer it from after the user taps the notification.
  */
-export async function notifyTaskNeedsReview(
-  title: string,
+export async function notifyTaskReply(
+  taskTitle: string,
   target: TaskReviewNotificationTarget = {},
+  reply: { status?: string; assistantText?: string } = {},
 ): Promise<boolean> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -64,10 +61,15 @@ export async function notifyTaskNeedsReview(
       });
     }
 
+    const copy = taskReplyNotificationCopy({
+      status: reply.status,
+      taskTitle,
+      assistantText: reply.assistantText,
+    });
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: "Task needs review",
-        body: reviewBody(title),
+        title: copy.title,
+        body: copy.body,
         sound: "default",
         data: {
           kind: "task-review",
@@ -85,6 +87,9 @@ export async function notifyTaskNeedsReview(
     return false;
   }
 }
+
+// Compatibility export for callers compiled against the review-only name.
+export const notifyTaskNeedsReview = notifyTaskReply;
 
 /**
  * Installs the process-wide handler, rather than a Tasks-screen listener, so

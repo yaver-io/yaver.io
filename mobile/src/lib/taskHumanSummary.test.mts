@@ -6,6 +6,10 @@ test("humanizes common coding actions instead of exposing shell syntax", () => {
   assert.equal(humanizeTaskCommand("pnpm test -- --runInBand"), "Run tests");
   assert.equal(humanizeTaskCommand("git diff --stat"), "Review changes");
   assert.equal(humanizeTaskCommand("npx tsc --noEmit"), "Check types");
+  assert.equal(
+    humanizeTaskCommand("custom-tool --opaque=value && another-tool --flag"),
+    "Work in the project",
+  );
 });
 
 test("running summary names the latest action and explicit outcomes", () => {

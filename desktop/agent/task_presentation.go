@@ -13,6 +13,7 @@ package main
 import (
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -109,8 +110,10 @@ func (tm *TaskManager) present(task *Task, in taskPresentationInput) {
 	tm.mu.Lock()
 	ev := tm.presentLocked(task, in)
 	// Token deltas can arrive hundreds of times per second; persist the
-	// authoritative upsert/status boundaries, never each append fragment.
-	if !in.Append {
+	// authoritative upsert/status boundaries, never each append fragment. The
+	// first real token replaces the immediate acknowledgement, so it is an
+	// upsert even though the runner sent it through the append API.
+	if ev.Op != "append" {
 		tm.persistAsync()
 	}
 	tm.mu.Unlock()
@@ -143,7 +146,7 @@ func (tm *TaskManager) presentLocked(task *Task, in taskPresentationInput) TaskP
 			break
 		}
 	}
-	if in.Append && idx >= 0 {
+	if in.Append && idx >= 0 && task.Presentation[idx].State != "acknowledged" {
 		text = task.Presentation[idx].Text + text
 		op = "append"
 	}
@@ -189,6 +192,25 @@ func (tm *TaskManager) presentLocked(task *Task, in taskPresentationInput) TaskP
 		wire.Text = in.Text
 	}
 	return TaskPresentationEvent{Type: "presentation", Schema: TaskPresentationSchema, Op: op, Seq: task.PresentationSeq, Message: &wire}
+}
+
+// taskAssistantPresentationID identifies the one visible assistant message for
+// the active conversation turn. Admission, live token streaming and final
+// completion all upsert this ID so an immediate acknowledgement evolves into
+// the real answer instead of becoming a duplicate chat turn.
+func taskAssistantPresentationID(task *Task) string {
+	if task == nil {
+		return "assistant"
+	}
+	return task.ID + "-assistant-" + strconv.Itoa(len(task.Turns)+1)
+}
+
+func taskAcceptedPresentation(task *Task) taskPresentationInput {
+	return taskPresentationInput{
+		ID: taskAssistantPresentationID(task), Kind: "message", Role: "assistant",
+		Text:  "I’m on it. I’ll keep clear progress and the final result visible here.",
+		Phase: "accepted", State: "acknowledged", Surface: task.LastSurface,
+	}
 }
 
 func presentationTextBytes(messages []TaskPresentationMessage) int {

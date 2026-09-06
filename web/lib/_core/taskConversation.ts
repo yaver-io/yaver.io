@@ -81,6 +81,11 @@ export function remoteAgentConversationView(
   const stateMessage = latest(presentation, (message) =>
     message.kind !== 'message' && message.kind !== 'tool' && message.kind !== 'patch' && !!message.text.trim());
   const assistantText = clean(assistant?.text || '', 32 * 1024) || undefined;
+  // `assistantText` remains the complete semantic reply for transcript and
+  // voice consumers. Status cards need a bounded summary: putting a multi-KB
+  // final answer into a pinned mobile status surface simply recreates the raw
+  // transcript wall this contract replaced.
+  const assistantSummary = assistantText ? clean(assistantText, 420) : '';
   const semanticActivity = clean(stateMessage?.text || options.latestActivity || '');
   const pendingQuestion = clean(options.pendingQuestion || '');
 
@@ -112,7 +117,7 @@ export function remoteAgentConversationView(
   if (task.status === 'stopped') {
     return {
       state: 'stopped', tone: 'muted', eyebrow: 'STOPPED', title: 'The session was stopped',
-      detail: assistantText || 'No runner work is active.', activity: semanticActivity || undefined,
+      detail: assistantSummary || 'No runner work is active.', activity: semanticActivity || undefined,
       assistantText, isCoding: false, canCompose: true, closesTurnStream: true,
     };
   }
@@ -120,7 +125,7 @@ export function remoteAgentConversationView(
   if (task.status === 'completed') {
     return {
       state: 'completed', tone: 'success', eyebrow: 'COMPLETED', title: 'Work completed',
-      detail: assistantText || 'The task is complete.', activity: semanticActivity || undefined,
+      detail: assistantSummary || 'The task is complete.', activity: semanticActivity || undefined,
       assistantText, isCoding: false, canCompose: false, closesTurnStream: true,
     };
   }
@@ -128,7 +133,7 @@ export function remoteAgentConversationView(
   if (task.status === 'review') {
     return {
       state: 'review', tone: 'success', eyebrow: 'READY TO REVIEW', title: 'The agent says the work is fully complete',
-      detail: assistantText || semanticActivity || 'Review the result, then mark it complete or keep vibing.',
+      detail: assistantSummary || semanticActivity || 'Review the result, then mark it complete or keep vibing.',
       activity: semanticActivity || undefined,
       assistantText, nextAction: 'Review the result or send another message.',
       isCoding: false, canCompose: true, closesTurnStream: true,
@@ -156,9 +161,23 @@ export function remoteAgentConversationView(
     };
   }
 
+  // ACP-capable runners publish human narration while they work. That message
+  // is the thing the person is waiting to read; tool activity is supporting
+  // context. The old ordering ignored `assistantText` here, so a real agent
+  // update was buried in the transcript while the prominent card showed a
+  // shell-derived action instead.
+  if (assistantSummary) {
+    return {
+      state: 'working', tone: 'active', eyebrow: 'WORKING', title: 'Latest update from the agent',
+      detail: assistantSummary,
+      activity: clean(options.latestActivity || semanticActivity) || undefined,
+      assistantText, isCoding: true, canCompose: false, closesTurnStream: false,
+    };
+  }
+
   return {
     state: 'working', tone: 'active', eyebrow: 'WORKING', title: semanticActivity || 'The agent is working',
-    detail: options.latestActivity ? clean(options.latestActivity) : 'Meaningful actions will appear here as they happen.',
+    detail: options.latestActivity ? clean(options.latestActivity) : 'The agent is working. A readable update will appear here as soon as it responds.',
     activity: semanticActivity || undefined,
     assistantText, isCoding: true, canCompose: false, closesTurnStream: false,
   };

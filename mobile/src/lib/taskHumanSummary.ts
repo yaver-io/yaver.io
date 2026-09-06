@@ -79,7 +79,10 @@ export function humanizeTaskCommand(command: string): string {
   if (/\b(?:deploy|wrangler deploy|vercel|firebase deploy)\b/.test(lower)) return "Deploy updates";
   if (/\b(?:pnpm|npm|yarn|bun)\s+(?:install|i)\b|\b(?:brew|apt(?:-get)?|dnf)\s+install\b/.test(lower)) return "Install dependencies";
   if (/^(?:rg|grep|find|fd|ls|sed|cat|head|tail|wc)\b/.test(lower)) return "Inspect the project";
-  return cmd ? `Run ${cmd}` : "Run a command";
+  // The exact command remains in `HumanTaskStep.command` and the folded
+  // console. Unknown shell syntax is not a useful primary status sentence and
+  // can be hundreds of characters long, so keep the visible fallback calm.
+  return cmd ? "Work in the project" : "Run a command";
 }
 
 function commandDetail(model: CommandCardModel): string | undefined {
