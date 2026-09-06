@@ -856,106 +856,6 @@ function ThinkingBubble({ runner, deviceName }: { runner?: string; deviceName?: 
   );
 }
 
-/// Single-line streaming status: morphing braille spinner + the
-/// current derived phase ("searching", "compiling", …). Replaces
-/// the prior two-block pattern (big TypingIndicator → "Working…"
-/// label → activity-spinner → "Working…" label) at the bottom of
-/// the task detail view, and the inline PhaseChip at the top.
-/// Designed to overwrite ITSELF as the runner moves through phases
-/// rather than stack a new line for each — the user's mental model
-/// is "what is it doing right now", not "what did it do already".
-function PhaseStatusLine({ task }: { task: Task }) {
-  const c = useColors();
-  const phases = useMemo(
-    () => deriveTaskPhases(task),
-    [task.id, task.title, task.output, task.resultText, task.status]
-  );
-  const isRunning = task.status === "running" || task.status === "queued";
-  const [phaseIdx, setPhaseIdx] = useState(0);
-  const [spinIdx, setSpinIdx] = useState(0);
-  const [elapsedSec, setElapsedSec] = useState(() =>
-    Math.max(0, Math.floor((Date.now() - task.createdAt) / 1000)),
-  );
-  const fade = useRef(new Animated.Value(1)).current;
-
-  // Spinner: ~10 fps, cheap to keep alive — only mounts while the
-  // task is running.
-  useEffect(() => {
-    if (!isRunning) return;
-    const t = setInterval(() => {
-      setSpinIdx((v) => (v + 1) % PHASE_SPINNER_FRAMES.length);
-    }, 90);
-    return () => clearInterval(t);
-  }, [isRunning]);
-
-  // Elapsed timer — ticks every 1s while running. Spec B3 fallback:
-  // "Working · 4s", "Still working · 12s". Bumps a number, doesn't
-  // touch the chat surface.
-  useEffect(() => {
-    if (!isRunning) return;
-    const t = setInterval(() => {
-      setElapsedSec(Math.max(0, Math.floor((Date.now() - task.createdAt) / 1000)));
-    }, 1000);
-    return () => clearInterval(t);
-  }, [isRunning, task.createdAt]);
-
-  // Phase rotation: same 1.8s cadence + fade-flip the inline pill
-  // already used.
-  useEffect(() => {
-    if (!isRunning || phases.length <= 1) return;
-    const t = setInterval(() => {
-      Animated.sequence([
-        Animated.timing(fade, { toValue: 0.35, duration: 180, useNativeDriver: true }),
-        Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
-      ]).start();
-      setPhaseIdx((v) => (v + 1) % phases.length);
-    }, 1800);
-    return () => clearInterval(t);
-  }, [fade, isRunning, phases.length]);
-
-  if (!isRunning) return null;
-  const current = phases[phaseIdx] || phases[0];
-  const tint =
-    current?.tone === "success"
-      ? "#4ade80"
-      : current?.tone === "warm"
-        ? "#fb923c"
-        : current?.tone === "neutral"
-          ? c.textMuted
-          : "#818cf8";
-  return (
-    <Animated.View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, opacity: fade }}>
-      <Text style={{
-        color: tint,
-        fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-        fontSize: 14,
-        width: 20,
-        textAlign: "center",
-      }}>
-        {PHASE_SPINNER_FRAMES[spinIdx]}
-      </Text>
-      <Text style={{
-        color: tint,
-        fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-        fontSize: 13,
-        marginLeft: 4,
-      }}>
-        {current?.label || "working"}…
-      </Text>
-      {/* Elapsed counter — switches to "still working" past 10s so
-          the user knows the agent is alive and we're not stuck. */}
-      <Text style={{
-        color: c.textTertiary,
-        fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-        fontSize: 12,
-        marginLeft: 8,
-      }}>
-        · {elapsedSec >= 10 ? "still working " : ""}{elapsedSec}s
-      </Text>
-    </Animated.View>
-  );
-}
-
 // An agent call that fails because Convex rejected the bearer (token
 // expired / rotated-away / revoked) must NOT masquerade as a task
 // failure. The agent surfaces these as 401/403 or a "token validation"
@@ -8162,7 +8062,7 @@ export default function TasksScreen() {
                     thread and made the keyboard feel dead while the agent
                     was running. ChatBubble is React.memo'd with content
                     equality, so windowed rows skip re-render entirely.
-                    PhaseStatusLine + DebugSection ride along as
+                    DebugSection and recovery controls ride along as
                     ListFooterComponent.
 
                     NO Chat|Terminal toggle here (2026-08-09, user call):
@@ -8191,14 +8091,6 @@ export default function TasksScreen() {
                     removeClippedSubviews
                     ListFooterComponent={
                       <>
-                        {/* ThinkingBubble used to render here next to
-                            PhaseStatusLine; the two pulsing effects
-                            stacked on top of each other made the
-                            screen feel busy. The runner+model info it
-                            carried is now surfaced as a chip in the
-                            TaskHeader, so we only keep the one
-                            spinner-with-elapsed line below. */}
-                        {isRunning && <PhaseStatusLine task={selectedTask} />}
                         {selectedTask.status === "failed" && (() => {
                           const errMsg = extractTaskErrorMessage(selectedTask);
                           return (
@@ -8409,10 +8301,8 @@ export default function TasksScreen() {
                         </Text>
                         <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
                       </Pressable> : null}
-                      {/* NO running spinner here (2026-08-09, user call): the
-                          runner is already named by the chip + the status
-                          pill + the Stop button + PhaseStatusLine. A pulsing
-                          circle beside a usable composer reads as blocked. */}
+                      {/* The task header already shows running state. A second
+                          indicator beside a usable composer reads as blocked. */}
                     </View>
                     {showFollowUpOptions ? <>
                     {/* Project/MCP scope chip — SAME affordance as the New
