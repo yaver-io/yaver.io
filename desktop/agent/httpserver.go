@@ -67,6 +67,8 @@ type HTTPServer struct {
 	// locally rather than erroring — a client that names this box is asking for
 	// work this box can do.
 	localMux *http.ServeMux
+	vsrOnce     sync.Once
+	vsrSessions *vsrSessionStore
 
 	taskMgr           *TaskManager
 	errorStore        *ErrorStore // nil uses the process-wide Yaver error ledger
@@ -1610,6 +1612,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/runner/sandboxes/", s.auth(s.handleRunnerSandboxByID))
 	mux.HandleFunc("/runner/agent/sessions", s.auth(s.handleRunnerAgentSessions))
 	mux.HandleFunc("/runner/agent/sessions/", s.auth(s.handleRunnerAgentSessionByID))
+
+	// Silent Input stays on the existing authenticated peer transport. The
+	// phone sends normalized mouth crops only; sessions live in memory and are
+	// removed before inference returns.
+	mux.HandleFunc("/vsr/capabilities", s.auth(s.handleVSRCapabilities))
+	mux.HandleFunc("/vsr/session/start", s.auth(s.handleVSRSessionStart))
+	mux.HandleFunc("/vsr/session/", s.auth(s.handleVSRSession))
 
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))

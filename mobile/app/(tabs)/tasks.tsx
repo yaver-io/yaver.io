@@ -136,6 +136,7 @@ import { gitContextForSlug, runAgenticCoding } from "../../src/lib/codingAgent/c
 import { gitNetForSlug, loadCodingConfig } from "../../src/lib/codingAgent/sandboxBinding";
 import { repoSandboxForSlug } from "../../src/lib/codingAgent/repoSandbox";
 import { isRepo } from "../../src/lib/codingAgent/sandboxGit";
+import { makeYaverReadOnlyCodingTools } from "../../src/lib/codingAgent/yaverReadTools";
 import { useRouteParamsCompat } from "../../src/lib/useRouteParamsCompat";
 import { restoreTurnSnapshot, type TurnSnapshot } from "../../src/lib/codingAgent/turnTransaction";
 import { redactProgressText, redactSecrets, redactValue } from "../../src/lib/codingAgent/secretRedaction";
@@ -199,6 +200,9 @@ import { firstClassTaskConversationTurns } from "../../src/_core/taskConversatio
 import { taskRunnerControlForMessage } from "../../src/_core/taskRunnerControls";
 import { buildTaskConsolePreview } from "../../src/lib/taskConsolePreview";
 import { taskProjectExecutionSummary, workDirForTaskExecution } from "../../src/lib/taskProjectRouting";
+import { SilentInputModal } from "../../src/components/SilentInputModal";
+import { DEFAULT_SILENT_INPUT_CONFIG } from "../../src/lib/silentInput/types";
+import { loadSilentInputConfig } from "../../src/lib/silentInput/config";
 import {
   displayRunnerLabel,
   isModelCompatibleWithRunnerId,
@@ -2882,8 +2886,18 @@ export default function TasksScreen() {
     [runnerSelectionDeviceId],
   );
   const [newTaskText, setNewTaskText] = useState("");
+  const [showSilentInput, setShowSilentInput] = useState(false);
+  const [silentInputEnabled, setSilentInputEnabled] = useState(DEFAULT_SILENT_INPUT_CONFIG.enabled);
   const newTaskTextRef = useRef("");
   newTaskTextRef.current = newTaskText;
+
+  useEffect(() => {
+    let active = true;
+    void loadSilentInputConfig().then((config) => {
+      if (active) setSilentInputEnabled(config.enabled);
+    });
+    return () => { active = false; };
+  }, []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlightRef = useRef(false);
   const [taskSubmitError, setTaskSubmitError] = useState<string | null>(null);
@@ -3137,6 +3151,58 @@ export default function TasksScreen() {
       includeYaverMcp: snap.includeYaverMcp,
     });
   }, [activeDevice?.id, token]);
+  const phoneLocalYaverToolContext = useMemo<YaverAgentToolContext>(() => ({
+    devices: () => devices,
+    primaryDeviceId: () => primaryDeviceId,
+    secondaryDeviceId: () => secondaryDeviceId,
+    selectDevice: async (deviceId) => {
+      const d = devices.find((x) => x.id === deviceId);
+      if (d) await selectDevice(d);
+    },
+  }), [devices, primaryDeviceId, secondaryDeviceId, selectDevice]);
+  const phoneLocalAuditTools = useMemo(
+    () => makeYaverReadOnlyCodingTools(phoneLocalYaverToolContext),
+    [phoneLocalYaverToolContext],
+  );
+  // Cross-device + offline tmux runner-session ledger from Convex
+  // (mobile/src/lib/tmuxRunnerSessions.ts). The P2P list above only sees the
+  // CONNECTED agent; this roster shows every machine's runner seats, open or
+  // closed, even before connecting — the "always keep vibing" inventory.
+  const [convexTmuxSessions, setConvexTmuxSessions] = useState<TmuxRunnerSessionRecord[]>([]);
+  const [isLoadingConvexTmux, setIsLoadingConvexTmux] = useState(false);
+  const [convexTmuxError, setConvexTmuxError] = useState<string | null>(null);
+  const refreshConvexTmuxSessions = useCallback(async () => {
+    if (!token) {
+      setConvexTmuxSessions([]);
+      setConvexTmuxError("Sign in to load runner seats from your other machines.");
+      return;
+    }
+    setIsLoadingConvexTmux(true);
+    try {
+      const rows = await listTmuxRunnerSessions();
+      setConvexTmuxSessions(rows);
+      setConvexTmuxError(null);
+    } catch (error) {
+      setConvexTmuxError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsLoadingConvexTmux(false);
+    }
+  }, [token]);
+  // Keep cross-device runner seats visible on the main Tasks screen. Before
+  // this, the roster only loaded after opening the Tmux sheet, so a live seat
+  // could exist on another machine and still be invisible here.
+  useEffect(() => {
+    void refreshConvexTmuxSessions();
+    const t = setInterval(() => { void refreshConvexTmuxSessions(); }, 30000);
+    return () => clearInterval(t);
+  }, [refreshConvexTmuxSessions]);
+  // Refresh while the modal is open (~30s cadence) so a /exit on any machine
+  // flips its seat to closed without closing/reopening the sheet.
+  useEffect(() => {
+    if (!showTmuxSessions) return;
+    const t = setInterval(() => { void refreshConvexTmuxSessions(); }, 30000);
+    return () => clearInterval(t);
+  }, [showTmuxSessions, refreshConvexTmuxSessions]);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   // Transient inline status for the composer's ⚡ Hermes-reload action.
@@ -5110,6 +5176,7 @@ export default function TasksScreen() {
         prompt: promptText,
         config,
         mode: askModeEnabled ? "audit" : "vibe",
+        extraTools: askModeEnabled ? phoneLocalAuditTools : undefined,
         net: (await gitNetForSlug(slug)) ?? undefined,
         sandbox: repoSandboxForSlug(slug),
         signal: controller.signal,
@@ -5296,18 +5363,9 @@ export default function TasksScreen() {
       yaverAgentAbortersRef.current.set(taskId, controller);
 
       try {
-        const ctx: YaverAgentToolContext = {
-          devices: () => devices,
-          primaryDeviceId: () => primaryDeviceId,
-          secondaryDeviceId: () => null,
-          selectDevice: async (deviceId) => {
-            const d = devices.find((x) => x.id === deviceId);
-            if (d) await selectDevice(d);
-          },
-        };
         const result = await runYaverAgent({
           prompt: promptText,
-          ctx,
+          ctx: phoneLocalYaverToolContext,
           maxSteps: 6,
           signal: controller.signal,
           onProgress: (event) => {
@@ -6069,6 +6127,7 @@ export default function TasksScreen() {
           prompt: `Previous conversation:\n${prior}\n\nNew request:\n${promptText}`,
           config,
           mode: askModeEnabled ? "audit" : "vibe",
+          extraTools: askModeEnabled ? phoneLocalAuditTools : undefined,
           net: (await gitNetForSlug(slug)) ?? undefined,
           sandbox: repoSandboxForSlug(slug),
           signal: controller.signal,
@@ -6159,18 +6218,9 @@ export default function TasksScreen() {
       yaverAgentAbortersRef.current.set(taskId, controller);
 
       try {
-        const ctx: YaverAgentToolContext = {
-          devices: () => devices,
-          primaryDeviceId: () => primaryDeviceId,
-          secondaryDeviceId: () => null,
-          selectDevice: async (deviceId) => {
-            const d = devices.find((x) => x.id === deviceId);
-            if (d) await selectDevice(d);
-          },
-        };
         const result = await runYaverAgent({
           prompt: promptText,
-          ctx,
+          ctx: phoneLocalYaverToolContext,
           history,
           maxSteps: 6,
           signal: controller.signal,
@@ -8360,6 +8410,29 @@ export default function TasksScreen() {
                     >
                       <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
                     </Pressable>
+                    {silentInputEnabled && Platform.OS === "ios" ? (
+                      <Pressable
+                        style={({ pressed }) => [
+                          s.composerActionButton,
+                          { backgroundColor: c.bgCard },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          // iOS cannot present a native Modal above the task
+                          // composer Modal. Hand the surface off atomically;
+                          // the transcription returns to this same draft.
+                          setShowNewTask(false);
+                          setShowSilentInput(true);
+                        }}
+                        disabled={isSubmitting || isTranscribing || !runnerSelectionDeviceId}
+                        accessibilityRole="button"
+                        accessibilityLabel="Silent lip-reading input"
+                        testID="silent-input-button"
+                      >
+                        <Text style={{ color: c.textPrimary, fontSize: 20 }}>👄</Text>
+                      </Pressable>
+                    ) : null}
                     {(() => {
                       const isDisabled =
                         (!newTaskText.trim() && attachedImages.length === 0) ||
@@ -8424,6 +8497,25 @@ export default function TasksScreen() {
             </View>
           ) : null}
         </Modal>
+
+        {Platform.OS === "ios" && runnerSelectionDeviceId ? (
+          <SilentInputModal
+            visible={showSilentInput}
+            colors={c}
+            targetDeviceId={runnerSelectionDeviceId}
+            projectName={selectedComposerProject?.name || projectNameFromPath(projectDir) || undefined}
+            onCancel={() => {
+              setShowSilentInput(false);
+              setShowNewTask(true);
+            }}
+            onTranscription={(transcription) => {
+              newTaskTextRef.current = transcription;
+              setNewTaskText(transcription);
+              setInputFromSpeech(false);
+              setTaskSubmitError(null);
+            }}
+          />
+        ) : null}
 
         {/* Standalone picker Modal — ONLY when neither the New Task composer
             nor the task-detail Modal is up. Over any other Modal a second

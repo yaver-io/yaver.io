@@ -37,9 +37,12 @@ export function isAttachedDogfoodWebRuntime(scope: any = globalThis): boolean {
 }
 
 export function normalizedDogfoodPath(value: unknown): string {
-  const raw = String(value || "").trim().replace(/\\/g, "/");
+  const raw = String(value || "").trim();
   if (!raw) return "";
-  const withoutTrailingSlash = raw.replace(/\/+$/, "");
+  const withoutScheme = raw.replace(/^file:(\/\/)?/i, "");
+  const decoded = withoutScheme.replace(/\\/g, "/");
+  const withoutQuery = decoded.split(/[?#]/, 1)[0] || "";
+  const withoutTrailingSlash = withoutQuery.replace(/\/+$/, "");
   if (/^[A-Za-z]:$/.test(withoutTrailingSlash)) return `${withoutTrailingSlash.toLowerCase()}/`;
   if (/^[A-Za-z]:\//.test(withoutTrailingSlash)) return withoutTrailingSlash.toLowerCase();
   return withoutTrailingSlash || "/";

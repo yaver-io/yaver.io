@@ -24,6 +24,8 @@ test("detects the Yaver monorepo and mobile app as self-development", () => {
 
 test("does not classify third-party RN apps as Yaver self-development", () => {
   assert.equal(isYaverSelfDevelopmentProject("todo", "/Users/me/Workspace/todo/mobile", "git@github.com:acme/todo.git"), false);
+  assert.equal(isYaverSelfDevelopmentProject("todo", "/Users/me/Workspace/not-yaver.io-copy/mobile", ""), false);
+  assert.equal(isYaverSelfDevelopmentProject("todo", "/tmp/repo", "git@github.com:acme/yaver-io-helper.git"), false);
 });
 
 test("Yaver self-development preserves browser, Hermes, and WebRTC actions", () => {
