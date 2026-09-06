@@ -5173,7 +5173,7 @@ export class AgentClient {
       }
 
       // 3. Try direct connection as fallback
-      if (!connected && this.host) {
+      if (!connected && this.host && this.port) {
         const directUrl = agentHttpBase(this.host, this.port);
         const diag = await this.probeHealth(directUrl, this.authHeaders, 5000, "direct");
         diagnostics.push(diag);
