@@ -9588,7 +9588,7 @@ export default function TasksScreen() {
                       </Pressable> : null}
                       {/* NO running spinner here (2026-08-09, user call): the
                           runner is already named by the chip + the status
-                          pill + the Stop button + PhaseStatusLine. A pulsing
+                          pill + the header Stop action + PhaseStatusLine. A pulsing
                           circle beside a usable composer reads as blocked. */}
                     </View>
                     {showFollowUpOptions ? <>
@@ -9814,35 +9814,7 @@ export default function TasksScreen() {
                         <Ionicons name="arrow-undo-outline" size={20} color={c.textPrimary} />
                       </Pressable>
                     ) : null}
-                    {isRunning ? (
-                      <Pressable
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        style={({ pressed }) => [
-                          {
-                            width: 44, height: 44, borderRadius: 12,
-                            backgroundColor: c.errorBg,
-                            alignItems: "center", justifyContent: "center",
-                            borderWidth: 1, borderColor: c.error,
-                          },
-                          pressed && { opacity: 0.7 },
-                        ]}
-                        onPress={() => {
-                          taskHaptics.stop();
-                          Alert.alert(
-                            "Stop Task",
-                            "The AI agent will be stopped and this session will be terminated. You can send a follow-up to resume later.",
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Stop", style: "destructive", onPress: () => handleExitTask(selectedTask.id) },
-                            ]
-                          );
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel="Stop task"
-                      >
-                        <Text style={{ color: c.error, fontSize: 16, fontWeight: "700", lineHeight: 18 }}>{"■"}</Text>
-                      </Pressable>
-                    ) : (
+                    {!isRunning ? (
                       <Pressable
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         style={({ pressed }) => [
@@ -9859,7 +9831,7 @@ export default function TasksScreen() {
                       >
                         <Text style={{ color: "#fff", fontSize: 20, fontWeight: "700", lineHeight: 22 }}>↑</Text>
                       </Pressable>
-                    )}
+                    ) : null}
                   </View>
                 )}
               </View>

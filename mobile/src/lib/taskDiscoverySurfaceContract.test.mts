@@ -39,6 +39,21 @@ test("hosting details remain progressive disclosure, not primary chrome", () => 
     "the exact pane address remains available to continuation routing and details");
 });
 
+test("an active task exposes one Stop action in the fixed header", () => {
+  assert.equal(
+    [...header.matchAll(/accessibilityLabel="Stop task"/g)].length,
+    1,
+    "TaskHeader must own the single task-stop action",
+  );
+  assert.equal(
+    [...tasks.matchAll(/accessibilityLabel="Stop task"/g)].length,
+    0,
+    "the follow-up composer must not duplicate the header Stop action",
+  );
+  assert.match(tasks, /primaryAction=\{[\s\S]{0,180}isRunning \? "stop"/,
+    "running task detail must route Stop through TaskHeader");
+});
+
 test("bulk selection deletes only after each owning agent acknowledges", () => {
   assert.match(tasks, /accessibilityLabel="Select tasks"/);
   assert.match(tasks, /accessibilityLabel="Select all visible tasks"/);
