@@ -55,6 +55,8 @@ import {
 } from "../../src/lib/dogfoodThread";
 import { quicClient } from "../../src/lib/quic";
 import { speakText } from "../../src/lib/speech";
+import { startAttachSession, verifyYaverCheckout } from "../../src/lib/attachClient";
+import { dogfoodModeLabel, isDogfoodModeUser } from "../../src/lib/dogfoodAccess";
 
 const RUNNERS = ["claude-code", "codex", "opencode"];
 
@@ -91,6 +93,7 @@ export default function DogfoodScreen() {
   const [showConfig, setShowConfig] = React.useState(false);
   const [manualShot, setManualShot] = React.useState<string | null>(null);
   const [batchBusy, setBatchBusy] = React.useState(false);
+  const [startingDogfoodMode, setStartingDogfoodMode] = React.useState(false);
   const [sourceState, setSourceState] = React.useState<YaverSourceState>({
     checking: false,
     installing: false,
@@ -101,6 +104,8 @@ export default function DogfoodScreen() {
   const connected = connectionStatus === "connected" && !!activeDevice;
   const repoDir = config?.repoDir?.trim() || "";
   const vibeAvailable = !!repoDir && connected;
+  const dogfoodUser = isDogfoodModeUser(user?.email);
+  const dogfoodLabel = dogfoodModeLabel(user?.email);
 
   React.useEffect(() => subscribeDogfoodMode(setEnabled), []);
   React.useEffect(() => subscribeDogfoodThread(setItems), []);
@@ -228,10 +233,62 @@ export default function DogfoodScreen() {
     [manualShot, dispatchItems],
   );
 
+  const handleStartDogfoodMode = React.useCallback(async () => {
+    if (!dogfoodUser) return;
+    if (!activeDevice?.id || !repoDir) {
+      Alert.alert("Dogfood Mode needs a box", "Connect a box and set the Yaver checkout path first.");
+      return;
+    }
+    setStartingDogfoodMode(true);
+    try {
+      const verified = await verifyYaverCheckout(activeDevice.id, repoDir);
+      if (!verified) {
+        Alert.alert(
+          "Yaver checkout not verified",
+          "Dogfood Mode only works with the yaver.io checkout. Check the path below and try again.",
+        );
+        return;
+      }
+      const session = await startAttachSession(activeDevice.id, repoDir);
+      if (!session.ok || !session.sessionId) {
+        Alert.alert("Couldn't start Dogfood Mode", session.error || "Attach Mode could not start.");
+        return;
+      }
+      const status = await quicClient.startDevServer({
+        workDir: `${repoDir.replace(/\/+$/, "")}/mobile`,
+        framework: "expo",
+        web: true,
+      });
+      const url = (status as any)?.previewUrl || (status as any)?.bundleUrl || "";
+      if (!url) {
+        Alert.alert(
+          "Browser lane missing",
+          "The box started the preview but did not report a render URL. Check the browser lane from Projects if this keeps happening.",
+        );
+        return;
+      }
+      router.push({
+        pathname: "/attach" as any,
+        params: {
+          sessionId: session.sessionId,
+          url,
+          workDir: repoDir,
+          runner: config?.runner ?? "claude-code",
+          deviceId: activeDevice.id,
+          deviceName: activeDevice.name,
+        },
+      } as any);
+    } catch (err) {
+      Alert.alert("Couldn't start Dogfood Mode", err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setStartingDogfoodMode(false);
+    }
+  }, [activeDevice?.id, activeDevice?.name, config?.runner, dogfoodUser, repoDir, router]);
+
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <AppScreenHeader
-        title="Dogfood Yaver"
+        title={dogfoodUser ? "Dogfood Mode" : "Dogfood Yaver"}
         onBack={() => router.navigate("/(tabs)/more" as any)}
         right={
           items.length ? (
@@ -251,6 +308,37 @@ export default function DogfoodScreen() {
       />
 
       <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 120 }, tabletContent]}>
+        {dogfoodUser ? (
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700" }}>Render Yaver from your box</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4, lineHeight: 17 }}>
+              This re-renders the mobile app from the remote `yaver.io/mobile` checkout over the browser lane, so the app
+              you are holding becomes the thing you are editing.
+            </Text>
+            <Pressable
+              disabled={!vibeAvailable || startingDogfoodMode}
+              onPress={() => void handleStartDogfoodMode()}
+              style={({ pressed }) => ({
+                marginTop: 12,
+                paddingVertical: 11,
+                paddingHorizontal: 14,
+                borderRadius: 10,
+                backgroundColor: vibeAvailable ? c.accent : c.bgInput,
+                opacity: pressed || startingDogfoodMode ? 0.8 : vibeAvailable ? 1 : 0.55,
+                alignItems: "center",
+              })}
+            >
+              {startingDogfoodMode ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={{ color: vibeAvailable ? "#000" : c.textMuted, fontSize: 13, fontWeight: "800" }}>
+                  Start Dogfood Mode
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* Toggle */}
         <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -286,7 +374,9 @@ export default function DogfoodScreen() {
                 {connected ? activeDevice?.name : "No box connected"}
               </Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 3 }}>
-                {vibeAvailable ? "Vibe ready · edits + Hermes reload" : "PR mode · opens a GitHub PR"}
+                {vibeAvailable
+                  ? `${dogfoodLabel} ready · edits + browser rerender`
+                  : "PR mode · opens a GitHub PR"}
                 {repoDir ? ` · ${repoDir}` : ""}
               </Text>
             </View>
@@ -295,7 +385,7 @@ export default function DogfoodScreen() {
 
           {showConfig ? (
             <View style={{ marginTop: 14, gap: 12 }} onStartShouldSetResponder={() => true}>
-              <Field label="Yaver repo dir on the box (Vibe mode)" c={c}>
+              <Field label={`Yaver repo dir on the box (${dogfoodLabel} mode)`} c={c}>
                 <TextInput
                   value={config?.repoDir ?? ""}
                   onChangeText={(t) => patchConfig({ repoDir: t })}
@@ -389,7 +479,7 @@ export default function DogfoodScreen() {
           </View>
           {sourceState.path && sourceState.path !== repoDir ? (
             <Pressable onPress={() => sourceState.path && patchConfig({ repoDir: sourceState.path })} style={{ alignSelf: "flex-start", marginTop: 10 }}>
-              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Use this path for Vibe mode</Text>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Use this path for {dogfoodLabel} mode</Text>
             </Pressable>
           ) : null}
         </View>
@@ -418,6 +508,7 @@ export default function DogfoodScreen() {
               key={item.id}
               item={item}
               c={c}
+              dogfoodUser={dogfoodUser}
               onSendNow={(mode) => dispatchItems([item], mode)}
               onDelete={() => void removeDogfoodItem(item.id)}
               onOpenTasks={() =>
@@ -463,6 +554,7 @@ export default function DogfoodScreen() {
         imagePath={manualShot}
         defaultMode={vibeAvailable ? config?.mode ?? "vibe" : "pr"}
         vibeAvailable={vibeAvailable}
+        dogfoodUser={dogfoodUser}
         onCancel={() => setManualShot(null)}
         onConfirm={handleManualConfirm}
       />
@@ -485,12 +577,14 @@ function DogfoodCard({
   onSendNow,
   onDelete,
   onOpenTasks,
+  dogfoodUser,
 }: {
   item: DogfoodItem;
   c: any;
   onSendNow: (mode: DogfoodMode) => void;
   onDelete: () => void;
   onOpenTasks: () => void;
+  dogfoodUser: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const meta = STATUS_META[item.status];
@@ -506,7 +600,7 @@ function DogfoodCard({
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <Text style={{ color: meta.color(c), fontSize: 10, fontWeight: "800", letterSpacing: 0.4 }}>
-              {meta.label} · {item.mode === "pr" ? "PR" : "VIBE"}
+              {meta.label} · {item.mode === "pr" ? "PR" : dogfoodUser ? "DOGFOOD" : "VIBE"}
             </Text>
             <Text style={{ color: c.textMuted, fontSize: 10 }}>{timeAgo(item.createdAt)}</Text>
           </View>

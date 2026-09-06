@@ -48,6 +48,7 @@ const OWNER_ONLY_MORE_TOOLS = new Set<string>([
 import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { isOptionalMoreToolEnabled, normalizeOptionalMoreTools, type OptionalMoreToolId } from "../../src/lib/moreOptionalTools";
+import { isDogfoodModeUser } from "../../src/lib/dogfoodAccess";
 
 // ── Quality Gates types ────────────────────────────────────────────
 
@@ -3272,15 +3273,21 @@ export default function MoreScreen() {
           </Pressable>
         ) : null}
 
-        {/* Dogfood Yaver — improve Yaver with screenshots */}
+        {/* Dogfood Yaver / Dogfood Mode */}
         <Pressable
           style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
           onPress={() => router.navigate("/(tabs)/dogfood" as any)}
         >
           <Text style={[s.icon, { color: c.textMuted }]}>{"🐕"}</Text>
           <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Dogfood Yaver</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Screenshot → fix Yaver itself</Text>
+            <Text style={[s.label, { color: c.textPrimary }]}>
+              {isDogfoodModeUser(user?.email) ? "Dogfood Mode" : "Dogfood Yaver"}
+            </Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+              {isDogfoodModeUser(user?.email)
+                ? "Render Yaver from your box and fix it in place"
+                : "Screenshot → fix Yaver itself"}
+            </Text>
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
         </Pressable>

@@ -19,9 +19,19 @@ import (
 // routes after a successful coding/vibe task — but only on projects that opted
 // in (have a yaver-tests/ dir) and never for its own "testkit-grow" tasks
 // (recursion guard). Best-effort; failures are logged, never fatal.
+//
+// OPT-IN SINCE 2026-08-13: the hook only fires when the operator explicitly
+// enabled config.auto_grow_tests. Every grow task is a paid LLM run on the
+// runner's subscription/API key, so auto-queuing one after every finished
+// coding task consumed tokens the user never asked to spend. Default is OFF;
+// `yaver config set auto-grow-tests true` (MCP config_set) re-enables it.
 func maybeGrowTestsAfterTask(tm *TaskManager, task *Task) {
 	if tm == nil || task == nil {
 		return
+	}
+	cfg, err := LoadConfig()
+	if err == nil && cfg != nil && !shouldAutoGrowTests(cfg) {
+		return // opt-in gate: off by default, tokens are not free
 	}
 	if task.Status != TaskStatusFinished {
 		return // only grow after a clean success
@@ -76,6 +86,13 @@ func testkitGrowPlacementConfig(workDir string) (TaskIngressPlacementConfig, boo
 		WorkDir:       strings.TrimSpace(workDir),
 	}
 	return out, out.ConvexURL != "" && out.Token != ""
+}
+
+// shouldAutoGrowTests reports whether the zero-touch post-task grow hook
+// is enabled. Opt-in, default OFF: nil and false both mean off, so a box
+// that never opted in never spends a paid LLM run on spec authoring.
+func shouldAutoGrowTests(cfg *Config) bool {
+	return cfg != nil && cfg.AutoGrowTests != nil && *cfg.AutoGrowTests
 }
 
 func deferralPendingTaskID(deferral *taskIngressCloudDeferral) string {

@@ -1279,6 +1279,19 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// PAT to call the provider API on their behalf + commit a
 	// yaver.workspace.yaml). Not opened to SDK / guest tokens.
 	mux.HandleFunc("/git/provider/repo/create", s.auth(s.handleGitProviderRepoCreate))
+	// Remote repo browsing — the mobile git widget's detail endpoints.
+	// Register before the catch-all /git/provider/ remove handler below.
+	mux.HandleFunc("/git/provider/repo/branches", s.auth(s.handleGitProviderRepoBranches))
+	mux.HandleFunc("/git/provider/repo/commits", s.auth(s.handleGitProviderRepoCommits))
+	mux.HandleFunc("/git/provider/repo/tree", s.auth(s.handleGitProviderRepoTrees))
+	mux.HandleFunc("/git/provider/repo/file", s.auth(s.handleGitProviderRepoFile))
+	mux.HandleFunc("/git/provider/repo/readme", s.auth(s.handleGitProviderRepoReadme))
+	mux.HandleFunc("/git/provider/repo/audit", s.auth(s.handleGitProviderRepoAudit))
+	// Managed SSH key for git providers — view the current public key
+	// (to copy into GitHub/GitLab) or generate + optionally upload it.
+	// Specific route registered before the catch-all /git/provider/ remove
+	// handler below so it takes precedence.
+	mux.HandleFunc("/git/provider/ssh-key", s.auth(s.handleGitProviderSSHKey))
 	// Deploy-token onboarding (Convex / Cloudflare / npm / PyPI /
 	// TestFlight / Play). Vault-backed; values never sync to Convex.
 	// Owner-only — guests can't enumerate or save deploy secrets.
@@ -7977,6 +7990,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		safeCfg := map[string]interface{}{
 			"auto_start":       cfg.AutoStart,
 			"auto_update":      shouldAutoUpdate(cfg),
+			"auto_grow_tests":  shouldAutoGrowTests(cfg),
 			"relay_count":      len(cfg.RelayServers),
 			"acl_peers":        len(cfg.ACLPeers),
 			"email_configured": cfg.Email != nil && cfg.Email.Provider != "",
@@ -9027,6 +9041,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				return mcpToolError(fmt.Sprintf("save config: %v", err))
 			}
 			return mcpToolResult(fmt.Sprintf("headless-keep-awake set to %v", enabled))
+		case "auto-grow-tests":
+			enabled := args.Value == "true" || args.Value == "1" || args.Value == "yes"
+			cfg.AutoGrowTests = &enabled
+			if err := SaveConfig(cfg); err != nil {
+				return mcpToolError(fmt.Sprintf("save config: %v", err))
+			}
+			// Each auto-grow run is a paid LLM task on the runner's
+			// subscription/API key — say so when enabling.
+			if enabled {
+				return mcpToolResult("auto-grow-tests enabled: after each finished coding task, the runner may author yaver-tests specs for uncovered routes (paid LLM tokens)")
+			}
+			return mcpToolResult("auto-grow-tests disabled: no grow-test tasks will be auto-queued after coding tasks")
+
 		case "require-private-recovery":
 			enabled := args.Value == "true" || args.Value == "1" || args.Value == "yes"
 			cfg.RequirePrivateRecoveryTransport = enabled
@@ -9038,7 +9065,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 			return mcpToolResult("require-private-recovery disabled; /auth/recover is back to default open mode")
 		default:
-			return mcpToolError(fmt.Sprintf("Unknown config key: %s. Supported: auto-start, auto-update, headless-keep-awake, require-private-recovery", args.Key))
+			return mcpToolError(fmt.Sprintf("Unknown config key: %s. Supported: auto-start, auto-update, auto-grow-tests, headless-keep-awake, require-private-recovery", args.Key))
 		}
 
 	case "relay_test":
