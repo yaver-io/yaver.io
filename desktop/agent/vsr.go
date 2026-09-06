@@ -98,15 +98,41 @@ func (s *HTTPServer) handleVSRCapabilities(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	available, reason := vsrAvailability()
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"available":     available,
 		"backend":       "user-machine",
 		"language":      "en",
 		"mouthCropOnly": true,
 		"frame":         map[string]any{"width": vsrFrameWidth, "height": vsrFrameHeight, "format": "gray8", "fps": 25, "maxFrames": vsrMaxFrames},
 		"reason":        reason,
-		"remedy":        map[string]any{"label": "Install lip-reading backend", "method": "POST", "path": "/install/vsr", "stream": "/streams/install:vsr"},
-	})
+	}
+	if !available {
+		var gap *CapabilityGap
+		if !vsrRuntimeInstalled() {
+			// Derive the route from the same install registry used by both the
+			// CLI and POST /install/vsr. In particular, GapFix.Stream is the
+			// stream name (install:vsr), not a guessed URL path.
+			gap = capabilityGapForMissingTools([]string{"vsr"})
+		} else {
+			// The installer deliberately cannot fetch the separately licensed
+			// Auto-AVSR checkout/checkpoint. Advertising Install here would be a
+			// successful no-op followed by the same refusal.
+			gap = &CapabilityGap{
+				Code:       ReasonCapabilityToolchainMissing,
+				Capability: "vsr-model",
+				Summary:    reason,
+				Detail:     reason,
+				Constraint: "Configure a locally licensed Auto-AVSR checkout, config, and checkpoint on this machine; Yaver cannot download or license that model for you.",
+			}
+		}
+		payload["capabilityGap"] = gap
+		if gap != nil && gap.Fix != nil {
+			// Kept as a compatibility alias for older clients. New surfaces
+			// consume capabilityGap and render its typed Fix generically.
+			payload["remedy"] = gap.Fix
+		}
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *HTTPServer) handleVSRSessionStart(w http.ResponseWriter, r *http.Request) {
