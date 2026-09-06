@@ -6,6 +6,9 @@
     "allowImportingTsExtensions": true,
     "strict": true,
     "paths": {
+      "*": [
+        "./node_modules/*"
+      ],
       "@/*": [
         "./src/*"
       ]
