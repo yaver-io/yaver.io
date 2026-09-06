@@ -70,6 +70,28 @@ run_one() {
 
 # ── mobile: plain tsx, these are dependency-free primitives ────────────────
 if [[ "$ONLY" == "all" || "$ONLY" == "mobile" ]]; then
+  echo "── mobile native source integrity ──"
+  # mobile/ios is mostly generated and therefore ignored, while selected native
+  # overlays are force-tracked. A referenced-but-untracked overlay can exist in a
+  # developer checkout yet disappear on a clean release runner. Guard both the
+  # Xcode reference and Git index so local state cannot create a false green.
+  for native_source in \
+    mobile/ios/Yaver/YaverMouthCropper.swift \
+    mobile/ios/Yaver/YaverMouthCropper.m; do
+    if [[ ! -f "$native_source" ]] || ! git ls-files --error-unmatch "$native_source" >/dev/null 2>&1; then
+      printf 'FAIL %s — Xcode native overlay must exist and be tracked by Git\n' "$native_source"
+      FAIL=$((FAIL + 1))
+      FAILED_FILES+=("$native_source")
+    elif ! grep -Fq "$(basename "$native_source")" mobile/ios/Yaver.xcodeproj/project.pbxproj; then
+      printf 'FAIL %s — missing from Xcode project\n' "$native_source"
+      FAIL=$((FAIL + 1))
+      FAILED_FILES+=("$native_source")
+    else
+      printf 'ok   %s\n' "$native_source"
+      PASS=$((PASS + 1))
+    fi
+  done
+
   echo "── mobile/src/lib guards ──"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
