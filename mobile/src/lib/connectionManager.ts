@@ -28,6 +28,7 @@
 
 import { QuicClient, createQuicClient, setQuicClientResolver } from "./quic";
 import type { ConnectionPreference, TunnelServer, RelayServer } from "./quic";
+import { InflightAttemptRegistry } from "./inflightAttemptRegistry";
 
 type ManagerListener = () => void;
 
@@ -64,6 +65,10 @@ class ConnectionManager {
   private latestForceRelay = false;
   private latestToken: string | null = null;
   private latestSessionTunnels: TunnelServer[] = [];
+  // AppState belongs to the whole pool, not whichever device happens to be
+  // focused. Persist the latest value so clients created while suspended do
+  // not start retry timers until the app is active again.
+  private isForeground = true;
 
   // In-flight connect-attempt tracker. The user reported "Couldn't
   // switch · Could not reach this device" when picking a secondary
@@ -76,7 +81,7 @@ class ConnectionManager {
   // setup. We dedupe by remembering the in-flight Promise here;
   // selectDevice and the warm-up effect both go through
   // ensureConnected() instead of raw client.connect.
-  private inflightConnects = new Map<string, Promise<void>>();
+  private inflightConnects = new InflightAttemptRegistry<Promise<void>>();
 
   /** Returns the QuicClient currently treated as focused, or the fallback
    *  instance when none is set. Callers that don't care about identity
@@ -179,6 +184,7 @@ class ConnectionManager {
     if (this.latestSessionTunnels.length > 0) {
       try { fresh.setSessionTunnelServers(this.latestSessionTunnels); } catch {}
     }
+    try { fresh.setForegroundState(this.isForeground); } catch {}
     // Audit §5c (2026-07-19): every client minted in this pool needs the
     // relay-repair rung so scheduleReconnect can auto-heal a stale relay
     // credential. Registered by DeviceContext via setRelayRepairHook.
@@ -275,13 +281,15 @@ class ConnectionManager {
     if (client.isConnected) return;
     const existing = this.inflightConnects.get(id);
     if (existing) return existing;
-    const promise = client
+    let promise: Promise<void>;
+    promise = client
       .connect(params.host, params.port, params.token, id, params.lanIps, params.sessionTunnels, params.connectionPreferences)
       .finally(() => {
-        // Drop the entry whether the connect resolved or rejected so
-        // the next attempt starts fresh — leaving a rejected Promise
-        // pinned would make every retry fail with the original error.
-        this.inflightConnects.delete(id);
+        // Drop only if this Promise still owns the id. A timed-out client can
+        // be disconnected and replaced while its uncancellable Promise is
+        // still settling; unconditional cleanup here used to erase the fresh
+        // retry's dedupe entry.
+        this.inflightConnects.release(id, promise);
       });
     this.inflightConnects.set(id, promise);
     return promise;
@@ -294,8 +302,14 @@ class ConnectionManager {
   disconnect(deviceId: string): void {
     const id = deviceId.trim();
     if (!id) return;
+    // Invalidate even if the client was already removed by another path: the
+    // uncancellable connect Promise may still be registered for this id.
+    this.inflightConnects.invalidate(id);
     const client = this.clients.get(id);
     if (!client) return;
+    // Promise.race timeouts do not cancel client.connect(). Invalidating its
+    // manager-level ownership above lets the user's next Retry reach the fresh
+    // client instead of joining the retired Promise until app relaunch.
     try {
       client.disconnect();
     } catch {
@@ -312,6 +326,7 @@ class ConnectionManager {
   /** Drop every pooled client. Used on sign-out — every per-user
    *  connection must die before the next user picks up. */
   disconnectAll(): void {
+    this.inflightConnects.clear();
     for (const [, client] of this.clients) {
       try {
         client.disconnect();
@@ -411,6 +426,16 @@ class ConnectionManager {
   setSessionTunnelServersOnAll(tunnels: TunnelServer[]): void {
     this.latestSessionTunnels = [...tunnels];
     this.applyToAll((c) => c.setSessionTunnelServers(tunnels));
+  }
+
+  /**
+   * Fan native lifecycle state to every pooled connection. Forwarding it only
+   * through the focused-client Proxy left secondary/Ubuntu clients retrying in
+   * the background and prevented their resume-time stale-path proof.
+   */
+  setForegroundStateOnAll(isForeground: boolean): void {
+    this.isForeground = isForeground;
+    this.applyToAll((client) => client.setForegroundState(isForeground));
   }
 
   /** Re-probe the currently focused device after a network path change.

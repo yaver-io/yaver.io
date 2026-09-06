@@ -4236,12 +4236,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // suspended (saves battery, no spurious "failed" state on resume).
   const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
+    // The provider can mount while already inactive/backgrounded, in which
+    // case React Native emits no initial change event. Seed the whole pool
+    // from the actual current state before listening for transitions.
+    connectionManager.setForegroundStateOnAll(AppState.currentState === "active");
     const sub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
       const prevState = appStateRef.current;
       appStateRef.current = nextState;
-      quicClient.setForegroundState(nextState === "active");
+      connectionManager.setForegroundStateOnAll(nextState === "active");
       if (nextState !== "active" || !prevState.match(/inactive|background/)) return;
       if (!activeDevice || userDisconnected) return;
+      // A `connected` flag is not proof after native suspension. Each pooled
+      // client now performs a bounded /health probe above and starts its full
+      // transport ladder if stale, so this branch intentionally leaves the
+      // React state alone until that operation reports its verdict.
       if (quicClient.connectionState === "connected" || connectionStatus === "connecting") return;
       if (quicClient.reconnectAttempt > 0) {
         connectionManager.triggerReconnectFocused();
