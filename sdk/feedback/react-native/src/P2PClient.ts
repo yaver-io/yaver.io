@@ -1804,16 +1804,17 @@ export class P2PClient {
 
   /**
    * Subscribe to a task's live stdout/stderr stream. Returns an abort
-   * function — call it to detach. The agent emits NDJSON lines on
-   * `/tasks/{id}/output`; we surface each line via `onLine`.
+   * function — call it to detach. The agent emits SSE frames on the
+   * source-gated `/vibing/task/{id}/output` route; we surface each output
+   * frame via `onLine`.
    *
    * `onComplete` fires when the agent reports the task entered a
    * settled turn status (ready / review / completed / failed / stopped). After that the
    * caller should stop calling abort().
    *
-   * Robust to fetch streaming on Hermes (streams Body via Response.
-   * body.getReader on platforms that support it; falls back to
-   * polling `/tasks/{id}` every 750 ms if streaming isn't available).
+   * React Native uses XMLHttpRequest progress because Hermes fetch commonly
+   * buffers the whole response. Browser/test runtimes use fetch streaming;
+   * both fall back to source-gated polling after an interruption.
    */
   streamTaskOutput(
     taskId: string,
@@ -1822,16 +1823,81 @@ export class P2PClient {
     options?: { onEvent?: (event: Record<string, unknown>) => void },
   ): () => void {
     const ctrl = new AbortController();
+    let xhr: XMLHttpRequest | null = null;
     let closed = false;
     const close = () => {
       if (closed) return;
       closed = true;
       try { ctrl.abort(); } catch { /* ignore */ }
+      try { xhr?.abort(); } catch { /* ignore */ }
     };
+
+    const consumePayload = (payload: string) => {
+      if (!payload) return;
+      let event: Record<string, unknown> | null = null;
+      try { event = JSON.parse(payload) as Record<string, unknown>; } catch { /* raw output */ }
+      if (event) {
+        options?.onEvent?.(event);
+        if (event.type === 'output' && typeof event.text === 'string') onLine(event.text);
+      } else {
+        onLine(payload);
+      }
+    };
+    const streamUrl = `${this.baseUrl}/vibing/task/${encodeURIComponent(taskId)}/output`;
+
+    // XHR onprogress is the established Hermes streaming lane (also used for
+    // /dev/events). Waiting for fetch to resolve would wait until the task ends.
+    if (typeof XMLHttpRequest !== 'undefined') {
+      const request = new XMLHttpRequest();
+      xhr = request;
+      let parsed = 0;
+      let carry = '';
+      let handedOff = false;
+      const consume = () => {
+        const text = request.responseText || '';
+        if (text.length <= parsed) return;
+        carry += text.slice(parsed);
+        parsed = text.length;
+        const frames = carry.replace(/\r\n/g, '\n').split('\n\n');
+        carry = frames.pop() || '';
+        for (const frame of frames) {
+          const data = frame.split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).replace(/^ /, ''))
+            .join('\n');
+          consumePayload(data);
+        }
+      };
+      const handOffToPoll = (reason: string) => {
+        if (closed || handedOff) return;
+        handedOff = true;
+        options?.onEvent?.({
+          type: 'task_stream_interrupted',
+          message: 'Live updates paused. Reconnecting while the task continues on the coding machine.',
+          error: reason,
+        });
+        void pollTaskUntilDone(this, taskId, onLine, onComplete, () => closed, options?.onEvent);
+      };
+      request.open('GET', streamUrl, true);
+      for (const [key, value] of Object.entries(this.authHeaders({ Accept: 'text/event-stream' }))) {
+        try { request.setRequestHeader(key, value); } catch { /* restricted RN header */ }
+      }
+      request.onprogress = consume;
+      request.onload = () => { consume(); handOffToPoll(`stream ended with HTTP ${request.status || 0}`); };
+      request.onerror = () => handOffToPoll('connection failed');
+      request.ontimeout = () => handOffToPoll('connection timed out');
+      request.onabort = () => { if (!closed) handOffToPoll('connection aborted'); };
+      try {
+        request.send();
+      } catch (error) {
+        handOffToPoll(error instanceof Error ? error.message : String(error));
+      }
+      return close;
+    }
 
     (async () => {
       try {
-        const resp = await fetch(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}/output`, {
+        const resp = await fetch(streamUrl, {
           method: 'GET',
           headers: this.authHeaders({ Accept: 'text/event-stream' }),
           signal: ctrl.signal,
@@ -1862,18 +1928,11 @@ export class P2PClient {
               if (line.startsWith('data:')) {
                 const payload = line.slice(5).trim();
                 if (payload) {
-                  let event: Record<string, unknown> | null = null;
-                  try { event = JSON.parse(payload) as Record<string, unknown>; } catch { /* raw output */ }
-                  if (event) {
-                    // Structured events retain meaning. Shipping their JSON as
-                    // chat text was the source of the SDK's remote "runner
-                    // dump" UX. Only the groomed output lane is a text line;
-                    // semantic/task/render events go to the typed consumer.
-                    options?.onEvent?.(event);
-                    if (event.type === 'output' && typeof event.text === 'string') onLine(event.text);
-                  } else {
-                    onLine(payload);
-                  }
+                  // Structured events retain meaning. Shipping their JSON as
+                  // chat text was the source of the SDK's remote "runner
+                  // dump" UX. Only the groomed output lane is a text line;
+                  // semantic/task/render events go to the typed consumer.
+                  consumePayload(payload);
                 }
               }
             }
@@ -1885,7 +1944,7 @@ export class P2PClient {
         // fall back to visible, resumable polling.
         try {
           const final = await fetch(
-            `${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`,
+            `${this.baseUrl}/vibing/task/${encodeURIComponent(taskId)}`,
             { headers: this.authHeaders() },
           );
           if (!final.ok) throw new Error(`final task probe HTTP ${final.status}`);
@@ -2092,8 +2151,8 @@ export class P2PClient {
 
 /**
  * Fallback path used by streamTaskOutput when the platform's fetch
- * returns a Response with no streaming body (older Hermes builds).
- * Polls `/tasks/{id}` every 750 ms; surfaces newly-appended output
+ * cannot keep an SSE response open. Polls the source-gated
+ * `/vibing/task/{id}` route; surfaces newly-appended output
  * lines via `onLine`, fires `onComplete` when status is terminal.
  */
 async function pollTaskUntilDone(
@@ -2115,7 +2174,7 @@ async function pollTaskUntilDone(
   for (;;) {
     if (isClosed()) return;
     try {
-      const r = await fetch(`${c.baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+      const r = await fetch(`${c.baseUrl}/vibing/task/${encodeURIComponent(taskId)}`, {
         headers: c.authHeaders(),
       });
       const payload = (await r.json().catch(() => ({}))) as {

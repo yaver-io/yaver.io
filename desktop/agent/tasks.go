@@ -63,7 +63,7 @@ func saveImages(taskID string, images []ImageAttachment) []string {
 // TaskStatus represents the lifecycle state of a task.
 type TaskStatus string
 
-// rawOutputMaxBytes caps the in-memory raw runner-stdout tail retained on
+// rawOutputMaxBytes caps the in-memory raw runner-process tail retained on
 // the Task for the console view's `?rawSince=` replay. Raw bytes are dense
 // (ANSI + TUI redraws can exceed the groomed text 10x), so an uncapped
 // tail would hold a multi-hour opencode run hostage in RAM — same defect
@@ -76,9 +76,23 @@ const rawOutputMaxBytes = 512 * 1024
 // from advancing RawOutputOffset before a slower SSE subscriber drains the
 // channel and accidentally acknowledging bytes it has never rendered.
 type taskRawFrame struct {
+	Stream string
 	Bytes  []byte
 	Offset int64
 }
+
+// Task streams are recoverable state, not queues that may grow with runner
+// verbosity. Keep live channels shallow and retain one bounded transcript tail
+// for reconnects. At the maximum process read size this limits queued groomed
+// + raw bytes to about 1 MiB per active task instead of roughly 6 MiB.
+const (
+	taskOutputMaxBytes     = 1024 * 1024
+	taskLiveChunkMaxBytes  = 4 * 1024
+	taskOutputChannelDepth = 128
+	rawOutputChannelDepth  = 64
+)
+
+const taskOutputTruncatedMarker = "\n…[task transcript truncated — earlier runner output dropped]…\n"
 
 // rawOutputTruncatedMarker marks the head of a tail-capped raw replay so a
 // client opening the console mid-run knows the earliest bytes were dropped.
@@ -1501,7 +1515,7 @@ type Task struct {
 	cancel           context.CancelFunc
 	stdin            io.WriteCloser
 	outputCh         chan string
-	// rawOutputCh carries the runner's RAW stdout bytes — ANSI escape
+	// rawOutputCh carries the runner's RAW stdout/stderr bytes — ANSI escape
 	// sequences, cursor addressing, TUI box-drawing, everything — as they
 	// arrived from the process, BEFORE the per-runner grooming filters
 	// (opencodeStreamFilter / stripANSI) turn them into chat text. The
@@ -1775,7 +1789,7 @@ type TaskInfo struct {
 	HostKind         string `json:"hostKind,omitempty"`
 	ProjectSessionID string `json:"projectSessionId,omitempty"`
 	Output           string `json:"output,omitempty"`
-	// RawOutput is the tail of the runner's RAW stdout (ANSI escape
+	// RawOutput is the tail of the runner's RAW stdout/stderr (ANSI escape
 	// sequences, TUI redraws, box-drawing — everything the grooming filters
 	// strip) retained for the console/terminal view. Only populated on the
 	// task-detail endpoint, and wire-capped below; the SSE stream is the
@@ -2559,8 +2573,8 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		Goal:               taskRunner.Goal,
 		runner:             taskRunner,
 		CreatedAt:          now,
-		outputCh:           make(chan string, 512),
-		rawOutputCh:        make(chan taskRawFrame, 256),
+		outputCh:           make(chan string, taskOutputChannelDepth),
+		rawOutputCh:        make(chan taskRawFrame, rawOutputChannelDepth),
 		eventCh:            make(chan map[string]interface{}, 32),
 		doneCh:             make(chan struct{}),
 		WorkDir:            strings.TrimSpace(opts.WorkDir),
@@ -2871,7 +2885,10 @@ func CheckRunnerBinary(command string) error {
 	case "sh", "bash", "zsh", "dash":
 		args = []string{"-c", "exit 0"}
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
+	cmd, err := newExecutableCommandContext(ctx, runtime.GOOS, path, args...)
+	if err != nil {
+		return fmt.Errorf("prepare %s probe: %w", command, err)
+	}
 	cmd.Env = append(os.Environ(), "PATH="+expandedPath())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -3653,12 +3670,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			go func() { defer close(outputDone); tm.readRawOutput(task, stdout, stderr) }()
 		} else {
 			go func() { defer close(outputDone); tm.readStreamJSON(task, stdout) }()
-			go func() {
-				scanner := bufio.NewScanner(stderr)
-				for scanner.Scan() {
-					log.Printf("[task %s] [container stderr] %s", task.ID, scanner.Text())
-				}
-			}()
+			go tm.readRunnerProcessStream(task, "stderr", stderr)
 		}
 	} else {
 		// ── Direct execution (default) ──────────────────────────────────
@@ -3695,7 +3707,11 @@ func (tm *TaskManager) startProcess(task *Task) error {
 					return fmt.Errorf("runner not ready: %w", err)
 				}
 			}
-			cmd = exec.CommandContext(ctx, runner.Command, args...)
+			cmd, err = newRunnerCommandContext(ctx, runner.Command, args...)
+			if err != nil {
+				cancel()
+				return fmt.Errorf("prepare runner process: %w", err)
+			}
 		}
 		cmd.Dir = taskDir
 
@@ -3789,12 +3805,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			go func() { defer close(outputDone); tm.readRawOutput(task, stdout, stderr) }()
 		} else {
 			go func() { defer close(outputDone); tm.readStreamJSON(task, stdout) }()
-			go func() {
-				scanner := bufio.NewScanner(stderr)
-				for scanner.Scan() {
-					log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
-				}
-			}()
+			go tm.readRunnerProcessStream(task, "stderr", stderr)
 		}
 	} // end else (direct execution)
 
@@ -3931,8 +3942,8 @@ func (tm *TaskManager) startProcess(task *Task) error {
 					time.Sleep(backoff)
 
 					// Re-create channels for the new process
-					task.outputCh = make(chan string, 512)
-					task.rawOutputCh = make(chan taskRawFrame, 256)
+					task.outputCh = make(chan string, taskOutputChannelDepth)
+					task.rawOutputCh = make(chan taskRawFrame, rawOutputChannelDepth)
 					task.eventCh = make(chan map[string]interface{}, 32)
 					task.doneCh = make(chan struct{})
 
@@ -4104,7 +4115,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 				task.ResultText = ""
 				task.FinishedAt = nil
 				task.Status = TaskStatusQueued
-				task.outputCh = make(chan string, 512)
+				task.outputCh = make(chan string, taskOutputChannelDepth)
 				task.eventCh = make(chan map[string]interface{}, 32)
 				task.doneCh = make(chan struct{})
 				tm.persist()
@@ -4271,7 +4282,7 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 				// console view on mobile + web feeds these exact bytes to
 				// xterm.js, so an opencode run paints its TUI the way it
 				// does in a real terminal. See emitRaw.
-				tm.emitRaw(task, payload)
+				tm.emitRunnerProcessChunk(task, name, payload)
 				if ocFilter := ocFilters[name]; ocFilter != nil {
 					payload = ocFilter.process(payload)
 				} else if stripLiveANSI {
@@ -4425,7 +4436,7 @@ func (tm *TaskManager) armPromptEchoGuard(task *Task, prompt string) {
 	tm.mu.Unlock()
 }
 
-// emitRaw retains the runner's RAW stdout bytes — ANSI and all — for the
+// emitRaw retains runner evidence bytes — ANSI and all — for the
 // console view, BEFORE the per-runner grooming filters strip them. Called
 // once per raw chunk in readRawOutput, immediately after the read, so the
 // retained tail is byte-for-byte what the process wrote to the terminal.
@@ -4438,6 +4449,10 @@ func (tm *TaskManager) armPromptEchoGuard(task *Task, prompt string) {
 //     `GET /tasks/{id}/output?rawSince=` replays to a late-joining or
 //     reconnecting console client.
 func (tm *TaskManager) emitRaw(task *Task, chunk []byte) {
+	tm.emitRunnerProcessChunk(task, "stdout", chunk)
+}
+
+func (tm *TaskManager) retainRunnerProcessChunk(task *Task, stream string, chunk []byte) {
 	if task == nil || len(chunk) == 0 {
 		return
 	}
@@ -4462,7 +4477,7 @@ func (tm *TaskManager) emitRaw(task *Task, chunk []byte) {
 	} else {
 		task.RawOutput = retained
 	}
-	frame := taskRawFrame{Bytes: cp, Offset: task.RawOutputOffset}
+	frame := taskRawFrame{Stream: stream, Bytes: cp, Offset: task.RawOutputOffset}
 	tm.mu.Unlock()
 	select {
 	case task.rawOutputCh <- frame:
@@ -4473,11 +4488,24 @@ func (tm *TaskManager) emitRaw(task *Task, chunk []byte) {
 // emit pushes text to both the output buffer and the streaming channel.
 func (tm *TaskManager) emit(task *Task, output *strings.Builder, text string) {
 	output.WriteString(text)
+	if output.Len() > taskOutputMaxBytes {
+		full := output.String()
+		keep := taskOutputMaxBytes - len(taskOutputTruncatedMarker)
+		start := alignToRuneStart(full, len(full)-keep)
+		retained := taskOutputTruncatedMarker + full[start:]
+		output.Reset()
+		output.WriteString(retained)
+	}
 	tm.mu.Lock()
 	task.Output = output.String()
 	tm.mu.Unlock()
+	liveText := text
+	if len(liveText) > taskLiveChunkMaxBytes {
+		keep := alignToRuneStart(liveText, taskLiveChunkMaxBytes)
+		liveText = liveText[:keep] + "\n…[live chunk trimmed; retained in task transcript]…\n"
+	}
 	select {
-	case task.outputCh <- text:
+	case task.outputCh <- liveText:
 	default:
 	}
 	if reason := runtimeRenderReasonFromTaskOutput(text); reason != "" {
@@ -5134,8 +5162,8 @@ func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAtt
 	task.Status = TaskStatusQueued
 
 	// Re-create channels for the new run
-	task.outputCh = make(chan string, 512)
-	task.rawOutputCh = make(chan taskRawFrame, 256)
+	task.outputCh = make(chan string, taskOutputChannelDepth)
+	task.rawOutputCh = make(chan taskRawFrame, rawOutputChannelDepth)
 	task.eventCh = make(chan map[string]interface{}, 32)
 	task.doneCh = make(chan struct{})
 
@@ -5251,6 +5279,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	}
 
 	var cmd *exec.Cmd
+	var err error
 	var tmuxEnvAdditions []string
 	tmuxTarget := tmuxRunnerTargetForTask(task, runner.RunnerID)
 	if tmuxTarget.Session != "" {
@@ -5277,7 +5306,11 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 		task.TmuxWindowName = ""
 		task.TmuxPaneIndex = ""
 		task.TmuxPaneID = ""
-		cmd = exec.CommandContext(ctx, runner.Command, args...)
+		cmd, err = newRunnerCommandContext(ctx, runner.Command, args...)
+		if err != nil {
+			cancel()
+			return fmt.Errorf("prepare runner process: %w", err)
+		}
 	}
 	cmd.Dir = resumeWorkDir
 	cmd.Env = taskEnv(task)
@@ -5340,12 +5373,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 		go tm.readRawOutput(task, stdout, stderr)
 	} else {
 		go tm.readStreamJSON(task, stdout)
-		go func() {
-			scanner := bufio.NewScanner(stderr)
-			for scanner.Scan() {
-				log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
-			}
-		}()
+		go tm.readRunnerProcessStream(task, "stderr", stderr)
 	}
 
 	go func() {
@@ -5389,8 +5417,8 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 				task.ResultText = ""
 				task.FinishedAt = nil
 				task.Status = TaskStatusQueued
-				task.outputCh = make(chan string, 512)
-				task.rawOutputCh = make(chan taskRawFrame, 256)
+				task.outputCh = make(chan string, taskOutputChannelDepth)
+				task.rawOutputCh = make(chan taskRawFrame, rawOutputChannelDepth)
 				task.eventCh = make(chan map[string]interface{}, 32)
 				task.doneCh = make(chan struct{})
 				tm.persist()
@@ -5842,8 +5870,8 @@ func (tm *TaskManager) CreateChainedTasks(tasks []ChainedTaskInput, model, sourc
 			LastUserMessageAt:  &now,
 			runner:             taskRunner,
 			CreatedAt:          now,
-			outputCh:           make(chan string, 512),
-			rawOutputCh:        make(chan taskRawFrame, 256),
+			outputCh:           make(chan string, taskOutputChannelDepth),
+			rawOutputCh:        make(chan taskRawFrame, rawOutputChannelDepth),
 			eventCh:            make(chan map[string]interface{}, 32),
 			doneCh:             make(chan struct{}),
 			ChainID:            chainID,
@@ -6011,7 +6039,7 @@ func (tm *TaskManager) autoRetryTask(task *Task) bool {
 	task.ResultText = ""
 	task.Status = TaskStatusQueued
 	task.FinishedAt = nil
-	task.outputCh = make(chan string, 512)
+	task.outputCh = make(chan string, taskOutputChannelDepth)
 	task.eventCh = make(chan map[string]interface{}, 32)
 	task.doneCh = make(chan struct{})
 

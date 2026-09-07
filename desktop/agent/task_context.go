@@ -204,7 +204,7 @@ Web / WebView preview rules:
 - Use web_preview_reload or the web-preview reload action when the user asks for a refresh.
 - Use web_preview_stop or POST /dev/web-preview/stop to shut the preview down.
 - Finishing code is not permission to replace the user's current preview. Do not reload merely because files changed.
-- When your changes affect visible UI, say "UI updates are ready" in the response. Yaver turns that into a Render updates button by default, or may render automatically when the user enabled Auto-render Vibing mode.
+- When your changes affect visible UI, call yaver_request_render once after the change is ready. Yaver turns that typed signal into a Render updates button by default, or may render automatically when the user enabled Auto-render Vibing mode. If the tool is unavailable, say "UI updates are ready" as a compatibility fallback.
 - If the user explicitly asks to reload, re-render, or refresh, execute that request once it is safe.
 
 Remote visual feedback:

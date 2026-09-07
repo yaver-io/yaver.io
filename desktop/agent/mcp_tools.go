@@ -208,6 +208,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "yaver_request_render",
+			"description": "Signal that visible UI changes are ready to render. This is advisory: by default Yaver shows a Render updates action, and auto-render runs only when the user explicitly enabled it and the coding turn is safe. Call once after completing a visible UI change; do not call for backend/docs-only work or merely because a task completed. Requires YAVER_TASK_ID.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"reason"},
+				"properties": map[string]interface{}{
+					"reason": map[string]interface{}{
+						"type": "string", "enum": []string{"ui-change", "web-preview", "native-preview", "user-request"},
+						"description": "Why one render is warranted.",
+					},
+					"summary": map[string]interface{}{
+						"type": "string", "description": "Short user-facing description of what is ready to inspect.",
+					},
+				},
+			},
+		},
+		{
 			"name":        "access_policy_check",
 			"description": "F5 Access-Layer Policy Guard. Call BEFORE automating a gated source to check whether an {action} on a {source} is permitted from a {jurisdiction}. Returns {decision: allow|warn|block, reason, category}. It BLOCKS jurisdiction-illegal funding/betting (e.g. foreign sportsbooks from Turkey), WARNS on account actions (login/signup) in such jurisdictions, and ALLOWS public-data reading everywhere. Unknown sources => allow (it does not over-block legitimate automation). You MUST honor a 'block' (do not place/fund bets) and surface a 'warn' to the user. This is the boundary that keeps remote-hands legitimate.",
 			"inputSchema": map[string]interface{}{

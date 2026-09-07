@@ -149,3 +149,19 @@ func newRuntimeCommandContext(ctx context.Context, name string, args ...string) 
 func newRuntimeCommand(name string, args ...string) (*exec.Cmd, error) {
 	return newRuntimeCommandContext(context.Background(), name, args...)
 }
+
+// newRunnerCommandContext is the single spawn boundary for first-class coding
+// runners. CheckRunnerReady records the exact executable it exercised; use that
+// path here instead of asking CreateProcess/exec.LookPath a second, weaker
+// question. This matters on launchd/systemd hosts (the runner can live outside
+// the daemon PATH) and on Windows where npm exposes codex/claude/opencode as
+// .cmd shims that must be invoked through cmd.exe.
+func newRunnerCommandContext(ctx context.Context, command string, args ...string) (*exec.Cmd, error) {
+	resolved := strings.TrimSpace(command)
+	if path, ok := cachedRunnerBinaryPath(resolved); ok {
+		resolved = path
+	} else if path := resolveRunnerBinary(resolved); path != "" {
+		resolved = path
+	}
+	return newExecutableCommandContext(ctx, runtime.GOOS, resolved, args...)
+}

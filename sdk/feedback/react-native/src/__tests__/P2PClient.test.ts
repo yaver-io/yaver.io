@@ -46,6 +46,48 @@ describe('P2PClient', () => {
 				expect.objectContaining({ type: 'presentation_snapshot', schema: 1 }),
 			]));
 			expect(lines).toEqual(['runner bytes']);
+			expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:18080/vibing/task/task-1/output');
+			expect(mockFetch.mock.calls[1][0]).toBe('http://localhost:18080/vibing/task/task-1');
+		});
+
+		it('uses XHR progress for live task SSE on Hermes', async () => {
+			const originalXHR = (global as any).XMLHttpRequest;
+			let openedUrl = '';
+			class MockXHR {
+				responseText = '';
+				status = 200;
+				onprogress: (() => void) | null = null;
+				onload: (() => void) | null = null;
+				onerror: (() => void) | null = null;
+				onabort: (() => void) | null = null;
+				ontimeout: (() => void) | null = null;
+				open(_method: string, url: string) { openedUrl = url; }
+				setRequestHeader() {}
+				send() {
+					this.responseText = 'data: {"type":"output","text":"live bytes"}\n\n';
+					this.onprogress?.();
+					this.onload?.();
+				}
+				abort() {}
+			}
+			(global as any).XMLHttpRequest = MockXHR;
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve({ task: { status: 'completed', output: '', presentation: [] } }),
+			});
+			try {
+				const client = new P2PClient('http://localhost:18080', 'oauth-token');
+				const lines: string[] = [];
+				await new Promise<void>((resolve) => {
+					client.streamTaskOutput('task-1', (line) => lines.push(line), () => resolve());
+				});
+				expect(openedUrl).toBe('http://localhost:18080/vibing/task/task-1/output');
+				expect(lines).toEqual(['live bytes']);
+				expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:18080/vibing/task/task-1');
+			} finally {
+				if (originalXHR === undefined) delete (global as any).XMLHttpRequest;
+				else (global as any).XMLHttpRequest = originalXHR;
+			}
 		});
 
 		it('never converts an uncertain stream end into task completion', async () => {

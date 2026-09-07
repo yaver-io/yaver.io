@@ -172,7 +172,7 @@ func TestRawLiveFrames(t *testing.T) {
 		// Buffered before the handler's select drains it; 256-deep channel,
 		// so no drops.
 		offset += int64(len(c))
-		task.rawOutputCh <- taskRawFrame{Bytes: c, Offset: offset}
+		task.rawOutputCh <- taskRawFrame{Stream: "stdout", Bytes: c, Offset: offset}
 	}
 
 	frames := collectSSEFrames(t, srv.URL+"/tasks/"+taskID+"/output?rawSince=0")
@@ -181,6 +181,9 @@ func TestRawLiveFrames(t *testing.T) {
 	for _, f := range frames {
 		if f["type"] == "raw" {
 			rawTypes++
+			if f["stream"] != "stdout" {
+				t.Fatalf("raw frame stream = %#v, want stdout", f["stream"])
+			}
 			joined.WriteString(fmt.Sprint(f["text"]))
 		}
 	}

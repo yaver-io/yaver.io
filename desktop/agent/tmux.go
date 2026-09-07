@@ -1192,10 +1192,21 @@ func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, key, target st
 				continue
 			}
 
-			// Emit new lines through the task's output channel
-			m.taskMgr.mu.Lock()
+			// Preserve the adopted terminal bytes in the same P2P raw/typed lane
+			// as Yaver-owned runner processes. An arbitrary TUI cannot be turned
+			// into a truthful semantic chat stream, but stdout must not disappear
+			// merely because Yaver attached after the process started.
+			m.taskMgr.mu.RLock()
 			task, ok := m.taskMgr.tasks[taskID]
-			if ok {
+			m.taskMgr.mu.RUnlock()
+			if !ok || task == nil {
+				continue
+			}
+			m.taskMgr.emitRunnerProcessChunk(task, "pty", []byte(newContent))
+
+			// Emit new lines through the groomed task output channel.
+			m.taskMgr.mu.Lock()
+			if current, stillPresent := m.taskMgr.tasks[taskID]; stillPresent && current == task {
 				task.Output += newContent
 				// Truncate stored output to last 50000 chars
 				if len(task.Output) > 50000 {
@@ -1219,6 +1230,9 @@ func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, key, target st
 				}
 			}
 			m.taskMgr.mu.Unlock()
+			if reason := runtimeRenderReasonFromTaskOutput(newContent); reason != "" {
+				emitRuntimeRenderRequested(task, reason, newContent)
+			}
 			m.taskMgr.present(task, taskPresentationInput{
 				ID: task.ID + "-activity", Kind: "status",
 				Text:  "The adopted runner produced new terminal output. Open Details to inspect it.",
