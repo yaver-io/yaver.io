@@ -456,7 +456,11 @@ func (tm *TaskManager) runRunnerACPPrompt(ctx context.Context, client *acpClient
 	workDir := tm.effectiveTaskWorkDir(task)
 	tm.mu.Unlock()
 
-	go saveSessionFile(&sessionTask, runnerName, workDir)
+	// Complete the local history write before publishing doneCh. Callers use the
+	// done event as the terminal lifecycle boundary (and tests may tear down the
+	// task HOME immediately afterward), so leaving this write detached can race
+	// cleanup and occasionally lose the just-finished session.
+	saveSessionFile(&sessionTask, runnerName, workDir)
 	closeTaskStream(task.outputCh)
 	closeTaskDone(task.doneCh)
 }
