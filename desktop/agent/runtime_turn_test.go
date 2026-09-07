@@ -161,28 +161,25 @@ func TestRuntimeTurnEnqueuesIdeaAsTaskWhenRequested(t *testing.T) {
 	}
 }
 
-func TestRuntimeTurnStatusMapsCompletedTaskToReadyToTest(t *testing.T) {
+func newRuntimeTurnStatusFixture(t *testing.T, status TaskStatus) (*HTTPServer, RuntimeTurnQueueItem) {
+	t.Helper()
 	withIsolatedRuntimeQueue(t)
 	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
-	tm.DummyMode = true
-	server := &HTTPServer{taskMgr: tm}
-	resp := executeRuntimeTurn(OpsContext{Ctx: context.Background(), Server: server}, RuntimeTurnRequest{
-		Utterance: "fix the startup flicker",
-		Development: RuntimeTurnDevelopment{
-			Queue: RuntimeTurnQueuePrefs{Mode: "enqueue-or-run"},
-		},
+	task := &Task{ID: "runtime-turn-status", Status: status}
+	tm.mu.Lock()
+	tm.tasks[task.ID] = task
+	tm.mu.Unlock()
+	item := runtimeQueue.add(&RuntimeTurnQueueItem{
+		State:  runtimeQueueStateRunning,
+		TaskID: task.ID,
 	})
-	if resp.Queue == nil || resp.Queue.TaskID == "" {
-		t.Fatalf("expected task-backed queue item: %+v", resp)
-	}
-	task, ok := tm.GetTask(resp.Queue.TaskID)
-	if !ok {
-		t.Fatalf("task not found")
-	}
-	task.Status = TaskStatusFinished
-	task.ResultText = "Done. Tests pass."
+	return &HTTPServer{taskMgr: tm}, item
+}
 
-	status := runtimeTurnStatus(OpsContext{Server: server}, resp.Queue.ItemID)
+func TestRuntimeTurnStatusMapsCompletedTaskToReadyToTest(t *testing.T) {
+	server, item := newRuntimeTurnStatusFixture(t, TaskStatusFinished)
+
+	status := runtimeTurnStatus(OpsContext{Server: server}, item.ItemID)
 	if !status.OK {
 		t.Fatalf("status failed: %+v", status)
 	}
@@ -198,18 +195,9 @@ func TestRuntimeTurnStatusMapsCompletedTaskToReadyToTest(t *testing.T) {
 // phone. Selling that as test-ready is the inventory-vs-operation trap, so the
 // default must stay "unverified" until a reload is actually attempted.
 func TestRuntimeTurnReadyToTestIsUnverifiedUntilReloadAttempted(t *testing.T) {
-	withIsolatedRuntimeQueue(t)
-	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
-	tm.DummyMode = true
-	server := &HTTPServer{taskMgr: tm}
-	resp := executeRuntimeTurn(OpsContext{Ctx: context.Background(), Server: server}, RuntimeTurnRequest{
-		Utterance:   "fix the startup flicker",
-		Development: RuntimeTurnDevelopment{Queue: RuntimeTurnQueuePrefs{Mode: "run"}},
-	})
-	task, _ := tm.GetTask(resp.Queue.TaskID)
-	task.Status = TaskStatusFinished
+	server, item := newRuntimeTurnStatusFixture(t, TaskStatusFinished)
 
-	status := runtimeTurnStatus(OpsContext{Server: server}, resp.Queue.ItemID)
+	status := runtimeTurnStatus(OpsContext{Server: server}, item.ItemID)
 	if status.TestTarget.State != "unverified" {
 		t.Fatalf("testTarget.state = %q, want unverified", status.TestTarget.State)
 	}
