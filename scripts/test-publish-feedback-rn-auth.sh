@@ -17,4 +17,14 @@ grep -q 'npm login --auth-type=web' "$SCRIPT" || {
   exit 1
 }
 
-echo "PASS: feedback SDK publish authenticates before installing dependencies"
+grep -q 'NPM_PUBLISH_VERIFY_TIMEOUT_SECONDS:-300' "$SCRIPT" || {
+  echo "FAIL: accepted npm publishes need a registry-processing verification window" >&2
+  exit 1
+}
+
+grep -q 'npm accepted .* but did not serve it within' "$SCRIPT" || {
+  echo "FAIL: publish verification failure must distinguish acceptance from registry visibility" >&2
+  exit 1
+}
+
+echo "PASS: feedback SDK publish authenticates early and tolerates registry processing"
