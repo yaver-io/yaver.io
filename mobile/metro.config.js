@@ -54,6 +54,18 @@ config.resolver.extraNodeModules = {
   ...pinnedCoreModules,
 };
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // isomorphic-git exposes a Node-specific CommonJS condition that imports
+  // the built-in `crypto` module. Expo's release asset pass can assert that
+  // condition even for an iOS archive, which makes Metro select index.cjs and
+  // fail after the native build has already spent minutes compiling. The ESM
+  // entry is the package's portable implementation (sha.js + Web APIs), so
+  // pin it for every React Native surface. Do the same for its web transport
+  // subpath to keep both imports on one module format.
+  const portableGitModule = moduleName === "isomorphic-git"
+    ? path.join(mobileNodeModules, "isomorphic-git", "index.js")
+    : moduleName === "isomorphic-git/http/web"
+      ? path.join(mobileNodeModules, "isomorphic-git", "http", "web", "index.js")
+      : null;
   // Expo normally aliases react-native to react-native-web. The shared-SDK
   // pin must preserve that platform decision; forcing the native package on
   // web imports ReactFabric and fails the entire RN-web bundle before #root
@@ -61,7 +73,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   const pinned = moduleName === "react-native" && platform === "web"
     ? path.join(mobileNodeModules, "react-native-web")
     : pinnedCoreModules[moduleName];
-  return context.resolveRequest(context, pinned || moduleName, platform);
+  return context.resolveRequest(context, portableGitModule || pinned || moduleName, platform);
 };
 
 if (!config.resolver.assetExts.includes("bin")) {
