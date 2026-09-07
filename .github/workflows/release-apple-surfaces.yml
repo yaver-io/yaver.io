@@ -78,6 +78,7 @@ jobs:
           "$RUNNER_TEMP/apple-release-venv/bin/python" -m pip install \
             --disable-pip-version-check PyJWT cryptography requests
           echo "$RUNNER_TEMP/apple-release-venv/bin" >> "$GITHUB_PATH"
+          echo "YAVER_PYTHON=$RUNNER_TEMP/apple-release-venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Upload tvOS to TestFlight
         run: ./deploy/deploy.sh tvos
