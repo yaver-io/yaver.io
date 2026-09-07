@@ -50,7 +50,6 @@ struct SessionView: View {
     @State private var error: String?
     @State private var boxUnreachable = false
     @StateObject private var lifecycle = BoxLifecycle()
-    @FocusState private var promptFocused: Bool
     @State private var editingRequest = 0
 
     /// The runner PTYs live on the box right now, and which one we drive.

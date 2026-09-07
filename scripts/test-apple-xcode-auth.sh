@@ -122,6 +122,8 @@ done
 tvos_deploy="$ROOT/scripts/deploy-tvos.sh"
 grep -Fq '*/Xcode*.app/Contents/Developer/usr/bin/xcodebuild)' "$tvos_deploy" || \
   fail "deploy-tvos.sh must accept versioned full-Xcode app names used by CI"
+[ "$(grep -c '@FocusState private var promptFocused' "$ROOT/tvos/YaverTV/Views/SessionView.swift")" -eq 1 ] || \
+  fail "tvOS SessionView must declare prompt focus exactly once"
 grep -q -- '--upload) UPLOAD=1; shift ;;' "$tvos_deploy" || \
   fail "deploy-tvos.sh --upload must advance the argument parser"
 grep -q -- '--simulator) SIM_MODE=1; shift ;;' "$tvos_deploy" || \
