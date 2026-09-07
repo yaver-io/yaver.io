@@ -56,6 +56,9 @@ export default function EmptyState({ icon, title, body, action, link, busy }: Em
         <Pressable
           onPress={action.onPress}
           disabled={action.busy}
+          accessibilityRole="button"
+          accessibilityLabel={action.label}
+          accessibilityState={{ disabled: !!action.busy }}
           style={({ pressed }) => [
             styles.action,
             {
@@ -71,7 +74,15 @@ export default function EmptyState({ icon, title, body, action, link, busy }: Em
       ) : null}
 
       {link ? (
-        <Pressable onPress={link.onPress} disabled={link.busy} hitSlop={8} style={styles.link}>
+        <Pressable
+          onPress={link.onPress}
+          disabled={link.busy}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={link.label}
+          accessibilityState={{ disabled: !!link.busy }}
+          style={styles.link}
+        >
           <Text style={[styles.linkText, { color: c.accent }]}>{link.label}</Text>
         </Pressable>
       ) : null}

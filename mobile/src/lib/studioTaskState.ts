@@ -37,6 +37,10 @@ export function mergeTaskSnapshot(current: Task, snapshot: Task): Task {
   return {
     ...current,
     ...snapshot,
+    // sendTask stamps createdAt when this client observed acceptance. Keep it
+    // across compact list refreshes: replacing it with a skewed remote wall
+    // clock made a just-created task instantly look stalled on the phone.
+    createdAt: current.createdAt || snapshot.createdAt,
     status,
     turns: snapshot.turns ?? current.turns,
     pendingFollowUps: snapshot.pendingFollowUps ?? current.pendingFollowUps,

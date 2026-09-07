@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // printerClient — drives a 3D printer cell (Bambu Lab P1/P1S/A1/X1) over the
 // YAVER MESH, addressed by device, with YOUR bearer + machine:"local" (LAN-first,
 // relay fallback). Mirrors armClient/robotClient transport. Discovery is
@@ -94,7 +95,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

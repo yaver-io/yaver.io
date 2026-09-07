@@ -451,22 +451,22 @@ func directAgentBaseCandidates(target *DeviceInfo) []string {
 			}
 			for _, p := range ports {
 				if ip.To4() != nil {
-					add(fmt.Sprintf("http://%s:%d", host, p))
+					add(agentHTTPBase(host, p))
 				} else {
-					add(fmt.Sprintf("http://[%s]:%d", host, p))
+					add(agentHTTPBase(host, p))
 				}
 			}
 			continue
 		}
 		if strings.HasSuffix(strings.ToLower(host), ".local") {
 			for _, p := range ports {
-				add(fmt.Sprintf("http://%s:%d", host, p))
+				add(agentHTTPBase(host, p))
 			}
 			continue
 		}
 		add(fmt.Sprintf("https://%s", host))
 		for _, p := range ports {
-			add(fmt.Sprintf("http://%s:%d", host, p))
+			add(agentHTTPBase(host, p))
 		}
 	}
 	return out
@@ -507,9 +507,9 @@ func publicAgentBaseCandidates(target *DeviceInfo) []string {
 		// it does its own URL stripping on the device-list payload. Try the
 		// registered port then the canonical 18080 default — same stale-port
 		// rescue as directAgentBaseCandidates.
-		add(fmt.Sprintf("http://%s:%d", base, port))
+		add(agentHTTPBase(base, port))
 		if port != 18080 {
-			add(fmt.Sprintf("http://%s:%d", base, 18080))
+			add(agentHTTPBase(base, 18080))
 		}
 	}
 	return out

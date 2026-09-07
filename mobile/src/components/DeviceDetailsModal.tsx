@@ -1,3 +1,4 @@
+import { urlHost } from "../lib/urlHost";
 // Mobile mirror of web/components/dashboard/DevicesView.tsx →
 // DeviceDetailsPanel + ConnectionSection. Surfaces the same
 // transport classification, relay version, LAN/Tailscale/Cloudflare
@@ -211,7 +212,7 @@ function stripSSHHost(raw: string | undefined): string {
   if (!text) return "";
   try {
     if (text.startsWith("http://") || text.startsWith("https://")) {
-      return new URL(text).host;
+      return new URL(text).hostname.replace(/^\[|\]$/g, "");
     }
   } catch {}
   return text.replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -1930,7 +1931,7 @@ function WirelessPhonesSection({ device }: { device: Device }) {
       }
       // Direct LAN fallback (works only when the phone is on the same
       // WiFi as the agent — same trade-off as the rest of the modal).
-      candidates.push(`http://${device.host}:${device.port}`);
+      candidates.push(`http://${urlHost(device.host)}:${device.port}`);
       let lastErr = "no candidates";
       for (const base of candidates) {
         if (cancelled) return;

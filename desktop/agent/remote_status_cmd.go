@@ -772,7 +772,13 @@ func renderRemoteAgentStatusError(ctx context.Context, deviceID string, err erro
 	if hostLabel != "" {
 		fmt.Printf("  host:           %s\n", hostLabel)
 	}
-	if target != nil && !target.IsOnline {
+	if localNetworkUnavailable(err) {
+		// Every attempted operation failed in this process before a packet
+		// could leave the caller. Do not turn that into a claim about the
+		// remote lifecycle (or prescribe remote re-auth): we have not measured
+		// the remote machine at all.
+		fmt.Println("  status:         unknown (this machine has no route to the network)")
+	} else if target != nil && !target.IsOnline {
 		// Convex hasn't seen a heartbeat in 5+ minutes. Not necessarily
 		// offline-as-in-unplugged — the box could just have its agent
 		// stopped or unauth'd. We can still SSH to it.
@@ -795,6 +801,8 @@ func renderRemoteAgentStatusError(ctx context.Context, deviceID string, err erro
 func classifyRemoteStatusError(err error, target *DeviceInfo) (cause, hint string) {
 	msg := strings.ToLower(err.Error())
 	switch {
+	case localNetworkUnavailable(err):
+		return "this machine has no usable network route", "connect this machine to the internet, then retry `yaver ssh primary`; the primary device was not tested"
 	case target != nil && !target.IsOnline:
 		return "device offline (last heartbeat too old)", "ssh into the box and run `yaver serve`, or check `systemctl --user status yaver`"
 	case strings.Contains(msg, "device not connected to relay"):
@@ -815,6 +823,22 @@ func classifyRemoteStatusError(err error, target *DeviceInfo) (cause, hint strin
 		// session). `--json` is still suggested for the raw list.
 		return "every transport candidate failed", "run `yaver primary auth` to re-sign in on the primary device, or `yaver primary status --json` for the raw error list"
 	}
+}
+
+// localNetworkUnavailable recognizes failures produced by the caller's kernel
+// before any remote endpoint was reached. This must outrank heartbeat and relay
+// heuristics: during the 2026-09-07 incident macOS had a self-assigned
+// 169.254/16 address and no default IPv4 route. Both the direct agent leg and
+// relay leg returned "network is unreachable", but `yaver primary status`
+// called the remote box "bootstrap" and prescribed remote re-auth. The
+// operation had measured only the local Mac.
+func localNetworkUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "network is unreachable") ||
+		strings.Contains(msg, "no route to host")
 }
 
 // probeSSHReachable does a quick TCP dial to port 22 against each plausible

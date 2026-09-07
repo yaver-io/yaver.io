@@ -66,7 +66,7 @@ type HTTPServer struct {
 	// handlePeerProxy to serve a self-targeted /peer/<thisDevice>/<path> call
 	// locally rather than erroring — a client that names this box is asking for
 	// work this box can do.
-	localMux *http.ServeMux
+	localMux    *http.ServeMux
 	vsrOnce     sync.Once
 	vsrSessions *vsrSessionStore
 
@@ -4046,7 +4046,10 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 	// authoritative byte length (rawOffset) so a client can seed a terminal
 	// and resume the raw stream from `?rawSince=<rawOffset>` without overlap.
 	rawOutput := task.RawOutput
-	rawOffset := len(rawOutput)
+	rawOffset := task.RawOutputOffset
+	if rawOffset == 0 && rawOutput != "" {
+		rawOffset = int64(len(strings.TrimPrefix(rawOutput, rawOutputTruncatedMarker)))
+	}
 	if len(rawOutput) > taskWireRawOutputCap {
 		rawOutput = rawOutput[len(rawOutput)-taskWireRawOutputCap:]
 	}
@@ -4826,20 +4829,26 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 	if rawSinceRequested {
 		s.taskMgr.mu.RLock()
 		fullRaw := task.RawOutput
-		s.taskMgr.mu.RUnlock()
-		rawSince := 0
-		if n, err := strconv.Atoi(r.URL.Query().Get("rawSince")); err == nil && n > 0 {
-			rawSince = n
+		rawBase := task.RawOutputBase
+		rawOffset := task.RawOutputOffset
+		if rawOffset == 0 && fullRaw != "" {
+			rawOffset = rawBase + int64(len(strings.TrimPrefix(fullRaw, rawOutputTruncatedMarker)))
 		}
-		rawFull := rawSince <= 0 || rawSince > len(fullRaw)
+		s.taskMgr.mu.RUnlock()
+		rawSince := int64(0)
+		if n, err := strconv.Atoi(r.URL.Query().Get("rawSince")); err == nil && n > 0 {
+			rawSince = int64(n)
+		}
+		retainedRaw := strings.TrimPrefix(fullRaw, rawOutputTruncatedMarker)
+		rawFull := rawSince <= 0 || rawSince < rawBase || rawSince > rawOffset
 		rawReplay := fullRaw
 		if !rawFull {
 			// Same rune-backup as the groomed slice: `rawSince` arrives as
 			// JS UTF-16 units; slicing mid-rune ships invalid UTF-8.
-			rawSince = alignToRuneStart(fullRaw, rawSince)
-			rawReplay = fullRaw[rawSince:]
+			relativeSince := int(rawSince - rawBase)
+			relativeSince = alignToRuneStart(retainedRaw, relativeSince)
+			rawReplay = retainedRaw[relativeSince:]
 		}
-		rawOffset := len(fullRaw)
 		if rawReplay != "" || rawFull {
 			fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
 				"type":   "raw_replay",
@@ -5044,16 +5053,16 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 			// AFTER emitRaw retained this chunk (emitRaw appends before it
 			// sends), so a client that re-subscribes with `?rawSince=<offset>`
 			// never re-renders bytes it already drew.
-			s.taskMgr.mu.RLock()
-			rawOff := len(task.RawOutput)
-			s.taskMgr.mu.RUnlock()
-			if len(raw) > maxStreamChunkBytes {
-				keep := alignToRuneStart(string(raw), maxStreamChunkBytes)
-				raw = raw[:keep]
+			rawBytes := raw.Bytes
+			rawOff := raw.Offset
+			if len(rawBytes) > maxStreamChunkBytes {
+				keep := alignToRuneStart(string(rawBytes), maxStreamChunkBytes)
+				rawOff -= int64(len(rawBytes) - keep)
+				rawBytes = rawBytes[:keep]
 			}
 			fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
 				"type":   "raw",
-				"text":   string(raw),
+				"text":   string(rawBytes),
 				"offset": rawOff,
 			}))
 			flusher.Flush()

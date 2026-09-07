@@ -55,6 +55,9 @@ func TestNormalizedEndpointMatches(t *testing.T) {
 
 func TestPublicEndpointsWithAutoIP_AppendsAndSkipsWhenDisabled(t *testing.T) {
 	t.Cleanup(resetAutoPublicIPCache)
+	originalIPv6Source := autoPublicIPv6EndpointSource
+	autoPublicIPv6EndpointSource = func(*Config, int) []string { return nil }
+	t.Cleanup(func() { autoPublicIPv6EndpointSource = originalIPv6Source })
 
 	// Pre-warm the cache so detectAutoPublicIP() returns immediately
 	// without doing real network probes.
@@ -84,5 +87,24 @@ func TestPublicEndpointsWithAutoIP_AppendsAndSkipsWhenDisabled(t *testing.T) {
 	got = publicEndpointsWithAutoIP(cfg, 18080)
 	if len(got) != 1 || got[0] != "203.0.113.42" {
 		t.Fatalf("manual entry should suppress auto duplicate; got %v", got)
+	}
+}
+
+func TestPublicEndpointsWithAutoIPPublishesIPv6BeforeIPv4(t *testing.T) {
+	t.Cleanup(resetAutoPublicIPCache)
+	originalIPv6Source := autoPublicIPv6EndpointSource
+	autoPublicIPv6EndpointSource = func(*Config, int) []string {
+		return []string{"http://[2001:db8::42]:18080"}
+	}
+	t.Cleanup(func() { autoPublicIPv6EndpointSource = originalIPv6Source })
+	autoPublicIPCache.mu.Lock()
+	autoPublicIPCache.ip = "203.0.113.42"
+	autoPublicIPCache.ts = time.Now()
+	autoPublicIPCache.mu.Unlock()
+
+	got := publicEndpointsWithAutoIP(&Config{}, 18080)
+	want := []string{"http://[2001:db8::42]:18080", "http://203.0.113.42:18080"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dual-stack endpoints = %v, want %v", got, want)
 	}
 }

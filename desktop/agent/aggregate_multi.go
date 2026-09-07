@@ -58,7 +58,7 @@ func fetchOneMachine(ctx context.Context, m MachineInfo, path string, body []byt
 	base := localAgentBase()
 	if !m.IsLocal && m.QuicHost != "" {
 		// For remote agents, hit the LAN/Tailscale address directly if we can.
-		base = fmt.Sprintf("http://%s:%d", m.QuicHost, m.QuicPort)
+		base = agentHTTPBase(m.QuicHost, m.QuicPort)
 	}
 	method := "GET"
 	var reader io.Reader

@@ -7,9 +7,82 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestVSRCapabilitiesCarriesHonestTypedRecovery(t *testing.T) {
+	t.Run("missing runtime offers the real streamed installer", func(t *testing.T) {
+		capabilityGapTestWithHeadroom(t)
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("YAVER_VSR_COMMAND", "")
+		w := httptest.NewRecorder()
+		(&HTTPServer{}).handleVSRCapabilities(w, httptest.NewRequest(http.MethodGet, "/vsr/capabilities", nil))
+
+		var got struct {
+			Available     bool           `json:"available"`
+			CapabilityGap *CapabilityGap `json:"capabilityGap"`
+			Remedy        *GapFix        `json:"remedy"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != http.StatusOK || got.Available || got.CapabilityGap == nil || got.CapabilityGap.Fix == nil {
+			t.Fatalf("missing runtime must carry a fix: status=%d body=%s", w.Code, w.Body)
+		}
+		if got.CapabilityGap.Fix.Path != "/install/vsr" || got.CapabilityGap.Fix.Stream != "install:vsr" {
+			t.Fatalf("wrong VSR install route: %+v", got.CapabilityGap.Fix)
+		}
+		if got.Remedy == nil || got.Remedy.Path != got.CapabilityGap.Fix.Path || got.Remedy.Stream != got.CapabilityGap.Fix.Stream {
+			t.Fatalf("legacy remedy drifted from typed fix: remedy=%+v fix=%+v", got.Remedy, got.CapabilityGap.Fix)
+		}
+	})
+
+	t.Run("installed runtime with missing licensed model has no fake installer", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("YAVER_VSR_COMMAND", "")
+		python, adapter := vsrRuntimePaths()
+		if err := os.MkdirAll(filepath.Dir(python), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{python, adapter} {
+			if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w := httptest.NewRecorder()
+		(&HTTPServer{}).handleVSRCapabilities(w, httptest.NewRequest(http.MethodGet, "/vsr/capabilities", nil))
+
+		var got struct {
+			CapabilityGap *CapabilityGap `json:"capabilityGap"`
+			Remedy        *GapFix        `json:"remedy"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.CapabilityGap == nil || got.CapabilityGap.Fix != nil || got.CapabilityGap.Constraint == "" {
+			t.Fatalf("model gap must explain its constraint without a fake fix: %s", w.Body)
+		}
+		if got.Remedy != nil {
+			t.Fatalf("model gap must not advertise the library installer: %+v", got.Remedy)
+		}
+	})
+
+	t.Run("available override has no gap", func(t *testing.T) {
+		t.Setenv("YAVER_VSR_COMMAND", "custom-vsr")
+		w := httptest.NewRecorder()
+		(&HTTPServer{}).handleVSRCapabilities(w, httptest.NewRequest(http.MethodGet, "/vsr/capabilities", nil))
+		var got map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["available"] != true || got["capabilityGap"] != nil || got["remedy"] != nil {
+			t.Fatalf("available VSR must not carry a recovery action: %s", w.Body)
+		}
+	})
+}
 
 func TestVSRRejectsFullOrMalformedFrames(t *testing.T) {
 	t.Setenv("YAVER_VSR_COMMAND", os.Args[0]+" -test.run=TestVSRHelper")

@@ -23,6 +23,41 @@ const RELAY_LOCATION_CANDIDATES: Record<string, string[]> = {
 // selector ranks by gross €/h so an expensive box is never picked.
 const RELAY_MIN_REQ = { minCores: 1, minRamGb: 2, minDiskGb: 20, architecture: "x86" as const };
 
+/** Hetzner returns the routed IPv6 /64; the server owns the first address. */
+export function hetznerPrimaryIPv6(prefix: unknown): string | undefined {
+  const network = String(prefix || "").trim().split("/", 1)[0];
+  if (!network || !network.includes(":")) return undefined;
+  return network.endsWith("::") ? `${network}1` : network;
+}
+
+async function createRelayDNSRecords(args: {
+  token: string;
+  zoneId: string;
+  name: string;
+  ipv4: string;
+  ipv6?: string;
+}): Promise<void> {
+  const addresses = [
+    { type: "A", content: args.ipv4 },
+    ...(args.ipv6 ? [{ type: "AAAA", content: args.ipv6 }] : []),
+  ];
+  await Promise.all(addresses.map(async ({ type, content }) => {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${args.zoneId}/dns_records`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${args.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ type, name: args.name, content, proxied: false, ttl: 60 }),
+      },
+    );
+    const data = await response.json() as any;
+    if (!data.success) console.error(`Cloudflare ${type} DNS error:`, data.errors);
+  }));
+}
+
 /** First region-group location where ANY sufficient server type is orderable. */
 async function pickRelayLocation(token: string, region: string): Promise<string | undefined> {
   const candidates = RELAY_LOCATION_CANDIDATES[String(region || "eu").startsWith("us") ? "us" : "eu"];
@@ -122,6 +157,7 @@ ${envLines}
     cat > /etc/nginx/sites-available/relay <<'NGINX'
     server {
         listen 80;
+        listen [::]:80;
         server_name ${args.domain};
         location / {
             proxy_pass http://127.0.0.1:8080;
@@ -285,22 +321,19 @@ export const provision = internalAction({
             relayId: args.relayId,
             hetznerServerId: existingHost.serverId,
             serverIp: existingHost.serverIp,
+            serverIpv6: existingHost.serverIpv6,
             domain,
           });
           // The tenant still gets its OWN canonical hostname pointing at the
           // shared host, so its relay URL is stable and independent of which
           // box it happens to sit on today.
-          await fetch(
-            `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records`,
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${CF_API_TOKEN}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                type: "A", name: subdomain, content: existingHost.serverIp,
-                proxied: false, ttl: 60,
-              }),
-            },
-          ).catch(() => { /* DNS is best-effort; IP-direct still works */ });
+          await createRelayDNSRecords({
+            token: CF_API_TOKEN,
+            zoneId: CF_ZONE_ID,
+            name: subdomain,
+            ipv4: existingHost.serverIp,
+            ipv6: existingHost.serverIpv6,
+          }).catch(() => { /* DNS is best-effort; IP-direct still works */ });
           console.log(`[provision] Relay ${domain} joined shared host ${hostKey} (${slot?.reason ?? ""})`);
           await ctx.scheduler.runAfter(60_000, internal.provisionRelay.healthCheck, {
             relayId: args.relayId, domain,
@@ -368,32 +401,20 @@ export const provision = internalAction({
       const hetznerData = await hetznerResp.json() as any;
       const serverId = String(hetznerData.server.id);
       const serverIp = hetznerData.server.public_net.ipv4.ip;
+      const serverIpv6 = hetznerPrimaryIPv6(hetznerData.server.public_net.ipv6?.ip);
 
       // ── Step 2: Add Cloudflare DNS record ─────────────────────
 
-      const cfResp = await fetch(
-        `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${CF_API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            type: "A",
-            name: subdomain,
-            content: serverIp,
-            proxied: false,
-            ttl: 60,
-          }),
-        }
-      );
-
-      const cfData = await cfResp.json() as any;
-      if (!cfData.success) {
-        console.error("Cloudflare DNS error:", cfData.errors);
-        // Don't fail — DNS can be added manually
-      }
+      await createRelayDNSRecords({
+        token: CF_API_TOKEN,
+        zoneId: CF_ZONE_ID,
+        name: subdomain,
+        ipv4: serverIp,
+        ipv6: serverIpv6,
+      }).catch((error) => {
+        // Don't fail provisioning — IP-direct remains available.
+        console.error("Cloudflare DNS error:", error);
+      });
 
       // ── Step 3: Update Convex with server details ─────────────
 
@@ -401,6 +422,7 @@ export const provision = internalAction({
         relayId: args.relayId,
         hetznerServerId: serverId,
         serverIp,
+        serverIpv6,
         domain,
       });
 
@@ -520,16 +542,15 @@ export const deprovision = internalAction({
           { headers: { "Authorization": `Bearer ${CF_API_TOKEN}` } }
         );
         const listData = await listResp.json() as any;
-        if (listData.result?.length > 0) {
-          const recordId = listData.result[0].id;
-          await fetch(
-            `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${recordId}`,
+        await Promise.all((listData.result ?? []).map((record: { id: string }) =>
+          fetch(
+            `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${record.id}`,
             {
               method: "DELETE",
               headers: { "Authorization": `Bearer ${CF_API_TOKEN}` },
-            }
-          );
-        }
+            },
+          ),
+        ));
       } catch (e) {
         console.error("[deprovision] DNS cleanup failed:", e);
       }

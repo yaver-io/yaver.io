@@ -1,3 +1,4 @@
+import { urlHost } from "../../src/lib/urlHost";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -2079,7 +2080,7 @@ export default function MoreScreen() {
     // re-pairing a known machine is one-tap. For a brand-new
     // headless box this will be empty — user types it in.
     if (activeDevice?.host && activeDevice?.port) {
-      setPairUrl(`http://${activeDevice.host}:${activeDevice.port}`);
+      setPairUrl(`http://${urlHost(activeDevice.host)}:${activeDevice.port}`);
     } else {
       setPairUrl("");
     }
@@ -2105,7 +2106,7 @@ export default function MoreScreen() {
     setPairSuccess(null);
     setPairExpired(false);
     setPairHost(dev.name || dev.deviceId);
-    setPairUrl(`http://${dev.ip}:${dev.port}`);
+    setPairUrl(`http://${urlHost(dev.ip)}:${dev.port}`);
     if (dev.bootstrapPasskey) {
       setPairCode(dev.bootstrapPasskey);
     }

@@ -250,7 +250,7 @@ func newACPTestTask(suffix string) *Task {
 		CreatedAt:   time.Now(),
 		runner:      runner,
 		outputCh:    make(chan string, 32),
-		rawOutputCh: make(chan []byte, 32),
+		rawOutputCh: make(chan taskRawFrame, 32),
 		eventCh:     make(chan map[string]interface{}, 32),
 		doneCh:      make(chan struct{}),
 	}

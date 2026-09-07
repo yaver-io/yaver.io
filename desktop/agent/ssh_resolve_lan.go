@@ -150,6 +150,19 @@ func tcpPortDialable(host, port string, timeout time.Duration) bool {
 	return true
 }
 
+// firstDialableHost tries address-family candidates in their advertised order.
+// This is deliberately family-neutral: on an IPv6-only caller an older cached
+// IPv4 endpoint fails immediately and the next IPv6 endpoint can still win.
+func firstDialableHost(candidates []string, port string, timeout time.Duration) string {
+	for _, raw := range candidates {
+		host := strings.TrimSpace(raw)
+		if host != "" && tcpPortDialable(host, port, timeout) {
+			return host
+		}
+	}
+	return ""
+}
+
 // localInterfacePrivateIPv4s collects RFC1918 IPv4 addresses on every
 // non-loopback interface that's UP. Used as the "what subnet am I
 // on?" probe for pickReachableLanIP.

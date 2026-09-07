@@ -30,7 +30,8 @@ test("the Y is draggable, visible by default, and can hide itself", () => {
 test("the native library menu owns stateful runtime, tasks, and settings", () => {
   assert.match(menu, /active \? \(/);
   assert.match(menu, /Reload Dogfood/);
-  assert.match(menu, />Exit Dogfood</);
+  assert.match(menu, /'Exit Dogfood'/);
+  assert.match(menu, /'Stop Dogfood'/);
   assert.match(menu, /Launch Dogfood/);
   assert.match(menu, />Tasks</);
   assert.match(menu, />Settings</);

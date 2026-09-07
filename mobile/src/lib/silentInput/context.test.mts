@@ -12,8 +12,8 @@ test("silent input vocabulary is dynamic, bounded, and de-duplicated", () => {
   assert.ok(terms.length <= 80);
 });
 
-test("experimental silent input defaults to explicit-send local privacy", () => {
-  assert.equal(DEFAULT_SILENT_INPUT_CONFIG.enabled, true);
+test("experimental silent input is opt-in and keeps explicit-send privacy", () => {
+  assert.equal(DEFAULT_SILENT_INPUT_CONFIG.enabled, false);
   assert.equal(DEFAULT_SILENT_INPUT_CONFIG.backend, "user-machine");
   assert.equal(DEFAULT_SILENT_INPUT_CONFIG.autoSend, false);
   assert.equal(DEFAULT_SILENT_INPUT_CONFIG.sendFullVideo, false);

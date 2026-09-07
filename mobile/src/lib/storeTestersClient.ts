@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // storeTestersClient — drives Yaver's app-store TESTER + BUILD management over
 // the YAVER MESH (LAN-first, relay fallback, your bearer, machine:"local").
 // Backed by the store_* MCP ops verbs (desktop/agent/ops_store.go →
@@ -31,7 +32,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

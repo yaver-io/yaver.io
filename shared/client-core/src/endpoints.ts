@@ -68,3 +68,12 @@ export const RELAY_ENDPOINTS = {
   presence: '/presence',
   forDevice: (deviceId: string) => `/d/${encodeURIComponent(deviceId)}`,
 } as const;
+
+import { urlHost } from './urlHost';
+export { urlHost } from './urlHost';
+
+/** Build an agent HTTP origin without duplicating IPv4-only interpolation at
+ * every client surface. Paths should be appended by the caller. */
+export function agentHttpBase(host: string, port = 18080): string {
+  return `http://${urlHost(host)}:${port}`;
+}

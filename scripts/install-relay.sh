@@ -211,6 +211,7 @@ fi
 cat > /etc/nginx/sites-available/yaver-relay <<NGINX
 server {
     listen 80;
+    listen [::]:80;
     server_name ${DOMAIN};
 
     location / {

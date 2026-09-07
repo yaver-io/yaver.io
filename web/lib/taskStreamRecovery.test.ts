@@ -50,7 +50,7 @@ test("only an interruption schedules a reattach", () => {
   }
 });
 
-test("reattach narrates progress and cause without inventing a task verdict", () => {
+test("reattach narrates compact progress and cause without inventing a task verdict", () => {
   const plan = planStreamRecovery({
     end: "interrupted",
     attempt: 1,
@@ -58,14 +58,13 @@ test("reattach narrates progress and cause without inventing a task verdict", ()
   });
   assert.equal(plan.action, "reattach");
   if (plan.action !== "reattach") return;
-  assert.match(plan.message, /live output \(2 of 5\)/i, "must count attempts for the user");
-  assert.match(plan.message, /has not reported a failure/i, "must distinguish stream evidence from task state");
+  assert.match(plan.message, /reconnecting 2\/5/i, "must count attempts for the user");
   assert.doesNotMatch(plan.message, /still running/i, "must not claim liveness without a fresh task probe");
   assert.match(plan.message, /device not connected to relay/, "must preserve the cause");
   assert.equal(plan.delayMs, reattachDelayMs(1));
 });
 
-test("give-up names the route back and never blames the task", () => {
+test("give-up preserves the task verdict and transport cause", () => {
   const plan = planStreamRecovery({
     end: "interrupted",
     attempt: MAX_REATTACH_ATTEMPTS,
@@ -73,10 +72,24 @@ test("give-up names the route back and never blames the task", () => {
   });
   assert.equal(plan.action, "give-up");
   if (plan.action !== "give-up") return;
-  assert.match(plan.message, /has not reported a failure/i);
-  assert.match(plan.message, /Reattach/, "give-up must offer a route, not just a verdict");
-  assert.match(plan.message, /Reconnect/);
+  assert.match(plan.message, /task status is unchanged/i);
   assert.match(plan.message, /relay 502/);
+});
+
+test("deterministic HTTP failures do not waste five retries", () => {
+  const missing = planStreamRecovery({ end: "interrupted", attempt: 0, httpStatus: 404 });
+  assert.equal(missing.action, "give-up");
+  if (missing.action === "give-up") assert.match(missing.message, /does not have this task/i);
+
+  const expired = planStreamRecovery({ end: "interrupted", attempt: 0, httpStatus: 401 });
+  assert.equal(expired.action, "give-up");
+  if (expired.action === "give-up") assert.match(expired.message, /authorization/i);
+
+  assert.equal(
+    planStreamRecovery({ end: "interrupted", attempt: 0, httpStatus: 429 }).action,
+    "reattach",
+    "rate limits are transient and stay on the bounded ladder",
+  );
 });
 
 test("backoff is bounded and monotonic", () => {
@@ -118,6 +131,8 @@ test("mobile task output uses the relay's real SSE lane", () => {
   const body = src.slice(start, start + 9000);
   assert.match(body, /xhr\.open\("GET", url, true\)/, "task output must be a GET subscription");
   assert.match(body, /setRequestHeader\("Accept", "text\/event-stream"\)/, "relay streaming detection needs the SSE Accept header");
+  assert.match(body, /HEADERS_RECEIVED/, "task output must preserve an HTTP rejection before onloadend flattens it");
+  assert.match(body, /httpStatus/, "task output must report the HTTP status to recovery policy");
   assert.doesNotMatch(body, /xhr\.open\("POST", url, true\)/, "POST falls into the relay's buffered 60s lane");
 });
 

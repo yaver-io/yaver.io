@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // robotClient — drives a robot cell over the YAVER MESH, addressed by device
 // (docs/yaver-robot-fleet-mesh-design.md). It reaches the chosen device's agent
 // with YOUR bearer + machine:"local" — NOT the gateway proxy (which forwards the
@@ -185,7 +186,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

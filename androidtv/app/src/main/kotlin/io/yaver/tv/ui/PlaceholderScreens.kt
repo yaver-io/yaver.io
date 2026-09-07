@@ -407,16 +407,6 @@ private fun TaskCard(task: TaskRow, onClick: () -> Unit) {
             (primaryUpdate ?: task.presentation.lastOrNull { it.kind != "message" })?.let { summary ->
                 Text(summary.text, color = TvColors.TextSecondary, fontSize = 16.sp, maxLines = 2)
             }
-            val execution = listOfNotNull(
-                task.yaverSessionId?.let { "yaver $it" },
-                task.remoteBoxId?.let { "box $it" },
-                task.sessionId?.let { "runner $it" },
-                (task.tmuxSession ?: task.tmuxSessionId)?.let { "tmux $it" },
-                task.tmuxPaneId,
-            ).joinToString(" · ")
-            if (execution.isNotEmpty()) {
-                Text(execution, color = TvColors.TextSecondary, fontSize = 13.sp, maxLines = 1)
-            }
         }
         Text("Select ›", color = TvColors.TextSecondary, fontSize = 17.sp)
     }

@@ -1,6 +1,6 @@
 # Managed-Cloud CI Absorption — killing the GitHub/GitLab bill as a managed-cloud value prop
 
-> **Status:** design-only, 2026-06-08. Strategy + architecture, no code written.
+> **Status:** Model 1 exists in code; security/reliability hardening is in progress (audited 2026-09-06). The code, tests, and live forge probes remain authoritative.
 > **Frame:** the inverse customer to `roadmap_ci_solo_developer_lower_costs.md`.
 
 ## The gap this fills
@@ -352,18 +352,18 @@ The invoice line writes itself: *"Yaver ran your CI for **$1.46**. GitHub
 Actions would have billed **$489**. You saved **$487**."* — and it's debited
 honestly against the same `prepaidCredits` wallet as every other managed meter.
 
-## Surfaces (agent + web + mobile), 2026-06-08
+## Surfaces (agent + web + mobile), audited 2026-09-06
 
 Wired across all three surfaces via the self-registering ops verbs (web/mobile
 drive them over the relay/LAN, mirroring the `arm` feature — no central-router
 edit):
 
-- **Agent verbs:** `ci_runner_register` / `_list` / `_remove` / `_status`,
+- **Agent verbs:** `ci_runner_preflight` / `_register` / `_list` / `_remove` / `_status`,
   `ci_workflow_scaffold`, `ci_workflow_targets` (`ops_ci.go`). Workflow
-  scaffolder `ci_workflows.go` generates `runs-on: [self-hosted, yaver]`
-  pipelines for **test / npm / testflight / play-internal** (TestFlight pins
-  `os:darwin` — run the 10× macOS build on your own Mac for $0; Play pins
-  `os:linux`), returning the YAML + the GitHub Actions secrets to set.
+  scaffolder `ci_workflows.go` generates GitHub workflow files or GitLab
+  include fragments for **test / npm / testflight / play-internal**. Store
+  release jobs are manual; GitLab runner creation additionally enforces tagged,
+  project-locked, protected-ref-only execution.
 - **Web:** `web/components/dashboard/CIRunnerView.tsx` + route
   `web/app/dashboard/ci/page.tsx` (`/dashboard/ci`). Device picker → register
   form (provider/repo/scope/isolation/where) → registrations list+remove →
@@ -375,20 +375,19 @@ edit):
 Both UIs are standalone routes (same bar as the shipped `arm` feature — not yet
 in a launcher menu).
 
-## Build status (2026-06-08) — FULLY WIRED (agent + backend), uncommitted
+## Build status (2026-09-06) — wired, hardened tranche under verification
 
-The Model 1 adapter is end-to-end wired and unit-tested. The only parts not
-exercisable in-session are the live forge job (needs a real repo + admin token +
-a long-poll) and live billing (deliberately dormant — `YAVER_MANAGED_METER_LIVE`
-off + per-user `ci` opt-in). `go build ./...` = 0; 14 new Go tests + the privacy
-guard pass; `npx convex codegen` = 0.
+The Model 1 adapter is end-to-end wired. Registration now performs a real local
+storage/isolation probe and an exact private-project probe before persistence or
+success. Focused tests cover the safety fields and cleanup lifecycle; live
+GitLab job execution and billing remain unverified in this slice.
 
 **Agent (`desktop/agent/`):**
 - `ci_selfhosted_runner.go` — both seams REAL now (no stubs):
-  - **SEAM 1** `mintRunnerRegistrationToken` → `githubRegistrationTokenURL`
-    (repo/org/GHES) + `fetchRegistrationToken` (real POST, token via
-    `detectGitHubToken`/`detectGitLabToken`). GitLab needs a numeric project_id
-    (honest error otherwise).
+  - **SEAM 1** `prepareCIRegistration` + `mintCIRunnerLease` verifies free disk,
+    the requested isolation operation, credentials, exact project visibility,
+    and the first runner lease. GitLab namespace paths resolve to canonical
+    numeric IDs; callers do not need to discover IDs by hand.
   - **SEAM 2** `runEphemeralRunner` — both providers wired:
     - **GitHub** → `githubRunnerDownloadURL` + `ensureGitHubRunnerExtracted`
       (download+untar once) + `ghRunnerConfigArgs` (`--ephemeral --unattended`) +
@@ -398,19 +397,22 @@ guard pass; `npx convex codegen` = 0.
       `ensureGitLabRunner` (download the binary once) + `gitlabRunnerRunArgs`
       (`run-single --max-builds 1` — GitLab's one-shot ≈ GitHub `--ephemeral`);
       host→`shell` executor, container→`docker` (default `alpine:latest`).
-    - per-run work dir wiped on return (teardown).
+    - per-run work dir wiped on return. GitLab runner records are deleted by
+      one-use auth token (PAT+ID fallback); GitHub cancellation cleanup deletes
+      only the exact generated runner name.
   - `CIManager` singleton (Register/Unregister/ResumeAll/Status) + per-reg
     `CISupervisor` ephemeral loop, sharing the HTTPServer `RunnerStore` so CI
     runs surface in the Runs tab.
   - `defaultCIMeter` → local savings ledger `~/.yaver/runner/ci-savings.jsonl`
     (`readCISavingsSummary` aggregates it) + best-effort
     `managedMeter:recordCIUsageFromAgent`.
-- `ops_ci.go` — self-registering verbs `ci_runner_register` / `_list` /
+- `ops_ci.go` — self-registering verbs `ci_runner_preflight` / `_register` / `_list` /
   `_remove` / `_status` (web/mobile/CLI drive via callOps; no httpserver edit).
 - `main.go` — one boot line: `go resumeCIRunnersOnBoot(ctx, httpServer.ensureRunnerStore())`.
-- `ci_selfhosted_runner_test.go` — 14 tests (savings/COGS math, download URL,
-  registration-token URL, label dedup, forge URL, store CRUD+defaults,
-  `fetchRegistrationToken` via httptest, config args, numeric/shell-join).
+- `ci_selfhosted_runner_test.go` — focused tests cover pricing math, URL/label
+  construction, durable-store failure, low-disk recovery routing, protected
+  GitLab creation+deletion, exact-name GitHub cleanup, cancellation, checksum
+  parsing, and both forge scaffold formats.
 - `convex_privacy_test.go` — `TestCIUsageAgentPayload_isCounterOnly` pins the
   meter payload to non-secret counters.
 
@@ -439,12 +441,14 @@ CI runs auto-join it. The docker-network lifecycle is verified live on macOS
 (`TestCIJailNetworkLifecycleLive`); the iptables firewall is Linux-only and not
 yet exercised on a real Linux box (the rule builders are unit-tested).
 
-**Remaining to flip on for a paying user:** (1) flip `YAVER_MANAGED_METER_LIVE`
-+ surface the `ci` capability on the CapabilityShelf (launch/billing call); (2)
-verify the iptables firewall on a real Linux operator box; (3) a fork-PR approval
-gate (needs webhook ingestion — Model 3). Both GitHub and GitLab private-repo
-host/container paths are complete; the GitHub path is verified live on a real
-registered box.
+**Remaining before calling this production-ready:** verify a real GitLab job and
+record cleanup; pin and cryptographically verify both downloaded runner release
+artifacts (the GitLab binary currently checks the release SHA-256 over HTTPS);
+add a crash-recovery journal for records left by SIGKILL/power loss; run host
+mode only from a dedicated macOS CI account/box; verify the Linux egress jail;
+and keep public/internal repos and organization runners refused until an
+untrusted-job approval+jail contract exists. Billing enablement remains a
+separate launch decision.
 
 ### Earlier slice notes
 

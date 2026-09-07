@@ -391,6 +391,11 @@ var integrations = []installPlan{
 		runFunc:     runRemoteRuntimeInstall,
 	},
 	{
+		name:        "vsr",
+		description: "Private remote lip-reading adapter and Python mouth-video libraries. A separately licensed Auto-AVSR model remains user-supplied.",
+		runFunc:     runVSRInstall,
+	},
+	{
 		// webrtc is the Phase-2 alias for the remote-runtime install
 		// that ALSO runs `yaver doctor webrtc` at the end so the
 		// user sees what's still missing in one shot. The npm
@@ -634,6 +639,11 @@ func checkInstalled(name string) string {
 		return "—"
 	case "android-sdk":
 		if androidSDKRuntimeReady() {
+			return "✓"
+		}
+		return "—"
+	case "vsr":
+		if vsrRuntimeInstalled() {
 			return "✓"
 		}
 		return "—"

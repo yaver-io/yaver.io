@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // pairDevice.ts — submit this phone's auth token to a headless
 // target that's running `yaver auth pair`.
 //
@@ -267,7 +268,7 @@ export async function adoptBootstrapDevice(
         "This box hid its passkey from the beacon. Type the 6-character passkey shown on the machine.",
     };
   }
-  const targetUrl = `http://${dev.ip}:${dev.port}`;
+  const targetUrl = `http://${urlHost(dev.ip)}:${dev.port}`;
   const info = await fetchPairInfo(targetUrl);
   if (!info.ok) {
     return { ok: false, error: info.error ?? "Target is not in pairing mode." };

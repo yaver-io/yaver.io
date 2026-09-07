@@ -84,6 +84,7 @@ export const updateProvisioned = internalMutation({
     relayId: v.id("managedRelays"),
     hetznerServerId: v.string(),
     serverIp: v.string(),
+    serverIpv6: v.optional(v.string()),
     domain: v.string(),
   },
   handler: async (ctx, args) => {
@@ -91,6 +92,7 @@ export const updateProvisioned = internalMutation({
       status: "active",
       hetznerServerId: args.hetznerServerId,
       serverIp: args.serverIp,
+      serverIpv6: args.serverIpv6,
       domain: args.domain,
       updatedAt: Date.now(),
     });

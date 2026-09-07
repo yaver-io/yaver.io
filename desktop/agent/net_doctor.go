@@ -38,6 +38,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -139,6 +140,51 @@ func netDefaultGateway() (gw string, iface string) {
 	return gw, iface
 }
 
+// netDefaultGatewayIPv6 is the family-6 peer of netDefaultGateway. Keeping the
+// probes separate matters on partially broken networks: the 2026-09-07 modem
+// handed macOS a valid global IPv6 route while IPv4 DHCP fell back to
+// 169.254/16. Collapsing that into "no default route" made Yaver call working
+// internet offline.
+func netDefaultGatewayIPv6() (gw string, iface string) {
+	var out string
+	var err error
+	switch runtime.GOOS {
+	case "darwin":
+		out, err = runCmd("route", "-n", "get", "-inet6", "default")
+		if err != nil || out == "" {
+			out, err = runCmd("/sbin/route", "-n", "get", "-inet6", "default")
+		}
+	case "linux":
+		out, err = runCmd("sh", "-c", "ip -6 route show default 2>/dev/null | head -1")
+		if err == nil {
+			fields := strings.Fields(out)
+			for i := 0; i < len(fields)-1; i++ {
+				switch fields[i] {
+				case "via":
+					gw = fields[i+1]
+				case "dev":
+					iface = fields[i+1]
+				}
+			}
+			return gw, iface
+		}
+	default:
+		return "", ""
+	}
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "gateway:") {
+			gw = strings.TrimSpace(strings.TrimPrefix(line, "gateway:"))
+		} else if strings.HasPrefix(line, "interface:") {
+			iface = strings.TrimSpace(strings.TrimPrefix(line, "interface:"))
+		}
+	}
+	return gw, iface
+}
+
 var netLossRe = regexp.MustCompile(`([\d.]+)% packet loss`)
 var netRttRe = regexp.MustCompile(`=\s*([\d.]+)/([\d.]+)/([\d.]+)`)
 
@@ -148,10 +194,19 @@ func netPingStats(host string, count int) (ok bool, lossPct float64, avgMs float
 	if count <= 0 {
 		count = 4
 	}
-	out, _ := runCmd("ping", "-c", strconv.Itoa(count), "-t", "8", host)
-	if out == "" {
-		// linux uses -W for timeout, not -t; retry without -t.
-		out, _ = runCmd("ping", "-c", strconv.Itoa(count), host)
+	command := "ping"
+	args := []string{"-c", strconv.Itoa(count), "-t", "8", host}
+	if strings.Contains(host, ":") {
+		command = "ping6"
+		args = []string{"-c", strconv.Itoa(count), host}
+	}
+	out, _ := runCmd(command, args...)
+	if out == "" && command == "ping6" && runtime.GOOS == "darwin" {
+		// The launchd daemon's PATH commonly omits /sbin on macOS.
+		out, _ = runCmd("/sbin/ping6", args...)
+	} else if out == "" {
+		// Linux uses -W for timeout, not Darwin's -t; retry portably.
+		out, _ = runCmd(command, "-c", strconv.Itoa(count), host)
 	}
 	raw = out
 	lossPct = 100
@@ -263,8 +318,13 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 	add := func(l NetLayer) { rep.Layers = append(rep.Layers, l) }
 
 	// ── Layer 1: link (interface + IP + medium) ──────────────────────
-	gw, iface := netDefaultGateway()
-	localIP := netPrimaryLocalIP()
+	gw4, iface4 := netDefaultGateway()
+	gw6, iface6 := netDefaultGatewayIPv6()
+	localIPv4, localIPv6 := netPrimaryLocalIPs()
+	gw, iface, localIP := gw4, iface4, localIPv4
+	if gw == "" && gw6 != "" {
+		gw, iface, localIP = gw6, iface6, localIPv6
+	}
 	ssid := ""
 	if wi, ok := mcpWiFiInfo().(map[string]interface{}); ok {
 		if s, _ := wi["ssid"].(string); s != "" {
@@ -275,24 +335,28 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 	rep.Medium = netMediumFromGateway(gw, iface, ssid, netIfaceType(iface))
 
 	link := NetLayer{Name: "link", Title: "Network interface & IP", Metrics: map[string]interface{}{
-		"interface": iface, "gateway": gw, "local_ip": localIP, "ssid": ssid, "medium": rep.Medium,
+		"interface": iface, "gateway": gw, "local_ip": localIP, "local_ipv4": localIPv4,
+		"local_ipv6": localIPv6, "gateway_ipv4": gw4, "gateway_ipv6": gw6, "ssid": ssid, "medium": rep.Medium,
 	}}
 	switch {
-	case gw == "" && localIP == "":
+	case gw4 == "" && gw6 == "" && localIPv4 == "" && localIPv6 == "":
 		link.Status = NetFail
 		link.Detail = "No active network interface or default route — not connected to any network."
 		link.Hint = "Turn Wi-Fi on (or plug in ethernet / enable your phone's hotspot), then re-run."
-	case strings.HasPrefix(localIP, "169.254.") || localIP == "":
+	case (strings.HasPrefix(localIPv4, "169.254.") || localIPv4 == "") && localIPv6 == "":
 		link.Status = NetFail
-		link.Detail = fmt.Sprintf("Interface %s is up but has a self-assigned address (%s) — DHCP failed.", iface, localIP)
+		link.Detail = fmt.Sprintf("Interface %s is up but has a self-assigned IPv4 address (%s) and no usable IPv6 — DHCP failed.", iface, localIPv4)
 		link.Hint = "Toggle Wi-Fi off/on or renew DHCP. On a hotspot, re-join it. The router never gave you an IP."
-	case gw == "":
+	case gw4 == "" && gw6 == "":
 		link.Status = NetWarn
 		link.Detail = fmt.Sprintf("Have IP %s but no default gateway — limited to the local subnet.", localIP)
 		link.Hint = "No route to the internet is configured. Reconnect to the network."
+	case gw4 == "" && gw6 != "":
+		link.Status = NetOK
+		link.Detail = fmt.Sprintf("%s up · IPv6 %s · gateway %s · IPv4 unavailable (IPv6-only internet is supported)%s", iface, localIPv6, gw6, netMediumNote(rep.Medium, ssid))
 	default:
 		link.Status = NetOK
-		link.Detail = fmt.Sprintf("%s up · IP %s · gateway %s%s", iface, localIP, gw, netMediumNote(rep.Medium, ssid))
+		link.Detail = fmt.Sprintf("%s up · IPv4 %s · IPv6 %s · gateway %s%s", iface, nonEmpty(localIP, "none"), nonEmpty(localIPv6, "none"), nonEmpty(gw, "IPv6 route"), netMediumNote(rep.Medium, ssid))
 	}
 	add(link)
 
@@ -317,23 +381,49 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 
 	// ── Layer 3: internet by IP (DNS-independent) ────────────────────
 	inet := NetLayer{Name: "internet", Title: "Internet reachable (by IP)"}
-	// 1.1.1.1 and 8.8.8.8 over TCP/443 — works through ICMP-blocking networks.
-	cf, cfMs := netReachTCP("1.1.1.1", 443, 4000)
-	goog, googMs := netReachTCP("8.8.8.8", 443, 4000)
+	// Probe both families by literal address so this layer stays DNS-independent.
+	var cf, goog, cf6, goog6 bool
+	var cfMs, googMs, cf6Ms, goog6Ms int64
+	var internetProbes sync.WaitGroup
+	internetProbes.Add(4)
+	go func() { defer internetProbes.Done(); cf, cfMs = netReachTCP("1.1.1.1", 443, 4000) }()
+	go func() { defer internetProbes.Done(); goog, googMs = netReachTCP("8.8.8.8", 443, 4000) }()
+	go func() { defer internetProbes.Done(); cf6, cf6Ms = netReachTCP("2606:4700:4700::1111", 443, 4000) }()
+	go func() { defer internetProbes.Done(); goog6, goog6Ms = netReachTCP("2001:4860:4860::8888", 443, 4000) }()
+	internetProbes.Wait()
+	ipv4Internet := cf || goog
+	ipv6Internet := cf6 || goog6
+	internetUsable := ipv4Internet || ipv6Internet
 	inet.Metrics = map[string]interface{}{
 		"cloudflare_1111": cf, "cloudflare_ms": cfMs, "google_8888": goog, "google_ms": googMs,
+		"cloudflare_ipv6": cf6, "cloudflare_ipv6_ms": cf6Ms, "google_ipv6": goog6, "google_ipv6_ms": goog6Ms,
+	}
+	if internetUsable && gwLayer.Status == NetFail {
+		// A successful public TCP operation disproves a broken gateway. Some
+		// routers simply ignore ICMP echo requests.
+		gwLayer.Status = NetWarn
+		gwLayer.Detail = fmt.Sprintf("Gateway %s does not answer ICMP, but public internet operations succeed.", gw)
+		gwLayer.Hint = ""
+		rep.Layers[len(rep.Layers)-1] = gwLayer
 	}
 	switch {
-	case cf || goog:
+	case ipv4Internet && ipv6Internet:
 		inet.Status = NetOK
-		best := cfMs
-		if best < 0 || (googMs >= 0 && googMs < best) {
-			best = googMs
-		}
-		inet.Detail = fmt.Sprintf("Reached public internet by IP (%d ms) — raw connectivity is up.", best)
-	case gwLayer.Status == NetOK:
+		inet.Detail = "Reached the public internet over both IPv4 and IPv6."
+		inet.Metrics["family"] = "dual-stack"
+	case ipv6Internet:
+		inet.Status = NetWarn
+		inet.Detail = "IPv6 internet works, but IPv4 is unavailable. Yaver can continue over IPv6; IPv4-only services cannot."
+		inet.Hint = "Keep working in Yaver over IPv6. Renew router DHCP/WAN IPv4 when convenient."
+		inet.Metrics["family"] = "IPv6-only"
+	case ipv4Internet:
+		inet.Status = NetWarn
+		inet.Detail = "IPv4 internet works, but IPv6 is unavailable. Yaver can continue over IPv4."
+		inet.Hint = "IPv6 is degraded; check router prefix delegation if IPv6 reachability is required."
+		inet.Metrics["family"] = "IPv4-only"
+	case gwLayer.Status == NetOK || gwLayer.Status == NetWarn:
 		inet.Status = NetFail
-		inet.Detail = "Gateway is reachable but the wider internet is not (1.1.1.1 & 8.8.8.8 both unreachable by IP)."
+		inet.Detail = "Gateway is reachable but the wider internet is not (IPv4 and IPv6 public probes are unreachable)."
 		inet.Hint = "Your router is fine but its upstream is down: ISP outage, or a hotspot that's out of mobile data / has no signal."
 	default:
 		inet.Status = NetFail
@@ -357,7 +447,7 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 			dns.Detail = fmt.Sprintf("DNS resolves but is slow (%d ms) — consider 1.1.1.1 / 8.8.8.8.", dnsMs)
 			dns.Hint = "Set your DNS to 1.1.1.1 or 8.8.8.8 for faster, more reliable lookups."
 		}
-	case inet.Status == NetOK:
+	case internetUsable:
 		dns.Status = NetFail
 		dns.Detail = fmt.Sprintf("Internet is up by IP but DNS fails: %v. This is the classic \"connected but nothing loads\".", dnsErr)
 		dns.Hint = "Change your DNS server to 1.1.1.1 or 8.8.8.8. On a captive/hotel network you may need to sign in first."
@@ -382,7 +472,7 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 	} else if cap.Status == NetFail {
 		https.Status = NetSkip
 		https.Detail = "Skipped — a captive portal is in the way."
-	} else if dns.Status == NetOK && inet.Status == NetOK {
+	} else if dns.Status == NetOK && internetUsable {
 		https.Status = NetWarn
 		https.Detail = fmt.Sprintf("DNS+IP work but an HTTPS fetch failed: %v (possible TLS-intercepting proxy or clock skew).", httpsErr)
 		https.Hint = "Check the system clock, and any corporate proxy / VPN that may be intercepting TLS."
@@ -394,8 +484,12 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 
 	// ── Layer 7: connection quality ──────────────────────────────────
 	qual := NetLayer{Name: "quality", Title: "Connection quality"}
-	if inet.Status == NetOK {
-		ok, loss, avg, _ := netPingStats("1.1.1.1", 5)
+	if internetUsable {
+		qualityTarget := "1.1.1.1"
+		if !ipv4Internet && ipv6Internet {
+			qualityTarget = "2606:4700:4700::1111"
+		}
+		ok, loss, avg, _ := netPingStats(qualityTarget, 5)
 		qual.Metrics = map[string]interface{}{"loss_pct": loss, "rtt_ms": avg, "icmp_ok": ok}
 		var dlMbps float64 = -1
 		if opts.Throughput {
@@ -418,7 +512,10 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 		if dlMbps >= 0 && dlMbps < 3 {
 			issues = append(issues, fmt.Sprintf("low throughput %.1f Mbps", dlMbps))
 		}
-		if len(issues) == 0 {
+		if !ok {
+			qual.Status = NetWarn
+			qual.Detail = "TCP internet is healthy; ICMP quality sampling is unavailable on this network."
+		} else if len(issues) == 0 {
 			qual.Status = NetOK
 			d := fmt.Sprintf("Latency %.0f ms, %.0f%% loss", avg, loss)
 			if dlMbps >= 0 {
@@ -452,21 +549,39 @@ func RunNetDoctor(ctx context.Context, opts NetDoctorOptions) NetDoctorReport {
 	return rep
 }
 
-// netPrimaryLocalIP returns the host's primary outbound IPv4 (no traffic sent).
-func netPrimaryLocalIP() string {
-	conn, err := net.Dial("udp", "1.1.1.1:80")
-	if err != nil {
-		// Fall back to first non-loopback interface address.
-		ifaces, _ := net.InterfaceAddrs()
-		for _, a := range ifaces {
-			if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && ipn.IP.To4() != nil {
-				return ipn.IP.String()
-			}
+// netPrimaryLocalIPs returns one usable interface address per family without
+// sending traffic. Link-local addresses are retained only for IPv4 so the
+// caller can name a 169.254/16 DHCP failure; IPv6 link-local is never internet.
+func netPrimaryLocalIPs() (ipv4, ipv6 string) {
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok || ipn.IP == nil || ipn.IP.IsLoopback() || ipn.IP.IsUnspecified() {
+			continue
 		}
+		if ipn.IP.To4() != nil {
+			if ipv4 == "" || (strings.HasPrefix(ipv4, "169.254.") && !ipn.IP.IsLinkLocalUnicast()) {
+				ipv4 = ipn.IP.String()
+			}
+			continue
+		}
+		if ipv6 == "" && ipn.IP.IsGlobalUnicast() && !ipn.IP.IsLinkLocalUnicast() {
+			ipv6 = ipn.IP.String()
+		}
+	}
+	return ipv4, ipv6
+}
+
+// netPrimaryLocalIPv6 returns the source address the kernel selects for an
+// IPv6 internet route. The UDP connect sends no packet; it asks the routing
+// table the same operational question an outbound Yaver connection will ask.
+func netPrimaryLocalIPv6() string {
+	conn, err := net.Dial("udp6", "[2606:4700:4700::1111]:80")
+	if err != nil {
 		return ""
 	}
 	defer conn.Close()
-	if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+	if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok && ua.IP != nil && ua.IP.IsGlobalUnicast() {
 		return ua.IP.String()
 	}
 	return ""
@@ -523,7 +638,7 @@ func netCheckCaptivePortal() NetLayer {
 // the public IP + country it reports.
 func netHTTPSTrace() (ip, country string, err error) {
 	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Get("https://1.1.1.1/cdn-cgi/trace")
+	resp, err := client.Get("https://one.one.one.one/cdn-cgi/trace")
 	if err != nil {
 		return "", "", err
 	}

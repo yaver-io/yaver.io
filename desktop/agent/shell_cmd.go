@@ -90,16 +90,17 @@ func runShellOverRelay(deviceHint, shell string) error {
 		if len(candidates) == 0 {
 			return fmt.Errorf("no reachable transport to %q — is the device online?", deviceHint)
 		}
-		// Candidates are pre-ordered + probed (LAN → mesh → public → relay).
-		c := candidates[0]
-		baseURL = strings.TrimRight(c.BaseURL, "/")
-		label = fmt.Sprintf("%s via %s", c.DeviceID, c.Kind)
-		for k, v := range c.Headers {
-			headers.Set(k, v)
-			if strings.EqualFold(k, "Authorization") {
-				token = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
-			}
+		// Ordering expresses preference, not exclusivity. A public IPv4 address
+		// can rank ahead of a healthy dual-stack relay on an IPv6-only network;
+		// stopping at candidates[0] made the advertised NAT-friendly fallback a
+		// no-op. Dial every candidate until the operation itself succeeds.
+		conn, connectedLabel, dialErr := dialFirstTerminalCandidate(candidates, token, shell)
+		if dialErr != nil {
+			return dialErr
 		}
+		defer conn.Close()
+		fmt.Fprintf(os.Stderr, "→ connected to %s — Ctrl-D / `exit` to leave\r\n", connectedLabel)
+		return bridgeTerminal(conn)
 	}
 
 	wsURL, err := terminalWSURL(baseURL, token, shell)
@@ -119,6 +120,41 @@ func runShellOverRelay(deviceHint, shell string) error {
 
 	fmt.Fprintf(os.Stderr, "→ connected to %s — Ctrl-D / `exit` to leave\r\n", label)
 	return bridgeTerminal(conn)
+}
+
+func dialFirstTerminalCandidate(candidates []RemoteAgentCandidate, defaultToken, shell string) (*websocket.Conn, string, error) {
+	var failures []string
+	for _, c := range candidates {
+		baseURL := strings.TrimRight(c.BaseURL, "/")
+		label := fmt.Sprintf("%s via %s", c.DeviceID, c.Kind)
+		token := defaultToken
+		headers := http.Header{}
+		for k, v := range c.Headers {
+			headers.Set(k, v)
+			if strings.EqualFold(k, "Authorization") {
+				token = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+			}
+		}
+		wsURL, err := terminalWSURL(baseURL, token, shell)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+			continue
+		}
+		dialer := &websocket.Dialer{HandshakeTimeout: 15 * time.Second}
+		conn, resp, err := dialer.Dial(wsURL, headers)
+		if err == nil {
+			return conn, label, nil
+		}
+		if resp != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v (HTTP %d)", label, err, resp.StatusCode))
+		} else {
+			failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+		}
+	}
+	if len(failures) == 0 {
+		return nil, "", errors.New("no terminal transport candidates")
+	}
+	return nil, "", fmt.Errorf("terminal failed across %d transport candidate(s): %s", len(failures), strings.Join(failures, " | "))
 }
 
 // terminalWSURL converts an http(s) agent base URL into the ws(s)

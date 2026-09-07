@@ -341,7 +341,8 @@ async function connectToDevice(device, relayServers) {
   // Try direct first (if on same LAN)
   if (device.quicHost) {
     try {
-      const directUrl = `http://${device.quicHost}:${device.quicPort || 18080}`;
+      const host = device.quicHost.includes(':') ? `[${device.quicHost}]` : device.quicHost;
+      const directUrl = `http://${host}:${device.quicPort || 18080}`;
       const res = await fetch(`${directUrl}/health`, {
         headers: { 'Authorization': `Bearer ${authToken}` },
         signal: AbortSignal.timeout(3000),

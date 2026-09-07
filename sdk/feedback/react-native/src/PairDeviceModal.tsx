@@ -1,3 +1,4 @@
+import { urlHost } from "./_core/urlHost";
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -76,7 +77,7 @@ export const PairDeviceModal: React.FC<PairDeviceModalProps> = ({
     setBusy(true);
     setError(null);
     try {
-      const url = `http://${host}:${port}/auth/pair/submit?code=${encodeURIComponent(
+      const url = `http://${urlHost(host)}:${port}/auth/pair/submit?code=${encodeURIComponent(
         trimmed,
       )}`;
       const res = await fetch(url, {

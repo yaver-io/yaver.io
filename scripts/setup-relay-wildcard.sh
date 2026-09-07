@@ -10,7 +10,7 @@
 # / public IP themselves.
 #
 # What it does, idempotently:
-#   1. Ensures `*.<expose-domain>` A record exists in Cloudflare,
+#   1. Ensures `*.<expose-domain>` A and, when available, AAAA records exist in Cloudflare,
 #      DNS-only (gray cloud — proxy off so the wildcard doesn't enter
 #      a Worker route configured for the apex zone).
 #   2. Installs certbot + the Cloudflare DNS-01 plugin and obtains a
@@ -33,6 +33,7 @@
 #     [--cf-zone example.com] \
 #     [--relay-http-port 8443] \
 #     [--public-ip <auto-detected>] \
+#     [--public-ipv6 <auto-detected>] \
 #     [--email admin@example.com] \
 #     [--restart-mode docker|systemd|none]
 #
@@ -48,6 +49,7 @@ CF_TOKEN="${CF_TOKEN:-}"
 CF_ZONE=""
 RELAY_HTTP_PORT="8443"
 PUBLIC_IP=""
+PUBLIC_IPV6=""
 EMAIL=""
 RESTART_MODE="auto"  # auto picks docker | systemd | none
 
@@ -69,6 +71,8 @@ Optional:
   --public-ip       This server's public IPv4 the wildcard A record
                     should point at. Auto-detected via api.ipify.org
                     when omitted.
+  --public-ipv6     This server's public IPv6 for the wildcard AAAA record.
+                    Auto-detected over IPv6 when omitted; optional when absent.
   --email           Email for Let's Encrypt registration. Defaults to
                     admin@<expose-domain>.
   --restart-mode    docker | systemd | none. Default: auto.
@@ -87,6 +91,7 @@ while [[ $# -gt 0 ]]; do
     --cf-zone)         CF_ZONE="$2";       shift 2 ;;
     --relay-http-port) RELAY_HTTP_PORT="$2"; shift 2 ;;
     --public-ip)       PUBLIC_IP="$2";     shift 2 ;;
+    --public-ipv6)     PUBLIC_IPV6="$2";   shift 2 ;;
     --email)           EMAIL="$2";         shift 2 ;;
     --restart-mode)    RESTART_MODE="$2";  shift 2 ;;
     --help|-h)         usage ;;
@@ -123,6 +128,14 @@ if [ -z "$PUBLIC_IP" ]; then
             || true)
 fi
 
+if [ -z "$PUBLIC_IPV6" ]; then
+  PUBLIC_IPV6=$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)
+fi
+if [ -n "$PUBLIC_IPV6" ] && [[ "$PUBLIC_IPV6" != *:* ]]; then
+  echo "Error: --public-ipv6 must be an IPv6 literal."
+  exit 2
+fi
+
 if [ -z "$PUBLIC_IP" ]; then
   echo "Error: could not auto-detect public IP. Pass --public-ip <ip>."
   exit 2
@@ -150,6 +163,7 @@ log "Yaver relay wildcard setup"
 log "  expose-domain : $EXPOSE_DOMAIN"
 log "  cf-zone       : $CF_ZONE"
 log "  public-ip     : $PUBLIC_IP"
+log "  public-ipv6   : ${PUBLIC_IPV6:-unavailable (A-only fallback)}"
 log "  relay-port    : $RELAY_HTTP_PORT"
 log "  email         : $EMAIL"
 log "  restart-mode  : $RESTART_MODE"
@@ -165,6 +179,7 @@ ZONE_ID=$(echo "$ZONE_RESP" | grep -oE '"id":"[^"]+' | head -1 | cut -d'"' -f4)
 if [ -z "$ZONE_ID" ]; then
   err "Cloudflare zone '$CF_ZONE' not found. Token scoped to this zone? API response: $ZONE_RESP"
 fi
+
 ok "Found zone $CF_ZONE (id ${ZONE_ID:0:8}...)"
 
 # Find existing wildcard record
@@ -189,6 +204,27 @@ else
   log "  Creating wildcard A record"
   cf_api POST "/zones/${ZONE_ID}/dns_records" --data "$PAYLOAD" >/dev/null
   ok "Created wildcard A record"
+fi
+
+if [ -n "$PUBLIC_IPV6" ]; then
+  EXISTING_V6=$(cf_api GET "/zones/${ZONE_ID}/dns_records?name=${WILDCARD_NAME}&type=AAAA")
+  RECORD_ID_V6=$(echo "$EXISTING_V6" | grep -oE '"id":"[^"]+' | head -1 | cut -d'"' -f4 || true)
+  EXISTING_IP_V6=$(echo "$EXISTING_V6" | grep -oE '"content":"[^"]+' | head -1 | cut -d'"' -f4 || true)
+  PAYLOAD_V6=$(printf '{"type":"AAAA","name":"%s","content":"%s","ttl":300,"proxied":false}' \
+    "$WILDCARD_NAME" "$PUBLIC_IPV6")
+  if [ -n "$RECORD_ID_V6" ]; then
+    if [ "$EXISTING_IP_V6" = "$PUBLIC_IPV6" ]; then
+      ok "Wildcard AAAA record already correct (id ${RECORD_ID_V6:0:8}...)"
+    else
+      cf_api PUT "/zones/${ZONE_ID}/dns_records/${RECORD_ID_V6}" --data "$PAYLOAD_V6" >/dev/null
+      ok "Updated wildcard AAAA record"
+    fi
+  else
+    cf_api POST "/zones/${ZONE_ID}/dns_records" --data "$PAYLOAD_V6" >/dev/null
+    ok "Created wildcard AAAA record"
+  fi
+else
+  warn "No public IPv6 detected — keeping the IPv4 A-record fallback only"
 fi
 
 # ── Step 2: Wildcard TLS cert via certbot DNS-01 ───────────────────
@@ -274,6 +310,7 @@ cat > "$NGINX_CONF" <<NGINX
 # Each connected agent's auto-assigned URL terminates here.
 server {
     listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name *.${EXPOSE_DOMAIN};
 
     ssl_certificate     ${CERT_DIR}/fullchain.pem;
@@ -302,6 +339,7 @@ server {
 # Redirect plain HTTP to HTTPS for the wildcard.
 server {
     listen 80;
+    listen [::]:80;
     server_name *.${EXPOSE_DOMAIN};
     return 301 https://\$host\$request_uri;
 }

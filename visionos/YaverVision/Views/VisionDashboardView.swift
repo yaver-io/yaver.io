@@ -1,8 +1,8 @@
 // VisionDashboardView.swift — spatial runtime control room.
 //
 // This is not a code editor. It is the headset control surface for a Yaver
-// machine: machine health, active project, connected preview devices, runner
-// sessions, and deliberate reload controls with honest delivery feedback.
+// machine: machine health, active project, connected preview devices, tasks,
+// and deliberate reload controls with honest delivery feedback.
 
 import SwiftUI
 
@@ -11,7 +11,7 @@ struct VisionDashboardView: View {
 
     @State private var info: AgentInfo?
     @State private var status: AgentStatus?
-    @State private var runners: RunnerSessions?
+    @State private var tasks: [TaskSummary] = []
     @State private var platformMatrix: PlatformMatrixReport?
     @State private var notice: VisionNotice?
     @State private var loading = false
@@ -222,18 +222,17 @@ struct VisionDashboardView: View {
     }
 
     private var runnersPanel: some View {
-        panel("Coding Agents", systemImage: "terminal") {
-            let sessions = runners?.sessions ?? []
-            if sessions.isEmpty {
-                Text("No active runner sessions")
+        panel("Tasks", systemImage: "bubble.left.and.bubble.right") {
+            if tasks.isEmpty {
+                Text("No active tasks")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(Array(sessions.prefix(4))) { session in
+                ForEach(Array(tasks.prefix(4))) { task in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(session.label)
+                        Text(task.safeTitle)
                             .font(.headline)
                             .lineLimit(1)
-                        Text(session.attached == true ? "attached" : "detached")
+                        Text((task.status ?? "task").capitalized)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -245,7 +244,7 @@ struct VisionDashboardView: View {
             Button {
                 showSession = true
             } label: {
-                Label("Open Session", systemImage: "paperplane.fill")
+                Label("Open Tasks", systemImage: "paperplane.fill")
             }
             .padding(.top, 6)
         }
@@ -466,11 +465,11 @@ struct VisionDashboardView: View {
         do {
             async let nextInfo = client.info()
             async let nextStatus = client.status()
-            async let nextRunners = client.runnerSessions()
+            async let nextTasks = client.listTasks()
             async let nextMatrix = client.platformMatrix()
             info = try await nextInfo
             status = try await nextStatus
-            runners = try? await nextRunners
+            tasks = (try? await nextTasks) ?? []
             platformMatrix = try? await nextMatrix.matrix
             if clearNotice {
                 notice = nil

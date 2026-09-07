@@ -5,20 +5,21 @@ import type { ThemeColors } from "../constants/colors";
 import { RecordedMouthFrameSource } from "../lib/silentInput/nativeSource";
 import { UserMachineVSRRecognizer } from "../lib/silentInput/client";
 import { silentInputContextTerms } from "../lib/silentInput/context";
-import type { MouthFrame } from "../lib/silentInput/types";
+import type { MouthFrame, VSRBackend } from "../lib/silentInput/types";
 
 type Props = {
   visible: boolean;
   colors: ThemeColors;
   targetDeviceId: string;
   projectName?: string;
+  backend: VSRBackend;
   onCancel(): void;
   onTranscription(text: string): void;
 };
 
 const MAX_CAPTURE_MS = 8_000;
 
-export function SilentInputModal({ visible, colors: c, targetDeviceId, projectName, onCancel, onTranscription }: Props) {
+export function SilentInputModal({ visible, colors: c, targetDeviceId, projectName, backend, onCancel, onTranscription }: Props) {
   const camera = useRef<Camera>(null);
   const device = useCameraDevice("front");
   const permission = useCameraPermission();
@@ -46,6 +47,16 @@ export function SilentInputModal({ visible, colors: c, targetDeviceId, projectNa
     let cancelled = false;
     setBackendReady(null);
     setError(null);
+    if (backend === "mobile") {
+      setBackendReady(false);
+      setError("On-device lip reading is selected, but this build has no verified edge model installed. Choose Edge + remote box in Settings.");
+      return;
+    }
+    if (backend === "cloud") {
+      setBackendReady(false);
+      setError("Cloud lip reading is not enabled. Choose Edge + remote box in Settings.");
+      return;
+    }
     const recognizer = new UserMachineVSRRecognizer(targetDeviceId);
     void recognizer.initialize()
       .then(() => { if (!cancelled) setBackendReady(true); })
@@ -55,7 +66,7 @@ export function SilentInputModal({ visible, colors: c, targetDeviceId, projectNa
         setError(cause instanceof Error ? cause.message : String(cause));
       });
     return () => { cancelled = true; void recognizer.dispose(); };
-  }, [targetDeviceId, visible]);
+  }, [backend, targetDeviceId, visible]);
 
   useEffect(() => () => { if (stopTimer.current) clearTimeout(stopTimer.current); }, []);
 

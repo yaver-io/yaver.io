@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // qaClient — drives the agentic app-test agent over the YAVER MESH (LAN-first,
 // relay fallback), mirroring studioClient's transport. Runs the in-repo flow
 // corpus on a redroid surface and returns the bug report ("K caught / J fixed").
@@ -67,7 +68,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

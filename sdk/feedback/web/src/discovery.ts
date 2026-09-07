@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 import {
   DEFAULT_CONVEX_SITE_URL,
   listReachableDevices,
@@ -9,6 +10,10 @@ const STORAGE_KEY = 'yaver_feedback_agent';
 const DEFAULT_PORT = 18080;
 const TIMEOUT_MS = 2000;
 const RELAY_TIMEOUT_MS = 6000;
+
+function agentHttpBase(host: string, port: number): string {
+  return `http://${urlHost(host)}:${port}`;
+}
 
 // Common local network prefixes to scan in the no-token fallback path.
 const LOCAL_PREFIXES = ['192.168.1', '192.168.0', '10.0.0', '10.0.1', '172.16.0'];
@@ -128,7 +133,7 @@ export class YaverDiscovery {
 
     const addDirectHost = (host: string | undefined, label: string) => {
       if (!host) return;
-      candidates.push({ url: `http://${host}:${port}`, label });
+      candidates.push({ url: agentHttpBase(host, port), label });
     };
     const addDirectUrl = (url: string | undefined, label: string) => {
       if (!url) return;

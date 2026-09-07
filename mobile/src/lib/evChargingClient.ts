@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // evChargingClient — drives Yaver's EV-charging DISCOVERY verbs over the mesh,
 // addressed by device, with YOUR bearer + machine:"local" (LAN-first, relay
 // fallback). Transport mirrors circuitClient/printerClient/armClient.
@@ -105,7 +106,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 12000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

@@ -11,10 +11,8 @@ struct TasksView: View {
     @EnvironmentObject var store: YaverStore
 
     @State private var tasks: [TaskSummary] = []
-    @State private var runnerSessions: [RunnerSession] = []
     @State private var loading = true
     @State private var error: String?
-    @State private var sessionError: String?
     @State private var filter: Filter = .all
     @State private var createdTask: TaskSummary?
     @State private var destination: ChatDestination?
@@ -52,8 +50,6 @@ struct TasksView: View {
                     // history request. A slow/failed GET /tasks must never
                     // remove the one action the user came to Chat to perform.
                     newVibeButton
-
-                    runnerSessionSection
 
                     if loading {
                         ProgressView().scaleEffect(1.4).padding(.top, 32)
@@ -105,68 +101,6 @@ struct TasksView: View {
             }
         }
         .defaultFocus($newVibeFocused, true)
-    }
-
-    private var runnerSessionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Console sessions")
-                    .font(.system(size: 21, weight: .bold))
-                Text("tmux · live on \(store.runnerBox()?.name ?? "runner")")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            if runnerSessions.isEmpty {
-                HStack(spacing: 12) {
-                    Image(systemName: "terminal")
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("No live tmux sessions")
-                            .font(.system(size: 17, weight: .semibold))
-                        Text(sessionError ?? "Runner sessions appear here as soon as OpenCode, Codex, or Claude opens one.")
-                            .font(.system(size: 14))
-                            .foregroundStyle(sessionError == nil ? Color.secondary : Color.orange)
-                            .lineLimit(2)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
-                .accessibilityIdentifier("chat.no-live-sessions")
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 14) {
-                        ForEach(runnerSessions) { session in
-                            NavigationLink(destination: SessionView(preselect: session.name)) {
-                                HStack(spacing: 14) {
-                                    Image(systemName: "terminal.fill")
-                                        .font(.system(size: 22))
-                                        .foregroundStyle(.green)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(session.name)
-                                            .font(.system(size: 18, weight: .semibold))
-                                            .lineLimit(1)
-                                        Text("\(session.model?.isEmpty == false ? session.model! : runnerDisplayName(session.runner)) · \(session.attached == true ? "attached" : "active")")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 16)
-                                .frame(width: 360, alignment: .leading)
-                            }
-                            .buttonStyle(.card)
-                            .accessibilityIdentifier("chat.session.\(session.name)")
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.top, 10)
     }
 
     private var noTaskRuntimeView: some View {
@@ -327,17 +261,10 @@ struct TasksView: View {
                     ? "Your AI runner machine needs the relay to be reachable from this TV — nothing was read from the wrong box."
                     : "No machine selected")
             }
-            async let taskRows: [TaskSummary]? = try? client.listTasks()
-            async let sessionRows: RunnerSessions? = try? client.runnerSessions()
-            let loadedTasks = await taskRows
-            let loadedSessions = await sessionRows
+            let loadedTasks: [TaskSummary]? = try? await client.listTasks()
             tasks = loadedTasks ?? []
-            runnerSessions = loadedSessions?.sessions ?? []
             if loadedTasks == nil {
                 error = "Couldn't load recent conversations."
-            }
-            if loadedSessions == nil {
-                sessionError = "Couldn't refresh live tmux sessions."
             }
         } catch {
             self.error = error.localizedDescription

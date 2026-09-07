@@ -12,7 +12,7 @@ export type SilentInputConfig = {
 };
 
 export const DEFAULT_SILENT_INPUT_CONFIG: SilentInputConfig = {
-  enabled: true,
+  enabled: false,
   backend: "user-machine",
   language: "en",
   autoSend: false,

@@ -139,6 +139,7 @@ docker compose up -d
 cat > /etc/nginx/sites-available/relay <<NGINX
 server {
     listen 80;
+    listen [::]:80;
     server_name $DOMAIN;
 
     location / {

@@ -60,7 +60,36 @@ func (s *HTTPServer) ensureVSRStore() *vsrSessionStore {
 }
 
 func vsrCommand() []string {
-	return strings.Fields(strings.TrimSpace(os.Getenv("YAVER_VSR_COMMAND")))
+	if configured := strings.Fields(strings.TrimSpace(os.Getenv("YAVER_VSR_COMMAND"))); len(configured) > 0 {
+		return configured
+	}
+	python, adapter := vsrRuntimePaths()
+	if vsrRuntimeInstalled() {
+		return []string{python, adapter}
+	}
+	return nil
+}
+
+func vsrAvailability() (bool, string) {
+	if strings.TrimSpace(os.Getenv("YAVER_VSR_COMMAND")) != "" {
+		return true, ""
+	}
+	if !vsrRuntimeInstalled() {
+		return false, "Remote lip-reading libraries are not installed. Install them from Settings or POST /install/vsr; no camera data was sent."
+	}
+	root := strings.TrimSpace(os.Getenv("AUTO_AVSR_ROOT"))
+	config := strings.TrimSpace(os.Getenv("AUTO_AVSR_CONFIG"))
+	model := strings.TrimSpace(os.Getenv("AUTO_AVSR_MODEL"))
+	if root == "" || config == "" || model == "" {
+		return false, "Lip-reading libraries are installed, but a licensed model is not configured. Set AUTO_AVSR_ROOT, AUTO_AVSR_CONFIG, and AUTO_AVSR_MODEL on this machine."
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return false, "AUTO_AVSR_ROOT does not point to an installed Auto-AVSR checkout."
+	}
+	if _, err := os.Stat(model); err != nil {
+		return false, "AUTO_AVSR_MODEL does not point to a readable, locally licensed checkpoint."
+	}
+	return true, ""
 }
 
 func (s *HTTPServer) handleVSRCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -68,20 +97,42 @@ func (s *HTTPServer) handleVSRCapabilities(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	command := vsrCommand()
-	available := len(command) > 0
-	reason := ""
-	if !available {
-		reason = "Install a local VSR runtime and set YAVER_VSR_COMMAND; no camera data was sent."
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	available, reason := vsrAvailability()
+	payload := map[string]any{
 		"available":     available,
 		"backend":       "user-machine",
 		"language":      "en",
 		"mouthCropOnly": true,
 		"frame":         map[string]any{"width": vsrFrameWidth, "height": vsrFrameHeight, "format": "gray8", "fps": 25, "maxFrames": vsrMaxFrames},
 		"reason":        reason,
-	})
+	}
+	if !available {
+		var gap *CapabilityGap
+		if !vsrRuntimeInstalled() {
+			// Derive the route from the same install registry used by both the
+			// CLI and POST /install/vsr. In particular, GapFix.Stream is the
+			// stream name (install:vsr), not a guessed URL path.
+			gap = capabilityGapForMissingTools([]string{"vsr"})
+		} else {
+			// The installer deliberately cannot fetch the separately licensed
+			// Auto-AVSR checkout/checkpoint. Advertising Install here would be a
+			// successful no-op followed by the same refusal.
+			gap = &CapabilityGap{
+				Code:       ReasonCapabilityToolchainMissing,
+				Capability: "vsr-model",
+				Summary:    reason,
+				Detail:     reason,
+				Constraint: "Configure a locally licensed Auto-AVSR checkout, config, and checkpoint on this machine; Yaver cannot download or license that model for you.",
+			}
+		}
+		payload["capabilityGap"] = gap
+		if gap != nil && gap.Fix != nil {
+			// Kept as a compatibility alias for older clients. New surfaces
+			// consume capabilityGap and render its typed Fix generically.
+			payload["remedy"] = gap.Fix
+		}
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *HTTPServer) handleVSRSessionStart(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +140,8 @@ func (s *HTTPServer) handleVSRSessionStart(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if len(vsrCommand()) == 0 {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Local VSR runtime is not configured."})
+	if available, reason := vsrAvailability(); !available {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": reason})
 		return
 	}
 	var body struct {

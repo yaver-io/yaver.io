@@ -67,7 +67,7 @@ func TestTaskOutputSSEWaitsForTerminalStatusAfterOutputChannelCloses(t *testing.
 func TestTaskOutputSSESurvivesOutputChannelReplacementBeforeTaskDone(t *testing.T) {
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
 	firstOut := make(chan string, 1)
-	firstRaw := make(chan []byte, 1)
+	firstRaw := make(chan taskRawFrame, 1)
 	firstEvents := make(chan map[string]interface{}, 1)
 	firstDone := make(chan struct{})
 	task := &Task{
@@ -97,7 +97,7 @@ func TestTaskOutputSSESurvivesOutputChannelReplacementBeforeTaskDone(t *testing.
 
 		time.Sleep(350 * time.Millisecond)
 		secondOut := make(chan string, 1)
-		secondRaw := make(chan []byte, 1)
+		secondRaw := make(chan taskRawFrame, 1)
 		secondEvents := make(chan map[string]interface{}, 1)
 		secondDone := make(chan struct{})
 

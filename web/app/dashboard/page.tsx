@@ -23,6 +23,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { dedupeScopedTasks, scopedTaskKey } from "@/lib/taskIdentity";
+import { listAgentTaskSnapshots, reconcileTasksWithAgentSnapshots, type AgentTaskSnapshot } from "@/lib/taskSnapshots";
 import ProjectsView from "@/components/dashboard/ProjectsView";
 import GitView from "@/components/dashboard/GitView";
 import DownloadsView from "@/components/dashboard/DownloadsView";
@@ -1073,27 +1074,10 @@ export default function DashboardPage() {
         }))
       : [session]
   ), [sidebarTmux]);
-  // Cross-device runner-seat ledger from Convex (GET /tmux-sessions). Unlike
-  // sidebarTmux this works DISCONNECTED and covers every machine: open or
-  // closed seats, so a /exit on any box flips here within ~60s and a seat that
-  // survived an agent restart still shows. The sidebar merges it under the
-  // connected device's live sessions; "see all" opens the Vibing tab.
+  // Legacy diagnostic state retained for the explicit runtime terminal view.
+  // Tasks are the user-facing session inventory, so the dashboard does not
+  // poll or render a second Convex/tmux roster.
   const [sidebarConvexTmux, setSidebarConvexTmux] = useState<TmuxRunnerSessionRecord[]>([]);
-  useEffect(() => {
-    if (!token) {
-      setSidebarConvexTmux([]);
-      return;
-    }
-    let cancelled = false;
-    const load = () => {
-      listTmuxRunnerSessions(token)
-        .then((rows) => { if (!cancelled) setSidebarConvexTmux(rows); })
-        .catch(() => { if (!cancelled) setSidebarConvexTmux([]); });
-    };
-    load();
-    const t = setInterval(load, 30_000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [token]);
   // Rows worth rendering: everything except the connected device's sessions
   // that are already shown live above (runner seats float to the top).
   const sidebarConvexRows = useMemo(() => {
@@ -1114,6 +1098,7 @@ export default function DashboardPage() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectDiagnostics, setConnectDiagnostics] = useState<ConnectAttemptDiagnostic[]>([]);
   const [connectedDeviceIds, setConnectedDeviceIds] = useState<string[]>([]);
+  const [agentTaskSnapshots, setAgentTaskSnapshots] = useState<AgentTaskSnapshot[]>([]);
   const [copiedReauth, setCopiedReauth] = useState(false);
   const [reauthing, setReauthing] = useState(false);
   const [rescueQueuing, setRescueQueuing] = useState(false);
@@ -1335,8 +1320,10 @@ export default function DashboardPage() {
     const taskDeviceId = String(task?.deviceId || "").trim();
     if (!taskDeviceId) return agentClient;
     if (taskDeviceId === connectedDevice?.id) return agentClient;
-    if (agentClientPool.has(taskDeviceId)) return agentClientPool.get(taskDeviceId);
-    return agentClient;
+    // Never fall through to whichever box happens to be focused: task ids are
+    // scoped to their owner. A disconnected pooled client fails honestly and
+    // the caller can connect that box; it cannot mutate another machine.
+    return agentClientPool.get(taskDeviceId);
   }, [connectedDevice?.id]);
 
   const sameScopedTask = useCallback(
@@ -1420,31 +1407,6 @@ export default function DashboardPage() {
     void pull();
     return () => { cancelled = true; };
   }, [token, fleetSignature]);
-
-  // Sidebar tmux list: refresh on connect and every 20s after. Errors degrade to
-  // an empty list (the section hides) — a stale roster that outlives the box is
-  // worse than no roster.
-  useEffect(() => {
-    if (!isConnected) {
-      setSidebarTmux([]);
-      return;
-    }
-    let cancelled = false;
-    const pull = async () => {
-      try {
-        const rows = await agentClient.listTmuxSessions();
-        if (!cancelled) setSidebarTmux(rows);
-      } catch {
-        if (!cancelled) setSidebarTmux([]);
-      }
-    };
-    void pull();
-    const t = setInterval(() => void pull(), 20_000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [isConnected]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -2185,10 +2147,44 @@ export default function DashboardPage() {
     return String(task?.deviceName || "").trim() || "this machine";
   }, [devices]);
 
+  const refreshAgentTaskSnapshots = useCallback(async () => {
+    if (!token) {
+      setAgentTaskSnapshots([]);
+      return;
+    }
+    try {
+      setAgentTaskSnapshots(await listAgentTaskSnapshots(CONVEX_URL, token));
+    } catch {
+      // Convex is discovery only. Preserve direct agent state when it is
+      // unavailable rather than treating a failed read as an empty snapshot.
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void refreshAgentTaskSnapshots();
+    const interval = setInterval(() => void refreshAgentTaskSnapshots(), 5 * 60_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshAgentTaskSnapshots();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refreshAgentTaskSnapshots]);
+
+  useEffect(() => {
+    if (agentTaskSnapshots.length === 0) return;
+    setTasks((previous) => reconcileTasksWithAgentSnapshots(previous, agentTaskSnapshots));
+  }, [agentTaskSnapshots]);
+
   const refreshTaskHistory = useCallback(async () => {
     const pendingTasks = listPendingCloudDispatches().map(pendingCloudTaskPlaceholder);
     if (!isConnected) {
-      setTasks(pendingTasks);
+      setTasks((previous) => reconcileTasksWithAgentSnapshots([
+        ...pendingTasks,
+        ...previous.filter((task) => !pendingTasks.some((pending) => pending.id === task.id)),
+      ], agentTaskSnapshots));
       return;
     }
     // Key clients by the machine that actually receives /tasks, not merely by
@@ -2220,7 +2216,7 @@ export default function DashboardPage() {
         .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)));
       setTasks((prev) => {
         const previousByKey = new Map(prev.map((task) => [scopedTaskKey(task), task] as const));
-        return dedupeScopedTasks([
+        return reconcileTasksWithAgentSnapshots(dedupeScopedTasks([
           ...pendingTasks,
           ...merged
             .filter((task) => !pendingTasks.some((pending) => pending.id === task.id))
@@ -2230,12 +2226,15 @@ export default function DashboardPage() {
                 ? { ...task, turns: previous.turns }
                 : task;
             }),
-        ]);
+        ]), agentTaskSnapshots);
       });
     } catch {
-      setTasks(pendingTasks);
+      setTasks((previous) => reconcileTasksWithAgentSnapshots([
+        ...pendingTasks,
+        ...previous.filter((task) => !pendingTasks.some((pending) => pending.id === task.id)),
+      ], agentTaskSnapshots));
     }
-  }, [isConnected, connectedDevice?.id, connectedDeviceIds, devices]);
+  }, [isConnected, connectedDevice?.id, connectedDeviceIds, devices, agentTaskSnapshots]);
 
   useEffect(() => {
     if (!isConnected) return;
@@ -3427,13 +3426,24 @@ export default function DashboardPage() {
     // user sent (their second message existed solely as the runner's prompt
     // echo, which grooming rightly dedupes). Mobile guards this with
     // keepTurns; web now hydrates the full detail and upgrades in place.
-    void taskClientFor(t).getTask(t.id).then((full) => {
-      setActiveTask((cur) => (cur && cur.id === full.id ? { ...cur, ...full } : cur));
+    const hydrate = async () => {
+      if (t.source === "session-index" && t.deviceId && !agentClientPool.get(t.deviceId).isConnected) {
+        const owner = devices.find((device) => device.id === t.deviceId);
+        if (!owner) throw new Error("The machine that owns this task is no longer registered.");
+        await connectToDevice(owner);
+      }
+      const fetched = await taskClientFor(t).getTask(t.id);
+      const full = { ...fetched, deviceId: fetched.deviceId || t.deviceId, deviceName: fetched.deviceName || t.deviceName };
+      setActiveTask((cur) => (sameScopedTask(cur, full) ? { ...cur, ...full } : cur));
+      setTasks((previous) => previous.map((row) => sameScopedTask(row, full) ? full : row));
       setChatMsgs((prev) => {
         const upgraded = msgsFromTask(full);
         return upgraded.length >= prev.length ? upgraded : prev;
       });
-    }).catch(() => {});
+    };
+    void hydrate().catch((error) => {
+      setConnectError(error instanceof Error ? error.message : "Could not connect to this task's machine.");
+    });
   };
 
   const stopTaskFromUI = async (task: Task) => {
@@ -3465,6 +3475,7 @@ export default function DashboardPage() {
     try {
       await taskClientFor(task).deleteTask(task.id);
       setTasks((prev) => prev.filter((row) => !sameScopedTask(row, task)));
+      void refreshAgentTaskSnapshots();
       if (sameScopedTask(activeTask, task)) {
         setActiveTask(null);
         setOutputLines([]);
@@ -3732,7 +3743,7 @@ export default function DashboardPage() {
               Convex (open or closed, every machine — visible even when no box
               is connected). Same data the Vibing tab shows; the sidebar is
               the glanceable half. Hidden entirely when there are none. */}
-          {(isConnected && sidebarTmuxSeats.length > 0) || sidebarConvexRows.length > 0 ? (
+          {false && ((isConnected && sidebarTmuxSeats.length > 0) || sidebarConvexRows.length > 0) ? (
             <div className="mb-3 shrink-0">
               <div className="mb-1 flex items-center justify-between">
                 {/* Folded by default (user directive 2026-07-27): six session

@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // homeClient — drives the "single kumanda" home-control surface
 // (docs/yaver-single-kumanda.md) over the YAVER MESH, addressed by the hub
 // device, LAN-direct first with relay fallback. Mirrors appletvClient's
@@ -29,7 +30,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

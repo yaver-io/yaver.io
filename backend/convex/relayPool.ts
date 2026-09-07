@@ -136,13 +136,17 @@ export const hostIsEmpty = internalQuery({
  */
 export const hostEndpoint = internalQuery({
   args: { hostKey: v.string() },
-  handler: async (ctx, { hostKey }): Promise<{ serverId: string; serverIp: string } | null> => {
+  handler: async (ctx, { hostKey }): Promise<{ serverId: string; serverIp: string; serverIpv6?: string } | null> => {
     const rows = await ctx.db.query("managedRelays").collect();
     for (const r of rows) {
       if (r.sharedHostKey !== hostKey) continue;
       if (r.status === "stopped" || r.status === "error") continue;
       if (r.hetznerServerId && r.serverIp) {
-        return { serverId: String(r.hetznerServerId), serverIp: String(r.serverIp) };
+        return {
+          serverId: String(r.hetznerServerId),
+          serverIp: String(r.serverIp),
+          ...(r.serverIpv6 ? { serverIpv6: String(r.serverIpv6) } : {}),
+        };
       }
     }
     return null;

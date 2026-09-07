@@ -55,7 +55,7 @@ func createRawFixture(t *testing.T, tm *TaskManager, id, raw string, status Task
 		RunnerID:    "opencode",
 		RawOutput:   raw,
 		outputCh:    make(chan string, 512),
-		rawOutputCh: make(chan []byte, 256),
+		rawOutputCh: make(chan taskRawFrame, 256),
 		eventCh:     make(chan map[string]interface{}, 32),
 		doneCh:      make(chan struct{}),
 	}
@@ -167,10 +167,12 @@ func TestRawLiveFrames(t *testing.T) {
 		[]byte(" dependencies…\x1b[0m\r\n"),
 		[]byte("✓ done\x1b[?25h"),
 	}
+	var offset int64
 	for _, c := range chunks {
 		// Buffered before the handler's select drains it; 256-deep channel,
 		// so no drops.
-		task.rawOutputCh <- c
+		offset += int64(len(c))
+		task.rawOutputCh <- taskRawFrame{Bytes: c, Offset: offset}
 	}
 
 	frames := collectSSEFrames(t, srv.URL+"/tasks/"+taskID+"/output?rawSince=0")
@@ -200,7 +202,7 @@ func TestOpenCodeRawReaderSeparatesAssistantReplyFromConsoleEvidence(t *testing.
 	task := &Task{
 		ID: "opencode-semantic", RunnerID: "opencode",
 		runner:   RunnerConfig{RunnerID: "opencode", OutputMode: "raw"},
-		outputCh: make(chan string, 16), rawOutputCh: make(chan []byte, 16),
+		outputCh: make(chan string, 16), rawOutputCh: make(chan taskRawFrame, 16),
 		eventCh: make(chan map[string]interface{}, 16), doneCh: make(chan struct{}),
 	}
 	tm.readRawOutput(
@@ -287,7 +289,7 @@ func TestRemotelessRawReaderUsesOpenCodeSemanticBoundary(t *testing.T) {
 	task := &Task{
 		ID: "remoteless-semantic", RunnerID: "remoteless",
 		runner:   RunnerConfig{RunnerID: "remoteless", Command: "opencode", OutputMode: "raw"},
-		outputCh: make(chan string, 16), rawOutputCh: make(chan []byte, 16),
+		outputCh: make(chan string, 16), rawOutputCh: make(chan taskRawFrame, 16),
 		eventCh: make(chan map[string]interface{}, 16), doneCh: make(chan struct{}),
 	}
 	tm.readRawOutput(
@@ -309,7 +311,7 @@ func TestRemotelessRawReaderUsesOpenCodeSemanticBoundary(t *testing.T) {
 // readable marker is prepended so a client knows the earliest bytes went.
 func TestRawCap_TruncationMarker(t *testing.T) {
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
-	task := &Task{RunnerID: "opencode"}
+	task := &Task{RunnerID: "opencode", rawOutputCh: make(chan taskRawFrame, 128)}
 	chunk := strings.Repeat("x", 8*1024)
 	// Feed ~1.1 MB through the cap path (600 KB > 512 KB cap).
 	for i := 0; i < 80; i++ {
@@ -321,6 +323,28 @@ func TestRawCap_TruncationMarker(t *testing.T) {
 	}
 	if !strings.HasPrefix(task.RawOutput, rawOutputTruncatedMarker) {
 		t.Errorf("RawOutput must start with the truncation marker; got %q", task.RawOutput[:80])
+	}
+	if task.RawOutputOffset != int64(80*len(chunk)) {
+		t.Errorf("RawOutputOffset = %d, want monotonic source length %d", task.RawOutputOffset, 80*len(chunk))
+	}
+	if task.RawOutputBase != task.RawOutputOffset-rawOutputMaxBytes {
+		t.Errorf("RawOutputBase = %d, want retained-tail base %d", task.RawOutputBase, task.RawOutputOffset-rawOutputMaxBytes)
+	}
+}
+
+func TestRawLiveFrameCursorStaysBoundToItsChunk(t *testing.T) {
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	task := &Task{RunnerID: "opencode", rawOutputCh: make(chan taskRawFrame, 2)}
+	tm.emitRaw(task, []byte("first"))
+	tm.emitRaw(task, []byte("second"))
+
+	first := <-task.rawOutputCh
+	second := <-task.rawOutputCh
+	if string(first.Bytes) != "first" || first.Offset != 5 {
+		t.Fatalf("first frame = %#v, want bytes=first offset=5", first)
+	}
+	if string(second.Bytes) != "second" || second.Offset != 11 {
+		t.Fatalf("second frame = %#v, want bytes=second offset=11", second)
 	}
 }
 

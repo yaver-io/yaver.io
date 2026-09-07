@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // packagesClient.ts — mobile client for Yaver Task Packages
 // (docs/yaver-task-packages.md). Mirrors armClient: LAN-first ops calls to the
 // agent's package_* verbs, relay fallback. Used by app/packages.tsx and the
@@ -51,7 +52,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

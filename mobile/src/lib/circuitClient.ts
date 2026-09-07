@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // circuitClient — drives Yaver's electrical-circuit cell over the YAVER MESH,
 // addressed by device, with YOUR bearer + machine:"local" (LAN-first, relay
 // fallback). Mirrors printerClient/armClient transport. Import a SPICE netlist,
@@ -68,7 +69,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

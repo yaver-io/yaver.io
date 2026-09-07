@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // testkitClient — drives project web tests over the Yaver mesh, mirroring
 // qaClient's LAN-first/relay-fallback transport. Picking a target device =
 // picking the remote PC the suite runs on. Supports chromedp, YAML Playwright,
@@ -168,7 +169,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

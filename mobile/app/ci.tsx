@@ -33,6 +33,7 @@ export default function CIScreen() {
   const [wfTargets, setWfTargets] = useState<CIWorkflowTarget[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [issueCode, setIssueCode] = useState<string | null>(null);
 
   const [provider, setProvider] = useState<"github" | "gitlab">("github");
   const [repo, setRepo] = useState("");
@@ -40,6 +41,7 @@ export default function CIScreen() {
   const [isolation, setIsolation] = useState<"container" | "host">("container");
 
   const [wfTarget, setWfTarget] = useState("test");
+  const [wfWorkDir, setWfWorkDir] = useState("");
   const [preview, setPreview] = useState<{ path: string; content: string; secrets: string[] } | null>(null);
 
   const target = useCallback((): CITarget | undefined => {
@@ -87,10 +89,12 @@ export default function CIScreen() {
     }
     setBusy(true);
     setMsg(null);
+    setIssueCode(null);
     const r = await ciClient.register(t, { provider, target: repo.trim(), scope, isolation });
     setBusy(false);
     if (r?.ok === false) {
       setMsg(r.error || "register failed");
+      setIssueCode(r.code || null);
       return;
     }
     setMsg(`registered — runs-on: ${JSON.stringify(r?.runsOn || ["self-hosted", "yaver"])}`);
@@ -112,7 +116,7 @@ export default function CIScreen() {
     if (!t) return;
     setBusy(true);
     setMsg(null);
-    const r = await ciClient.scaffold(t, wfTarget, write);
+    const r = await ciClient.scaffold(t, provider, wfTarget, write, wfWorkDir.trim());
     setBusy(false);
     if (r?.ok === false) {
       setMsg(r.error || "scaffold failed");
@@ -192,17 +196,28 @@ export default function CIScreen() {
         <View style={card}>
           <Text style={h}>Register a repo</Text>
           <Text style={label}>Provider</Text>
-          <Toggle opts={["github", "gitlab"]} value={provider} onChange={setProvider} />
+          <Toggle opts={["github", "gitlab"]} value={provider} onChange={(next) => {
+            setProvider(next);
+            if (next === "gitlab") setScope("repo");
+          }} />
           <Text style={label}>owner/repo (or org / project id)</Text>
           <TextInput style={input} value={repo} onChangeText={setRepo} placeholder="owner/repo" placeholderTextColor={c.textMuted} autoCapitalize="none" autoCorrect={false} />
           <Text style={label}>Scope</Text>
-          <Toggle opts={["repo", "org"]} value={scope} onChange={setScope} />
+          <Toggle opts={["repo"]} value={scope} onChange={setScope} />
           <Text style={label}>Isolation</Text>
           <Toggle opts={["container", "host"]} value={isolation} onChange={setIsolation} />
           <Pressable disabled={busy} onPress={register} style={{ backgroundColor: c.accent, padding: 12, borderRadius: 10, alignItems: "center", marginTop: 6, opacity: busy ? 0.5 : 1 }}>
             <Text style={{ color: c.textInverse, fontWeight: "700" }}>Register runner</Text>
           </Pressable>
-          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>Private repos only by default. Token minted per-job from the box&apos;s git creds.</Text>
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>Private repos are enforced. GitLab accepts only tagged jobs on protected refs. Host mode is required for Xcode.</Text>
+          {issueCode === "ci_runner_insufficient_disk" ? (
+            <Pressable
+              onPress={() => router.push(`/(tabs)/devices?openDetails=${encodeURIComponent(deviceId)}` as any)}
+              style={{ borderColor: "#f59e0b88", borderWidth: 1, borderRadius: 8, padding: 9, marginTop: 9 }}
+            >
+              <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "600" }}>Open this box’s storage controls</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* registrations */}
@@ -213,11 +228,15 @@ export default function CIScreen() {
             <View key={r.key} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderTopColor: c.borderSubtle, borderTopWidth: 1 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: c.textPrimary, fontFamily: "monospace" }}>
-                  {r.key} <Text style={{ color: r.live ? c.accent : c.textMuted }}>{r.live ? "● live" : "○ idle"}</Text>
+                  {r.key}{" "}
+                  <Text style={{ color: r.state === "degraded" ? "#f59e0b" : r.supervisorActive ? c.accent : c.textMuted }}>
+                    {r.state === "degraded" ? "● needs attention" : r.supervisorActive ? `● ${r.state || "active"}` : "○ stopped"}
+                  </Text>
                 </Text>
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
                   {r.isolation} · {r.where}
                 </Text>
+                {r.lastError ? <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 3 }}>{r.lastError}</Text> : null}
               </View>
               <Pressable disabled={busy} onPress={() => remove(r.key)} style={{ borderColor: c.borderSubtle, borderWidth: 1, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}>
                 <Text style={{ color: c.textSecondary, fontSize: 12 }}>Remove</Text>
@@ -233,11 +252,20 @@ export default function CIScreen() {
           {wfTargets.find((t) => t.target === wfTarget)?.description ? (
             <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 8 }}>{wfTargets.find((t) => t.target === wfTarget)?.description}</Text>
           ) : null}
+          <TextInput
+            style={input}
+            value={wfWorkDir}
+            onChangeText={setWfWorkDir}
+            placeholder="Absolute project root on the runner box"
+            placeholderTextColor={c.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
           <View style={{ flexDirection: "row", gap: 10 }}>
             <Pressable disabled={busy} onPress={() => scaffold(false)} style={{ flex: 1, borderColor: c.borderSubtle, borderWidth: 1, padding: 10, borderRadius: 10, alignItems: "center" }}>
               <Text style={{ color: c.textSecondary, fontWeight: "600" }}>Preview</Text>
             </Pressable>
-            <Pressable disabled={busy} onPress={() => scaffold(true)} style={{ flex: 1, backgroundColor: c.accent, padding: 10, borderRadius: 10, alignItems: "center", opacity: busy ? 0.5 : 1 }}>
+            <Pressable disabled={busy || !wfWorkDir.trim()} onPress={() => scaffold(true)} style={{ flex: 1, backgroundColor: c.accent, padding: 10, borderRadius: 10, alignItems: "center", opacity: busy || !wfWorkDir.trim() ? 0.5 : 1 }}>
               <Text style={{ color: c.textInverse, fontWeight: "700" }}>Write to repo</Text>
             </Pressable>
           </View>

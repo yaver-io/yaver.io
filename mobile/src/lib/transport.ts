@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 /**
  * Mobile-side mirror of web/lib/transport.ts. Same classifier so
  * the mobile device card + details screen render the same labels.
@@ -102,7 +103,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     return {
       primary: "yaver-mesh", label: "Yaver Mesh",
       detail: `via ${meshIp}`,
-      tone: "emerald", url: `http://${meshIp}:${d.port ?? 18080}`,
+      tone: "emerald", url: `http://${urlHost(meshIp)}:${d.port ?? 18080}`,
     };
   }
 
@@ -111,7 +112,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     return {
       primary: "tailscale", label: "Private network",
       detail: `via ${tsIp}`,
-      tone: "blue", url: `http://${tsIp}:${d.port ?? 18080}`,
+      tone: "blue", url: `http://${urlHost(tsIp)}:${d.port ?? 18080}`,
     };
   }
 
@@ -126,7 +127,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     return {
       primary: "wsl-nat", label: "WSL2 NAT",
       detail: wslIp ? `via ${wslIp} (Hyper-V)` : "Linux on Windows host",
-      tone: "amber", url: wslIp ? `http://${wslIp}:${d.port ?? 18080}` : undefined,
+      tone: "amber", url: wslIp ? `http://${urlHost(wslIp)}:${d.port ?? 18080}` : undefined,
     };
   }
 
@@ -135,7 +136,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     return {
       primary: "private-lan", label: "Private LAN",
       detail: `via ${lan}`,
-      tone: "slate", url: `http://${lan}:${d.port ?? 18080}`,
+      tone: "slate", url: `http://${urlHost(lan)}:${d.port ?? 18080}`,
     };
   }
 
@@ -143,7 +144,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     return {
       primary: "direct-public", label: "Public IP",
       detail: `via ${host}`,
-      tone: "rose", url: `http://${host}:${d.port ?? 18080}`,
+      tone: "rose", url: `http://${urlHost(host)}:${d.port ?? 18080}`,
     };
   }
   if ((d.publicEndpoints || []).length) {

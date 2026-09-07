@@ -21,10 +21,13 @@ type Registration = {
   isolation: string;
   where: string;
   maxConcurrent: number;
+  supervisorActive?: boolean;
+  state?: string;
+  lastError?: string;
   live?: boolean;
 };
 type Savings = { runs: number; chargedCents: number; wouldHaveCostUpstreamCents: number; savedCents: number };
-type WorkflowTarget = { target: string; file: string; runsOn: string; secrets: string[]; description: string };
+type WorkflowTarget = { target: string; file: string; gitlabFile?: string; runsOn: string; secrets: string[]; description: string };
 
 const dollars = (cents: number) => `$${((cents || 0) / 100).toFixed(2)}`;
 
@@ -34,6 +37,7 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
   const [savings, setSavings] = useState<Savings | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [issueCode, setIssueCode] = useState<string | null>(null);
 
   // register form
   const [provider, setProvider] = useState<"github" | "gitlab">("github");
@@ -45,6 +49,7 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
   // workflow scaffold
   const [wfTargets, setWfTargets] = useState<WorkflowTarget[]>([]);
   const [wfTarget, setWfTarget] = useState("test");
+  const [wfWorkDir, setWfWorkDir] = useState("");
   const [wfPreview, setWfPreview] = useState<{ path: string; content: string; secrets: string[] } | null>(null);
 
   const clientRef = useRef<AgentClient | null>(null);
@@ -79,7 +84,7 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
         const client = await ensureClient(deviceId);
         if (!client) return { ok: false, error: "not connected" };
         const res = await client.callOps(verb, payload);
-        if (res?.ok === false) return { ok: false, code: res.code, error: res.error };
+        if (res?.ok === false) return { ok: false, code: res.code, error: res.error, ...((res as any)?.initial || {}) };
         return (res as any)?.initial ?? res;
       } catch (e: any) {
         setMsg(e?.message || "connection failed");
@@ -112,10 +117,12 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
     }
     setBusy(true);
     setMsg(null);
+    setIssueCode(null);
     const r = await callCI("ci_runner_register", { provider, target: target.trim(), scope, isolation, where });
     setBusy(false);
     if (r?.ok === false) {
       setMsg(r.error || "register failed");
+      setIssueCode(r.code || null);
       return;
     }
     setMsg(`registered — set workflow to runs-on: ${JSON.stringify(r?.runsOn || ["self-hosted", "yaver"])}`);
@@ -133,7 +140,7 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
   const previewWorkflow = async (write: boolean) => {
     setBusy(true);
     setMsg(null);
-    const r = await callCI("ci_workflow_scaffold", { target: wfTarget, write, workDir: "." });
+    const r = await callCI("ci_workflow_scaffold", { provider, target: wfTarget, write, workDir: wfWorkDir.trim() });
     setBusy(false);
     if (r?.ok === false) {
       setMsg(r.error || "scaffold failed");
@@ -188,7 +195,11 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
           <section className="rounded-lg border border-neutral-800 p-4 space-y-3">
             <h2 className="text-sm font-medium">Register a repo</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <select className="rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm" value={provider} onChange={(e) => setProvider(e.target.value as any)}>
+              <select className="rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm" value={provider} onChange={(e) => {
+                const next = e.target.value as "github" | "gitlab";
+                setProvider(next);
+                if (next === "gitlab") setScope("repo");
+              }}>
                 <option value="github">GitHub</option>
                 <option value="gitlab">GitLab</option>
               </select>
@@ -200,11 +211,10 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
               />
               <select className="rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm" value={scope} onChange={(e) => setScope(e.target.value as any)}>
                 <option value="repo">repo</option>
-                <option value="org">org</option>
               </select>
               <select className="rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm" value={isolation} onChange={(e) => setIsolation(e.target.value as any)}>
                 <option value="container">container (safe)</option>
-                <option value="host">host (trusted)</option>
+                <option value="host">host (trusted/private; Xcode)</option>
               </select>
             </div>
             <div className="flex items-center gap-3">
@@ -218,7 +228,12 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
                 Register runner
               </button>
             </div>
-            <p className="text-xs text-neutral-500">Private repos only by default. The forge token is minted per-job from this box&apos;s git creds (run “Connect git” first if missing).</p>
+            <p className="text-xs text-neutral-500">Private repos are enforced. GitLab accepts only tagged jobs on protected refs. The forge token is minted per-job from this box&apos;s git credentials.</p>
+            {issueCode === "ci_runner_insufficient_disk" && (
+              <a href="/dashboard?tab=devices" className="inline-flex rounded-md border border-amber-600/60 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-950/40">
+                Open this box’s storage controls
+              </a>
+            )}
           </section>
 
           {/* registrations */}
@@ -229,10 +244,13 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
               <div key={r.key} className="flex items-center justify-between rounded-md border border-neutral-800 p-3 text-sm">
                 <div>
                   <span className="font-mono">{r.key}</span>{" "}
-                  <span className={r.live ? "text-emerald-400" : "text-neutral-500"}>{r.live ? "● live" : "○ idle"}</span>
+                  <span className={r.state === "degraded" ? "text-amber-400" : r.supervisorActive ? "text-emerald-400" : "text-neutral-500"}>
+                    {r.state === "degraded" ? "● needs attention" : r.supervisorActive ? `● ${r.state || "active"}` : "○ stopped"}
+                  </span>
                   <div className="text-xs text-neutral-500">
                     {r.isolation} · {r.where} · runs-on {JSON.stringify(r.labels?.slice(0, 4))}
                   </div>
+                  {r.lastError && <div className="mt-1 max-w-2xl text-xs text-amber-400">{r.lastError}</div>}
                 </div>
                 <button disabled={busy} onClick={() => remove(r.key)} className="rounded-md border border-neutral-700 px-3 py-1 text-xs hover:bg-neutral-800 disabled:opacity-50">
                   Remove
@@ -255,10 +273,16 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
               <button disabled={busy} onClick={() => previewWorkflow(false)} className="rounded-md border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-50">
                 Preview
               </button>
-              <button disabled={busy} onClick={() => previewWorkflow(true)} className="rounded-md bg-neutral-700 px-3 py-2 text-sm disabled:opacity-50">
+              <button disabled={busy || !wfWorkDir.trim()} onClick={() => previewWorkflow(true)} className="rounded-md bg-neutral-700 px-3 py-2 text-sm disabled:opacity-50">
                 Write to repo
               </button>
             </div>
+            <input
+              className="w-full rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm font-mono"
+              placeholder="Absolute project root on the runner box (required to write)"
+              value={wfWorkDir}
+              onChange={(e) => setWfWorkDir(e.target.value)}
+            />
             {wfTargets.find((t) => t.target === wfTarget)?.description && (
               <p className="text-xs text-neutral-400">{wfTargets.find((t) => t.target === wfTarget)?.description}</p>
             )}

@@ -1,3 +1,4 @@
+import { urlHost } from "../lib/urlHost";
 import React, {
   createContext,
   useCallback,
@@ -534,14 +535,10 @@ function withFreeRelayFallback(list: RelayServer[], password?: string): RelaySer
     ...list,
     {
       id: "public-free",
-      // NOTE (2026-08-03): a hardcoded relay address in shipped code. It is
-      // public by design — public.yaver.io resolves here — so this is not a
-      // leak, but it IS fragile: rebuild the relay box on a new IP and every
-      // installed app carries a dead last-resort address it cannot be told
-      // about. The durable shape is to resolve it from /config like the rest.
-      // Left as-is deliberately: changing the transport fallback is not this
-      // change's business.
-      quicAddr: "46.224.110.38:4433", // infra-addr-ok: public.yaver.io resolves here
+      // Resolve at connection time so the platform can use A on IPv4-only
+      // networks and AAAA on IPv6-only networks. A literal IPv4 here made the
+      // universal fallback unavailable precisely when DNS + IPv6 still worked.
+      quicAddr: "public.yaver.io:4433",
       httpUrl: FREE_RELAY_HTTP,
       region: "eu",
       priority: 99, // last resort — tried only after configured relays 502/fail
@@ -3076,7 +3073,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (autoPairedRef.current.has(dev.deviceId)) continue;
         if (isAutoPairBlocked(dev.deviceId)) continue;
         autoPairedRef.current.add(dev.deviceId);
-        const targetUrl = `http://${dev.ip}:${dev.port}`;
+        const targetUrl = `http://${urlHost(dev.ip)}:${dev.port}`;
         let paired = false;
         try {
           // Try encrypted path: find the device's public key from Convex.
@@ -3216,14 +3213,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (autoPairedRef.current.has(activeDevice.id)) return;
       if (isAutoPairBlocked(activeDevice.id)) return;
       try {
-        const url = `http://${activeDevice.host}:${activeDevice.port || 18080}/info`;
+        const url = `http://${urlHost(activeDevice.host)}:${activeDevice.port || 18080}/info`;
         const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) return;
         const info = await res.json();
         if (!info.needsAuth) return;
         // Mark before we try so we don't retry-storm
         autoPairedRef.current.add(activeDevice.id);
-        const targetUrl = `http://${activeDevice.host}:${activeDevice.port || 18080}`;
+        const targetUrl = `http://${urlHost(activeDevice.host)}:${activeDevice.port || 18080}`;
         // Try encrypted pair if we have this device's pubkey in Convex
         if (activeDevice.publicKey) {
           const ok = await submitEncryptedPair(targetUrl, token, activeDevice.publicKey, info.bootstrapPasskey || info.passkey);
@@ -3355,8 +3352,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     const port = device.port || 18080;
     const directTargets = Array.from(new Set([
-      `http://${device.host}:${port}`,
-      ...(device.lanIps || []).filter(Boolean).map((ip) => `http://${ip}:${port}`),
+      `http://${urlHost(device.host)}:${port}`,
+      ...(device.lanIps || []).filter(Boolean).map((ip) => `http://${urlHost(ip)}:${port}`),
     ])).filter((url) => {
       try {
         const parsed = new URL(url);
@@ -3395,7 +3392,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // First, if the caller passed a fresh /info that already shows bootstrap
     // and a usable passkey, attempt against device.host without re-fetching.
     if (cachedInfo) {
-      const primaryUrl = `http://${device.host}:${port}`;
+      const primaryUrl = `http://${urlHost(device.host)}:${port}`;
       const out = await tryPairAtUrl(primaryUrl, cachedInfo);
       if ("ok" in out && out.ok) {
         quicClient.agentAuthExpired = false;

@@ -25,9 +25,10 @@ test("live output still advances a genuinely queued task", () => {
 });
 
 test("an authoritative terminal snapshot ends stale local coding state", () => {
-  const local = task("running", { updatedAt: 8, turns: [{ role: "user", content: "blue" }] });
-  const merged = mergeTaskSnapshot(local, task("completed", { updatedAt: 9 }));
+  const local = task("running", { createdAt: 8, updatedAt: 8, turns: [{ role: "user", content: "blue" }] });
+  const merged = mergeTaskSnapshot(local, task("completed", { createdAt: 1, updatedAt: 9 }));
   assert.equal(merged.status, "completed");
+  assert.equal(merged.createdAt, 8, "the client's observed start survives remote clock skew");
   assert.deepEqual(merged.turns, local.turns);
 });
 

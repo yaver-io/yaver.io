@@ -7,7 +7,7 @@ import { remoteAgentConversationView, type RemoteAgentConversationTone } from ".
 import { buildTaskHumanSummary, type HumanStepState, type HumanTaskLike } from "../lib/taskHumanSummary";
 import { useColors } from "../context/ThemeContext";
 import { spacing } from "../theme/tokens";
-import { describeLaneProgress } from "../lib/laneProgress";
+import { describeLaneProgress, resolveLaneStartAt } from "../lib/laneProgress";
 
 function toneColor(tone: RemoteAgentConversationTone, c: ReturnType<typeof useColors>): string {
   if (tone === "success") return c.success;
@@ -63,14 +63,22 @@ export function TaskSessionSummary({
   }), [latestActivity, pendingQuestion, task]);
   const accent = toneColor(view.tone, c);
   const steps = evidence.steps.slice(-3);
-  const startedAt = (() => {
+  const remoteStartedAt = (() => {
     const sessionStart = task.executionSession?.sessionStartedAt;
     if (sessionStart) {
       const parsed = Date.parse(sessionStart);
       if (Number.isFinite(parsed)) return parsed;
     }
-    return Number.isFinite(task.createdAt) ? task.createdAt : null;
+    return null;
   })();
+  // A remote box's wall clock can differ from the phone's. A task created on
+  // this client carries a local observed timestamp in task.createdAt; prefer
+  // the later observation so a 55-second box skew cannot make a brand-new turn
+  // immediately claim "this may be stalled".
+  const startedAt = resolveLaneStartAt(
+    Number.isFinite(task.createdAt) ? task.createdAt : null,
+    remoteStartedAt,
+  );
   const presentationUpdatedAt = task.presentation
     ?.map((message) => Date.parse(message.updatedAt))
     .filter(Number.isFinite)

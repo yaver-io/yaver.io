@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // deviceAgentFetch.ts — build a request context (base URL + auth headers) for
 // talking to a *remote* device's Yaver agent HTTP server from the phone.
 //
@@ -46,7 +47,7 @@ export function deviceAgentContext(
   }
   if (!device.host) return null;
   return {
-    baseUrl: `http://${device.host}:${device.port || 18080}`,
+    baseUrl: `http://${urlHost(device.host)}:${device.port || 18080}`,
     headers: {
       Authorization: `Bearer ${token}`,
       ...clientPlatformHeaders(),

@@ -1,5 +1,7 @@
 "use client";
 
+import { urlHost } from "@/lib/urlHost";
+
 // ManagedCloudPanel — web-only surface for Cloud Workspace resources:
 // subscribe via LemonSqueezy, or owner/dev ADOPT an existing cloud machine
 // (allowlist-gated server-side). Every managed row carries the
@@ -140,7 +142,7 @@ async function ensureBoxConnected(
   if (!host) throw new Error("workspace has no address yet (still provisioning)");
   const tunnelUrls = [
     hostname ? `https://${hostname}` : "",
-    serverIp ? `http://${serverIp}:18080` : "",
+    serverIp ? `http://${urlHost(serverIp)}:18080` : "",
   ].filter(Boolean);
   await agentClient.connect(host, 18080, token, deviceId, { tunnelUrls });
 }

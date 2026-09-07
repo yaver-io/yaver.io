@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // backgroundCollector.ts — periodic on-phone runner for Yaver Task Packages.
 //
 // Registers an expo-background-fetch task that, on the OS's schedule, runs the
@@ -25,7 +26,7 @@ async function runAssignedPackageOnce(): Promise<boolean> {
   const token = await getToken();
   if (!token) return false;
   try {
-    const res = await fetch(`http://${host}:18080/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:18080/ops`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ verb: "package_run", payload: { name }, machine: "local" }),

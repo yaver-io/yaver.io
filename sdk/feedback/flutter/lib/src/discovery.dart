@@ -182,8 +182,9 @@ class YaverDiscovery {
             if (m['status'] != 'active') continue;
             final ip = m['serverIp'] as String?;
             if (ip == null || ip.isEmpty) continue;
-            final probed =
-                await probe('http://$ip:$defaultAgentHttpPort');
+            final probed = await probe(
+              'http://${_formatUrlHost(ip)}:$defaultAgentHttpPort',
+            );
             if (probed != null) return probed;
           }
         }
@@ -395,17 +396,23 @@ class YaverDiscovery {
     var normalized = url.trim();
     if (!normalized.startsWith('http://') &&
         !normalized.startsWith('https://')) {
-      normalized = 'http://$normalized';
+      normalized = 'http://${_formatUrlHost(normalized)}';
     }
 
     final uri = Uri.parse(normalized);
     if (uri.port == 0 ||
         (uri.port == 80 && !normalized.contains(':$defaultAgentHttpPort'))) {
-      normalized = '${uri.scheme}://${uri.host}:$defaultAgentHttpPort';
+      normalized = '${uri.scheme}://${_formatUrlHost(uri.host)}:$defaultAgentHttpPort';
     }
 
     final result = await probe(normalized);
     if (result != null) _cached = result;
     return result;
   }
+}
+
+String _formatUrlHost(String host) {
+  final value = host.trim();
+  if (value.startsWith('[') && value.endsWith(']')) return value;
+  return value.contains(':') ? '[$value]' : value;
 }

@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // screwCellClient — reads Yaver's screw-cell shop-floor analytics over the
 // YAVER MESH (LAN-first via /ops, relay fallback), the same agent verbs the
 // firmware pushes to (screw_cell_record via cell_runner.py --yaver) and the
@@ -76,7 +77,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, 8000));
   try {
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

@@ -18,6 +18,15 @@
 /** Seconds of silence after which a lane is called out as possibly stalled. */
 export const LANE_STALL_SECONDS = 45;
 
+/** Pick a start time without letting a slower remote wall clock make a turn
+ * look older than when this client actually observed it. */
+export function resolveLaneStartAt(clientObservedAt: number | null, remoteStartedAt: number | null): number | null {
+  const client = clientObservedAt && Number.isFinite(clientObservedAt) ? clientObservedAt : null;
+  const remote = remoteStartedAt && Number.isFinite(remoteStartedAt) ? remoteStartedAt : null;
+  if (client && remote) return Math.max(client, remote);
+  return client || remote;
+}
+
 export function formatElapsed(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;

@@ -1,7 +1,6 @@
-// VisionSessionView.swift — compact prompt surface for an existing runner
-// session. It uses the shared SessionClient but keeps the UI visionOS-native
-// and dependency-light. Structured narration is primary; raw tmux bytes are
-// evidence under a folded Runner details disclosure.
+// VisionSessionView.swift — compact task conversation surface. The Go agent's
+// /tasks index is authoritative; tmux remains an implementation detail used
+// only to stream raw runner evidence for that task.
 
 import SwiftUI
 
@@ -78,7 +77,7 @@ struct VisionSessionView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Live Session")
+                Text("Task")
                     .font(.largeTitle.bold())
                 Text(headerSubtitle)
                     .foregroundStyle(.secondary)
@@ -134,7 +133,7 @@ struct VisionSessionView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                TextField("Ask the active coding session...", text: $prompt, axis: .vertical)
+                TextField("Continue this task...", text: $prompt, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await sendPrompt() } }
@@ -215,9 +214,9 @@ struct VisionSessionView: View {
 
     private var sessionPicker: some View {
         HStack(spacing: 12) {
-            Picker("Session", selection: $selectedSession) {
+            Picker("Task", selection: $selectedSession) {
                 if sessions.isEmpty {
-                    Text("No sessions").tag("")
+                    Text("No tasks").tag("")
                 } else {
                     ForEach(sessions) { session in
                         Text(session.label).tag(session.name)
@@ -238,7 +237,7 @@ struct VisionSessionView: View {
 
     private var choices: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("The session is waiting for a choice.")
+            Text("The task is waiting for a choice.")
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal) {
                 HStack(spacing: 12) {
@@ -326,21 +325,31 @@ struct VisionSessionView: View {
 
     private var emptyPaneText: String {
         if selectedSession.isEmpty {
-            return "Select a live runner session on the selected machine."
+            return "Select a task on the selected machine."
         }
         if loading { return "The runner is working…" }
         if !pane.isEmpty {
             return "The runner is active. Open Runner details for its live terminal output."
         }
-        return "Send a prompt to \(selectedSession)."
+        return "Continue this task."
     }
 
     private func loadSessions() async {
         error = nil
         do {
             guard let agentClient else { throw AgentError(message: "No machine selected") }
-            let result = try await agentClient.runnerSessions()
-            sessions = result.sessions ?? []
+            let tasks = try await agentClient.listTasks()
+            sessions = tasks.compactMap { task in
+                guard let tmux = task.tmuxSession, !tmux.isEmpty else { return nil }
+                return RunnerSession(
+                    name: tmux,
+                    runner: task.runner,
+                    attached: true,
+                    taskId: task.id,
+                    model: task.model,
+                    taskTitle: task.safeTitle
+                )
+            }
             if selectedSession.isEmpty || !sessions.contains(where: { $0.name == selectedSession }) {
                 selectedSession = sessions.first?.name ?? ""
             }
@@ -374,8 +383,11 @@ struct VisionSessionView: View {
         error = nil
         defer { loading = false }
         do {
-            guard let sessionClient else { throw AgentError(message: "No machine selected") }
-            apply(try await sessionClient.sendText(text, session: selectedSession, surfaceId: "vision"))
+            guard let taskId = selectedTaskID, let agentClient else {
+                throw AgentError(message: "This task no longer has an owning runner conversation.")
+            }
+            try await agentClient.continueTask(taskId, input: text, mode: "")
+            narrative = "Follow-up sent to the same Yaver task."
         } catch {
             if store.handleAuthenticationFailure(error) { return }
             self.error = error.localizedDescription

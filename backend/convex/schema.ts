@@ -1618,6 +1618,7 @@ export default defineSchema({
     lastSnapshotId: v.optional(v.string()),
     lastSnapshotAt: v.optional(v.number()),
     serverIp: v.optional(v.string()),
+    serverIpv6: v.optional(v.string()),
     domain: v.optional(v.string()), // e.g. "abc123.relay.yaver.io"
     region: v.string(), // "eu" | "us" — datacenter region
     password: v.string(), // relay password (auto-generated)

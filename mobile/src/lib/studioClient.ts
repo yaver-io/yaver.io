@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // studioClient — drives the Yaver store-asset Studio over the YAVER MESH,
 // addressed by device, with your bearer + machine:"local" (LAN-first, relay
 // fallback). Mirrors armClient's transport. Today it exposes the offline
@@ -45,7 +46,7 @@ async function lanAttempt(host: string, port: number, body: string, timeoutMs: n
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(`http://${host}:${port}/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:${port}/ops`, {
       method: "POST",
       headers: { ...quicClient.getAuthHeaders(), "Content-Type": "application/json" },
       body,

@@ -402,11 +402,13 @@ func (tm *TaskManager) runRunnerACPPrompt(ctx context.Context, client *acpClient
 		}
 		task.Output = ""
 		task.RawOutput = ""
+		task.RawOutputOffset = 0
+		task.RawOutputBase = 0
 		task.ResultText = ""
 		task.FinishedAt = nil
 		task.Status = TaskStatusQueued
 		task.outputCh = make(chan string, 512)
-		task.rawOutputCh = make(chan []byte, 256)
+		task.rawOutputCh = make(chan taskRawFrame, 256)
 		task.eventCh = make(chan map[string]interface{}, 32)
 		task.doneCh = make(chan struct{})
 		tm.persist()

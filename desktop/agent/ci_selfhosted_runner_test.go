@@ -2,10 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestGithubActionsUpstreamCents(t *testing.T) {
@@ -162,6 +170,195 @@ func TestCIRegistrationStoreInMemory(t *testing.T) {
 	if _, err := s.Add(CIRunnerRegistration{Provider: CIGitHub}); err == nil {
 		t.Errorf("missing target should error")
 	}
+	if _, err := s.Add(CIRunnerRegistration{Provider: CIGitLab, Target: "group/project", Scope: "org"}); err == nil {
+		t.Errorf("gitlab group/org runner should be refused until group safety is implemented")
+	}
+	if _, err := s.Add(CIRunnerRegistration{Provider: CIGitHub, Target: "o/r", MaxConcurrent: 2}); err == nil {
+		t.Errorf("maxConcurrent > 1 must not be accepted while the supervisor is single-worker")
+	}
+	if _, err := s.Add(CIRunnerRegistration{Provider: CIGitHub, Target: "o/r", Isolation: CIIsolationHost, Where: CIWhereOperator}); err == nil {
+		t.Errorf("operator-fleet host execution must be refused")
+	}
+}
+
+func TestCIRegistrationStoreDoesNotReportUnpersistedRegistration(t *testing.T) {
+	store := &CIRegistrationStore{
+		regs: map[string]*CIRunnerRegistration{},
+		path: filepath.Join(t.TempDir(), "missing-parent", "ci-registrations.json"),
+	}
+	if _, err := store.Add(CIRunnerRegistration{Provider: CIGitHub, Target: "owner/repo"}); err == nil {
+		t.Fatal("registration should fail when its durable record cannot be written")
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("failed persistence left a memory-only registration behind")
+	}
+}
+
+func TestRequirePrivateCIProject(t *testing.T) {
+	private := ciForgeProject{FullName: "group/private", Visibility: "private"}
+	if err := requirePrivateCIProject(CIGitLab, private); err != nil {
+		t.Fatalf("private project rejected: %v", err)
+	}
+	for _, visibility := range []string{"public", "internal", ""} {
+		project := ciForgeProject{FullName: "group/not-private", Visibility: visibility}
+		if err := requirePrivateCIProject(CIGitLab, project); err == nil {
+			t.Errorf("visibility %q should be refused", visibility)
+		}
+	}
+}
+
+func TestValidateCIRunnerDiskCarriesRecoveryRoute(t *testing.T) {
+	fs := diskGuardFS{Path: "/runner-volume", FreeBytes: ciRunnerMinFreeBytes - 1}
+	err := validateCIRunnerDisk(fs)
+	if err == nil {
+		t.Fatal("low runner volume must fail before a forge record is created")
+	}
+	var failure *ciPreflightFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("low-disk error is not structured: %T", err)
+	}
+	if failure.Code != "ci_runner_insufficient_disk" {
+		t.Fatalf("failure code=%q", failure.Code)
+	}
+	fix, _ := failure.Initial["fix"].(map[string]interface{})
+	if fix["opsVerb"] != "storage_scan" {
+		t.Fatalf("low-disk failure has no invocable storage route: %#v", failure.Initial)
+	}
+	if err := validateCIRunnerDisk(diskGuardFS{FreeBytes: ciRunnerMinFreeBytes}); err != nil {
+		t.Fatalf("exact disk floor rejected: %v", err)
+	}
+}
+
+func TestGitLabProtectedRunnerLeaseLifecycle(t *testing.T) {
+	var created, deleted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/projects/"):
+			if !strings.Contains(r.RequestURI, "group%2Fproject") {
+				t.Errorf("project path was not URL encoded: %s", r.RequestURI)
+			}
+			if r.Header.Get("PRIVATE-TOKEN") != "access-token" {
+				t.Errorf("project probe missing private token")
+			}
+			_, _ = w.Write([]byte(`{"id":42,"path_with_namespace":"group/project","visibility":"private","web_url":"https://gitlab.example/group/project"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/user/runners":
+			if r.Header.Get("PRIVATE-TOKEN") != "access-token" {
+				t.Errorf("runner creation missing private token")
+			}
+			_ = r.ParseForm()
+			want := map[string]string{
+				"runner_type":  "project_type",
+				"project_id":   "42",
+				"paused":       "false",
+				"locked":       "true",
+				"run_untagged": "false",
+				"access_level": "ref_protected",
+			}
+			for key, value := range want {
+				if got := r.Form.Get(key); got != value {
+					t.Errorf("runner create %s=%q, want %q", key, got, value)
+				}
+			}
+			if tags := r.Form.Get("tag_list"); !strings.Contains(tags, "self-hosted") || !strings.Contains(tags, "yaver") {
+				t.Errorf("runner tags missing mandatory selectors: %q", tags)
+			}
+			created = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":99,"token":"glrt-one-use"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/runners":
+			body, _ := io.ReadAll(r.Body)
+			form, _ := url.ParseQuery(string(body))
+			if form.Get("token") != "glrt-one-use" {
+				t.Errorf("cleanup token mismatch")
+			}
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	project, err := fetchGitLabProjectAt(context.Background(), srv.URL+"/api/v4", "access-token", "group/project")
+	if err != nil {
+		t.Fatalf("project probe: %v", err)
+	}
+	lease, err := createGitLabRunnerLeaseAt(context.Background(), srv.URL+"/api/v4", CIRunnerRegistration{
+		Provider: CIGitLab,
+		Target:   "group/project",
+		Labels:   []string{"ios"},
+	}, project, "access-token")
+	if err != nil {
+		t.Fatalf("create lease: %v", err)
+	}
+	if lease.Token != "glrt-one-use" || !created {
+		t.Fatalf("runner lease not created correctly")
+	}
+	if err := lease.Cleanup(context.Background()); err != nil {
+		t.Fatalf("cleanup lease: %v", err)
+	}
+	if !deleted {
+		t.Fatalf("runner record was not deleted")
+	}
+}
+
+func TestGitHubRunnerCleanupDeletesOnlyExactName(t *testing.T) {
+	var deletedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer access-token" {
+			t.Errorf("cleanup request missing bearer token")
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/project/actions/runners":
+			_, _ = w.Write([]byte(`{"total_count":2,"runners":[{"id":11,"name":"yaver-someone-else"},{"id":22,"name":"yaver-exact"}]}`))
+		case r.Method == http.MethodDelete:
+			deletedPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	if err := deleteGitHubRunnerByNameAt(context.Background(), srv.URL+"/repos/owner/project", "access-token", "yaver-exact"); err != nil {
+		t.Fatalf("cleanup exact runner: %v", err)
+	}
+	if deletedPath != "/repos/owner/project/actions/runners/22" {
+		t.Fatalf("deleted %q, want only exact runner id 22", deletedPath)
+	}
+}
+
+func TestCISupervisorStopCancelsWaitingLoop(t *testing.T) {
+	reg := CIRunnerRegistration{Provider: CIGitHub, Target: "owner/repo", MaxConcurrent: 1, PrivateOnly: true}
+	limiter := newRunnerLimiter()
+	key := "ci:" + reg.key()
+	if !limiter.tryAcquire(key, 1) {
+		t.Fatal("failed to occupy test limiter")
+	}
+	defer limiter.release(key)
+
+	sv := NewCISupervisor(reg, NewRunnerStore(1), limiter, nil, nil)
+	go sv.Run(context.Background())
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && sv.Status().State != "waiting_for_slot" {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := sv.Status().State; got != "waiting_for_slot" {
+		t.Fatalf("supervisor state=%q, want waiting_for_slot", got)
+	}
+	done := make(chan struct{})
+	go func() {
+		sv.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not cancel the waiting supervisor")
+	}
+	if got := sv.Status().State; got != "stopped" {
+		t.Fatalf("supervisor state after Stop=%q", got)
+	}
 }
 
 func TestFetchRegistrationToken(t *testing.T) {
@@ -237,6 +434,30 @@ func TestScaffoldCIWorkflow(t *testing.T) {
 		}
 	}
 
+	// GitLab is a first-class scaffold, not a GitHub file with a different
+	// extension. Each fragment is valid YAML and carries tags that match the
+	// protected project runner registration.
+	for _, target := range ciWorkflowTargets() {
+		rel, content, _, err := scaffoldCIWorkflowFor(CIGitLab, target, "", false, false)
+		if err != nil {
+			t.Fatalf("gitlab preview %s: %v", target, err)
+		}
+		if !strings.HasPrefix(filepath.ToSlash(rel), ".gitlab/") {
+			t.Errorf("gitlab %s path wrong: %s", target, rel)
+		}
+		if !strings.Contains(content, "tags: [self-hosted, yaver") {
+			t.Errorf("gitlab %s missing runner tags:\n%s", target, content)
+		}
+		var parsed map[string]interface{}
+		if err := yaml.Unmarshal([]byte(content), &parsed); err != nil {
+			t.Errorf("gitlab %s invalid YAML: %v", target, err)
+		}
+	}
+	_, gitlabTF, _, _ := scaffoldCIWorkflowFor(CIGitLab, "testflight", "", false, false)
+	if !strings.Contains(gitlabTF, `yaver publish ios --path "$CI_PROJECT_DIR"`) || !strings.Contains(gitlabTF, "when: manual") {
+		t.Errorf("gitlab TestFlight must use the canonical Yaver publish facade behind a manual gate:\n%s", gitlabTF)
+	}
+
 	// TestFlight pins os:darwin + the ASC secrets.
 	_, tf, secrets, _ := scaffoldCIWorkflow("testflight", "", false, false)
 	if !strings.Contains(tf, "os:darwin") {
@@ -258,6 +479,9 @@ func TestScaffoldCIWorkflow(t *testing.T) {
 
 	// Write + no-clobber + overwrite.
 	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	rel, _, _, err := scaffoldCIWorkflow("npm", dir, true, false)
 	if err != nil {
 		t.Fatalf("write npm: %v", err)
@@ -270,6 +494,9 @@ func TestScaffoldCIWorkflow(t *testing.T) {
 	}
 	if _, _, _, err := scaffoldCIWorkflow("npm", dir, true, true); err != nil {
 		t.Errorf("overwrite should succeed: %v", err)
+	}
+	if _, _, _, err := scaffoldCIWorkflow("npm", ".", true, false); err == nil {
+		t.Error("relative workDir must never fall back to the agent daemon's CWD")
 	}
 }
 
@@ -315,9 +542,31 @@ func TestGitlabRunnerRunArgs(t *testing.T) {
 	if strings.Contains(shell, "--docker-image") {
 		t.Errorf("shell executor must not pass --docker-image: %s", shell)
 	}
+	if strings.Contains(shell, "--wait-timeout") {
+		t.Errorf("one-shot runner must wait for a real job instead of timing out into a false run: %s", shell)
+	}
 	docker := strings.Join(gitlabRunnerRunArgs("https://gitlab.com", "tok", "docker", "alpine:latest"), " ")
 	if !strings.Contains(docker, "--docker-image alpine:latest") {
 		t.Errorf("docker executor must pass --docker-image: %s", docker)
+	}
+}
+
+func TestFetchGitLabRunnerChecksum(t *testing.T) {
+	asset := "gitlab-runner-darwin-arm64"
+	hash := strings.Repeat("a", 64)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(hash + "  binaries/" + asset + "\n"))
+	}))
+	defer srv.Close()
+	got, err := fetchGitLabRunnerChecksum(context.Background(), srv.URL, asset)
+	if err != nil {
+		t.Fatalf("checksum: %v", err)
+	}
+	if got != hash {
+		t.Fatalf("checksum=%q want %q", got, hash)
+	}
+	if _, err := fetchGitLabRunnerChecksum(context.Background(), srv.URL, "missing"); err == nil {
+		t.Fatal("missing checksum entry should fail closed")
 	}
 }
 

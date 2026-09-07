@@ -3,6 +3,16 @@
 
 import Foundation
 
+func urlAuthorityHost(_ host: String) -> String {
+    let value = host.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.hasPrefix("[") && value.hasSuffix("]") { return value }
+    return value.contains(":") ? "[\(value)]" : value
+}
+
+func agentHTTPBase(host: String, port: Int) -> String {
+    "http://\(urlAuthorityHost(host)):\(port)"
+}
+
 struct NowPlaying: Decodable {
     var title: String?
     var artist: String?
@@ -597,6 +607,7 @@ struct RunnerSession: Decodable, Identifiable {
     var attached: Bool?
     var taskId: String?
     var model: String?
+    var taskTitle: String?
 
     var id: String { name }
 
@@ -604,6 +615,7 @@ struct RunnerSession: Decodable, Identifiable {
     /// fallback because the user already knows which coding-agent family owns
     /// the conversation.
     var label: String {
+        if let taskTitle, !taskTitle.isEmpty { return redactHomePaths(taskTitle) }
         if let model, !model.isEmpty { return "\(name) · \(model)" }
         guard let runner, !runner.isEmpty, runner != name else { return name }
         return "\(name) · \(runner)"
@@ -815,7 +827,7 @@ struct BoxTarget: Codable, Identifiable, Equatable {
     /// against the device's daily allowance.
     var opsEndpoints: [(url: URL, relay: Bool)] {
         var out: [(url: URL, relay: Bool)] = []
-        if !host.isEmpty, let lan = URL(string: "http://\(host):\(port)/ops") {
+        if !host.isEmpty, let lan = URL(string: "\(agentHTTPBase(host: host, port: port))/ops") {
             out.append((lan, false))
         }
         if let base = relayBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -834,7 +846,7 @@ struct BoxTarget: Codable, Identifiable, Equatable {
     func requestEndpoints(path rawPath: String) -> [(url: URL, relay: Bool)] {
         let path = rawPath.hasPrefix("/") ? rawPath : "/\(rawPath)"
         var out: [(url: URL, relay: Bool)] = []
-        if !host.isEmpty, let lan = URL(string: "http://\(host):\(port)\(path)") {
+        if !host.isEmpty, let lan = URL(string: "\(agentHTTPBase(host: host, port: port))\(path)") {
             out.append((lan, false))
         }
         if let base = relayBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),

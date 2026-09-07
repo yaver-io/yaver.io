@@ -24,6 +24,7 @@
  */
 
 import { HEARTBEAT_STALE_MS } from './constants';
+import { agentHttpBase } from './endpoints';
 
 export interface CoreDevice {
   /** Convex-issued device id. */
@@ -254,7 +255,7 @@ export function buildProbeCandidates(
   for (const ip of target.localIps ?? []) {
     if (ip) ips.add(ip);
   }
-  return [...ips].map((ip) => `http://${ip}:${port}`);
+  return [...ips].map((ip) => agentHttpBase(ip, port));
 }
 
 // ── Parallel /health race (Promise.any polyfill baked in) ─────────────

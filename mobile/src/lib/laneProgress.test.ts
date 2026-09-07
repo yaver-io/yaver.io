@@ -1,4 +1,4 @@
-import { describeLaneProgress, formatElapsed, LANE_STALL_SECONDS } from "./laneProgress.ts";
+import { describeLaneProgress, formatElapsed, LANE_STALL_SECONDS, resolveLaneStartAt } from "./laneProgress.ts";
 
 // The rule these pin: a user must be able to tell SLOW from STUCK. Reported
 // from TestFlight 465 — "I'm not sure whether it's going to load or not".
@@ -12,6 +12,9 @@ expectEq(formatElapsed(0), "0:00", "zero");
 expectEq(formatElapsed(9), "0:09", "pads seconds");
 expectEq(formatElapsed(74), "1:14", "minutes");
 expectEq(formatElapsed(-5), "0:00", "never negative");
+expectEq(resolveLaneStartAt(T0, T0 - 55_000), T0, "remote clock lag cannot age a new turn");
+expectEq(resolveLaneStartAt(T0, T0 + 55_000), T0 + 55_000, "future remote time safely clamps to zero elapsed");
+expectEq(resolveLaneStartAt(T0, null), T0, "client observation works without remote metadata");
 
 expectEq(describeLaneProgress({ startedAt: null, lastOutputAt: null, now: T0 }), null,
   "no start time renders nothing");

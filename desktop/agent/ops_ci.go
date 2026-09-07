@@ -4,7 +4,8 @@ package main
 // (ci_selfhosted_runner.go). Self-registering ops verbs so the web/mobile/CLI
 // drive it via callOps without any central-router edit (mirrors ops_git.go).
 //
-//   ci_runner_register {provider, target, scope?, host?, labels?, isolation?, where?, maxConcurrent?}
+//   ci_runner_register {provider, target, scope?, host?, labels?, isolation?, where?}
+//   ci_runner_preflight {same payload}       // no runner is created
 //   ci_runner_list     {}
 //   ci_runner_remove   {key}            // key = "github:owner/repo"
 //   ci_runner_status   {}               // registrations + live flag + local savings ledger
@@ -15,35 +16,31 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"path/filepath"
 	"strings"
 )
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
-		Name:        "ci_runner_register",
-		Description: "Register THIS box as a GitHub/GitLab self-hosted CI runner for a repo/org so the user's existing workflows (runs-on: [self-hosted, yaver]) run here and GitHub bills $0 for the minutes. Ephemeral per-job, container-isolated by default, private-repos-only. Token minted just-in-time from local git creds, never persisted/Convex. See docs/yaver-managed-cloud-ci-absorption.md.",
-		Schema: map[string]interface{}{
-			"type":     "object",
-			"required": []string{"provider", "target"},
-			"properties": map[string]interface{}{
-				"provider":      map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab"}},
-				"target":        map[string]interface{}{"type": "string", "description": "owner/repo (repo scope), org name (org scope), or gitlab numeric project id"},
-				"scope":         map[string]interface{}{"type": "string", "enum": []string{"repo", "org"}, "description": "default repo"},
-				"host":          map[string]interface{}{"type": "string", "description": "GHES / self-managed GitLab host; default github.com / gitlab.com"},
-				"labels":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "extra runs-on labels on top of self-hosted,yaver,os:*,arch:*"},
-				"isolation":     map[string]interface{}{"type": "string", "enum": []string{"container", "host"}, "description": "default container (needs docker). host = trusted private box only."},
-				"where":         map[string]interface{}{"type": "string", "enum": []string{"self-hosted", "operator-fleet", "yaver-cloud"}, "description": "hardware class for metering. default self-hosted (free)."},
-				"maxConcurrent": map[string]interface{}{"type": "integer", "description": "default 1"},
-			},
-			"additionalProperties": false,
-		},
+		Name:           "ci_runner_preflight",
+		Description:    "Probe a proposed GitHub/GitLab runner registration without creating or persisting it. Verifies local isolation, forge credentials, exact project resolution, and private visibility; returns the enforced labels/policy or a typed refusal.",
+		Schema:         ciRunnerRegistrationSchema(),
+		Handler:        opsCIRunnerPreflightHandler,
+		Streaming:      false,
+		AllowCompanion: false,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:           "ci_runner_register",
+		Description:    "Register THIS box as a project-scoped GitHub/GitLab self-hosted CI runner. Registration succeeds only after a real private-project and runner-token probe. GitLab runners are locked, tagged, protected-ref-only, and removed after their one job. Container-isolated by default; host mode is for trusted private projects on dedicated boxes.",
+		Schema:         ciRunnerRegistrationSchema(),
 		Handler:        opsCIRunnerRegisterHandler,
 		Streaming:      false,
 		AllowCompanion: false,
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "ci_runner_list",
-		Description: "List the self-hosted CI runner registrations on this box (provider/target/labels/isolation + whether the supervisor is live).",
+		Description: "List self-hosted CI runner registrations on this box. Runtime presence is supervisorActive; state/lastError report whether the forge-facing operation is actually healthy.",
 		Schema: map[string]interface{}{
 			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
 		},
@@ -73,6 +70,7 @@ func init() {
 			"type":     "object",
 			"required": []string{"target"},
 			"properties": map[string]interface{}{
+				"provider":  map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab"}, "description": "default github"},
 				"target":    map[string]interface{}{"type": "string", "enum": []string{"test", "npm", "testflight", "play-internal"}},
 				"workDir":   map[string]interface{}{"type": "string", "description": "project dir to write into (required when write:true)"},
 				"write":     map[string]interface{}{"type": "boolean", "description": "default false = preview only"},
@@ -126,7 +124,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "ci_runner_status",
-		Description: "CI runner status for this box: registrations + live supervisors + the local SAVINGS LEDGER (runs, charged ¢, what GitHub Actions would have billed, ¢ saved).",
+		Description: "CI runner status for this box: registrations + honest supervisor state/last error + the local savings ledger. supervisorActive means only that the loop exists; state and lastError carry operational health.",
 		Schema: map[string]interface{}{
 			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
 		},
@@ -136,6 +134,24 @@ func init() {
 	})
 }
 
+func ciRunnerRegistrationSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":     "object",
+		"required": []string{"provider", "target"},
+		"properties": map[string]interface{}{
+			"provider":      map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab"}},
+			"target":        map[string]interface{}{"type": "string", "description": "GitHub owner/repo or GitLab namespace/project path (numeric GitLab id also accepted)"},
+			"scope":         map[string]interface{}{"type": "string", "enum": []string{"repo", "org"}, "description": "default repo; org is refused while strict private-project enforcement is active"},
+			"host":          map[string]interface{}{"type": "string", "description": "GHES / self-managed GitLab host; default github.com / gitlab.com"},
+			"labels":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "extra runs-on/tags labels on top of self-hosted,yaver,os:*,arch:*"},
+			"isolation":     map[string]interface{}{"type": "string", "enum": []string{"container", "host"}, "description": "default container (needs a working Docker daemon). host = trusted private project on a dedicated box only"},
+			"where":         map[string]interface{}{"type": "string", "enum": []string{"self-hosted", "operator-fleet", "yaver-cloud"}, "description": "hardware class for metering; default self-hosted"},
+			"maxConcurrent": map[string]interface{}{"type": "integer", "enum": []int{1}, "description": "currently exactly 1; use separate registrations for separate projects"},
+		},
+		"additionalProperties": false,
+	}
+}
+
 func ciManagerFor(c OpsContext) (*CIManager, *OpsResult) {
 	if c.Server == nil {
 		return nil, &OpsResult{OK: false, Code: "internal", Error: "ci_runner verb needs an HTTPServer context"}
@@ -143,33 +159,24 @@ func ciManagerFor(c OpsContext) (*CIManager, *OpsResult) {
 	return ensureCIManager(c.Server.ensureRunnerStore()), nil
 }
 
-func opsCIRunnerRegisterHandler(c OpsContext, payload json.RawMessage) OpsResult {
-	mgr, errRes := ciManagerFor(c)
-	if errRes != nil {
-		return *errRes
-	}
-	var p struct {
-		Provider      string   `json:"provider"`
-		Target        string   `json:"target"`
-		Scope         string   `json:"scope"`
-		Host          string   `json:"host"`
-		Labels        []string `json:"labels"`
-		Isolation     string   `json:"isolation"`
-		Where         string   `json:"where"`
-		MaxConcurrent int      `json:"maxConcurrent"`
-	}
+type opsCIRunnerRegistrationPayload struct {
+	Provider      string   `json:"provider"`
+	Target        string   `json:"target"`
+	Scope         string   `json:"scope"`
+	Host          string   `json:"host"`
+	Labels        []string `json:"labels"`
+	Isolation     string   `json:"isolation"`
+	Where         string   `json:"where"`
+	MaxConcurrent int      `json:"maxConcurrent"`
+}
+
+func decodeCIRunnerRegistration(payload json.RawMessage) (CIRunnerRegistration, error) {
+	var p opsCIRunnerRegistrationPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
-		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+		return CIRunnerRegistration{}, err
 	}
-	provider := CIProvider(strings.ToLower(strings.TrimSpace(p.Provider)))
-	if provider != CIGitHub && provider != CIGitLab {
-		return OpsResult{OK: false, Code: "bad_payload", Error: "provider must be github or gitlab"}
-	}
-	if strings.TrimSpace(p.Target) == "" {
-		return OpsResult{OK: false, Code: "bad_payload", Error: "target required (owner/repo, org, or project id)"}
-	}
-	stored, err := mgr.Register(CIRunnerRegistration{
-		Provider:      provider,
+	return normalizeCIRegistration(CIRunnerRegistration{
+		Provider:      CIProvider(strings.ToLower(strings.TrimSpace(p.Provider))),
 		Target:        strings.TrimSpace(p.Target),
 		Scope:         strings.TrimSpace(p.Scope),
 		Host:          strings.TrimSpace(p.Host),
@@ -178,16 +185,75 @@ func opsCIRunnerRegisterHandler(c OpsContext, payload json.RawMessage) OpsResult
 		Where:         CIRunWhere(strings.TrimSpace(p.Where)),
 		MaxConcurrent: p.MaxConcurrent,
 	})
+}
+
+func opsCIRunnerPreflightHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	reg, err := decodeCIRunnerRegistration(payload)
 	if err != nil {
-		return OpsResult{OK: false, Code: "register_failed", Error: err.Error()}
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+	ctx := c.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	prepared, err := prepareCIRegistration(ctx, reg)
+	if err != nil {
+		return ciRegistrationFailureResult("ci_preflight_failed", err)
 	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{
-		"key":      stored.key(),
-		"labels":   stored.runnerLabels(),
-		"runsOn":   stored.runnerLabels(),
-		"forgeUrl": stored.forgeURL(),
-		"hint":     "Set `runs-on: [self-hosted, yaver]` in your workflow. Token is minted per-job from this box's git creds (run git_connect first if missing).",
+		"ready":         true,
+		"provider":      prepared.Provider,
+		"target":        prepared.Target,
+		"projectId":     prepared.ProjectID,
+		"labels":        prepared.runnerLabels(),
+		"isolation":     prepared.Isolation,
+		"privateOnly":   true,
+		"protectedOnly": prepared.Provider == CIGitLab,
 	}}
+}
+
+func opsCIRunnerRegisterHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	mgr, errRes := ciManagerFor(c)
+	if errRes != nil {
+		return *errRes
+	}
+	reg, err := decodeCIRunnerRegistration(payload)
+	if err != nil {
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+	ctx := c.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stored, err := mgr.Register(ctx, reg)
+	if err != nil {
+		return ciRegistrationFailureResult("register_failed", err)
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"key":       stored.key(),
+		"projectId": stored.ProjectID,
+		"labels":    stored.runnerLabels(),
+		"runsOn":    stored.runnerLabels(),
+		"forgeUrl":  stored.forgeURL(),
+		"hint":      ciRunnerWorkflowHint(stored),
+	}}
+}
+
+func ciRegistrationFailureResult(fallbackCode string, err error) OpsResult {
+	result := OpsResult{OK: false, Code: fallbackCode, Error: err.Error()}
+	var failure *ciPreflightFailure
+	if errors.As(err, &failure) {
+		result.Code = failure.Code
+		result.Initial = failure.Initial
+	}
+	return result
+}
+
+func ciRunnerWorkflowHint(r CIRunnerRegistration) string {
+	if r.Provider == CIGitLab {
+		return "Use matching `tags:` in .gitlab-ci.yml and protect the release branch/tag. This runner refuses untagged and unprotected jobs."
+	}
+	return "Set `runs-on: [self-hosted, yaver]` in the GitHub workflow. Only this verified private repository is registered."
 }
 
 func opsCIRunnerListHandler(c OpsContext, _ json.RawMessage) OpsResult {
@@ -207,6 +273,8 @@ func opsCIRunnerListHandler(c OpsContext, _ json.RawMessage) OpsResult {
 			"isolation":     string(r.Isolation),
 			"where":         string(r.Where),
 			"maxConcurrent": r.MaxConcurrent,
+			"privateOnly":   r.PrivateOnly,
+			"projectId":     r.ProjectID,
 		})
 	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{"registrations": rows, "count": len(rows)}}
@@ -242,6 +310,7 @@ func opsCIRunnerStatusHandler(c OpsContext, _ json.RawMessage) OpsResult {
 
 func opsCIWorkflowScaffoldHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
+		Provider  string `json:"provider"`
 		Target    string `json:"target"`
 		WorkDir   string `json:"workDir"`
 		Write     bool   `json:"write"`
@@ -250,7 +319,11 @@ func opsCIWorkflowScaffoldHandler(_ OpsContext, payload json.RawMessage) OpsResu
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
 	}
-	relPath, content, secrets, err := scaffoldCIWorkflow(p.Target, p.WorkDir, p.Write, p.Overwrite)
+	provider := CIProvider(strings.ToLower(strings.TrimSpace(p.Provider)))
+	if provider == "" {
+		provider = CIGitHub
+	}
+	relPath, content, secrets, err := scaffoldCIWorkflowFor(provider, p.Target, p.WorkDir, p.Write, p.Overwrite)
 	if err != nil {
 		return OpsResult{OK: false, Code: "scaffold_failed", Error: err.Error(), Initial: map[string]interface{}{
 			"path": relPath, "content": content, "secrets": secrets,
@@ -261,8 +334,15 @@ func opsCIWorkflowScaffoldHandler(_ OpsContext, payload json.RawMessage) OpsResu
 		"content": content,
 		"secrets": secrets,
 		"written": p.Write,
-		"hint":    "Commit this workflow, set the listed secrets in your repo (Settings → Secrets → Actions), register a runner with ci_runner_register, then push the tag — the build runs on your box.",
+		"hint":    ciWorkflowInstallHint(provider, relPath),
 	}}
+}
+
+func ciWorkflowInstallHint(provider CIProvider, relPath string) string {
+	if provider == CIGitLab {
+		return "Add `include: [{ local: '" + filepath.ToSlash(relPath) + "' }]` to .gitlab-ci.yml, protect the release branch/tag, set any listed CI/CD variables, and register the tagged runner. Store deploy jobs are manual by design."
+	}
+	return "Commit this workflow, set the listed Actions secrets, register the repository runner, then invoke the manual release workflow."
 }
 
 func opsCIJailSetupHandler(_ OpsContext, _ json.RawMessage) OpsResult {
@@ -301,6 +381,7 @@ func opsCIWorkflowTargetsHandler(_ OpsContext, _ json.RawMessage) OpsResult {
 		rows = append(rows, map[string]interface{}{
 			"target":      tpl.Target,
 			"file":        tpl.File,
+			"gitlabFile":  filepath.Join(".gitlab", tpl.GitLabFile),
 			"runsOn":      tpl.RunsOn,
 			"secrets":     tpl.Secrets,
 			"description": tpl.Description,

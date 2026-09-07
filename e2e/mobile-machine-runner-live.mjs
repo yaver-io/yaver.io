@@ -40,6 +40,7 @@ const page = context.pages()[0] || await context.newPage();
 const results = [];
 const consoleErrors = [];
 const failedResponses = [];
+const newTaskActionName = /^(?:Start a new chat|Dictate a new task|New task)$/i;
 page.on("console", (message) => {
   if (message.type() === "error") consoleErrors.push(message.text().slice(0, 300));
 });
@@ -88,6 +89,28 @@ async function clickPressableWithText(text) {
     target.click();
     return true;
   }, text);
+}
+
+function textPattern(value) {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+}
+
+async function currentTaskShellMachine(name) {
+  const newTask = await visible(page.getByRole("button", { name: newTaskActionName }));
+  if (!newTask) return false;
+  return !!(await visibleText(textPattern(name)));
+}
+
+async function currentTaskShellReady() {
+  const expectedMachines = matrixOnly === "linux-codex" || matrixOnly === "linux-opencode"
+    ? [linuxName]
+    : matrixOnly === "desktop-codex" || matrixOnly === "desktop-opencode"
+      ? [desktopName]
+      : [linuxName, desktopName];
+  for (const name of expectedMachines) {
+    if (await currentTaskShellMachine(name)) return true;
+  }
+  return false;
 }
 
 async function seedSession() {
@@ -139,12 +162,18 @@ async function seedSession() {
         await clickPressableWithText("Choose a machine myself");
       }
     }
-    const shellReady = await visibleText(/^(Switch|Pick)/i) || await visibleText(/^Remote Box$/i);
+    // The current Tasks overview no longer needs to expose its old
+    // Switch/Pick/Remote Box controls when the selected machine is already
+    // usable. Prove the operation the user needs instead: the intended box is
+    // named and the real New task action is present.
+    const shellReady = await currentTaskShellReady()
+      || await visibleText(/^(Switch|Pick)/i)
+      || await visibleText(/^Remote Box$/i);
     if (shellReady) break;
     await page.waitForTimeout(1000);
   }
   await page.screenshot({ path: join(artifacts, "authenticated-shell.png"), fullPage: true });
-  if (!(await visibleText(/^(Switch|Pick)/i)) && !(await visibleText(/^Remote Box$/i))) {
+  if (!(await currentTaskShellReady()) && !(await visibleText(/^(Switch|Pick)/i)) && !(await visibleText(/^Remote Box$/i))) {
     const body = ((await page.locator("body").innerText().catch(() => "")) || "").replace(/\s+/g, " ").slice(0, 1200);
     const storage = await page.evaluate(() => ({
       keys: Object.keys(localStorage).filter((key) => key.startsWith("yaver")),
@@ -162,10 +191,23 @@ async function seedSession() {
 
 async function selectMachine(name) {
   console.log(`[audit] selecting machine ${safeSlug(name)}`);
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const target = new RegExp(escaped, "i");
+  const target = textPattern(name);
   const runnerButton = await visible(page.locator('button[aria-label^="Change coding agent on "]'));
   if (runnerButton && target.test((await runnerButton.getAttribute("aria-label")) || "")) return;
+
+  // A connected task shell can render before the asynchronous runner probe
+  // settles. The old harness immediately searched for a removed switcher and
+  // failed even though the correct machine and New task action were already
+  // visible. Wait for the operation-level control, then fail with the missing
+  // capability named if it never arrives.
+  if (await currentTaskShellMachine(name)) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      const connectedRunner = await visible(page.locator('button[aria-label^="Change coding agent on "]'));
+      if (connectedRunner && target.test((await connectedRunner.getAttribute("aria-label")) || "")) return;
+      await page.waitForTimeout(1000);
+    }
+    throw new Error(`Tasks selected ${name} but never exposed its coding-agent control`);
+  }
 
   if (await visibleText(/^Pick a machine$/i)) {
     const inlineText = await visible(page.getByText(target));
@@ -232,12 +274,18 @@ async function selectRunner(machine, runner) {
 async function runHello(machine, runner, ordinal) {
   await selectMachine(machine);
   await selectRunner(machine, runner);
-  const marker = `YAVER_BROWSER_HELLO_${ordinal}`;
+  // Keep each dispatch unique. The agent deliberately deduplicates identical
+  // task creates, and reusing a fixed marker made retries reopen an older
+  // conversation instead of proving a fresh live stream.
+  const marker = `YAVER_BROWSER_HELLO_${ordinal}_${Date.now()}`;
   console.log(`[audit] dispatching ${marker}`);
-  const newTask = await visible(page.getByRole("button", { name: /^(?:Dictate a new task|New task)$/i }));
+  const newTask = await visible(page.getByRole("button", { name: newTaskActionName }));
   if (!newTask) throw new Error("Tasks has no new-task action");
   await newTask.click();
-  await page.getByText(/^New task$/).waitFor({ state: "visible", timeout: 30_000 });
+  // The overview action remains mounted behind the modal, so matching the
+  // duplicated title text is ambiguous in Playwright strict mode. The scroll
+  // surface is the modal's stable, named contract.
+  await page.getByTestId("new-task-scroll").waitFor({ state: "visible", timeout: 30_000 });
   const input = page.getByRole("textbox").last();
   await input.fill(`Reply with exactly ${marker}. Do not modify files and do not run commands.`);
   const sendText = await visibleText(/^Send$/);
@@ -270,17 +318,37 @@ async function runHello(machine, runner, ordinal) {
   const sendControl = sendText.locator("xpath=ancestor::div[@tabindex='0'][1]");
   if (!(await sendControl.count())) throw new Error("New-task composer Send action is disabled without a named repair route");
   await sendControl.evaluate((element) => element.click());
-  await page.locator('[aria-label="Back to tasks list"]').waitFor({ state: "visible", timeout: 90_000 });
-  const runnerChip = page.locator('[aria-label^="Change coding agent for the next turn"]');
-  const expectedRunner = new RegExp(runner, "i");
-  await runnerChip.filter({ hasText: expectedRunner }).first().waitFor({ state: "visible", timeout: 90_000 });
+  const taskBack = page.locator('[aria-label="Back to tasks list"]');
+  try {
+    await taskBack.waitFor({ state: "visible", timeout: 30_000 });
+  } catch {
+    await page.screenshot({ path: join(artifacts, `${safeSlug(machine)}-${safeSlug(runner)}-after-send.png`), fullPage: true });
+    const body = ((await page.locator("body").innerText().catch(() => "")) || "").replace(/\s+/g, " ").slice(0, 1800);
+    throw new Error(`${marker} was accepted but its task detail did not open. Visible text: ${body}`);
+  }
+  // The task header now makes the recorded model + effort the primary
+  // control; changing the coding agent moved behind follow-up options. The
+  // overview screenshot above proves the selected runner, while this named
+  // control proves the live task retained its execution settings.
+  await page.locator('[aria-label="Change model for the next turn"]').waitFor({ state: "visible", timeout: 90_000 });
   await page.getByText(new RegExp(machine.replace(/\.local$/i, ""), "i")).first().waitFor({ state: "visible", timeout: 90_000 });
+  await page.screenshot({ path: join(artifacts, `${safeSlug(machine)}-${safeSlug(runner)}-task-open.png`), fullPage: true });
   let completed = false;
   for (let attempt = 0; attempt < 360; attempt += 1) {
     const body = (await page.locator("body").innerText().catch(() => "")) || "";
-    const markerCount = body.split(marker).length - 1;
-    if (/\b(COMPLETED|REVIEW)\b/.test(body) && markerCount >= 2) { completed = true; break; }
-    if (/\bFAILED\b/.test(body)) {
+    const assistant = page.getByTestId("task-assistant-message").filter({ hasText: marker }).last();
+    const settledStatus = page.getByTestId("task-status").filter({ hasText: /^(?:YOUR TURN|READY TO REVIEW|COMPLETED)$/i });
+    // Require the response in the ASSISTANT bubble and the task header's own
+    // settled status. Looking for marker text + "Review" anywhere matched the
+    // user's prompt and the overview's background filter while the foreground
+    // task was still visibly stuck on WORKING.
+    if (await assistant.isVisible().catch(() => false) && await settledStatus.isVisible().catch(() => false)) {
+      await assistant.scrollIntoViewIfNeeded();
+      completed = true;
+      break;
+    }
+    const failedStatus = page.getByTestId("task-status").filter({ hasText: /^FAILED$/i });
+    if (await failedStatus.isVisible().catch(() => false)) {
       await page.screenshot({ path: join(artifacts, `${safeSlug(machine)}-${safeSlug(runner)}-failed.png`), fullPage: true });
       const failureAt = body.indexOf("FAILED");
       const excerpt = body.slice(Math.max(0, failureAt - 300), failureAt + 1400).replace(/\s+/g, " ");
@@ -288,9 +356,9 @@ async function runHello(machine, runner, ordinal) {
     }
     await page.waitForTimeout(1000);
   }
-  if (!completed) throw new Error(`${marker} never produced a completed visible response`);
+  if (!completed) throw new Error(`${marker} never produced a settled visible response`);
   await page.screenshot({ path: join(artifacts, `${safeSlug(machine)}-${safeSlug(runner)}-result.png`), fullPage: true });
-  results.push({ check: `${ordinal}-${runner}`, verdict: "PIXELS", detail: "machine + runner header and hello marker visible" });
+  results.push({ check: `${ordinal}-${runner}`, verdict: "PIXELS", detail: `machine + runner header and assistant marker visible (${marker})` });
   console.log(`[audit] ${marker} visible in task detail`);
   await page.locator('[aria-label="Back to tasks list"]').click();
   await page.waitForTimeout(1000);

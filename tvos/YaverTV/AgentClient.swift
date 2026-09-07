@@ -1552,7 +1552,7 @@ actor AgentClient {
     /// client polls. Bearer goes in the header on fetch; tvOS `AsyncImage` can't
     /// set headers, so callers fetch via `frameData()` instead.
     func captureFrameURL() -> URL? {
-        URL(string: "http://\(box.host):\(box.port)/capture/frame.jpg")
+        URL(string: "\(agentHTTPBase(host: box.host, port: box.port))/capture/frame.jpg")
     }
 
     /// A capture frame, or a real error — never a JSON error body dressed as JPEG.

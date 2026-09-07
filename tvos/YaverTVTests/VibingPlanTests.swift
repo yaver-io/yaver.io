@@ -92,6 +92,14 @@ final class VibingPlanTests: XCTestCase {
         XCTAssertEqual(relayOnly.opsEndpoints.first?.relay, true)
     }
 
+    func testBoxTargetBracketsIPv6DirectEndpoint() {
+        let box = BoxTarget(id: "box-v6", name: "IPv6 box", host: "2001:db8::10", port: 18080)
+        XCTAssertEqual(
+            box.requestEndpoints(path: "/health").first?.url.absoluteString,
+            "http://[2001:db8::10]:18080/health"
+        )
+    }
+
     func testTaskCreateResponseAcceptsTaskIdAndRunnerId() throws {
         let payload = Data(#"{"taskId":"task-new","status":"queued","runnerId":"codex"}"#.utf8)
         let task = try JSONDecoder().decode(TaskSummary.self, from: payload)

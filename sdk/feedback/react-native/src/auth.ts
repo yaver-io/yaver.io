@@ -15,6 +15,7 @@
  * Mobile-only. A web equivalent will ship as a separate `yaver-web-feedback`
  * package; do not import this module from a browser bundle.
  */
+import { agentHttpBase } from './_core/endpoints';
 
 // AsyncStorage is an optional peer dep — degrade gracefully if missing.
 let AsyncStorage: {
@@ -623,7 +624,7 @@ export function buildDeviceCandidateUrls(device: RemoteDevice): string[] {
   for (const ip of device.localIps ?? []) {
     if (ip) hosts.add(ip);
   }
-  return Array.from(hosts).map((host) => `http://${host}:${port}`);
+  return Array.from(hosts).map((host) => agentHttpBase(host, port));
 }
 
 export async function probeDeviceReachability(

@@ -112,17 +112,6 @@ struct TaskDetailView: View {
                 Text(task.safeTitle).font(.system(size: 22, weight: .semibold)).lineLimit(2)
                 Text([modelEffortLabel.isEmpty ? runnerLabel : modelEffortLabel, statusLabel].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.system(size: 15)).foregroundStyle(.secondary)
-                if task.executionSession != nil || task.sessionId?.isEmpty == false || task.tmuxSession?.isEmpty == false {
-                    Text([
-                        task.executionSession.map { "yaver \($0.yaverSessionId)" },
-                        task.executionSession?.remoteBoxId.map { "box \($0)" },
-                        task.sessionId.map { "runner \($0)" },
-                        task.tmuxSession.map { "tmux \($0)" },
-                    ].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
             Spacer()
             if runnerCoding {
@@ -140,12 +129,6 @@ struct TaskDetailView: View {
                 .buttonStyle(.bordered)
                 .tint(.red)
                 .accessibilityIdentifier("chat.runner-exit")
-            if task.tmuxSession?.isEmpty == false {
-                NavigationLink(destination: SessionView(preselect: task.tmuxSession)) {
-                    Label("Session", systemImage: "terminal.fill")
-                }
-                .buttonStyle(.bordered)
-            }
         }
         .padding(.horizontal, 48).padding(.vertical, 18)
     }

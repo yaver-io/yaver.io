@@ -2,6 +2,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yaver_feedback/yaver_feedback.dart';
 
 void main() {
+  group('IPv6 probe candidates', () {
+    test('brackets IPv6 literals and preserves IPv4 hosts', () {
+      const device = RemoteDevice(
+        deviceId: 'ipv6-host',
+        name: 'IPv6 host',
+        platform: 'linux',
+        isOnline: true,
+        needsAuth: false,
+        runnerDown: false,
+        lastHeartbeat: 0,
+        quicHost: '2001:db8::10',
+        quicPort: 18080,
+        localIps: ['192.0.2.10', 'fd00::20'],
+      );
+      expect(buildProbeCandidates(device), [
+        'http://[2001:db8::10]:18080',
+        'http://192.0.2.10:18080',
+        'http://[fd00::20]:18080',
+      ]);
+    });
+  });
+
   group('FeedbackConfig', () {
     test('creates with required fields and defaults', () {
       final config = FeedbackConfig(

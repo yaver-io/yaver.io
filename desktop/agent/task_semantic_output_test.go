@@ -14,7 +14,7 @@ func TestClaudeStreamJSONSeparatesAssistantReplyFromToolEvidence(t *testing.T) {
 	task := &Task{
 		ID: "claude-semantic", RunnerID: "claude",
 		runner:   GetRunnerConfig("claude"),
-		outputCh: make(chan string, 32), rawOutputCh: make(chan []byte, 16),
+		outputCh: make(chan string, 32), rawOutputCh: make(chan taskRawFrame, 16),
 		eventCh: make(chan map[string]interface{}, 32), doneCh: make(chan struct{}),
 	}
 	stream := strings.Join([]string{
@@ -62,7 +62,7 @@ func TestCodexLastMessageSeparatesAssistantReplyFromConsoleEvidence(t *testing.T
 	task := &Task{
 		ID: "codex-semantic", RunnerID: "codex", codexLastMsgPath: lastMessage,
 		runner:   GetRunnerConfig("codex"),
-		outputCh: make(chan string, 32), rawOutputCh: make(chan []byte, 16),
+		outputCh: make(chan string, 32), rawOutputCh: make(chan taskRawFrame, 16),
 		eventCh: make(chan map[string]interface{}, 32), doneCh: make(chan struct{}),
 	}
 

@@ -1,3 +1,4 @@
+import { urlHost } from "../../src/lib/urlHost";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -200,7 +201,7 @@ function buildDeviceRequestContext(
     };
   }
   return {
-    baseUrl: `http://${device.host}:${device.port}`,
+    baseUrl: `http://${urlHost(device.host)}:${device.port}`,
     headers: {
       Authorization: `Bearer ${token}`,
       ...platformHeaders,
@@ -482,7 +483,7 @@ function DeviceCard({
           const targetUrl =
             probe.path === "relay" && quicClient.getRelayServers()[0]
               ? `${quicClient.getRelayServers()[0].httpUrl}/d/${device.id}`
-              : `http://${device.host}:${device.port || 18080}`;
+              : `http://${urlHost(device.host)}:${device.port || 18080}`;
           const pubKey = device.publicKey || (info as any).devicePublicKey;
           if (pubKey) {
             const r = await submitEncryptedPair(targetUrl, token, pubKey, (info as any).bootstrapPasskey);
@@ -1239,7 +1240,7 @@ export default function DevicesScreen() {
         );
         return;
       }
-      const targetUrl = `http://${dev.ip}:${dev.port}`;
+      const targetUrl = `http://${urlHost(dev.ip)}:${dev.port}`;
       setAdoptingId(dev.deviceId);
       try {
         const info = await fetchPairInfo(targetUrl);

@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 /**
  * Classify how a device is reachable so the UI can show "Yaver public
  * relay v0.1.9 ✓" or "Private network 100.64.x.x" etc. instead of just an
@@ -164,7 +165,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
       label: "Private network",
       detail: `via ${tsIp}`,
       tone: "blue",
-      url: `http://${tsIp}:${d.port ?? 18080}`,
+      url: `http://${urlHost(tsIp)}:${d.port ?? 18080}`,
     };
   }
 
@@ -183,7 +184,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
       label: "WSL2 NAT",
       detail: wslIp ? `via ${wslIp} (Hyper-V)` : "Linux on Windows host",
       tone: "amber",
-      url: wslIp ? `http://${wslIp}:${d.port ?? 18080}` : undefined,
+      url: wslIp ? `http://${urlHost(wslIp)}:${d.port ?? 18080}` : undefined,
     };
   }
 
@@ -195,7 +196,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
       label: "Private LAN",
       detail: `via ${lan}`,
       tone: "slate",
-      url: `http://${lan}:${d.port ?? 18080}`,
+      url: `http://${urlHost(lan)}:${d.port ?? 18080}`,
     };
   }
 
@@ -206,7 +207,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
       label: "Public IP",
       detail: `via ${host}`,
       tone: "rose",
-      url: `http://${host}:${d.port ?? 18080}`,
+      url: `http://${urlHost(host)}:${d.port ?? 18080}`,
     };
   }
   if ((d.publicEndpoints || []).length) {

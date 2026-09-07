@@ -1,3 +1,4 @@
+import { urlHost } from "../../src/lib/urlHost";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Redirect, router } from "expo-router";
@@ -56,7 +57,7 @@ function previewOptionsFor(framework: string | undefined, caps: BoxCapabilities)
 function deviceBaseUrl(device: Device, token: string | null): string | null {
   const relays = quicClient.getRelayServers();
   if (relays.length > 0) return `${relays[0].httpUrl}/d/${device.id}`;
-  return `http://${device.host}:${device.port}`;
+  return `http://${urlHost(device.host)}:${device.port}`;
 }
 
 export default function VibingScreen() {

@@ -29,6 +29,7 @@ function getAsyncStorage(): AsyncStorageLike | null {
 }
 
 import type { RemoteDevice } from './auth';
+import { agentHttpBase } from './_core/endpoints';
 import {
   collapseRemoteDevices,
   pickTargetDevice,
@@ -170,7 +171,7 @@ export class YaverDiscovery {
             m.status === 'active' && m.serverIp,
         );
         if (activeMachine?.serverIp) {
-          const url = `http://${activeMachine.serverIp}:${DEFAULT_PORT}`;
+          const url = agentHttpBase(activeMachine.serverIp, DEFAULT_PORT);
           const probed = await YaverDiscovery.probe(url);
           if (probed) return probed;
         }
@@ -223,9 +224,7 @@ export class YaverDiscovery {
       for (const ip of target.localIps ?? []) {
         if (ip) ipSet.add(ip);
       }
-      const candidates = Array.from(ipSet).map(
-        (ip) => `http://${ip}:${port}`,
-      );
+      const candidates = Array.from(ipSet).map((ip) => agentHttpBase(ip, port));
 
       if (candidates.length > 0) {
         const direct = await YaverDiscovery.raceProbe(candidates);

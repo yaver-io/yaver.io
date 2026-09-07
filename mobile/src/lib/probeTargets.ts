@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 /**
  * Pure target-selection for reachability probes. No React Native imports, so
  * it is directly unit-testable (`npx tsx src/lib/probeTargets.test.ts`).
@@ -82,15 +83,15 @@ export function buildDirectProbeTargets(args: {
   // pool spent half its budget on duplicates.
   const hostLegs = args.host && !isMdnsName(args.host)
     ? (port === 18080
-        ? [`http://${args.host}:${port}`]
-        : [`http://${args.host}:${port}`, `http://${args.host}:18080`])
+        ? [`http://${urlHost(args.host)}:${port}`]
+        : [`http://${urlHost(args.host)}:${port}`, `http://${urlHost(args.host)}:18080`])
     : [];
   const lanLegs = (args.lanIps || [])
     .filter((ip): ip is string => !!ip)
     .flatMap((ip) =>
       port === 18080
-        ? [`http://${ip}:${port}`]
-        : [`http://${ip}:${port}`, `http://${ip}:18080`],
+        ? [`http://${urlHost(ip)}:${port}`]
+        : [`http://${urlHost(ip)}:${port}`, `http://${urlHost(ip)}:18080`],
     );
   return Array.from(new Set([...hostLegs, ...lanLegs]));
 }

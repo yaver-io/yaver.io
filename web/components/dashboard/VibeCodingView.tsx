@@ -557,6 +557,8 @@ export default function VibeCodingView({
   const [selectedMode, setSelectedMode] = useState("");
   const [taskList, setTaskList] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState("");
+  const [selectingTasks, setSelectingTasks] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
   const placementStatusSyncRef = useRef<Set<string>>(new Set());
   const pendingDispatchRef = useRef<Set<string>>(new Set());
   // Deep ask graph (investigate → answer → verify) — set when a broad
@@ -3387,20 +3389,94 @@ export default function VibeCodingView({
               onToggle={toggleSectionOpen}
             >
               <div className="flex min-h-0 flex-col gap-2 overflow-auto">
+                {taskList.length > 0 ? (
+                  <div className="flex items-center gap-2">
+                    {selectingTasks ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTaskIds(selectedTaskIds.size === taskList.length ? new Set() : new Set(taskList.map((task) => task.id)));
+                          }}
+                          className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-[11px] text-surface-300 hover:border-surface-500"
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          disabled={selectedTaskIds.size === 0}
+                          onClick={async () => {
+                            const deleted = new Set<string>();
+                            const failed: string[] = [];
+                            for (const task of taskList.filter((row) => selectedTaskIds.has(row.id))) {
+                              try {
+                                await agentClient.deleteTask(task.id);
+                                deleted.add(task.id);
+                              } catch {
+                                failed.push(task.id);
+                              }
+                            }
+                            setTaskList((previous) => previous.filter((task) => !deleted.has(task.id)));
+                            if (deleted.has(activeTaskId)) setActiveTaskId("");
+                            setSelectedTaskIds(new Set(failed));
+                            if (failed.length === 0) setSelectingTasks(false);
+                            else setBusy(`${failed.length} task${failed.length === 1 ? "" : "s"} remained because the agent did not acknowledge deletion.`);
+                          }}
+                          className="rounded-lg border border-red-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 dark:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                        >
+                          Delete · {selectedTaskIds.size}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectingTasks(false); setSelectedTaskIds(new Set()); }}
+                          className="rounded-lg px-2.5 py-1.5 text-[11px] text-surface-400 hover:text-surface-200"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setSelectingTasks(true)}
+                        className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-[11px] text-surface-300 hover:border-surface-500"
+                      >
+                        Select
+                      </button>
+                    )}
+                  </div>
+                ) : null}
                 {taskList.map((task) => (
                   <button
                     key={task.id}
                     onClick={() => {
+                      if (selectingTasks) {
+                        setSelectedTaskIds((previous) => {
+                          const next = new Set(previous);
+                          if (next.has(task.id)) next.delete(task.id);
+                          else next.add(task.id);
+                          return next;
+                        });
+                        return;
+                      }
                       setActiveGraphRunId(null);
                       setActiveTaskId(task.id);
                     }}
                     className={`rounded-2xl border p-3 text-left ${
-                      activeTask?.id === task.id
+                      selectingTasks && selectedTaskIds.has(task.id)
+                        ? "border-sky-500/60 bg-sky-500/10"
+                        : activeTask?.id === task.id
                         ? "border-amber-500/40 bg-amber-500/10"
                         : "border-surface-800 bg-surface-950/70 hover:border-surface-700"
                     }`}
                   >
-                    <div className="text-sm font-semibold text-surface-100">{task.title}</div>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-surface-100">
+                      {selectingTasks ? (
+                        <span aria-hidden className={`flex h-4 w-4 items-center justify-center rounded border text-[10px] ${selectedTaskIds.has(task.id) ? "border-sky-400 bg-sky-400 text-surface-950" : "border-surface-600"}`}>
+                          {selectedTaskIds.has(task.id) ? "✓" : ""}
+                        </span>
+                      ) : null}
+                      <span className="truncate">{task.title}</span>
+                    </div>
                     <div className="mt-1 text-[11px] text-surface-500">
                       {task.status} · {new Date(task.updatedAt).toLocaleTimeString()}
                     </div>
@@ -3417,27 +3493,6 @@ export default function VibeCodingView({
                   {activeGraphRunId
                     ? "Deep ask · investigate → answer → verify"
                     : activeTask?.title || "New coding session"}
-                  {!activeGraphRunId && activeTask && (activeTask.tmuxSession || activeTask.tmuxSessionId) ? (
-                    <div
-                      className="mt-0.5 font-mono text-[10px] font-normal text-surface-400 select-all"
-                      title="This task is attached to a persistent Yaver session on the box"
-                    >
-                      Yaver session · {activeTask.tmuxSession || activeTask.tmuxSessionId}
-                    </div>
-                  ) : null}
-                  {!activeGraphRunId && activeTask?.sessionId ? (
-                    <div
-                      className="mt-0.5 font-mono text-[10px] font-normal text-surface-400 select-all"
-                      title="Native coding-agent conversation resumed by follow-ups"
-                    >
-                      runner session: {activeTask.sessionId}
-                    </div>
-                  ) : null}
-                  {!activeGraphRunId && activeTask?.executionSession?.yaverSessionId ? (
-                    <div className="mt-0.5 font-mono text-[10px] font-normal text-surface-400 select-all">
-                      yaver: {activeTask.executionSession.yaverSessionId} · {activeTask.executionSession.remoteBoxId || "local box"} · {activeTask.executionSession.runnerName || activeTask.executionSession.runnerId || "runner"}
-                    </div>
-                  ) : null}
                 </div>
                 {!activeGraphRunId ? (
                   <div

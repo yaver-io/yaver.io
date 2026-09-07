@@ -46,13 +46,24 @@ func TestLiveCIFullJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint registration token: %v", err)
 	}
+	runnerName := newCIRunnerName()
+	lease := ciRunnerLease{
+		Token:      rt,
+		RunnerName: runnerName,
+		cleanup: func(cleanupCtx context.Context) error {
+			return deleteGitHubRunnerByName(cleanupCtx, reg.Host, reg.Target, token, runnerName)
+		},
+	}
 	t.Logf("minted registration token (len %d) for %s; labels=%v", len(rt), repo, reg.runnerLabels())
 
 	store := NewRunnerStore(50)
 	run := store.Start(RunnerRun{JobName: "livejob:" + repo, Kind: RunnerJobWorkflow})
 
 	t.Logf("bringing up ephemeral runner (host mode) — will claim one queued job ...")
-	runnerOS, exitCode, execErr := runEphemeralRunner(ctx, reg, rt, run.ID, store)
+	runnerOS, exitCode, execErr := runEphemeralRunner(ctx, reg, lease, run.ID, store)
+	if cleanupErr := lease.Cleanup(context.Background()); cleanupErr != nil {
+		t.Fatalf("runner record cleanup: %v", cleanupErr)
+	}
 	store.Finish(run.ID, exitCode, false)
 
 	final, _ := store.GetRun(run.ID)

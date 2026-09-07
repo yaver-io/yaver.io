@@ -35,6 +35,8 @@ export interface StreamEndInput {
   cancelled: boolean;
   /** Transport error text, when the platform gave us one. */
   error?: string | null;
+  /** HTTP response status when headers arrived. */
+  httpStatus?: number;
 }
 
 /**
@@ -86,18 +88,26 @@ export function planStreamRecovery(input: {
   attempt: number;
   maxAttempts?: number;
   cause?: string | null;
+  httpStatus?: number;
 }): StreamRecoveryPlan {
   if (input.end !== "interrupted") return { action: "idle" };
 
   const max = input.maxAttempts ?? MAX_REATTACH_ATTEMPTS;
+  const status = input.httpStatus || 0;
+  if (status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429) {
+    const message = status === 404
+      ? "This machine does not have this task. Refresh Tasks to resync its owner."
+      : status === 401 || status === 403
+        ? "The task machine rejected stream authorization. Reconnect it, then try again."
+        : `The task machine rejected the live stream (HTTP ${status}).`;
+    return { action: "give-up", message };
+  }
 
   if (input.attempt >= max) {
     return {
       action: "give-up",
       message: withCause(
-        `Live output could not be picked back up after ${max} attempts. ` +
-          "The task has not reported a failure; only its live-output connection was lost. " +
-          "Use Reattach to try again, or Reconnect if the box itself is unreachable.",
+        `Live output is still disconnected after ${max} attempts. The task status is unchanged.`,
         input.cause,
       ),
     };
@@ -108,8 +118,7 @@ export function planStreamRecovery(input: {
     attempt: input.attempt,
     delayMs: reattachDelayMs(input.attempt),
     message: withCause(
-      `Reconnecting live output (${input.attempt + 1} of ${max})… ` +
-        "The task has not reported a failure.",
+      `Live output interrupted · reconnecting ${input.attempt + 1}/${max}… The task has not reported a failure.`,
       input.cause,
     ),
   };

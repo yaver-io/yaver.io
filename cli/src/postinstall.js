@@ -588,6 +588,19 @@ async function main() {
     }
   }
 
+  // Install the small, owner-local VSR adapter + Python libraries alongside
+  // the Go agent so remote lip reading has an invocable backend after npm
+  // install. Checkpoints are deliberately not downloaded: their dataset/model
+  // terms require the user to provide a licensed Auto-AVSR model explicitly.
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_VSR")) {
+    try {
+      await runAgentCommand(["install", "vsr"], { quiet: true });
+      log("Provisioned private remote lip-reading adapter and mouth-video libraries.");
+    } catch (error) {
+      log(`Skipping VSR backend bootstrap: ${error.message}. Retry with \`yaver install vsr\`.`);
+    }
+  }
+
   if (!envEnabled("YAVER_SKIP_POSTINSTALL_MOBILE_TOOLS")) {
     installMissingMobileTools();
   }

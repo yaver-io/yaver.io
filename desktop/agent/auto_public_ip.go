@@ -1,7 +1,8 @@
 package main
 
 // auto_public_ip.go — best-effort detection of the agent's externally-
-// routable IPv4 so the device record carries at least one public
+// routable IPv4 and globally routed interface IPv6 addresses so the device
+// record carries at least one public
 // reachability candidate even when the user hasn't configured a
 // Cloudflare tunnel and the relay's published URL has rotted.
 //
@@ -23,7 +24,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -161,8 +161,55 @@ func autoPublicEndpoint(cfg *Config, port int) string {
 	if ip == "" {
 		return ""
 	}
-	return fmt.Sprintf("http://%s:%d", ip, port)
+	return agentHTTPBase(ip, port)
 }
+
+// autoPublicIPv6Endpoints returns bracketed HTTP endpoints for globally
+// routable IPv6 addresses assigned to non-container interfaces. Unlike IPv4,
+// IPv6 normally has no NAT translation to discover: the interface address is
+// the public address. ULA, link-local, loopback, multicast, and temporary
+// container interfaces are deliberately excluded.
+func detectAutoPublicIPv6Endpoints(cfg *Config, port int) []string {
+	if cfg == nil || cfg.DisableAutoPublicIP || port <= 0 || port > 65535 {
+		return nil
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var endpoints []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || isContainerBridgeInterfaceName(iface.Name) {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.To4() != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			host := ip.String()
+			if _, ok := seen[host]; ok {
+				continue
+			}
+			seen[host] = struct{}{}
+			endpoints = append(endpoints, agentHTTPBase(host, port))
+		}
+	}
+	return endpoints
+}
+
+var autoPublicIPv6EndpointSource = detectAutoPublicIPv6Endpoints
 
 // resetAutoPublicIPCache is exported only for tests — clears the
 // in-process cache so a follow-up call performs a fresh probe.
@@ -181,16 +228,23 @@ func resetAutoPublicIPCache() {
 // device row always carries the freshest reachability hint.
 func publicEndpointsWithAutoIP(cfg *Config, port int) []string {
 	endpoints := configuredPublicEndpoints(cfg)
-	auto := autoPublicEndpoint(cfg, port)
-	if auto == "" {
-		return endpoints
+	auto := autoPublicIPv6EndpointSource(cfg, port)
+	if v4 := autoPublicEndpoint(cfg, port); v4 != "" {
+		auto = append(auto, v4)
 	}
-	for _, ep := range endpoints {
-		if normalizedEndpointMatches(ep, auto) {
-			return endpoints
+	for _, candidate := range auto {
+		duplicate := false
+		for _, ep := range endpoints {
+			if normalizedEndpointMatches(ep, candidate) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			endpoints = append(endpoints, candidate)
 		}
 	}
-	return append(endpoints, auto)
+	return endpoints
 }
 
 // normalizedEndpointMatches treats two endpoint strings as the "same"

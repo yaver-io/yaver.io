@@ -527,7 +527,7 @@ enum MachineRegistry {
     /// let the relay/manual path take over).
     static func firstReachable(_ candidates: [String], port: Int, token: String) async -> String? {
         for host in candidates {
-            var req = URLRequest(url: URL(string: "http://\(host):\(port)/info")!)
+            var req = URLRequest(url: URL(string: "\(agentHTTPBase(host: host, port: port))/info")!)
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
             req.timeoutInterval = 2

@@ -1,3 +1,4 @@
+import { urlHost } from "./urlHost";
 // onPhoneCollector.ts — store-and-forward for the on-phone WebView collector.
 // Extracted observations are queued locally (survives app restart) and drained
 // to the phone's own agent (127.0.0.1) collection store, auto-registering a
@@ -45,7 +46,7 @@ async function agentOps(host: string, verb: string, payload: any): Promise<any |
   const token = await getToken();
   if (!token) return null;
   try {
-    const res = await fetch(`http://${host}:18080/ops`, {
+    const res = await fetch(`http://${urlHost(host)}:18080/ops`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ verb, payload, machine: "local" }),

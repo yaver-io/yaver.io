@@ -1008,11 +1008,11 @@ func (s *RelayServer) runQUICListener(ctx context.Context) error {
 		return fmt.Errorf("TLS setup: %w", err)
 	}
 
-	addr := fmt.Sprintf("0.0.0.0:%d", s.quicPort)
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return fmt.Errorf("resolve: %w", err)
-	}
+	// A nil IP is the wildcard for both address families. The old literal
+	// 0.0.0.0 made an otherwise healthy IPv6-only client unable to establish
+	// the agent tunnel even when the relay host had a routed IPv6 prefix.
+	addr := fmt.Sprintf(":%d", s.quicPort)
+	udpAddr := &net.UDPAddr{Port: s.quicPort}
 
 	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
@@ -1572,7 +1572,10 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/d/", s.handleProxy) // /d/{deviceId}/...
 
 	srv := &http.Server{
-		Addr: fmt.Sprintf("0.0.0.0:%d", s.httpPort),
+		// Empty host asks Go for a dual-stack wildcard listener. nginx normally
+		// reaches this over loopback, while direct/self-hosted relay installs may
+		// use either IPv4 or IPv6.
+		Addr: fmt.Sprintf(":%d", s.httpPort),
 		Handler: withRelayCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check for subdomain-based expose routing first
 			if s.exposeDomain != "" && s.tryExposeProxy(w, r) {
@@ -1593,7 +1596,7 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("[RELAY] HTTP proxy on 0.0.0.0:%d", s.httpPort)
+	log.Printf("[RELAY] HTTP proxy on [::]:%d (dual-stack)", s.httpPort)
 	err := srv.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil

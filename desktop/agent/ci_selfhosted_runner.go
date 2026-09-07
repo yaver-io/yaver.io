@@ -80,14 +80,15 @@ const (
 // labels, never a token, never crosses the Convex boundary.
 type CIRunnerRegistration struct {
 	Provider      CIProvider  `json:"provider"`
-	Scope         string      `json:"scope"`          // "repo" | "org"
-	Target        string      `json:"target"`         // "owner/repo" | "org-name" | gitlab project id
-	Host          string      `json:"host,omitempty"` // GHES / self-managed GitLab host; empty = SaaS
+	Scope         string      `json:"scope"`               // "repo" | "org"
+	Target        string      `json:"target"`              // "owner/repo" | "org-name" | GitLab path/id
+	ProjectID     string      `json:"projectId,omitempty"` // canonical GitLab numeric project id
+	Host          string      `json:"host,omitempty"`      // GHES / self-managed GitLab host; empty = SaaS
 	Labels        []string    `json:"labels,omitempty"`
 	Isolation     CIIsolation `json:"isolation,omitempty"`
 	Where         CIRunWhere  `json:"where,omitempty"`
 	MaxConcurrent int         `json:"maxConcurrent,omitempty"`
-	PrivateOnly   bool        `json:"privateOnly,omitempty"` // refuse public/fork-PR jobs (default true)
+	PrivateOnly   bool        `json:"privateOnly,omitempty"` // mandatory until an untrusted-job jail exists
 	CreatedAt     int64       `json:"createdAt,omitempty"`
 	UpdatedAt     int64       `json:"updatedAt,omitempty"`
 }
@@ -170,54 +171,38 @@ func (s *CIRegistrationStore) load() {
 	s.regs = regs
 }
 
-func (s *CIRegistrationStore) saveLocked() {
+func (s *CIRegistrationStore) saveLocked() error {
 	if s.path == "" {
-		return
+		return nil
 	}
 	data, err := json.MarshalIndent(s.regs, "", "  ")
 	if err != nil {
-		return
+		return fmt.Errorf("encode CI registrations: %w", err)
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		log.Printf("[ci] write %s failed: %v", tmp, err)
-		return
+		return fmt.Errorf("write CI registrations: %w", err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
-		log.Printf("[ci] rename %s failed: %v", tmp, err)
+		_ = os.Remove(tmp)
+		return fmt.Errorf("install CI registrations: %w", err)
 	}
+	return nil
 }
 
 // Add upserts a registration with safe defaults (container isolation,
 // private-only, single-concurrency).
 func (s *CIRegistrationStore) Add(r CIRunnerRegistration) (CIRunnerRegistration, error) {
-	if r.Provider == "" {
-		return CIRunnerRegistration{}, fmt.Errorf("ci registration requires a provider")
-	}
-	if strings.TrimSpace(r.Target) == "" {
-		return CIRunnerRegistration{}, fmt.Errorf("ci registration requires a target (owner/repo or org)")
-	}
-	if r.Scope == "" {
-		r.Scope = "repo"
-	}
-	if r.Isolation == "" {
-		r.Isolation = CIIsolationContainer
-	}
-	if r.Where == "" {
-		r.Where = CIWhereOwn
-	}
-	if r.MaxConcurrent <= 0 {
-		r.MaxConcurrent = 1
-	}
-	// Safe default: refuse public/fork-PR jobs until the jail + approval gate
-	// exist. Operators opt OUT explicitly (private+host only).
-	if !r.PrivateOnly {
-		r.PrivateOnly = true
+	var err error
+	r, err = normalizeCIRegistration(r)
+	if err != nil {
+		return CIRunnerRegistration{}, err
 	}
 	now := time.Now().UnixMilli()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if existing, ok := s.regs[r.key()]; ok {
+	existing, existed := s.regs[r.key()]
+	if existed {
 		r.CreatedAt = existing.CreatedAt
 	} else {
 		r.CreatedAt = now
@@ -225,8 +210,65 @@ func (s *CIRegistrationStore) Add(r CIRunnerRegistration) (CIRunnerRegistration,
 	r.UpdatedAt = now
 	stored := r
 	s.regs[r.key()] = &stored
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		if existed {
+			s.regs[r.key()] = existing
+		} else {
+			delete(s.regs, r.key())
+		}
+		return CIRunnerRegistration{}, err
+	}
 	return stored, nil
+}
+
+// normalizeCIRegistration is the single static policy gate used before a
+// registration can reach disk or a forge. In particular, maxConcurrent used
+// to accept values greater than one even though each registration owns exactly
+// one supervisor goroutine. Refusing that false promise is safer than showing a
+// concurrency control that has no effect.
+func normalizeCIRegistration(r CIRunnerRegistration) (CIRunnerRegistration, error) {
+	r.Target = strings.TrimSpace(r.Target)
+	r.Host = strings.TrimSpace(r.Host)
+	if r.Provider != CIGitHub && r.Provider != CIGitLab {
+		return CIRunnerRegistration{}, fmt.Errorf("ci registration requires provider github or gitlab")
+	}
+	if r.Target == "" {
+		return CIRunnerRegistration{}, fmt.Errorf("ci registration requires a target (owner/repo or GitLab project path/id)")
+	}
+	if r.Scope == "" {
+		r.Scope = "repo"
+	}
+	if r.Scope != "repo" && r.Scope != "org" {
+		return CIRunnerRegistration{}, fmt.Errorf("ci registration scope must be repo or org")
+	}
+	if r.Scope != "repo" {
+		return CIRunnerRegistration{}, fmt.Errorf("organization/group runners are disabled while Yaver enforces exact private-project scope; register each private repository separately")
+	}
+	if r.Isolation == "" {
+		r.Isolation = CIIsolationContainer
+	}
+	if r.Isolation != CIIsolationContainer && r.Isolation != CIIsolationHost {
+		return CIRunnerRegistration{}, fmt.Errorf("ci isolation must be container or host")
+	}
+	if r.Where == "" {
+		r.Where = CIWhereOwn
+	}
+	if r.Where != CIWhereOwn && r.Where != CIWhereOperator && r.Where != CIWhereCloud {
+		return CIRunnerRegistration{}, fmt.Errorf("ci hardware class must be self-hosted, operator-fleet, or yaver-cloud")
+	}
+	if r.Isolation == CIIsolationHost && r.Where == CIWhereOperator {
+		return CIRunnerRegistration{}, fmt.Errorf("operator-fleet jobs require container isolation; host execution is only for trusted dedicated boxes")
+	}
+	if r.MaxConcurrent <= 0 {
+		r.MaxConcurrent = 1
+	}
+	if r.MaxConcurrent != 1 {
+		return CIRunnerRegistration{}, fmt.Errorf("maxConcurrent=%d is not implemented for one-runner-per-registration supervisors; use 1", r.MaxConcurrent)
+	}
+	// This is a mandatory policy, not a caller-controlled default. Both forge
+	// adapters verify repository visibility before obtaining a runner token.
+	r.PrivateOnly = true
+	return r, nil
 }
 
 func (s *CIRegistrationStore) List() []CIRunnerRegistration {
@@ -252,11 +294,15 @@ func (s *CIRegistrationStore) Get(key string) (CIRunnerRegistration, bool) {
 func (s *CIRegistrationStore) Remove(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.regs[key]; !ok {
+	existing, ok := s.regs[key]
+	if !ok {
 		return fmt.Errorf("ci registration %q not found", key)
 	}
 	delete(s.regs, key)
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.regs[key] = existing
+		return err
+	}
 	return nil
 }
 
@@ -452,13 +498,27 @@ func ensureCIManager(runs *RunnerStore) *CIManager {
 	return globalCIManager
 }
 
-// Register persists a registration and starts (or restarts) its supervisor.
-func (m *CIManager) Register(r CIRunnerRegistration) (CIRunnerRegistration, error) {
-	stored, err := m.regs.Add(r)
+// Register probes the actual forge, obtains the first runner lease, then
+// persists the registration and starts its supervisor. Returning success means
+// the forge accepted this exact protected/private runner configuration; it is
+// not merely a promise that a background retry loop exists.
+func (m *CIManager) Register(ctx context.Context, r CIRunnerRegistration) (CIRunnerRegistration, error) {
+	prepared, err := prepareCIRegistration(ctx, r)
 	if err != nil {
 		return CIRunnerRegistration{}, err
 	}
-	m.startSupervisor(stored)
+	lease, err := mintCIRunnerLease(ctx, prepared)
+	if err != nil {
+		return CIRunnerRegistration{}, err
+	}
+	stored, err := m.regs.Add(prepared)
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = lease.Cleanup(cleanupCtx)
+		return CIRunnerRegistration{}, err
+	}
+	m.startSupervisor(stored, &lease)
 	return stored, nil
 }
 
@@ -482,24 +542,32 @@ func (m *CIManager) ResumeAll(ctx context.Context) {
 	m.ctx = ctx
 	m.mu.Unlock()
 	for _, r := range m.regs.List() {
-		m.startSupervisor(r)
+		m.startSupervisor(r, nil)
 	}
 }
 
-func (m *CIManager) startSupervisor(r CIRunnerRegistration) {
+func (m *CIManager) startSupervisor(r CIRunnerRegistration, initialLease *ciRunnerLease) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if old, ok := m.sups[r.key()]; ok {
-		go old.Stop()
 		delete(m.sups, r.key())
+		m.mu.Unlock()
+		old.Stop()
+		m.mu.Lock()
 	}
 	if m.runs == nil {
+		m.mu.Unlock()
+		if initialLease != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = initialLease.Cleanup(cleanupCtx)
+		}
 		log.Printf("[ci] no run store yet — supervisor for %s deferred", r.key())
 		return
 	}
-	sv := NewCISupervisor(r, m.runs, m.limiter, m.meter)
+	sv := NewCISupervisor(r, m.runs, m.limiter, m.meter, initialLease)
 	m.sups[r.key()] = sv
 	ctx := m.ctx
+	m.mu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -510,24 +578,35 @@ func (m *CIManager) startSupervisor(r CIRunnerRegistration) {
 // local savings summary.
 func (m *CIManager) Status() map[string]interface{} {
 	m.mu.Lock()
-	live := map[string]bool{}
-	for k := range m.sups {
-		live[k] = true
+	supervisors := map[string]*CISupervisor{}
+	for k, sv := range m.sups {
+		supervisors[k] = sv
 	}
 	m.mu.Unlock()
 	regs := m.regs.List()
 	rows := make([]map[string]interface{}, 0, len(regs))
 	for _, r := range regs {
+		status := ciSupervisorStatus{State: "stopped"}
+		if sv := supervisors[r.key()]; sv != nil {
+			status = sv.Status()
+		}
 		rows = append(rows, map[string]interface{}{
-			"key":           r.key(),
-			"provider":      string(r.Provider),
-			"target":        r.Target,
-			"scope":         r.Scope,
-			"labels":        r.runnerLabels(),
-			"isolation":     string(r.Isolation),
-			"where":         string(r.Where),
-			"maxConcurrent": r.MaxConcurrent,
-			"live":          live[r.key()],
+			"key":              r.key(),
+			"provider":         string(r.Provider),
+			"target":           r.Target,
+			"scope":            r.Scope,
+			"labels":           r.runnerLabels(),
+			"isolation":        string(r.Isolation),
+			"where":            string(r.Where),
+			"maxConcurrent":    r.MaxConcurrent,
+			"privateOnly":      r.PrivateOnly,
+			"projectId":        r.ProjectID,
+			"supervisorActive": status.Active,
+			"live":             status.Active, // backward-compatible; means goroutine only
+			"state":            status.State,
+			"lastError":        status.LastError,
+			"lastAttemptAt":    status.LastAttemptAt,
+			"lastCycleAt":      status.LastCycleAt,
 		})
 	}
 	return map[string]interface{}{
@@ -550,18 +629,65 @@ type CISupervisor struct {
 	limiter *runnerLimiter
 	meter   CIMeterFunc
 
+	mu           sync.RWMutex
+	state        string
+	lastError    string
+	lastAttempt  int64
+	lastCycle    int64
+	cancel       context.CancelFunc
+	initialLease *ciRunnerLease
+
 	stop chan struct{}
 	done chan struct{}
 }
 
-func NewCISupervisor(reg CIRunnerRegistration, store *RunnerStore, limiter *runnerLimiter, meter CIMeterFunc) *CISupervisor {
+type ciSupervisorStatus struct {
+	Active        bool
+	State         string
+	LastError     string
+	LastAttemptAt int64
+	LastCycleAt   int64
+}
+
+func NewCISupervisor(reg CIRunnerRegistration, store *RunnerStore, limiter *runnerLimiter, meter CIMeterFunc, initialLease *ciRunnerLease) *CISupervisor {
 	return &CISupervisor{
-		reg:     reg,
-		store:   store,
-		limiter: limiter,
-		meter:   meter,
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		reg:          reg,
+		store:        store,
+		limiter:      limiter,
+		meter:        meter,
+		state:        "starting",
+		initialLease: initialLease,
+		stop:         make(chan struct{}),
+		done:         make(chan struct{}),
+	}
+}
+
+func (sv *CISupervisor) setStatus(state string, err error, cycleDone bool) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	sv.state = state
+	if state == "connecting" {
+		sv.lastAttempt = time.Now().UnixMilli()
+	}
+	if cycleDone {
+		sv.lastCycle = time.Now().UnixMilli()
+	}
+	if err != nil {
+		sv.lastError = err.Error()
+	} else if cycleDone {
+		sv.lastError = ""
+	}
+}
+
+func (sv *CISupervisor) Status() ciSupervisorStatus {
+	sv.mu.RLock()
+	defer sv.mu.RUnlock()
+	return ciSupervisorStatus{
+		Active:        sv.state != "stopped",
+		State:         sv.state,
+		LastError:     sv.lastError,
+		LastAttemptAt: sv.lastAttempt,
+		LastCycleAt:   sv.lastCycle,
 	}
 }
 
@@ -569,8 +695,23 @@ func NewCISupervisor(reg CIRunnerRegistration, store *RunnerStore, limiter *runn
 // executes one isolated job. Transient errors back off; a misconfiguration
 // (no token, missing toolchain) backs off to the cap rather than spinning.
 func (sv *CISupervisor) Run(ctx context.Context) {
-	defer close(sv.done)
+	runCtx, cancel := context.WithCancel(ctx)
 	key := sv.reg.key()
+	sv.mu.Lock()
+	sv.cancel = cancel
+	sv.mu.Unlock()
+	defer func() {
+		if lease := sv.takeInitialLease(); lease != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+			if err := lease.Cleanup(cleanupCtx); err != nil {
+				log.Printf("[ci=%s] unused initial runner lease cleanup failed: %v", key, err)
+			}
+			cleanupCancel()
+		}
+		cancel()
+		sv.setStatus("stopped", nil, false)
+		close(sv.done)
+	}()
 	limiterKey := "ci:" + key
 	log.Printf("[ci=%s] supervisor up — labels=%v isolation=%s where=%s",
 		key, sv.reg.runnerLabels(), sv.reg.Isolation, sv.reg.Where)
@@ -578,7 +719,7 @@ func (sv *CISupervisor) Run(ctx context.Context) {
 	backoff := time.Second
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return
 		case <-sv.stop:
 			return
@@ -586,18 +727,24 @@ func (sv *CISupervisor) Run(ctx context.Context) {
 		}
 
 		if !sv.limiter.tryAcquire(limiterKey, sv.reg.MaxConcurrent) {
-			if !sleepCtx(ctx, 500*time.Millisecond) { // sleepCtx: false == cancelled
+			sv.setStatus("waiting_for_slot", nil, false)
+			if !sleepCtx(runCtx, 500*time.Millisecond) { // sleepCtx: false == cancelled
 				return
 			}
 			continue
 		}
 
-		err := sv.runOneEphemeralRunner(ctx)
+		sv.setStatus("connecting", nil, false)
+		err := sv.runOneEphemeralRunner(runCtx)
 		sv.limiter.release(limiterKey)
 
 		if err != nil {
+			if errors.Is(err, context.Canceled) && runCtx.Err() != nil {
+				return
+			}
+			sv.setStatus("degraded", err, true)
 			log.Printf("[ci=%s] ephemeral cycle failed: %v (backoff %s)", key, err, backoff)
-			if !sleepCtx(ctx, backoff) {
+			if !sleepCtx(runCtx, backoff) {
 				return
 			}
 			if backoff < 30*time.Second {
@@ -605,6 +752,7 @@ func (sv *CISupervisor) Run(ctx context.Context) {
 			}
 			continue
 		}
+		sv.setStatus("restarting", nil, true)
 		backoff = time.Second
 	}
 }
@@ -615,12 +763,27 @@ func (sv *CISupervisor) Stop() {
 	default:
 		close(sv.stop)
 	}
+	sv.mu.RLock()
+	cancel := sv.cancel
+	sv.mu.RUnlock()
+	if cancel != nil {
+		cancel()
+	}
 	<-sv.done
 }
 
 // runOneEphemeralRunner performs exactly one claim→execute→teardown→meter
 // cycle.
 func (sv *CISupervisor) runOneEphemeralRunner(ctx context.Context) error {
+	lease := sv.takeInitialLease()
+	if lease == nil {
+		minted, mintErr := mintCIRunnerLease(ctx, sv.reg)
+		if mintErr != nil {
+			return fmt.Errorf("mint runner lease: %w", mintErr)
+		}
+		lease = &minted
+	}
+
 	run := sv.store.Start(RunnerRun{
 		JobName:     "ci:" + sv.reg.Target,
 		Kind:        RunnerJobWorkflow,
@@ -628,16 +791,19 @@ func (sv *CISupervisor) runOneEphemeralRunner(ctx context.Context) error {
 		TriggeredBy: "webhook",
 	})
 
-	token, err := mintRunnerRegistrationToken(ctx, sv.reg)
-	if err != nil {
-		sv.store.Append(run.ID, "[ci] mint registration token: "+err.Error())
-		sv.store.Finish(run.ID, -1, false)
-		return err
-	}
-
+	sv.setStatus("waiting_for_job", nil, false)
 	started := time.Now()
-	runnerOS, exitCode, execErr := runEphemeralRunner(ctx, sv.reg, token, run.ID, sv.store)
+	runnerOS, exitCode, execErr := runEphemeralRunner(ctx, sv.reg, *lease, run.ID, sv.store)
 	durMin := time.Since(started).Minutes()
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	cleanupErr := lease.Cleanup(cleanupCtx)
+	cancel()
+	if cleanupErr != nil {
+		sv.store.Append(run.ID, "[ci] runner cleanup failed: "+cleanupErr.Error())
+		if execErr == nil {
+			execErr = fmt.Errorf("runner process exited but forge cleanup failed: %w", cleanupErr)
+		}
+	}
 	timedOut := errors.Is(execErr, context.DeadlineExceeded)
 	sv.store.Finish(run.ID, exitCode, timedOut)
 
@@ -657,38 +823,12 @@ func (sv *CISupervisor) runOneEphemeralRunner(ctx context.Context) error {
 	return execErr
 }
 
-// --- SEAM 1: registration token ------------------------------------------
-
-// mintRunnerRegistrationToken obtains a short-lived self-hosted-runner
-// registration token from the forge using the locally-stored git provider
-// credentials. The token is never persisted.
-func mintRunnerRegistrationToken(ctx context.Context, reg CIRunnerRegistration) (string, error) {
-	switch reg.Provider {
-	case CIGitLab:
-		token := detectGitLabToken(reg.Host)
-		if token == "" {
-			return "", fmt.Errorf("no GitLab token — run `yaver vault add gitlab-token --category git-credential --value <token>` or `git_connect`")
-		}
-		host := strings.TrimSpace(reg.Host)
-		if host == "" {
-			host = "gitlab.com"
-		}
-		// /user/runners needs a numeric project_id; we only carry the path
-		// unless the operator passed an id. Honest error rather than a wrong
-		// call.
-		if !isNumeric(reg.Target) {
-			return "", fmt.Errorf("gitlab self-hosted runner registration needs a numeric project_id as target (got %q)", reg.Target)
-		}
-		apiURL := fmt.Sprintf("https://%s/api/v4/user/runners?runner_type=project_type&project_id=%s", host, reg.Target)
-		return fetchRegistrationToken(ctx, apiURL, "PRIVATE-TOKEN", token)
-	default: // GitHub
-		token := detectGitHubToken()
-		if token == "" {
-			return "", fmt.Errorf("no GitHub token — run `yaver vault add github-token --category git-credential --value <token>` or `git_connect`")
-		}
-		apiURL := githubRegistrationTokenURL(reg.Host, reg.Scope, reg.Target)
-		return fetchRegistrationToken(ctx, apiURL, "Authorization", "Bearer "+token)
-	}
+func (sv *CISupervisor) takeInitialLease() *ciRunnerLease {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	lease := sv.initialLease
+	sv.initialLease = nil
+	return lease
 }
 
 // githubRegistrationTokenURL builds the registration-token endpoint. Repo scope
@@ -757,10 +897,10 @@ func isNumeric(s string) bool {
 // on return. Host mode runs directly; container mode runs the same flow inside
 // the sandbox image with the runner dir mounted. Returns (runnerOS, exitCode,
 // err). GitLab uses gitlab-runner (not yet wired) — host-runner path is GitHub.
-func runEphemeralRunner(ctx context.Context, reg CIRunnerRegistration, token, runID string, store *RunnerStore) (string, int, error) {
+func runEphemeralRunner(ctx context.Context, reg CIRunnerRegistration, lease ciRunnerLease, runID string, store *RunnerStore) (string, int, error) {
 	runnerOS := normalizeRunnerOS(runtime.GOOS)
 	if reg.Provider == CIGitLab {
-		code, glErr := runGitLabRunner(ctx, reg, token, runID, store)
+		code, glErr := runGitLabRunner(ctx, reg, lease.Token, runID, store)
 		return runnerOS, code, glErr
 	}
 
@@ -779,9 +919,12 @@ func runEphemeralRunner(ctx context.Context, reg CIRunnerRegistration, token, ru
 	}
 	defer os.RemoveAll(work) // teardown: wipe the per-run work dir
 
-	name := "yaver-" + safeRunSuffix(runID)
+	name := strings.TrimSpace(lease.RunnerName)
+	if name == "" {
+		name = "yaver-" + safeRunSuffix(runID)
+	}
 	labels := strings.Join(reg.runnerLabels(), ",")
-	cfgArgs := ghRunnerConfigArgs(reg.forgeURL(), token, name, labels, work)
+	cfgArgs := ghRunnerConfigArgs(reg.forgeURL(), lease.Token, name, labels, work)
 
 	if reg.Isolation == CIIsolationContainer {
 		code, cerr := runGitHubRunnerInContainer(ctx, runnerDir, work, cfgArgs, runID, store)

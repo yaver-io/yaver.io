@@ -11,7 +11,7 @@
  * the repository's generic "latest" release can be a CLI/mobile release and
  * must never decide which desktop bytes a user downloads.
  */
-export const GUI_VERSION = "0.1.10";
+export const GUI_VERSION = "0.1.11";
 export const GUI_WINDOWS_VERSION = "0.1.2";
 export const GUI_BASE_URL =
   `https://github.com/yaver-io/yaver.io/releases/download/gui/v${GUI_VERSION}`;

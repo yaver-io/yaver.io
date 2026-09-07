@@ -36,7 +36,8 @@ async function main() {
   }
 
   const target = online[0];
-  const agentURL = process.env.YAVER_URL || `http://${target.quicHost}:18080`;
+  const host = target.quicHost.includes(":") ? `[${target.quicHost}]` : target.quicHost;
+  const agentURL = process.env.YAVER_URL || `http://${host}:18080`;
   console.log(`\nConnecting to ${target.name} at ${agentURL}...`);
 
   const client = new YaverClient(agentURL, token);

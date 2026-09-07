@@ -5,21 +5,30 @@ package main
 // of `actions/runner --ephemeral` is `gitlab-runner run-single --max-builds 1`:
 // it claims exactly one job, runs it, and exits — so it slots into the same
 // CISupervisor ephemeral loop. The runner auth token is already minted by
-// mintRunnerRegistrationToken (POST /user/runners). See
+// mintCIRunnerLease (POST /user/runners); that lease is protected/tagged at
+// creation and deleted from GitLab after the runner exits. See
 // docs/yaver-managed-cloud-ci-absorption.md.
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
+	"time"
 )
 
 // gitlabRunnerVersion pins the downloaded gitlab-runner. "latest" tracks the
 // current release; gitlab-runner is backward-compatible with gitlab.com.
 const gitlabRunnerChannel = "latest"
+
+var gitLabRunnerDownloadMu sync.Mutex
 
 // ciGitLabDockerImage is the fallback image for the docker executor when the
 // project's .gitlab-ci.yml doesn't pin one.
@@ -58,6 +67,9 @@ func gitlabRunnerDownloadURL(channel, goos, goarch string) (string, error) {
 // ensureGitLabRunner downloads the gitlab-runner binary once into
 // ~/.yaver/runner/gitlab/ and returns its path (executable).
 func ensureGitLabRunner(ctx context.Context, store *RunnerStore, runID string) (string, error) {
+	gitLabRunnerDownloadMu.Lock()
+	defer gitLabRunnerDownloadMu.Unlock()
+
 	dir, err := ConfigDir()
 	if err != nil {
 		return "", err
@@ -67,9 +79,6 @@ func ensureGitLabRunner(ctx context.Context, store *RunnerStore, runID string) (
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	if fileExistsCI(bin) {
-		return bin, nil
-	}
 	if err := os.MkdirAll(target, 0700); err != nil {
 		return "", err
 	}
@@ -77,14 +86,87 @@ func ensureGitLabRunner(ctx context.Context, store *RunnerStore, runID string) (
 	if err != nil {
 		return "", err
 	}
+	asset := filepath.Base(url)
+	checksumURL := fmt.Sprintf("https://gitlab-runner-downloads.s3.amazonaws.com/%s/release.sha256", gitlabRunnerChannel)
+	expected, err := fetchGitLabRunnerChecksum(ctx, checksumURL, asset)
+	if err != nil {
+		return "", fmt.Errorf("fetch gitlab-runner checksum: %w", err)
+	}
+	checksumPath := bin + ".sha256"
+	if fileExistsCI(bin) {
+		actual, hashErr := sha256FileCI(bin)
+		stored, readErr := os.ReadFile(checksumPath)
+		if hashErr == nil && readErr == nil && strings.EqualFold(strings.TrimSpace(string(stored)), actual) && strings.EqualFold(actual, expected) {
+			return bin, nil
+		}
+		store.Append(runID, "[ci] existing gitlab-runner is unverified or stale; replacing it with a checksum-verified binary")
+	}
 	store.Append(runID, "[ci] downloading gitlab-runner ("+runtime.GOOS+"/"+runtime.GOARCH+") ...")
-	if err := downloadFileCI(ctx, url, bin); err != nil {
+	candidate := bin + ".download"
+	if err := downloadFileCI(ctx, url, candidate); err != nil {
 		return "", fmt.Errorf("download gitlab-runner: %w", err)
 	}
-	if err := os.Chmod(bin, 0755); err != nil {
+	defer os.Remove(candidate)
+	actual, err := sha256FileCI(candidate)
+	if err != nil {
+		return "", fmt.Errorf("hash downloaded gitlab-runner: %w", err)
+	}
+	if !strings.EqualFold(actual, expected) {
+		return "", fmt.Errorf("gitlab-runner checksum mismatch for %s: got %s, expected %s", asset, actual, expected)
+	}
+	if err := os.Chmod(candidate, 0755); err != nil {
 		return "", err
 	}
+	if err := os.Rename(candidate, bin); err != nil {
+		return "", fmt.Errorf("install verified gitlab-runner: %w", err)
+	}
+	if err := os.WriteFile(checksumPath, []byte(expected+"\n"), 0600); err != nil {
+		return "", fmt.Errorf("record gitlab-runner checksum: %w", err)
+	}
 	return bin, nil
+}
+
+func fetchGitLabRunnerChecksum(ctx context.Context, checksumURL, asset string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("checksum download returned %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.TrimPrefix(fields[len(fields)-1], "*")
+		if filepath.Base(name) == asset && len(fields[0]) == sha256.Size*2 {
+			return strings.ToLower(fields[0]), nil
+		}
+	}
+	return "", fmt.Errorf("%s not found in release.sha256", asset)
+}
+
+func sha256FileCI(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // gitlabRunnerRunArgs builds the `run-single` arg list for a one-shot job. Pure
@@ -96,7 +178,6 @@ func gitlabRunnerRunArgs(instanceURL, token, executor, dockerImage string) []str
 		"--token", token,
 		"--executor", executor,
 		"--max-builds", "1",
-		"--wait-timeout", "1800",
 	}
 	if executor == "docker" {
 		args = append(args, "--docker-image", dockerImage)
