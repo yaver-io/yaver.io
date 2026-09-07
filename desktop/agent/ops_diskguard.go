@@ -729,11 +729,15 @@ func diskGuardScanHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	case res.OverThresh && total > 0:
 		res.Recommended = fmt.Sprintf("disk at %d%% (>= %d%%): diskguard_clear would reclaim %s", fs.UsedPercent, threshold, res.TotalHuman)
 	case res.OverThresh:
-		res.Recommended = fmt.Sprintf("disk at %d%% (>= %d%%) but no known-safe artifacts found — investigate manually (find_large_files)", fs.UsedPercent, threshold)
+		res.Recommended = diskGuardNoCandidatesRecommendation(fs.UsedPercent, threshold)
 	default:
 		res.Recommended = fmt.Sprintf("disk at %d%% (< %d%%): healthy, no action", fs.UsedPercent, threshold)
 	}
 	return OpsResult{OK: true, Initial: res}
+}
+
+func diskGuardNoCandidatesRecommendation(usedPercent, threshold int) string {
+	return fmt.Sprintf("disk at %d%% (>= %d%%) but no diskguard artifacts were found — run storage_scan for a read-only, structured inventory of other rebuildable caches", usedPercent, threshold)
 }
 
 func diskGuardClearHandler(_ OpsContext, payload json.RawMessage) OpsResult {

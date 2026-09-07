@@ -40,6 +40,26 @@ func TestDiskGuardVerbsRegisteredOwnerOnly(t *testing.T) {
 	}
 }
 
+// Regression (2026-09-07, Ubuntu test box): diskguard_scan reported a full
+// filesystem and recommended find_large_files, but that name is an MCP-only
+// tool and `yaver ops find_large_files` rejected it. The recovery text must
+// point at a registered read-only ops verb that the same caller can invoke.
+func TestDiskGuardNoCandidatesNamesCallableRecoveryVerb(t *testing.T) {
+	recommendation := diskGuardNoCandidatesRecommendation(100, 85)
+	if strings.Contains(recommendation, "find_large_files") {
+		t.Fatalf("recommendation still names the unavailable ops verb: %q", recommendation)
+	}
+	if !strings.Contains(recommendation, "storage_scan") {
+		t.Fatalf("recommendation does not name the structured recovery verb: %q", recommendation)
+	}
+	opsRegistryMu.RLock()
+	spec, ok := opsRegistry["storage_scan"]
+	opsRegistryMu.RUnlock()
+	if !ok || spec.Handler == nil {
+		t.Fatal("storage_scan recovery route is not registered")
+	}
+}
+
 func TestDiskGuardPathAllowedRefusesProtected(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
