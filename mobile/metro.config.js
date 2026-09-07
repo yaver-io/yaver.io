@@ -48,6 +48,15 @@ const pinnedCoreModules = {
   "react/jsx-dev-runtime": path.join(mobileNodeModules, "react/jsx-dev-runtime.js"),
   "react-native": path.join(mobileNodeModules, "react-native"),
 };
+// isomorphic-git publishes a Node-specific CommonJS entry behind the `node`
+// export condition. Expo's production iOS asset export includes that condition,
+// even though the resulting bundle runs in Hermes, so Metro otherwise selects
+// index.cjs and then fails to resolve Node's built-in `crypto` module. Pin the
+// package root to its browser ESM build for every client platform. Subpaths such
+// as isomorphic-git/http/web keep using their own package exports.
+const browserOnlyModules = {
+  "isomorphic-git": path.join(mobileNodeModules, "isomorphic-git", "index.js"),
+};
 config.resolver.disableHierarchicalLookup = false;
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
@@ -60,7 +69,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // can mount.
   const pinned = moduleName === "react-native" && platform === "web"
     ? path.join(mobileNodeModules, "react-native-web")
-    : pinnedCoreModules[moduleName];
+    : browserOnlyModules[moduleName] || pinnedCoreModules[moduleName];
   return context.resolveRequest(context, pinned || moduleName, platform);
 };
 
