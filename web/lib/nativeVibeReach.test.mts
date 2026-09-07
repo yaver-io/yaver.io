@@ -65,6 +65,14 @@ test("visionOS still inherits the client rather than copying it", () => {
     "and a copied client is the drift that broke the visionOS archive on 2026-08-03");
 });
 
+test("visionOS compiles the shared vibe panel with its visual dependencies", () => {
+  assert.match(visionProject, /path:\s*\.\.\/tvos\/YaverTV\/Views\/VibeTurnPanel\.swift/,
+    "visionOS no longer compiles the shared vibe panel");
+  assert.match(visionProject, /path:\s*\.\.\/tvos\/YaverTV\/YouTubeAnimation\.swift/,
+    "VibeTurnPanel renders MicListeningIndicator, but visionOS omitted its source — " +
+    "the real archive then fails while the tvOS target stays green");
+});
+
 test("the pixel half already exists, so only creation was missing", () => {
   const streamView = readFileSync(join(repo, "tvos/YaverTV/Views/DroidStreamView.swift"), "utf8");
   assert.match(streamView, /droid\/frame/,

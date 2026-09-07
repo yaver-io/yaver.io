@@ -102,6 +102,11 @@ targets:
       # dependencies were not in this list.
       - path: ../tvos/YaverTV/Views/YaverDictationField.swift
       - path: ../tvos/YaverTV/Views/TVInputStatus.swift
+      # VibeTurnPanel renders MicListeningIndicator when its prompt owns focus.
+      # Keep the indicator implementation in this target too: compiling the
+      # shared panel without its shared visual dependency made the real
+      # visionOS archive fail even though the tvOS target remained green.
+      - path: ../tvos/YaverTV/YouTubeAnimation.swift
       - path: ../tvos/YaverTV/Views/VibeTurnPanel.swift
       - path: ../tvos/YaverTV/Views/UpdateAgentView.swift
       # DroidStreamView is the Android-project branch of ProjectsView's
