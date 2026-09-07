@@ -129,7 +129,7 @@ fi
 
 SCHEME="${SCHEME:-YaverVision}"
 VISIONOS_BUNDLE_ID="${VISIONOS_BUNDLE_ID:-io.yaver.mobile}"
-VISIONOS_PROVISIONING_PROFILE="${VISIONOS_PROVISIONING_PROFILE:-Yaver Mini AppStore io.yaver.mobile}"
+VISIONOS_PROVISIONING_PROFILE="${VISIONOS_PROVISIONING_PROFILE:-}"
 VISIONOS_CODE_SIGN_IDENTITY="${VISIONOS_CODE_SIGN_IDENTITY:-Apple Distribution}"
 PROJECT_ARGS=()
 if [ -d "$VISION_DIR/YaverVision.xcworkspace" ]; then
@@ -193,29 +193,51 @@ apple_validate_build_number VISIONOS_BUILD_NUMBER "$VISIONOS_BUILD_NUMBER"
 ls -la "$ARCHIVE_PATH" "$EXPORT_PATH" 2>/dev/null || true
 rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH"
 
-# Prefer the installed App Store profile for this app. Automatic signing can
-# silently choose an Xcode-managed development profile (get-task-allow=true),
-# which archives successfully but cannot be exported for TestFlight and then
-# reports the unrelated-looking "Account credentials have expired" error.
-# Keep the profile overridable for another Yaver signing setup, but make the
-# distribution requirement explicit and fail at archive time if it is absent.
+# Automatic signing is the clean-checkout default so Xcode can create/download
+# a profile that contains the currently imported distribution certificate.
+# A named profile remains available for deliberately managed local setups.
+SIGNING_SETTINGS=(DEVELOPMENT_TEAM="$APPLE_TEAM_ID")
+EXPORT_SIGNING_STYLE="automatic"
+ALLOW_PROVISIONING_UPDATES=(-allowProvisioningUpdates)
+if [ -n "$VISIONOS_PROVISIONING_PROFILE" ]; then
+  SIGNING_SETTINGS+=(
+    CODE_SIGN_STYLE=Manual
+    CODE_SIGN_IDENTITY="$VISIONOS_CODE_SIGN_IDENTITY"
+    PROVISIONING_PROFILE_SPECIFIER="$VISIONOS_PROVISIONING_PROFILE"
+  )
+  EXPORT_SIGNING_STYLE="manual"
+  ALLOW_PROVISIONING_UPDATES=()
+else
+  SIGNING_SETTINGS+=(CODE_SIGN_STYLE=Automatic)
+fi
+
 echo "Archiving visionOS…"
 xcodebuild "${PROJECT_ARGS[@]}" \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
   -destination "generic/platform=visionOS" \
   -archivePath "$ARCHIVE_PATH" archive \
-  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-  CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY="$VISIONOS_CODE_SIGN_IDENTITY" \
-  PROVISIONING_PROFILE_SPECIFIER="$VISIONOS_PROVISIONING_PROFILE" \
-  -allowProvisioningUpdates \
+  "${SIGNING_SETTINGS[@]}" \
+  ${ALLOW_PROVISIONING_UPDATES[@]+"${ALLOW_PROVISIONING_UPDATES[@]}"} \
   ${APPLE_XCODE_AUTH_ARGS[@]+"${APPLE_XCODE_AUTH_ARGS[@]}"} \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   ${VERSION_ARGS[@]+"${VERSION_ARGS[@]}"} \
   2>&1 | apple_redact_xcode_auth_output
 
 [ -d "$ARCHIVE_PATH" ] || { echo "ERROR: archive failed — no .xcarchive produced" >&2; exit 1; }
+
+if [ -n "$VISIONOS_PROVISIONING_PROFILE" ]; then
+  VISIONOS_MANUAL_SIGNING_XML="
+  <key>signingCertificate</key>
+  <string>$VISIONOS_CODE_SIGN_IDENTITY</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>$VISIONOS_BUNDLE_ID</key>
+    <string>$VISIONOS_PROVISIONING_PROFILE</string>
+  </dict>"
+else
+  VISIONOS_MANUAL_SIGNING_XML=""
+fi
 
 cat > /tmp/VisionExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -226,13 +248,9 @@ cat > /tmp/VisionExportOptions.plist <<EOF
   <string>app-store-connect</string>
   <key>teamID</key>
   <string>$APPLE_TEAM_ID</string>
-  <key>signingCertificate</key>
-  <string>$VISIONOS_CODE_SIGN_IDENTITY</string>
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>$VISIONOS_BUNDLE_ID</key>
-    <string>$VISIONOS_PROVISIONING_PROFILE</string>
-  </dict>
+  <key>signingStyle</key>
+  <string>$EXPORT_SIGNING_STYLE</string>
+  $VISIONOS_MANUAL_SIGNING_XML
   <key>destination</key>
   <string>$([ "$APPLE_XCODE_AUTH_MODE" = "api-key" ] && echo export || echo upload)</string>
   <key>uploadSymbols</key>
@@ -240,11 +258,13 @@ cat > /tmp/VisionExportOptions.plist <<EOF
 </dict>
 </plist>
 EOF
+plutil -lint /tmp/VisionExportOptions.plist
 
 echo "Exporting & uploading visionOS…"
 xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
   -exportOptionsPlist /tmp/VisionExportOptions.plist \
-  -exportPath "$EXPORT_PATH" -allowProvisioningUpdates \
+  -exportPath "$EXPORT_PATH" \
+  ${ALLOW_PROVISIONING_UPDATES[@]+"${ALLOW_PROVISIONING_UPDATES[@]}"} \
   ${APPLE_XCODE_AUTH_ARGS[@]+"${APPLE_XCODE_AUTH_ARGS[@]}"} \
   2>&1 | apple_redact_xcode_auth_output
 

@@ -147,6 +147,10 @@ vision_project_check_line="$(grep -n 'native visionOS directory exists but no Ya
 [ -n "$vision_generate_line" ] && [ -n "$vision_project_check_line" ] && \
   [ "$vision_generate_line" -lt "$vision_project_check_line" ] || \
   fail "visionOS must generate its Xcode project before checking for it"
+grep -q 'VISIONOS_PROVISIONING_PROFILE="${VISIONOS_PROVISIONING_PROFILE:-}"' "$visionos_deploy" || \
+  fail "visionOS must not default to a stale named provisioning profile"
+grep -q 'SIGNING_SETTINGS+=(CODE_SIGN_STYLE=Automatic)' "$visionos_deploy" || \
+  fail "visionOS clean CI uploads must support automatic App Store provisioning"
 
 # A clean mobile checkout has no node_modules. Dependency self-healing must run
 # before either Node-based target injector, and must include their xcode module.
