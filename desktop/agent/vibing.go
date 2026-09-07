@@ -1668,6 +1668,7 @@ func pickReadyVibingRunner(s *HTTPServer) string {
 // Routes handled:
 //
 //	GET  /vibing/task/<id>           → task info (status + output blob)
+//	GET  /vibing/task/<id>/output    → resumable task/process SSE
 //	POST /vibing/task/<id>/continue  → append a follow-up turn
 //	GET  /vibing/task/<id>/question  → pending structured runner question
 //	POST /vibing/task/<id>/answer    → answer that question from the overlay
@@ -1756,6 +1757,16 @@ func (s *HTTPServer) handleVibingTaskByID(w http.ResponseWriter, r *http.Request
 		})
 	case "session-settings":
 		s.updateTaskSessionSettings(w, r, taskID)
+	case "output":
+		if r.Method != http.MethodGet {
+			jsonError(w, http.StatusMethodNotAllowed, "use GET")
+			return
+		}
+		// The immutable feedback/vibing source check above is the privacy
+		// boundary. Reuse the owner stream implementation after that check so
+		// SDK clients receive identical semantic, raw, stderr, render and resume
+		// frames without gaining access to unrelated task history.
+		s.streamOutput(w, r, taskID)
 	case "question":
 		// SDK tokens may only reach this after the immutable source gate above
 		// proved the task belongs to a feedback/vibing conversation.

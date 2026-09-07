@@ -113,8 +113,14 @@ Auth-wrapped endpoints include:
 
 - `/info`
 - `/tasks`
+- `/vibing/task/{id}/output` (SDK-authenticated, immutable feedback/vibing
+  source-gated SSE; same stream contract as owner tasks)
 - `/agent/status`
 - most of the product surface
+
+Desktop runner process ownership, stdout/stderr/PTY semantics, Hermes SSE, and
+the boundary around already-open vendor GUI apps are documented in
+[`DESKTOP_RUNNER_STREAMING.md`](DESKTOP_RUNNER_STREAMING.md).
 
 Important detail:
 

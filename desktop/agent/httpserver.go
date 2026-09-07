@@ -4603,6 +4603,11 @@ func (s *HTTPServer) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		s.completeTask(w, r, taskID)
 	case "review-request":
 		s.requestTaskReview(w, r, taskID)
+	case "render-request":
+		// Runner-only structured render intent. The client still owns execution:
+		// default mode offers Render updates; opt-in auto-render waits for the
+		// coding turn to settle.
+		s.requestTaskRender(w, r, taskID)
 	case "fork":
 		// Runtime agent switch: keep parent immutable, spawn child with
 		// new runner/model/mode + bounded recent-context handoff. See
@@ -4822,7 +4827,7 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 	// ship verbatim and froze the mobile transcript view's main thread when
 	// it tried to render the accumulated buffer. We protect every consumer
 	// at the source: anything above maxStreamChunkBytes gets truncated with
-	// a readable marker. The full stream is still preserved in task.Output
+	// a readable marker. A bounded transcript tail is retained in task.Output
 	// for the Logs view. The raw terminal lane uses the same cap — xterm.js
 	// tolerates a partial escape sequence at a chunk boundary.
 	//
@@ -4877,7 +4882,7 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 	emitOutput := func(text string) {
 		// Cap per-chunk size before shipping to mobile / web. A runaway
 		// runner stdout used to freeze the mobile transcript view's main
-		// thread. The full stream remains available in task.Output/Logs.
+		// thread. The bounded transcript tail remains available in task.Output/Logs.
 		if len(text) > maxStreamChunkBytes {
 			keep := alignToRuneStart(text, maxStreamChunkBytes)
 			text = text[:keep] + "\n…[chunk trimmed: " +
@@ -4971,7 +4976,7 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 			}
 			fmt.Fprintf(w, "data: %s\n\n", jsonString(ev))
 			flusher.Flush()
-		case raw := <-rawCh:
+		case rawChunk := <-rawCh:
 			// Live RAW bytes (ANSI + TUI, ungroomed) for the terminal view.
 			// rawOutputCh is deliberately never closed (emitRaw does a
 			// non-blocking send, which would panic on a closed channel), so
@@ -4989,12 +4994,14 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 			s.taskMgr.mu.RLock()
 			rawOff := len(task.RawOutput)
 			s.taskMgr.mu.RUnlock()
+			raw := rawChunk.Data
 			if len(raw) > maxStreamChunkBytes {
 				keep := alignToRuneStart(string(raw), maxStreamChunkBytes)
 				raw = raw[:keep]
 			}
 			fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
 				"type":   "raw",
+				"stream": rawChunk.Stream,
 				"text":   string(raw),
 				"offset": rawOff,
 			}))
@@ -6645,6 +6652,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "yaver_report_complete":
 		return forwardYaverReportComplete(call.Arguments)
+
+	case "yaver_request_render":
+		return forwardYaverRequestRender(call.Arguments)
 
 	case "wire_detect":
 		// List USB-attached phones on the agent's host. See mcp_wire_tools.go.

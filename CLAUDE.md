@@ -887,12 +887,19 @@ present. `presentation_snapshot` is replayed on every SSE subscription, and
 `presentation` upsert/append frames carry live updates. The bounded snapshot
 stays device-local and MCP `get_task` exposes it for human-readable status.
 
-The app independently consumes RAW runner stdout
+The app independently consumes bounded RAW runner stdout/stderr/PTY bytes
 (`/tasks/{id}/output?rawSince=` + `onRaw` SSE) into a per-task 512 KB buffer and
 keeps it folded in `LiveConsoleSection` via the shared `AnsiConsoleText`
 (same colours/grammar as the opencode console: green `$` prompts, orange
 `> build · <model>` banners, diff +/- lines, `● live`/`○ idle` dot, byte
 counter). Raw output is evidence for diagnosis, not the primary remote UI.
+
+Live `raw` frames name their process `stream` (`stdout`, `stderr`, or `pty`).
+Feedback/Dogfood React Native SDK clients use the source-gated
+`/vibing/task/{id}/output` mirror through `XMLHttpRequest.onprogress` because
+Hermes fetch can buffer SSE until EOF. Runner task memory is bounded: 1 MiB
+groomed transcript, 512 KiB raw replay, and shallow recoverable live queues.
+Full contract: `docs/architecture/DESKTOP_RUNNER_STREAMING.md`.
 
 Task lifecycle is a conversation contract on every client surface: `queued` /
 `running` means the runner is coding; `ready` means this turn has a clean

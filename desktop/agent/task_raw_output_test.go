@@ -55,7 +55,7 @@ func createRawFixture(t *testing.T, tm *TaskManager, id, raw string, status Task
 		RunnerID:    "opencode",
 		RawOutput:   raw,
 		outputCh:    make(chan string, 512),
-		rawOutputCh: make(chan []byte, 256),
+		rawOutputCh: make(chan runnerProcessChunk, 256),
 		eventCh:     make(chan map[string]interface{}, 32),
 		doneCh:      make(chan struct{}),
 	}
@@ -170,7 +170,7 @@ func TestRawLiveFrames(t *testing.T) {
 	for _, c := range chunks {
 		// Buffered before the handler's select drains it; 256-deep channel,
 		// so no drops.
-		task.rawOutputCh <- c
+		task.rawOutputCh <- runnerProcessChunk{Stream: "stdout", Data: c}
 	}
 
 	frames := collectSSEFrames(t, srv.URL+"/tasks/"+taskID+"/output?rawSince=0")
@@ -179,6 +179,9 @@ func TestRawLiveFrames(t *testing.T) {
 	for _, f := range frames {
 		if f["type"] == "raw" {
 			rawTypes++
+			if f["stream"] != "stdout" {
+				t.Fatalf("raw frame stream = %#v, want stdout", f["stream"])
+			}
 			joined.WriteString(fmt.Sprint(f["text"]))
 		}
 	}
@@ -200,7 +203,7 @@ func TestOpenCodeRawReaderSeparatesAssistantReplyFromConsoleEvidence(t *testing.
 	task := &Task{
 		ID: "opencode-semantic", RunnerID: "opencode",
 		runner:   RunnerConfig{RunnerID: "opencode", OutputMode: "raw"},
-		outputCh: make(chan string, 16), rawOutputCh: make(chan []byte, 16),
+		outputCh: make(chan string, 16), rawOutputCh: make(chan runnerProcessChunk, 16),
 		eventCh: make(chan map[string]interface{}, 16), doneCh: make(chan struct{}),
 	}
 	tm.readRawOutput(
@@ -283,7 +286,7 @@ func TestRemotelessRawReaderUsesOpenCodeSemanticBoundary(t *testing.T) {
 	task := &Task{
 		ID: "remoteless-semantic", RunnerID: "remoteless",
 		runner:   RunnerConfig{RunnerID: "remoteless", Command: "opencode", OutputMode: "raw"},
-		outputCh: make(chan string, 16), rawOutputCh: make(chan []byte, 16),
+		outputCh: make(chan string, 16), rawOutputCh: make(chan runnerProcessChunk, 16),
 		eventCh: make(chan map[string]interface{}, 16), doneCh: make(chan struct{}),
 	}
 	tm.readRawOutput(
