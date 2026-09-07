@@ -2,6 +2,17 @@ name: Release Apple Standalone Surfaces
 
 on:
   workflow_dispatch:
+    inputs:
+      upload_tvos:
+        description: "Upload the standalone tvOS app"
+        required: false
+        type: boolean
+        default: true
+      upload_visionos:
+        description: "Upload the native visionOS app"
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: release-apple-surfaces
@@ -81,9 +92,11 @@ jobs:
           echo "YAVER_PYTHON=$RUNNER_TEMP/apple-release-venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Upload tvOS to TestFlight
+        if: inputs.upload_tvos
         run: ./deploy/deploy.sh tvos
 
       - name: Upload native visionOS to TestFlight
+        if: inputs.upload_visionos
         run: ./deploy/deploy.sh visionos
 
       - name: Cleanup signing material

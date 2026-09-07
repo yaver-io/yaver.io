@@ -110,6 +110,18 @@ if [ ! -d "$VISION_DIR" ]; then
   exit 0
 fi
 
+# Clean checkouts intentionally track project.yml rather than the generated
+# Xcode project. Generate before testing for the project's existence; the old
+# order made every clean CI checkout fail before XcodeGen was reachable.
+if [ -f "$VISION_DIR/project.yml" ]; then
+  if ! command -v xcodegen >/dev/null 2>&1; then
+    echo "ERROR: xcodegen is required to generate visionos/YaverVision.xcodeproj from project.yml." >&2
+    echo "Install: brew install xcodegen" >&2
+    exit 1
+  fi
+  (cd "$VISION_DIR" && xcodegen generate >/dev/null)
+fi
+
 if [ ! -d "$VISION_DIR/YaverVision.xcodeproj" ] && [ ! -d "$VISION_DIR/YaverVision.xcworkspace" ]; then
   echo "ERROR: native visionOS directory exists but no YaverVision project/workspace was found in $VISION_DIR." >&2
   exit 1
@@ -138,12 +150,6 @@ VERSION_ARGS=()
 # VISIONOS_BUILD_NUMBER is set — so the default invocation (no version
 # override) died at the build/archive step on every Mac. The `[@]+` guard
 # expands to zero words when the array is empty. Same idiom at both sites.
-
-# The .xcodeproj is generated from project.yml and gitignored — regenerate so the
-# spec stays the single source of truth (same contract as tvos/).
-if command -v xcodegen >/dev/null 2>&1 && [ -f "$VISION_DIR/project.yml" ]; then
-  ( cd "$VISION_DIR" && xcodegen generate >/dev/null )
-fi
 
 if [ "$UPLOAD" != "1" ]; then
   analyze_compatible_ios_for_visionos

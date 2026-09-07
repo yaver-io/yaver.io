@@ -141,6 +141,13 @@ create_task_signature="$(sed -n '/func createTask(/,/async throws -> TaskSummary
 printf '%s\n' "$create_task_signature" | grep -q 'sessionStartedFrom: String = "tasks"' || \
   fail "tvOS createTask must accept and default the Yaver session origin"
 
+visionos_deploy="$ROOT/scripts/deploy-visionos.sh"
+vision_generate_line="$(grep -n 'xcodegen generate' "$visionos_deploy" | head -1 | cut -d: -f1)"
+vision_project_check_line="$(grep -n 'native visionOS directory exists but no YaverVision' "$visionos_deploy" | head -1 | cut -d: -f1)"
+[ -n "$vision_generate_line" ] && [ -n "$vision_project_check_line" ] && \
+  [ "$vision_generate_line" -lt "$vision_project_check_line" ] || \
+  fail "visionOS must generate its Xcode project before checking for it"
+
 # A clean mobile checkout has no node_modules. Dependency self-healing must run
 # before either Node-based target injector, and must include their xcode module.
 testflight_script="$ROOT/scripts/deploy-testflight.sh"
