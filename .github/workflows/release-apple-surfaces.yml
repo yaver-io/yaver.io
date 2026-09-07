@@ -1,0 +1,86 @@
+name: Release Apple Standalone Surfaces
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-apple-surfaces
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: macos-26
+    environment: production
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Apple release toolchain
+        run: |
+          . scripts/apple-xcode-auth.sh
+          apple_require_working_xcode
+          apple_require_store_sdk appletvos 26
+          apple_require_store_sdk xros 26
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Import Apple distribution certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/apple-surfaces.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          CERT_PATH="$RUNNER_TEMP/apple-distribution.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"')
+
+      - name: Configure App Store Connect API key
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          KEY_DIR="$RUNNER_TEMP/private_keys"
+          KEY_FILE="$KEY_DIR/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          mkdir -m 700 -p "$KEY_DIR"
+          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['APP_STORE_CONNECT_API_KEY']))" > "$KEY_FILE" || true
+          if ! grep -q "BEGIN .*PRIVATE KEY" "$KEY_FILE"; then
+            printf '%s' "$APP_STORE_CONNECT_API_KEY" > "$KEY_FILE"
+          fi
+          chmod 600 "$KEY_FILE"
+          grep -q "BEGIN .*PRIVATE KEY" "$KEY_FILE" || {
+            echo "ERROR: App Store Connect key is neither base64-encoded nor raw PEM." >&2
+            exit 2
+          }
+          {
+            echo "APP_STORE_KEY_PATH=$KEY_FILE"
+            echo "APP_STORE_KEY_ID=$APP_STORE_CONNECT_KEY_ID"
+            echo "APP_STORE_KEY_ISSUER=$APP_STORE_CONNECT_ISSUER_ID"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload tvOS to TestFlight
+        run: ./deploy/deploy.sh tvos
+
+      - name: Upload native visionOS to TestFlight
+        run: ./deploy/deploy.sh visionos
+
+      - name: Cleanup signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/apple-surfaces.keychain-db" 2>/dev/null || true
+          ls -la "$RUNNER_TEMP/private_keys" 2>/dev/null || true
+          find "$RUNNER_TEMP/private_keys" -depth -delete 2>/dev/null || true
