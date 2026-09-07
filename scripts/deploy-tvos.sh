@@ -63,10 +63,13 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
 fi
 
 XCODEBUILD_PATH="$(xcrun -find xcodebuild 2>/dev/null || true)"
-if [ -z "$XCODEBUILD_PATH" ] || [[ "$XCODEBUILD_PATH" != *"/Xcode.app/"* ]]; then
-  echo "ERROR: xcodebuild is not the full Xcode toolchain (${XCODEBUILD_PATH:-not found}). Install/select Xcode.app with: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
-  exit 1
-fi
+case "$XCODEBUILD_PATH" in
+  */Xcode*.app/Contents/Developer/usr/bin/xcodebuild) ;;
+  *)
+    echo "ERROR: xcodebuild is not the full Xcode toolchain (${XCODEBUILD_PATH:-not found}). Install/select Xcode.app with: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+    exit 1
+    ;;
+esac
 
 if ! xcodebuild -showsdks | grep -q "appletvos"; then
   echo "ERROR: Xcode tvOS SDK is not installed. Install the tvOS platform component in Xcode, then retry." >&2

@@ -120,6 +120,8 @@ done
 # lane once spun forever at 100% CPU because --upload set its flag but left $1
 # unchanged, so the preflight/build never began and emitted no useful status.
 tvos_deploy="$ROOT/scripts/deploy-tvos.sh"
+grep -Fq '*/Xcode*.app/Contents/Developer/usr/bin/xcodebuild)' "$tvos_deploy" || \
+  fail "deploy-tvos.sh must accept versioned full-Xcode app names used by CI"
 grep -q -- '--upload) UPLOAD=1; shift ;;' "$tvos_deploy" || \
   fail "deploy-tvos.sh --upload must advance the argument parser"
 grep -q -- '--simulator) SIM_MODE=1; shift ;;' "$tvos_deploy" || \
