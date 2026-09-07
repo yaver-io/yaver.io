@@ -611,7 +611,9 @@ run_unit_tests() {
     # decoration.
     info "Running Convex policy unit tests..."
     if command -v node &>/dev/null; then
-        if (cd "$ROOT_DIR/backend" && node --experimental-strip-types --test \
+        if ! node --experimental-strip-types -e '' >/dev/null 2>&1; then
+            fail "Convex policy unit tests require Node.js 22+ with --experimental-strip-types support"
+        elif (cd "$ROOT_DIR/backend" && node --experimental-strip-types --test \
               convex/accessSigPolicy.test.mts \
               convex/billingWebhook.test.mts \
               convex/credentialHandoffDevices.test.mts \
