@@ -72,6 +72,13 @@ jobs:
             echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET"
           } >> "$GITHUB_ENV"
 
+      - name: Install App Store build-number client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/apple-release-venv"
+          "$RUNNER_TEMP/apple-release-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyJWT cryptography requests
+          echo "$RUNNER_TEMP/apple-release-venv/bin" >> "$GITHUB_PATH"
+
       - name: Upload tvOS to TestFlight
         run: ./deploy/deploy.sh tvos
 
