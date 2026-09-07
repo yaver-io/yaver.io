@@ -44,7 +44,7 @@ import (
 // release build injects the real tag via -ldflags "-X main.version=<tag>"
 // (see .github/workflows/release-cli.yml). The default below is only used for
 // local `go build`; releases always override it, so it never drifts again.
-var version = "1.99.455"
+var version = "1.99.457"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
