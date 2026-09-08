@@ -194,13 +194,13 @@ case "$target" in
     ;;
   android|playstore)
     require_deploy_boundary
-    run_shell 'JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json ./scripts/run-playstore-upload.sh'
+    run_shell './scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json ./scripts/run-playstore-upload.sh'
     ;;
   android-package|apk)
     require_deploy_boundary
     run_shell '
       set -euo pipefail
-      JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh
+      ./scripts/deploy-playstore.sh
       mobile_version=$(node -e "console.log(require(\"./versions.json\").mobile)")
       version_code=$(sed -n "s/.*versionCode \([0-9][0-9]*\).*/\1/p" mobile/android/app/build.gradle | head -1)
       apk_dir="$ROOT/mobile/android/app/build/outputs/apk/release"

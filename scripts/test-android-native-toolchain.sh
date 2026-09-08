@@ -6,6 +6,7 @@ SETTINGS="$ROOT/mobile/android/settings.gradle"
 WRAPPER="$ROOT/mobile/android/gradle/wrapper/gradle-wrapper.properties"
 DEPLOY="$ROOT/scripts/deploy-playstore.sh"
 ANDROID_SDK_HELPER="$ROOT/scripts/lib/android-sdk.sh"
+JAVA_HOME_HELPER="$ROOT/scripts/lib/java-home.sh"
 TV_DEPLOY="$ROOT/scripts/deploy-android-tv.sh"
 WEAR_DEPLOY="$ROOT/scripts/deploy-wear-os.sh"
 XR_DEPLOY="$ROOT/scripts/deploy-android-xr.sh"
@@ -27,7 +28,15 @@ if [ "$GRADLE_MAJOR" -lt 8 ] || { [ "$GRADLE_MAJOR" -eq 8 ] && [ "$GRADLE_MINOR"
 fi
 
 grep -q 'yaver_resolve_android_sdk' "$DEPLOY"
-grep -q 'export GRADLE_OPTS=.*-Xmx8g' "$DEPLOY"
+grep -q 'yaver_resolve_java_home 17' "$DEPLOY"
+grep -q 'TOTAL_MEMORY_KB.*10 \* 1024 \* 1024' "$DEPLOY"
+grep -q 'GRADLE_OPTS=.*-Xmx1g' "$DEPLOY"
+grep -q 'GRADLE_OPTS=.*-Xmx8g' "$DEPLOY"
+grep -q 'sed -i.bak' "$DEPLOY"
+if grep -q "sed -i ''" "$DEPLOY"; then
+  echo "Play deploy must use portable in-place sed syntax" >&2
+  exit 1
+fi
 if grep -q 'sed .*org\\.gradle\\.jvmargs' "$DEPLOY"; then
   echo "Play deploy must keep its larger heap process-local" >&2
   exit 1
@@ -41,6 +50,7 @@ grep -q 'android:testOnly="true"' "$DEPLOY"
 grep -q 'yaver_resolve_android_sdk' "$TV_DEPLOY"
 grep -q 'yaver_resolve_android_sdk' "$WEAR_DEPLOY"
 grep -q 'yaver_android_sdk_is_usable' "$ANDROID_SDK_HELPER"
+grep -q 'yaver_java_home_has_major' "$JAVA_HOME_HELPER"
 grep -q 'yaver_release_manifest_path' "$ANDROID_SDK_HELPER"
 grep -q 'yaver_release_manifest_path' "$TV_DEPLOY"
 grep -q 'yaver_release_manifest_path' "$WEAR_DEPLOY"

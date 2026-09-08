@@ -6,12 +6,29 @@ cd "$(dirname "$0")/../mobile/android"
 REPO_ROOT="$(cd ../.. && pwd)"
 # shellcheck source=scripts/lib/android-sdk.sh
 source "$REPO_ROOT/scripts/lib/android-sdk.sh"
+# shellcheck source=scripts/lib/java-home.sh
+source "$REPO_ROOT/scripts/lib/java-home.sh"
+yaver_resolve_java_home 17
 yaver_resolve_android_sdk
 
-# Release assembly needs more heap than the low-memory validation lane. Keep
-# that override process-local: mutating tracked gradle.properties leaves a
-# release checkout dirty and silently raises memory use for later validation.
-export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx8g -XX:MaxMetaspaceSize=1g"
+# The Gradle daemon has its own 3 GiB cap in gradle.properties. This is the
+# short-lived launcher JVM: an unconditional 8 GiB launcher took a nominal
+# 4 GiB remote worker into swap before the build even began. Size it from real
+# memory unless the operator already provided an -Xmx override.
+if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
+  TOTAL_MEMORY_KB=""
+  if [ -r /proc/meminfo ]; then
+    TOTAL_MEMORY_KB=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo)
+  elif command -v sysctl >/dev/null 2>&1; then
+    TOTAL_MEMORY_BYTES=$(sysctl -n hw.memsize 2>/dev/null || true)
+    [ -n "$TOTAL_MEMORY_BYTES" ] && TOTAL_MEMORY_KB=$((TOTAL_MEMORY_BYTES / 1024))
+  fi
+  if [ -n "$TOTAL_MEMORY_KB" ] && [ "$TOTAL_MEMORY_KB" -lt $((10 * 1024 * 1024)) ]; then
+    export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx1g -XX:MaxMetaspaceSize=512m"
+  else
+    export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx8g -XX:MaxMetaspaceSize=1g"
+  fi
+fi
 
 # Android signing creds + Play service account path. ~/.androidplay/yaver.env
 # is gitignored — pre-seed it with the exports the build/upload need
@@ -123,7 +140,11 @@ NEW_VERSION_CODE=$((REMOTE_MAX_VERSION_CODE + 1))
 else
 NEW_VERSION_CODE=$((CURRENT_VERSION_CODE + 1))
 fi
-sed -i '' "s/versionCode $CURRENT_VERSION_CODE/versionCode $NEW_VERSION_CODE/" "$GRADLE_FILE"
+# The separated empty-suffix in-place form is BSD-only and fails on the Linux
+# arm64 build worker. The
+# attached-backup form is supported by both BSD and GNU sed.
+sed -i.bak "s/versionCode $CURRENT_VERSION_CODE/versionCode $NEW_VERSION_CODE/" "$GRADLE_FILE"
+rm -f "$GRADLE_FILE.bak"
 echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 
 # On-device sandbox payload: cross-compile the Go agent (+ proot when a source is
