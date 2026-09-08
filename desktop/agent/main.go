@@ -2456,16 +2456,6 @@ func runServe(args []string) {
 	// insurance against a whole class of unfalsifiable outage.
 	log.Printf("[serve] starting — pid %d, version %s, args %v", os.Getpid(), version, args)
 
-	// Reap dev-server children a previous agent left running. Before any port is
-	// allocated, so the allocator sees the machine's real free ports instead of
-	// yesterday's ghosts holding 19006/19007/19008. See
-	// devserver_child_registry.go for the incident this exists for.
-	ReapOrphanedDevChildren()
-	// Start housekeeping HERE, not inside a lazily-created subsystem: a janitor
-	// that only wakes when the user opens a stream never runs on the machines
-	// that need it. See custodian.go.
-	StartAgentCustodian(nil)
-
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	httpPort := fs.Int("port", 18080, "HTTP server port")
 	quicPort := fs.Int("quic-port", 4433, "QUIC server port (legacy)")
@@ -2586,6 +2576,20 @@ func runServe(args []string) {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
+
+	// Only the process that is actually taking ownership of the primary agent
+	// may reap persisted dev children. This must stay AFTER the healthy-primary
+	// reuse check above. A stale user unit can otherwise launch beside a healthy
+	// system unit, get a different agentBootID, and SIGTERM that real agent's
+	// just-started Expo child before noticing :18080 is already owned. Observed
+	// on ubuntu-4gb-hel1-1: Dogfood spawned Expo at 15:08:56, the duplicate
+	// service's premature reaper killed it at 15:08:57, and the phone saw 503.
+	// It remains before any dev port allocation, so genuine previous-generation
+	// orphans are still gone before this owner starts serving.
+	ReapOrphanedDevChildren()
+	// Start housekeeping only after this process has passed the same ownership
+	// gate. A duplicate process must not start a second dev-child warden either.
+	StartAgentCustodian(nil)
 
 	// Auto-register as a system service (LaunchAgent / systemd
 	// user unit / Windows scheduled task) on the very first
