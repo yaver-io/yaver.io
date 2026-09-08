@@ -10,8 +10,9 @@ import (
 // presence, the false green behind the 2026-07-20 flap incident.
 //
 // The postmortem (see main.go:relayWSFallbackEnabled): a stale agent failed its
-// QUIC relay tunnel over to a WebSocket fallback the relay could not route, so
-// the box cycled ~30s connected / ~57s "device not connected to relay" forever.
+// QUIC relay tunnel over to a WebSocket fallback that the relay version at the
+// time could not route, so the box cycled ~30s connected / ~57s "device not
+// connected to relay" forever.
 // Every existing signal stayed GREEN through it — `yaver devices` said "online"
 // because the Convex heartbeat rides HTTP and is independent of the relay data
 // path, and a single point-in-time relay check had a ~1-in-3 chance of catching
@@ -72,8 +73,8 @@ func classifyRelayPresence(samples []bool) RelayPresenceVerdict {
 		v.Detail = fmt.Sprintf(
 			"relay presence flapped: usable on %d/%d samples with %d up/down transition(s) — "+
 				"the box keeps dropping its own relay tunnel. A spot check would have passed. "+
-				"Update the agent (a stale WS-fallback tears the QUIC tunnel down; see relayWSFallbackEnabled) "+
-				"and confirm YAVER_RELAY_WS_FALLBACK is unset.",
+				"Update the agent and relay together, then inspect the sampled relay data path; "+
+				"current releases route request/response traffic over the default-on WebSocket fallback.",
 			v.Up, v.Samples, v.Transitions)
 	}
 	return v

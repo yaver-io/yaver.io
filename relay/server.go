@@ -192,6 +192,10 @@ type agentTunnel struct {
 type wsAgentTunnel struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	// sendHook is test-only injection for exercising the HTTP proxy against a
+	// websocket-only tunnel without opening a real socket. Production tunnels
+	// leave it nil and write through conn below.
+	sendHook func(WSTunnelFrame) error
 
 	pendingMu sync.Mutex
 	pending   map[string]chan WSTunnelFrame
@@ -210,6 +214,9 @@ func newWSAgentTunnel(conn *websocket.Conn) *wsAgentTunnel {
 func (wst *wsAgentTunnel) send(frame WSTunnelFrame) error {
 	wst.writeMu.Lock()
 	defer wst.writeMu.Unlock()
+	if wst.sendHook != nil {
+		return wst.sendHook(frame)
+	}
 	return websocket.JSON.Send(wst.conn, frame)
 }
 
@@ -1240,6 +1247,9 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 			if existing.conn != nil {
 				_ = existing.conn.CloseWithError(0, "superseded by same-user reconnect")
 			}
+			if existing.ws != nil && existing.ws.conn != nil {
+				_ = existing.ws.conn.Close()
+			}
 			delete(s.tunnels, reg.DeviceID)
 		default:
 			s.mu.Unlock()
@@ -1488,6 +1498,23 @@ func (s *RelayServer) handleAgentWebSocket(ws *websocket.Conn) {
 			default:
 				alive = true
 			}
+		}
+		if alive && regUserID != "" && existing.userID == regUserID {
+			// Match the QUIC registration rule: a reconnect proven to belong to
+			// the SAME account may replace its stale/older lane. This matters most
+			// on restrictive networks, where a half-open websocket otherwise
+			// blocks the only fallback until its TCP timeout expires. Different
+			// users and password-only self-hosted relays still fail closed below.
+			log.Printf("[RELAY] Same-user websocket reconnect for device %s — replacing stale tunnel from %s",
+				reg.DeviceID[:min(8, len(reg.DeviceID))], existing.peerAddr)
+			if existing.conn != nil {
+				_ = existing.conn.CloseWithError(0, "superseded by same-user websocket reconnect")
+			}
+			if existing.ws != nil && existing.ws.conn != nil {
+				_ = existing.ws.conn.Close()
+			}
+			delete(s.tunnels, reg.DeviceID)
+			alive = false
 		}
 		if alive {
 			s.mu.Unlock()
@@ -1875,7 +1902,9 @@ func (s *RelayServer) handleAdminStatus(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleProxy proxies HTTP requests to agents via QUIC tunnel.
+// handleProxy proxies HTTP requests to agents through the registered relay
+// transport. QUIC carries every route; the WebSocket fallback carries bounded
+// request/response HTTP when UDP is unavailable.
 // URL format: /d/{deviceId}/... -> forwarded as /... to the agent
 func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Parse: /d/{deviceId}/rest/of/path

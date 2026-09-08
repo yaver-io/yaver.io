@@ -872,8 +872,10 @@ yaver vault env --project <p>        # source for deploy scripts
 | HTTPS (LAN) | 18443 | self-signed TLS for SDK clients on LAN |
 | Phone HTTP | 8347 | mobile-app inbound for `yaver push` from CLI |
 
-Relay is application-layer QUIC, password-protected, self-hostable, no
-TUN/TAP. Pass-through — never stores task data.
+Relay prefers application-layer QUIC and uses a default-on WebSocket fallback
+for bounded request/response HTTP when QUIC/UDP is unavailable. Streaming and
+upgraded connections remain QUIC-only. It is password-protected, self-hostable,
+has no TUN/TAP, and is pass-through — it never stores task data.
 
 ## Mobile app
 

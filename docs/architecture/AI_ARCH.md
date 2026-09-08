@@ -23,7 +23,10 @@ Yaver has four runtime surfaces:
 3. `backend/convex/`
    Auth, session validation, device registry, user settings, relay/tunnel metadata, guest access, platform config.
 4. `relay/`
-   QUIC relay server. The desktop agent creates outbound tunnels; the phone makes short-lived HTTP requests through relay URLs.
+   Relay server. The desktop agent prefers outbound QUIC tunnels and falls back
+   to WebSocket when UDP is unavailable; the phone makes short-lived HTTP
+   requests through relay URLs. The WebSocket lane carries request/response
+   HTTP only, while streaming and upgraded connections still require QUIC.
 
 The intended product shape is:
 
@@ -200,6 +203,7 @@ Desktop side:
 - startup in `desktop/agent/main.go`
 - `relayManager`
 - `runRelayTunnel(...)`
+- `relayConnectAndServeWebSocket(...)` after non-auth QUIC failures
 
 Mobile side:
 
@@ -213,6 +217,9 @@ Key product assumption:
 
 - relay path must keep working even if the desktop agent’s Convex auth session is stale
 - otherwise remote phone control is dead exactly when the user needs it
+- HTTPS/WebSocket-capable networks that block QUIC/UDP must retain bounded
+  request/response reachability; an explicit auth or identity rejection must
+  never trigger transport fallback
 
 ## Device Registry and Bootstrap Presence
 

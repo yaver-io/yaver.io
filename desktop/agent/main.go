@@ -186,43 +186,45 @@ func runtimeRelayConfigs(cfg *Config) []RelayServerConfig {
 	return appendRelayConfigs(append([]RelayServerConfig{}, cfg.RelayServers...), cfg.CachedRelayServers)
 }
 
-// relayWSFallbackEnabled gates the Cloudflare/WebSocket relay fallback. DEFAULT
-// OFF, opt in with YAVER_RELAY_WS_FALLBACK=1.
+// relayWSFallbackEnabled gates the Cloudflare/WebSocket relay fallback. It is
+// ON by default: networks commonly allow HTTPS/WebSocket while dropping QUIC's
+// UDP traffic, and an agent on one of those networks must remain reachable for
+// ordinary request/response operations such as /health, /info, and /tasks.
 //
-// The fallback is only half-built, and the missing half is on the RELAY: its
-// handleProxy resolves a device out of s.tunnels — the QUIC map — and never
-// consults the websocket tunnel. So an agent that abandons QUIC for the
-// websocket does not degrade to a slower path; it vanishes. Every proxied
-// request answers "502 device not connected to relay", because as far as the
-// proxy is concerned it isn't.
+// This was deliberately default-off after a 1.99.302 incident: the agent could
+// register a websocket tunnel, but relay handleProxy still consulted only the
+// QUIC path, so the fallback made the box disappear behind a permanent 502.
+// The relay now stores both transports in the same s.tunnels map and routes
+// request/response HTTP through wsAgentTunnel (relay/server.go). Keeping the old
+// default after landing that server half recreated the outage on every
+// UDP-blocking hotel, corporate, and captive network.
 //
-// That turns a transient blip into a permanent outage, and it does it in a loop.
-// Observed on an always-on Mac mini running 1.99.302, which shipped this
-// fallback (from launchd-stderr.log):
-//
-//	21:52:12 [RELAY] Registered with relay as device 229aeb03
-//	21:54:12 [RELAY] auto-heal: tunnel registered but not forwarding
-//	                 (streak=2: relay holds our tunnel but could not deliver: HTTP 502)
-//	21:54:12 [RELAY] Trying Cloudflare/WebSocket fallback at wss://…/agent/tunnel/ws
-//	21:54:12 [RELAY] Registered websocket fallback as device 229aeb03
-//	22:00:06 [RELAY] WebSocket fallback ended after 5m54s: EOF
-//	22:00:07 [RELAY] Registered with relay as device 229aeb03      ← QUIC again
-//	22:02:12 [RELAY] auto-heal: … could not deliver: HTTP 502      ← and round again
-//
-// The self-probe's 502 is the fallback's own doing, so auto-heal reads its own
-// damage as proof the tunnel is dead and re-applies the "cure". Measured 33-37%
-// reachability: down ~57s, up ~30s, forever. `yaver devices` said "unreachable",
-// `yaver primary status` said "every transport candidate failed", and the relay
-// took the blame for an agent that was disconnecting itself.
-//
-// A fallback whose server side cannot route is not a fallback. Turn it on when
-// relay handleProxy can deliver over a websocket tunnel — and not before.
+// Operators can explicitly disable the fallback with
+// YAVER_RELAY_WS_FALLBACK=0. This is a break-glass compatibility switch, not the
+// normal product path. Streaming endpoints still require QUIC and return a
+// named 502 rather than pretending the degraded path supports them.
 func relayWSFallbackEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("YAVER_RELAY_WS_FALLBACK"))) {
-	case "1", "true", "yes", "on":
-		return true
+	case "0", "false", "no", "off", "disable", "disabled":
+		return false
 	}
-	return false
+	return true
+}
+
+// shouldTryRelayWSFallback keeps a transport fallback from becoming an auth or
+// identity bypass. WebSocket is the recovery lane when QUIC/UDP cannot traverse
+// the current network; it must not be tried after the relay explicitly rejected
+// the session, password, device ownership, or pinned identity. Those failures
+// have their own deterministic recovery paths above.
+func shouldTryRelayWSFallback(err error) bool {
+	if err == nil || !relayWSFallbackEnabled() || classifyRelayAuthFailure(err) != relayAuthUnknown {
+		return false
+	}
+	// An older relay may reject registration without one of today's structured
+	// reason markers. That is still an explicit refusal, not evidence that UDP
+	// traversal failed, so changing transports must not retry the same rejected
+	// identity through a different ingress path.
+	return !strings.Contains(strings.ToLower(err.Error()), "registration rejected")
 }
 
 func runtimeRelayPassword(cfg *Config) string {
@@ -11492,7 +11494,7 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 			}
 		}
 
-		if ctx.Err() == nil && relayWSFallbackEnabled() {
+		if ctx.Err() == nil && shouldTryRelayWSFallback(err) {
 			if wsURL := relayWebSocketURLForQuicAddr(relayAddr); wsURL != "" {
 				log.Printf("[RELAY %s] Trying Cloudflare/WebSocket fallback at %s", relayAddr, wsURL)
 				wsStartedAt := time.Now()
