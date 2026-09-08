@@ -76,6 +76,7 @@ Targets:
   testflight   Alias for ios
   android      Play internal deploy + upload
   playstore    Alias for android
+  android-all  Build, verify, sign, and submit the complete Android family
   android-package
                Build signed AAB/APK, publish APK to R2 + GitHub; do not upload Play
   android-upload
@@ -88,6 +89,7 @@ Targets:
   watchos      Build watchOS companion (embedded in iOS — no own record)
   carplay      CarPlay iOS target archive/upload
   android-auto Android Auto Play AAB upload
+  android-xr   Verify/upload the headset-compatible shared Android AAB
   npm          CLI npm release via `yaver deploy npm`
   cli          Alias for npm
   feedback-sdk Publish the React Native feedback SDK to npm
@@ -195,6 +197,10 @@ case "$target" in
   android|playstore)
     require_deploy_boundary
     run_shell './scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json ./scripts/run-playstore-upload.sh'
+    ;;
+  android-all)
+    require_deploy_boundary
+    run "$ROOT/scripts/deploy-android-all.sh"
     ;;
   android-package|apk)
     require_deploy_boundary
@@ -313,6 +319,10 @@ case "$target" in
   android-auto|androidauto|auto)
     require_deploy_boundary
     run "$ROOT/scripts/deploy-android-auto.sh" --upload
+    ;;
+  android-xr|xr-android)
+    require_deploy_boundary
+    run "$ROOT/scripts/deploy-android-xr.sh" --upload
     ;;
   *)
     echo "ERROR: unknown deploy target '$target'." >&2

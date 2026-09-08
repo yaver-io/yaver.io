@@ -47,6 +47,9 @@ AAB="$ROOT/wear/app/build/outputs/bundle/release/app-release.aab"
 # shellcheck source=scripts/lib/android-sdk.sh
 source "$ROOT/scripts/lib/android-sdk.sh"
 yaver_resolve_android_sdk
+# shellcheck source=scripts/lib/android-gradle-memory.sh
+source "$ROOT/scripts/lib/android-gradle-memory.sh"
+yaver_android_gradle_memory_args
 
 "$ROOT/scripts/check-no-native-payment-sdks.sh" source
 
@@ -56,12 +59,12 @@ if [ "$SKIP_BUILD" != "1" ]; then
       -PyaverWearApplicationId="$PACKAGE" \
       -PyaverWearVersionCode="$VERSION_CODE" \
       -PyaverWearVersionName="$VERSION_NAME" \
-      --no-daemon --max-workers=2)
+      "${YAVER_ANDROID_GRADLE_ARGS[@]}")
 fi
 
 PAYMENT_DEP_REPORT="$(mktemp -t yaver-wear-release-deps.XXXXXX)"
 if ! (cd "$ROOT/wear" && ../mobile/android/gradlew -p . :app:dependencies \
-  --configuration releaseRuntimeClasspath --no-daemon --max-workers=2) >"$PAYMENT_DEP_REPORT"; then
+  --configuration releaseRuntimeClasspath "${YAVER_ANDROID_GRADLE_ARGS[@]}") >"$PAYMENT_DEP_REPORT"; then
   rm -f "$PAYMENT_DEP_REPORT"
   echo "ERROR: could not resolve the Wear release dependency graph for payment-SDK verification." >&2
   exit 1

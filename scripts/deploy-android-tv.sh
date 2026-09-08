@@ -34,6 +34,9 @@ BANNER="$ROOT/androidtv/app/src/main/res/drawable-xhdpi/tv_banner.png"
 # shellcheck source=scripts/lib/android-sdk.sh
 source "$ROOT/scripts/lib/android-sdk.sh"
 yaver_resolve_android_sdk
+# shellcheck source=scripts/lib/android-gradle-memory.sh
+source "$ROOT/scripts/lib/android-gradle-memory.sh"
+yaver_android_gradle_memory_args
 
 if pgrep -f '[x]codebuild' >/dev/null 2>&1; then
   echo "ERROR: refusing Android TV compilation while an Xcode build is active." >&2
@@ -52,7 +55,7 @@ if [ "$SKIP_BUILD" != "1" ]; then
     exit 2
   fi
   "$ROOT/mobile/android/gradlew" -p "$ROOT/androidtv" bundleRelease \
-    --no-daemon --max-workers=2
+    "${YAVER_ANDROID_GRADLE_ARGS[@]}"
 fi
 
 if ! MANIFEST="$(yaver_release_manifest_path "$ROOT/androidtv")"; then
