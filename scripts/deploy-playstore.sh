@@ -19,6 +19,7 @@ yaver_resolve_android_sdk
 # short-lived launcher JVM: an unconditional 8 GiB launcher took a nominal
 # 4 GiB remote worker into swap before the build even began. Size it from real
 # memory unless the operator already provided an -Xmx override.
+LOW_MEMORY_GRADLE_ARGS=()
 if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
   TOTAL_MEMORY_KB=""
   if [ -r /proc/meminfo ]; then
@@ -29,6 +30,16 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
   fi
   if [ -n "$TOTAL_MEMORY_KB" ] && [ "$TOTAL_MEMORY_KB" -lt $((10 * 1024 * 1024)) ]; then
     export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx1g -XX:MaxMetaspaceSize=512m"
+    # The project default caps the Gradle daemon at 3 GiB, but Kotlin may also
+    # start multiple independent 3 GiB compiler daemons (different plugin
+    # versions can require one each). On a 4 GiB worker that turns an apparently
+    # bounded build into an OOM. Keep Kotlin inside the 2 GiB Gradle process and
+    # serialize workers for this lane; larger CI/Mac builders retain defaults.
+    LOW_MEMORY_GRADLE_ARGS=(
+      --max-workers=1
+      '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m'
+      '-Pkotlin.compiler.execution.strategy=in-process'
+    )
   else
     export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx8g -XX:MaxMetaspaceSize=1g"
   fi
@@ -192,7 +203,7 @@ fi
 # and avoids the chicken-and-egg.
 # Build worklets prefab first — reanimated CMake configure depends on it.
 echo "Building release AAB..."
-"$GRADLE" :react-native-worklets:prefabReleasePackage
+"$GRADLE" :react-native-worklets:prefabReleasePackage "${LOW_MEMORY_GRADLE_ARGS[@]}"
 
 # Reanimated 4.x imports libworklets.so from the legacy AGP
 # intermediates/cmake/release path, while the current worklets/AGP build emits
@@ -232,10 +243,12 @@ fi
 # adds android:testOnly="true" to that bundle and Google Play rejects it.
 "$GRADLE" bundleRelease \
   ${YAVER_PLAYSTORE_ABI:+-PreactNativeArchitectures="$YAVER_PLAYSTORE_ABI"} \
+  "${LOW_MEMORY_GRADLE_ARGS[@]}" \
   -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease
 
 PAYMENT_DEP_REPORT="$(mktemp -t yaver-android-release-deps.XXXXXX)"
-if ! "$GRADLE" :app:dependencies --configuration releaseRuntimeClasspath >"$PAYMENT_DEP_REPORT"; then
+if ! "$GRADLE" :app:dependencies --configuration releaseRuntimeClasspath \
+  "${LOW_MEMORY_GRADLE_ARGS[@]}" >"$PAYMENT_DEP_REPORT"; then
   rm -f "$PAYMENT_DEP_REPORT"
   echo "ERROR: could not resolve the Android release dependency graph for payment-SDK verification." >&2
   exit 1
