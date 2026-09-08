@@ -1,9 +1,13 @@
 #!/bin/bash
 set -e
 
-cd "$(dirname "$0")/../mobile/android"
-
-REPO_ROOT="$(cd ../.. && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# A fresh checkout intentionally contains only force-tracked Yaver native
+# overlays; Expo owns the ignored scaffold. Ensure the actual build tree exists
+# and still contains both generated config-plugin sources and Yaver's dogfood,
+# bundle-loader, and on-device sandbox host before touching signing or Play.
+"$REPO_ROOT/scripts/prebuild-android-native.sh" --ensure
+cd "$REPO_ROOT/mobile/android"
 # shellcheck source=scripts/lib/android-sdk.sh
 source "$REPO_ROOT/scripts/lib/android-sdk.sh"
 # shellcheck source=scripts/lib/java-home.sh

@@ -232,24 +232,7 @@ jobs:
         run: cd mobile && npm ci --legacy-peer-deps
 
       - name: Prebuild native projects
-        run: cd mobile && npx expo prebuild --platform android --clean
-
-      # `expo prebuild --clean` wipes android/app/src/main/res/drawable/
-      # splashscreen_logo.xml. Gradle fails linking resources without
-      # it (CLAUDE.md documents this). Write a transparent shape
-      # drawable so the resource exists; the real splash is
-      # overlaid elsewhere.
-      - name: Restore splashscreen_logo drawable
-        run: |
-          DIR="mobile/android/app/src/main/res/drawable"
-          mkdir -p "$DIR"
-          cat > "$DIR/splashscreen_logo.xml" <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <solid android:color="@android:color/transparent"/>
-          </shape>
-          XML
+        run: ./scripts/prebuild-android-native.sh
 
       - name: Decode Android keystore
         env:

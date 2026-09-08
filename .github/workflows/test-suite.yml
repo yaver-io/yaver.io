@@ -545,7 +545,7 @@ jobs:
         run: cd mobile && npm ci --legacy-peer-deps
 
       - name: Prebuild native Android project
-        run: cd mobile && npx expo prebuild --platform android --clean
+        run: ./scripts/prebuild-android-native.sh
 
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .

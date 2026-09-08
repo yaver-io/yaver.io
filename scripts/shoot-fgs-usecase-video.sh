@@ -252,28 +252,14 @@ cat > /tmp/yaver-shoot-phase4.sh <<'REMOTE'
   cd /opt/yaver/mobile
   # 1) JS deps
   npm ci --legacy-peer-deps || npm install --legacy-peer-deps || echo "npm-FAILED"
-  # 1b) preserve the committed AndroidManifest.xml (declares SandboxService +
-  #     FOREGROUND_SERVICE_SPECIAL_USE + subtype) — `prebuild --clean` regenerates
-  #     it and DROPS the hand-declared service (run 6: analyzer found no service →
-  #     FGS never started → no notification). Mirrors CLAUDE.md cold-start "restore
-  #     force-tracked overlays after prebuild".
-  cp android/app/src/main/AndroidManifest.xml /tmp/yaver-manifest.bak
-  # CRITICAL: back up ALL committed custom Kotlin (MainApplication, the Yaver*
-  # modules, and the sandbox/ package incl. SandboxService) — prebuild --clean
-  # regenerates android/ and DROPS them, which is why SandboxService was missing
-  # → ClassNotFoundException → no notification. Restoring just the manifest (which
-  # only *declares* the service) was the bug.
-  rm -rf /tmp/yaver-java.bak && cp -r android/app/src/main/java /tmp/yaver-java.bak
   # 2) regenerate a COMPLETE native android project (--clean: the repo only
-  #    force-tracks overlay files, so reuse fails at settings.gradle).
-  npx expo prebuild --platform android --clean --no-install || echo "prebuild-FAILED"
-  # 2b) restore the real manifest + ALL committed Kotlin sources over the regen'd ones
-  cp /tmp/yaver-manifest.bak android/app/src/main/AndroidManifest.xml
-  cp -r /tmp/yaver-java.bak/io android/app/src/main/java/
-  test -f android/app/src/main/java/io/yaver/mobile/sandbox/SandboxService.kt && echo "sources: SandboxService.kt restored" || echo "sources: WARN SandboxService missing"
+  #    force-tracks overlay files, so reuse fails at settings.gradle). The
+  #    shared helper restores and verifies ALL committed overlays plus generated
+  #    car/wear plugin sources; do not hand-copy a subset here again.
+  cd /opt/yaver
+  ./scripts/prebuild-android-native.sh
   # 3) cross-compile libyaver(x86_64)+proot into jniLibs/x86_64 AFTER prebuild
   #    (prebuild --clean would otherwise wipe them).
-  cd /opt/yaver
   ABI="${TARGET_ABI:-arm64-v8a}" bash scripts/build-android-sandbox.sh || echo "sandbox-payload-FAILED"
   ls -la "mobile/android/app/src/main/jniLibs/${TARGET_ABI:-arm64-v8a}/" 2>/dev/null || echo "no ${TARGET_ABI} jniLibs"
   # 4) debug APK, gradle capped to the box RAM

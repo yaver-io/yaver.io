@@ -139,18 +139,7 @@ jobs:
       - name: Install dependencies
         run: cd mobile && npm ci --legacy-peer-deps
       - name: Prebuild native projects
-        run: cd mobile && npx expo prebuild --platform android --clean
-      - name: Restore splashscreen_logo drawable
-        run: |
-          DIR="mobile/android/app/src/main/res/drawable"
-          mkdir -p "$DIR"
-          cat > "$DIR/splashscreen_logo.xml" <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <solid android:color="@android:color/transparent"/>
-          </shape>
-          XML
+        run: ./scripts/prebuild-android-native.sh
       - name: Build debug APK
         # Debug build needs no signing secrets — this job only verifies the
         # variant manifest compiles into a real binary (the signed Play upload

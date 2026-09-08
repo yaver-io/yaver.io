@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="$ROOT/mobile/android/settings.gradle"
 WRAPPER="$ROOT/mobile/android/gradle/wrapper/gradle-wrapper.properties"
 DEPLOY="$ROOT/scripts/deploy-playstore.sh"
+PREBUILD="$ROOT/scripts/prebuild-android-native.sh"
 ANDROID_SDK_HELPER="$ROOT/scripts/lib/android-sdk.sh"
 JAVA_HOME_HELPER="$ROOT/scripts/lib/java-home.sh"
 TV_DEPLOY="$ROOT/scripts/deploy-android-tv.sh"
@@ -29,6 +30,24 @@ fi
 
 grep -q 'yaver_resolve_android_sdk' "$DEPLOY"
 grep -q 'yaver_resolve_java_home 17' "$DEPLOY"
+grep -q 'prebuild-android-native.sh.*--ensure' "$DEPLOY"
+grep -q 'expo prebuild --platform android --clean --no-install' "$PREBUILD"
+grep -Fqx 'git -C "$ROOT" restore --source=HEAD --worktree -- mobile/android' "$PREBUILD"
+grep -q 'YaverDogfoodPackage' "$PREBUILD"
+grep -q 'YaverBundleLoaderPackage' "$PREBUILD"
+grep -q 'sandbox/SandboxService.kt' "$PREBUILD"
+grep -q 'car/YaverCarMessagingModule.kt' "$PREBUILD"
+grep -q 'wear/YaverWearListenerService.kt' "$PREBUILD"
+for workflow in \
+  "$ROOT/.github/workflows/release-mobile.yml" \
+  "$ROOT/.github/workflows/test-suite.yml" \
+  "$ROOT/.github/workflows/mobile-variants.yml"; do
+  grep -q './scripts/prebuild-android-native.sh' "$workflow"
+  if grep -q 'npx expo prebuild --platform android --clean' "$workflow"; then
+    echo "Android workflows must use the shared overlay-restoring prebuild" >&2
+    exit 1
+  fi
+done
 grep -q 'TOTAL_MEMORY_KB.*10 \* 1024 \* 1024' "$DEPLOY"
 grep -q 'GRADLE_OPTS=.*-Xmx1g' "$DEPLOY"
 grep -q 'GRADLE_OPTS=.*-Xmx8g' "$DEPLOY"
