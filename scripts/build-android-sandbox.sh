@@ -32,14 +32,66 @@ esac
 JNI_DIR="$REPO_ROOT/mobile/android/app/src/main/jniLibs/$ABI"
 mkdir -p "$JNI_DIR"
 
+# The agent package is intentionally broad and its single compile action can
+# exceed 3.5 GiB RSS even when Gradle and Go package parallelism are disabled.
+# Bound the Go runtime itself on a nominal 4 GiB build worker; explicit caller
+# values win. Compiler tables also consume non-heap memory, so the low-memory
+# release lane stages this build before mounting Gradle's tmpfs and then reuses
+# the checksum-verified result during the AAB build.
+TOTAL_MEMORY_KB=""
+if [ -r /proc/meminfo ]; then
+  TOTAL_MEMORY_KB=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo)
+elif command -v sysctl >/dev/null 2>&1; then
+  TOTAL_MEMORY_BYTES=$(sysctl -n hw.memsize 2>/dev/null || true)
+  [ -n "$TOTAL_MEMORY_BYTES" ] && TOTAL_MEMORY_KB=$((TOTAL_MEMORY_BYTES / 1024))
+fi
+if [ -n "$TOTAL_MEMORY_KB" ] && [ "$TOTAL_MEMORY_KB" -lt $((10 * 1024 * 1024)) ]; then
+  export GOMEMLIMIT="${GOMEMLIMIT:-1536MiB}"
+  export GOGC="${GOGC:-20}"
+  export GOMAXPROCS="${GOMAXPROCS:-1}"
+  case " ${GOFLAGS:-} " in
+    *" -p="*|*" -p "*) ;;
+    *) export GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=1" ;;
+  esac
+  echo "    low-memory Go policy: GOMEMLIMIT=$GOMEMLIMIT GOGC=$GOGC GOMAXPROCS=$GOMAXPROCS GOFLAGS=$GOFLAGS"
+fi
+
 echo "==> Cross-compiling Go agent for android/$GOARCH (ABI=$ABI)"
+# A low-memory release worker may build this monolithic agent in a separate
+# phase before mounting Gradle's tmpfs cache. Reuse is allowed only with an
+# explicit digest; a path alone can never silently substitute stale bytes.
+YAVER_ANDROID_AGENT_SRC="${YAVER_ANDROID_AGENT_SRC:-}"
+YAVER_ANDROID_AGENT_SHA256="${YAVER_ANDROID_AGENT_SHA256:-}"
+if [[ -n "$YAVER_ANDROID_AGENT_SRC" ]]; then
+  [[ -f "$YAVER_ANDROID_AGENT_SRC" ]] || {
+    echo "prebuilt Android agent not found: $YAVER_ANDROID_AGENT_SRC" >&2
+    exit 1
+  }
+  [[ "$YAVER_ANDROID_AGENT_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || {
+    echo "YAVER_ANDROID_AGENT_SHA256 must be set to a 64-character digest when reusing an agent." >&2
+    exit 1
+  }
+  if command -v sha256sum >/dev/null 2>&1; then
+    AGENT_SHA256=$(sha256sum "$YAVER_ANDROID_AGENT_SRC" | awk '{print $1}')
+  else
+    AGENT_SHA256=$(shasum -a 256 "$YAVER_ANDROID_AGENT_SRC" | awk '{print $1}')
+  fi
+  AGENT_SHA256_LOWER=$(printf '%s' "$AGENT_SHA256" | tr '[:upper:]' '[:lower:]')
+  EXPECTED_AGENT_SHA256=$(printf '%s' "$YAVER_ANDROID_AGENT_SHA256" | tr '[:upper:]' '[:lower:]')
+  [[ "$AGENT_SHA256_LOWER" == "$EXPECTED_AGENT_SHA256" ]] || {
+    echo "prebuilt Android agent SHA-256 mismatch: got=$AGENT_SHA256 want=$YAVER_ANDROID_AGENT_SHA256" >&2
+    exit 1
+  }
+  cp "$YAVER_ANDROID_AGENT_SRC" "$JNI_DIR/libyaver.so"
+  chmod +x "$JNI_DIR/libyaver.so"
+  echo "    reused checksum-verified prebuilt agent: $AGENT_SHA256"
 # -checklinkname=0 is REQUIRED: github.com/wlynxg/anet uses //go:linkname
 #   against net.zoneCache, which the Go 1.26 linker rejects on GOOS=android.
 # -s -w strips debug info.
 # arm64: CGO off → self-contained, no NDK. amd64: GOOS=android/amd64 REQUIRES
 #   external (cgo) linking, so it needs the NDK x86_64 clang as CC (verified
 #   2026-06-08 — CGO_ENABLED=0 GOARCH=amd64 fails "requires external linking").
-if [[ "$GOARCH" == "arm64" ]]; then
+elif [[ "$GOARCH" == "arm64" ]]; then
   ( cd "$AGENT_DIR" && \
     CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
       go build -trimpath -ldflags="-checklinkname=0 -s -w" -o "$JNI_DIR/libyaver.so" . )

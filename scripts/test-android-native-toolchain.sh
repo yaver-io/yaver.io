@@ -13,6 +13,8 @@ WEAR_DEPLOY="$ROOT/scripts/deploy-wear-os.sh"
 XR_DEPLOY="$ROOT/scripts/deploy-android-xr.sh"
 ANDROID_ALL_DEPLOY="$ROOT/scripts/deploy-android-all.sh"
 GRADLE_MEMORY_HELPER="$ROOT/scripts/lib/android-gradle-memory.sh"
+NINJA_MEMORY_HELPER="$ROOT/scripts/lib/android-ninja-memory.sh"
+SANDBOX_BUILD="$ROOT/scripts/build-android-sandbox.sh"
 
 grep -q 'id("expo-autolinking-settings")' "$SETTINGS"
 grep -q 'includeBuild(expoPluginsPath)' "$SETTINGS"
@@ -86,6 +88,44 @@ grep -q 'YAVER_ANDROID_GRADLE_ARGS' "$TV_DEPLOY"
 grep -q 'YAVER_ANDROID_GRADLE_ARGS' "$WEAR_DEPLOY"
 grep -q -- '-Pkotlin.compiler.execution.strategy=in-process' "$GRADLE_MEMORY_HELPER"
 grep -q -- '--max-workers=1' "$GRADLE_MEMORY_HELPER"
+grep -q 'yaver_android_limit_ninja_jobs' "$DEPLOY"
+grep -q 'yaver_android_probe_ndk_host' "$DEPLOY"
+grep -q 'ninja.yaver-real.*-j' "$NINJA_MEMORY_HELPER"
+grep -q 'GOMEMLIMIT=.*1536MiB' "$SANDBOX_BUILD"
+grep -q 'GOGC=.*20' "$SANDBOX_BUILD"
+grep -q 'GOMAXPROCS=.*1' "$SANDBOX_BUILD"
+grep -q 'YAVER_ANDROID_AGENT_SHA256' "$SANDBOX_BUILD"
+grep -q 'reused checksum-verified prebuilt agent' "$SANDBOX_BUILD"
+grep -q 'refusing to publish a silently degraded Yaver AAB' "$DEPLOY"
+if grep -q 'sandbox payload build failed — continuing' "$DEPLOY"; then
+  echo "Play deploy must not report success after a sandbox build failure" >&2
+  exit 1
+fi
+
+# Execute the low-memory Ninja guard, not just its wiring. The fake SDK binary
+# records the wrapper's final argv so this fails if -j1 stops reaching Ninja.
+NINJA_TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$NINJA_TEST_ROOT"' EXIT
+mkdir -p "$NINJA_TEST_ROOT/sdk/cmake/3.22.1/bin"
+cat >"$NINJA_TEST_ROOT/sdk/cmake/3.22.1/bin/ninja" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$YAVER_NINJA_TEST_LOG"
+EOF
+chmod +x "$NINJA_TEST_ROOT/sdk/cmake/3.22.1/bin/ninja"
+export YAVER_NINJA_TEST_LOG="$NINJA_TEST_ROOT/argv.log"
+export ANDROID_SDK_ROOT="$NINJA_TEST_ROOT/sdk"
+export YAVER_ANDROID_NINJA_FORCE=1
+# shellcheck source=scripts/lib/android-ninja-memory.sh
+source "$NINJA_MEMORY_HELPER"
+yaver_android_limit_ninja_jobs
+"$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" target
+grep -q '^target -j1$' "$YAVER_NINJA_TEST_LOG"
+if YAVER_ANDROID_NINJA_JOBS=0 "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" target >/dev/null 2>&1; then
+  echo "Ninja low-memory wrapper accepted an invalid zero job count" >&2
+  exit 1
+fi
+rm -rf "$NINJA_TEST_ROOT"
+trap - EXIT
 grep -q 'deploy-playstore.sh' "$ANDROID_ALL_DEPLOY"
 grep -q 'deploy-android-auto.sh' "$ANDROID_ALL_DEPLOY"
 grep -q 'deploy-android-xr.sh.*--skip-build' "$ANDROID_ALL_DEPLOY"

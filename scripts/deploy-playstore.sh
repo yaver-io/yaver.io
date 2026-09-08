@@ -12,6 +12,8 @@ cd "$REPO_ROOT/mobile/android"
 source "$REPO_ROOT/scripts/lib/android-sdk.sh"
 # shellcheck source=scripts/lib/java-home.sh
 source "$REPO_ROOT/scripts/lib/java-home.sh"
+# shellcheck source=scripts/lib/android-ninja-memory.sh
+source "$REPO_ROOT/scripts/lib/android-ninja-memory.sh"
 yaver_resolve_java_home 17
 yaver_resolve_android_sdk
 
@@ -40,6 +42,9 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
       '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
+    export YAVER_ANDROID_NINJA_JOBS="${YAVER_ANDROID_NINJA_JOBS:-1}"
+    yaver_android_limit_ninja_jobs
+    yaver_android_probe_ndk_host
   else
     export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx8g -XX:MaxMetaspaceSize=1g"
   fi
@@ -175,9 +180,10 @@ echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 # On-device sandbox payload: cross-compile the Go agent (+ proot when a source is
 # configured) into jniLibs so the shipped AAB can host the phone-as-Linux-box
 # (SandboxService → libyaver.so + proot rootfs). Skipped only when explicitly
-# opted out or when Go isn't on PATH (a vanilla APK still builds fine; the
-# on-device box just stays disabled). proot needs PROOT_SRC or YAVER_PROOT_URL —
-# without it the script ships agent-only and says so. cwd is mobile/android here.
+# opted out; otherwise missing Go or a failed payload build is fatal. proot
+# needs PROOT_SRC or YAVER_PROOT_URL.
+# A production deploy must never turn a failed build into a success response;
+# YAVER_SKIP_SANDBOX=1 is the explicit operator opt-out. cwd is mobile/android.
 if [ "${YAVER_SKIP_SANDBOX:-0}" != "1" ]; then
   if command -v go >/dev/null 2>&1; then
     echo "Building on-device sandbox payload (jniLibs)..."
@@ -185,10 +191,14 @@ if [ "${YAVER_SKIP_SANDBOX:-0}" != "1" ]; then
       [ -f "app/src/main/jniLibs/.sandbox-payload.txt" ] && \
         sed 's/^/  sandbox: /' "app/src/main/jniLibs/.sandbox-payload.txt" || true
     else
-      echo "WARN: sandbox payload build failed — continuing without on-device agent." >&2
+      echo "ERROR: sandbox payload build failed; refusing to publish a silently degraded Yaver AAB." >&2
+      echo "Fix the streamed build failure or explicitly set YAVER_SKIP_SANDBOX=1." >&2
+      exit 1
     fi
   else
-    echo "WARN: 'go' not found — skipping on-device sandbox payload (set YAVER_SKIP_SANDBOX=1 to silence)." >&2
+    echo "ERROR: 'go' is required for the on-device Yaver sandbox payload." >&2
+    echo "Install Go or explicitly set YAVER_SKIP_SANDBOX=1." >&2
+    exit 1
   fi
 fi
 
