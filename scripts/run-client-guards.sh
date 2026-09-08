@@ -91,6 +91,23 @@ if [[ "$ONLY" == "all" || "$ONLY" == "mobile" ]]; then
       PASS=$((PASS + 1))
     fi
   done
+  # RCT_EXTERN_MODULE in the Objective-C shim is the module declaration for
+  # Swift overlays. Redundantly conforming the Swift class to RCTBridgeModule
+  # passed source-presence checks but failed only after a 17-minute archive:
+  # React Native's prebuilt Swift module does not expose that protocol name.
+  if grep -Fq 'RCT_EXTERN_MODULE(YaverMouthCropper' mobile/ios/Yaver/YaverMouthCropper.m && \
+     grep -Eq 'class[[:space:]]+YaverMouthCropper:[^{]*RCTBridgeModule' mobile/ios/Yaver/YaverMouthCropper.swift; then
+    printf 'FAIL mobile/ios/Yaver/YaverMouthCropper.swift — RCT_EXTERN_MODULE shim must own bridge conformance\n'
+    FAIL=$((FAIL + 1))
+    FAILED_FILES+=("mobile/ios/Yaver/YaverMouthCropper.swift")
+  elif ! grep -Fq '@objc static func requiresMainQueueSetup()' mobile/ios/Yaver/YaverMouthCropper.swift; then
+    printf 'FAIL mobile/ios/Yaver/YaverMouthCropper.swift — bridge setup selector is not Objective-C visible\n'
+    FAIL=$((FAIL + 1))
+    FAILED_FILES+=("mobile/ios/Yaver/YaverMouthCropper.swift")
+  else
+    printf 'ok   mobile/ios/Yaver/YaverMouthCropper bridge declaration\n'
+    PASS=$((PASS + 1))
+  fi
 
   echo "── mobile/src/lib guards ──"
   while IFS= read -r f; do

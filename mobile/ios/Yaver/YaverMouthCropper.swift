@@ -8,9 +8,12 @@ import Vision
 /// grayscale mouth ROIs. The source video is never returned across the bridge;
 /// JS deletes its temporary file immediately after this call completes.
 @objc(YaverMouthCropper)
-final class YaverMouthCropper: NSObject, RCTBridgeModule {
-  static func moduleName() -> String! { "YaverMouthCropper" }
-  static func requiresMainQueueSetup() -> Bool { false }
+final class YaverMouthCropper: NSObject {
+  // YaverMouthCropper.m exports this class through RCT_EXTERN_MODULE. Adding
+  // RCTBridgeModule conformance here looks redundant but fails against React
+  // Native's prebuilt Swift module because that protocol is not exported into
+  // Swift scope. Keep the Objective-C bridge as the single module declaration.
+  @objc static func requiresMainQueueSetup() -> Bool { false }
 
   private let queue = DispatchQueue(label: "io.yaver.mouth-cropper", qos: .userInitiated)
   private let context = CIContext(options: [.cacheIntermediates: false])
@@ -75,7 +78,7 @@ final class YaverMouthCropper: NSObject, RCTBridgeModule {
     let request = VNDetectFaceLandmarksRequest()
     let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
     try? handler.perform([request])
-    guard let face = (request.results as? [VNFaceObservation])?.max(by: { $0.boundingBox.width < $1.boundingBox.width }),
+    guard let face = request.results?.max(by: { $0.boundingBox.width < $1.boundingBox.width }),
           let lips = face.landmarks?.outerLips,
           lips.pointCount >= 4 else { return nil }
 
