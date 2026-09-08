@@ -32,6 +32,8 @@ grep -q 'yaver_resolve_java_home 17' "$DEPLOY"
 grep -q 'TOTAL_MEMORY_KB.*10 \* 1024 \* 1024' "$DEPLOY"
 grep -q 'GRADLE_OPTS=.*-Xmx1g' "$DEPLOY"
 grep -q 'GRADLE_OPTS=.*-Xmx8g' "$DEPLOY"
+grep -q 'YAVER_PLAYSTORE_VOLUME_PATH' "$DEPLOY"
+grep -q 'df -Pk "$BUILD_VOLUME_PATH"' "$DEPLOY"
 grep -q 'sed -i.bak' "$DEPLOY"
 if grep -q "sed -i ''" "$DEPLOY"; then
   echo "Play deploy must use portable in-place sed syntax" >&2

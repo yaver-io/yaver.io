@@ -88,11 +88,21 @@ else
 fi
 
 MIN_FREE_GB="${YAVER_PLAYSTORE_MIN_FREE_GB:-16}"
-AVAILABLE_KB=$(df -Pk . | awk 'NR==2 {print $4}')
+# A low-disk release worker may keep its owner-locked source checkout locally
+# while routing Gradle caches, node_modules, native intermediates, and outputs
+# to a private mounted build volume. Probe that real operation volume when it
+# is explicitly supplied; checking the small source filesystem would be a
+# false red even though every material write lands elsewhere.
+BUILD_VOLUME_PATH="${YAVER_PLAYSTORE_VOLUME_PATH:-.}"
+if [ ! -d "$BUILD_VOLUME_PATH" ]; then
+  echo "ERROR: configured Android build volume does not exist: $BUILD_VOLUME_PATH" >&2
+  exit 1
+fi
+AVAILABLE_KB=$(df -Pk "$BUILD_VOLUME_PATH" | awk 'NR==2 {print $4}')
 MIN_FREE_KB=$((MIN_FREE_GB * 1024 * 1024))
 if [ -n "$AVAILABLE_KB" ] && [ "$AVAILABLE_KB" -lt "$MIN_FREE_KB" ]; then
   AVAILABLE_GB=$((AVAILABLE_KB / 1024 / 1024))
-  echo "ERROR: Play deploy needs at least ${MIN_FREE_GB} GiB free on the Android build volume; only ${AVAILABLE_GB} GiB is available." >&2
+  echo "ERROR: Play deploy needs at least ${MIN_FREE_GB} GiB free on the Android build volume ($BUILD_VOLUME_PATH); only ${AVAILABLE_GB} GiB is available." >&2
   echo "Clean generated artifacts (mobile/android/app/build, mobile/android/.gradle, node_modules native .cxx/build outputs, or Gradle caches) or run the Play deploy on CI." >&2
   exit 1
 fi
