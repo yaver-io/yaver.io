@@ -24,6 +24,19 @@ apple_ensure_pods_directory "$TMP_BASE/checkout/mobile/ios/Pods"
   echo "FAIL: dangling external Pods directory was not restored" >&2
   exit 1
 }
+
+# A stale external-volume link is generated state, not a reason to strand the
+# release. Reproduce an unavailable target with a regular file in the path:
+# mkdir cannot recreate it, so the helper must fall back to a local Pods dir.
+mkdir -p "$TMP_BASE/fallback/mobile/ios"
+touch "$TMP_BASE/unavailable-volume"
+ln -s "$TMP_BASE/unavailable-volume/mobile/ios/Pods" "$TMP_BASE/fallback/mobile/ios/Pods"
+apple_ensure_pods_directory "$TMP_BASE/fallback/mobile/ios/Pods"
+[ -d "$TMP_BASE/fallback/mobile/ios/Pods" ] && [ ! -L "$TMP_BASE/fallback/mobile/ios/Pods" ] || {
+  echo "FAIL: unavailable external Pods target did not fall back locally" >&2
+  exit 1
+}
+
 mkdir -p "$TMP_BASE/external/mobile/node_modules"
 
 apple_ensure_pods_node_modules_layout \

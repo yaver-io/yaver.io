@@ -33,7 +33,24 @@ apple_ensure_pods_directory() {
     *) resolved_target="$(dirname "$pods_dir")/$link_target" ;;
   esac
 
-  mkdir -p "$resolved_target"
+  if ! mkdir -p "$resolved_target" 2>/dev/null; then
+    # The symlink is generated CocoaPods state. An external build volume can
+    # disappear between releases, leaving (for example) Pods pointed below an
+    # unmounted /Volumes entry that the current user cannot recreate. Retrying
+    # mkdir there only emits "Permission denied" and strands an otherwise
+    # healthy local release. Fall back to a real checkout-local Pods directory;
+    # `pod install` immediately below will repopulate it from the lockfile.
+    rm "$pods_dir" || {
+      echo "ERROR: could not remove unavailable CocoaPods symlink: $pods_dir" >&2
+      return 1
+    }
+    mkdir -p "$pods_dir" || {
+      echo "ERROR: could not create local CocoaPods directory: $pods_dir" >&2
+      return 1
+    }
+    echo "External CocoaPods target is unavailable; restored local generated directory: $pods_dir"
+    return 0
+  fi
   if [ ! -d "$pods_dir" ]; then
     echo "ERROR: restored CocoaPods symlink target is still not a directory: $resolved_target" >&2
     return 1
