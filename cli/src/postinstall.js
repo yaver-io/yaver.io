@@ -400,39 +400,6 @@ function ensureZshenvRescue() {
   }
 }
 
-// Update ~/.yaver/bin/current → versioned dir for the binary just
-// installed. Without this, the symlink can lag behind npm — every time
-// I bumped CLI on the user's Mac mini, `~/.yaver/bin/current` kept
-// pointing at an older version, so `~/.yaver/bin/current/<arch>/yaver`
-// silently ran the wrong binary even though `npm install -g yaver-cli@
-// <new>` had succeeded. The auto-update watchdogs (heartbeat_watcher
-// systemctl/launchctl kickstart paths) trust `current` too — so a
-// stale symlink keeps the old binary running across a "restart"
-// without anyone noticing. This belongs in postinstall, runs every
-// global install, never throws.
-function refreshCurrentSymlink(binaryPath) {
-  try {
-    if (process.platform === "win32") return;
-    if (!binaryPath) return;
-    // binaryPath is like ~/.yaver/bin/<version>/<cacheKey>/yaver — walk
-    // up two levels to the version dir, point `current` at it.
-    const versionDir = path.dirname(path.dirname(binaryPath));
-    if (!versionDir.startsWith(path.join(os.homedir(), ".yaver", "bin") + path.sep)) {
-      return;
-    }
-    if (!fs.existsSync(versionDir)) return;
-    const symlink = path.join(os.homedir(), ".yaver", "bin", "current");
-    let already = "";
-    try { already = fs.readlinkSync(symlink); } catch (_) {}
-    if (already === versionDir) return;
-    try { fs.unlinkSync(symlink); } catch (_) {}
-    fs.symlinkSync(versionDir, symlink);
-    log(`Repointed ~/.yaver/bin/current → ${path.basename(versionDir)}`);
-  } catch (err) {
-    log(`Skipping current symlink refresh: ${err.message}`);
-  }
-}
-
 // Restart whichever service supervisor the user has registered. Without
 // this, a fresh `npm install -g yaver-cli@latest` updates the binary on
 // disk but leaves the still-running agent process on the OLD binary
@@ -497,10 +464,8 @@ async function main() {
     log(`Skipping agent prefetch: ${error.message}`);
     return;
   }
-  // Repoint the canonical `current` symlink + bounce any registered
-  // service so a fresh `npm install -g yaver-cli@latest` actually
-  // takes effect without a manual `yaver restart`.
-  refreshCurrentSymlink(installedBinary);
+  // ensureAgentBinary has atomically reconciled the canonical `current`
+  // symlink. Bounce any registered service so the selected binary is live.
   bounceRunningAgent();
 
   if (isIotEdgeInstall()) {

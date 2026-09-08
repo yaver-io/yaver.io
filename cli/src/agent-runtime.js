@@ -32,7 +32,17 @@ const EXECUTABLE_MAGICS = [
   Buffer.from([0x4d, 0x5a]),             // PE (Windows) — MZ
 ];
 
-async function ensureAgentBinary({ quiet = false } = {}) {
+async function ensureAgentBinary({
+  quiet = false,
+  resolveBinary = resolveAgentBinary,
+  refreshLink = refreshCurrentSymlink,
+} = {}) {
+  const binaryPath = await resolveBinary({ quiet });
+  refreshLink(binaryPath, { quiet });
+  return binaryPath;
+}
+
+async function resolveAgentBinary({ quiet = false } = {}) {
   // Try cache first — when the user already has any version of yaver
   // installed locally, we shouldn't fail just because GitHub's API
   // rate-limited the unauthenticated /releases call. Falling back to
@@ -93,6 +103,69 @@ async function ensureAgentBinary({ quiet = false } = {}) {
       return fallback;
     }
     throw err;
+  }
+}
+
+// Keep the supervisor's stable path aligned with the binary the wrapper has
+// actually selected. Postinstall also does this, but agent releases can be
+// discovered and downloaded lazily on any later CLI invocation. Before this
+// guard, that path ran the new binary for the command while launchd/systemd
+// continued restarting `current`, which could still name an older version
+// (observed 2026-09-08: wrapper 1.99.459, live launchd agent 1.99.452).
+//
+// Use an atomic rename so a concurrent supervisor restart never observes a
+// missing `current` entry. The function is deliberately best-effort: resolving
+// a usable agent must not fail because a local symlink cannot be repaired.
+function refreshCurrentSymlink(binaryPath, {
+  quiet = false,
+  platform = process.platform,
+  cacheRoot = CACHE_ROOT,
+  fsImpl = fs,
+} = {}) {
+  let temporaryLink = '';
+  try {
+    if (platform === 'win32' || !binaryPath) return 'skipped';
+
+    const resolvedCacheRoot = path.resolve(cacheRoot);
+    const versionDir = path.resolve(path.dirname(path.dirname(binaryPath)));
+    const relativeVersionDir = path.relative(resolvedCacheRoot, versionDir);
+    if (
+      !relativeVersionDir ||
+      relativeVersionDir.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeVersionDir) ||
+      !semver.valid(path.basename(versionDir)) ||
+      !fsImpl.existsSync(versionDir)
+    ) {
+      return 'skipped';
+    }
+
+    const currentLink = path.join(resolvedCacheRoot, 'current');
+    try {
+      const existingTarget = fsImpl.readlinkSync(currentLink);
+      const existingResolved = path.resolve(path.dirname(currentLink), existingTarget);
+      if (existingResolved === versionDir) return 'already-current';
+    } catch (_) {}
+
+    temporaryLink = path.join(
+      resolvedCacheRoot,
+      `.current-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    fsImpl.symlinkSync(versionDir, temporaryLink);
+    fsImpl.renameSync(temporaryLink, currentLink);
+    temporaryLink = '';
+    if (!quiet) {
+      console.error(`[yaver] Repointed ~/.yaver/bin/current -> ${path.basename(versionDir)}`);
+    }
+    return 'repointed';
+  } catch (err) {
+    if (!quiet) {
+      console.error(`[yaver] Could not refresh the current agent link: ${err.message}`);
+    }
+    return 'failed';
+  } finally {
+    if (temporaryLink) {
+      try { fsImpl.unlinkSync(temporaryLink); } catch (_) {}
+    }
   }
 }
 
@@ -730,6 +803,7 @@ async function extractTarball(archivePath, destDir) {
 module.exports = {
   ensureAgentBinary,
   ensureValidMacSignature,
+  refreshCurrentSymlink,
   resolveAgentInfo,
   runAgentCommand,
 };
