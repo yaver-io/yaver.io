@@ -192,10 +192,6 @@ type agentTunnel struct {
 type wsAgentTunnel struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
-	// sendHook is test-only injection for exercising the HTTP proxy against a
-	// websocket-only tunnel without opening a real socket. Production tunnels
-	// leave it nil and write through conn below.
-	sendHook func(WSTunnelFrame) error
 
 	pendingMu sync.Mutex
 	pending   map[string]chan WSTunnelFrame
@@ -214,9 +210,6 @@ func newWSAgentTunnel(conn *websocket.Conn) *wsAgentTunnel {
 func (wst *wsAgentTunnel) send(frame WSTunnelFrame) error {
 	wst.writeMu.Lock()
 	defer wst.writeMu.Unlock()
-	if wst.sendHook != nil {
-		return wst.sendHook(frame)
-	}
 	return websocket.JSON.Send(wst.conn, frame)
 }
 

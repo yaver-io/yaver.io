@@ -18,24 +18,52 @@ import (
 // ever stops routing websocket-only tunnels, the operation-level health probe
 // fails here exactly as it would in the mobile app on a UDP-blocking network.
 func TestProxyHealthRoutesThroughWebSocketOnlyTunnel(t *testing.T) {
-	srv := NewRelayServer(0, 0, "pw", "", "")
-	done := make(chan struct{})
-	wst := &wsAgentTunnel{
-		pending: make(map[string]chan WSTunnelFrame),
-		done:    done,
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"userId":"user-a"}`)
+	}))
+	defer backend.Close()
+
+	relay := NewRelayServer(0, 0, "", backend.URL, "")
+	mux := http.NewServeMux()
+	mux.Handle("/agent/tunnel/ws", websocket.Handler(relay.handleAgentWebSocket))
+	mux.HandleFunc("/d/", relay.handleProxy)
+	proxy := httptest.NewServer(mux)
+	defer proxy.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(proxy.URL, "http") + "/agent/tunnel/ws"
+	agent, err := websocket.Dial(wsURL, "", proxy.URL)
+	if err != nil {
+		t.Fatalf("dial websocket fallback: %v", err)
 	}
-	wst.sendHook = func(frame WSTunnelFrame) error {
+	defer agent.Close()
+	reg := &RegisterMsg{Type: "register", DeviceID: "device-ws-only", Token: "token-a", Password: "password-a"}
+	if err := websocket.JSON.Send(agent, WSTunnelFrame{Type: "register", Register: reg}); err != nil {
+		t.Fatalf("send registration: %v", err)
+	}
+	var registered WSTunnelFrame
+	if err := websocket.JSON.Receive(agent, &registered); err != nil {
+		t.Fatalf("receive registration response: %v", err)
+	}
+	if !registered.OK || registered.Type != "registered" {
+		t.Fatalf("registration = %+v, want registered", registered)
+	}
+
+	agentErr := make(chan error, 1)
+	go func() {
+		var frame WSTunnelFrame
+		if err := websocket.JSON.Receive(agent, &frame); err != nil {
+			agentErr <- err
+			return
+		}
 		if frame.Type != "request" || frame.Request == nil {
-			t.Fatalf("websocket frame = %+v, want request", frame)
+			agentErr <- &fallbackTestError{"websocket frame was not a request"}
+			return
 		}
 		if frame.Request.Path != "/health" || frame.Request.Method != http.MethodGet {
-			t.Fatalf("proxied operation = %s %s, want GET /health", frame.Request.Method, frame.Request.Path)
+			agentErr <- &fallbackTestError{"proxied operation was not GET /health"}
+			return
 		}
-
-		wst.pendingMu.Lock()
-		responseCh := wst.pending[frame.ID]
-		wst.pendingMu.Unlock()
-		responseCh <- WSTunnelFrame{
+		agentErr <- websocket.JSON.Send(agent, WSTunnelFrame{
 			Type: "response",
 			ID:   frame.ID,
 			Response: &TunnelResponse{
@@ -44,27 +72,37 @@ func TestProxyHealthRoutesThroughWebSocketOnlyTunnel(t *testing.T) {
 				Headers:    map[string]string{"Content-Type": "application/json"},
 				Body:       []byte(`{"ok":true,"transport":"websocket"}`),
 			},
-		}
-		return nil
-	}
+		})
+	}()
 
-	srv.tunnels["device-ws-only"] = &agentTunnel{
-		deviceID: "device-ws-only",
-		ws:       wst,
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/d/device-ws-only/health", nil)
+	if err != nil {
+		t.Fatalf("build proxy request: %v", err)
 	}
-
-	req := httptest.NewRequest(http.MethodGet, "/d/device-ws-only/health", nil)
 	req.Header.Set("X-Relay-Password", "pw")
-	rr := httptest.NewRecorder()
-	srv.handleProxy(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("proxy health: %v", err)
 	}
-	if got := rr.Body.String(); got != `{"ok":true,"transport":"websocket"}` {
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read proxy response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.StatusCode, body)
+	}
+	if got := string(body); got != `{"ok":true,"transport":"websocket"}` {
 		t.Fatalf("body = %q", got)
 	}
+	if err := <-agentErr; err != nil {
+		t.Fatalf("websocket agent: %v", err)
+	}
 }
+
+type fallbackTestError struct{ message string }
+
+func (e *fallbackTestError) Error() string { return e.message }
 
 // The WebSocket recovery lane must match QUIC's collision boundary: a
 // Convex-proven same-owner reconnect may replace a half-open tunnel, while a
