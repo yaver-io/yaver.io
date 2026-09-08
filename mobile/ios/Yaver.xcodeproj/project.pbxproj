@@ -50,6 +50,7 @@
 		A1B2C3D4E5F60005C0A10003 /* YaverSceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006C0A10004 /* YaverSceneDelegate.swift */; };
 		A2F5DA27D039407FB594F1BC /* YaverLiveActivity.m in Sources */ = {isa = PBXBuildFile; fileRef = D203874E4A01483A90757AEF /* YaverLiveActivity.m */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
+		BEEF09180000000100000001 /* ggml-whisper-tiny.bin in Resources */ = {isa = PBXBuildFile; fileRef = BEEF09180000000200000002 /* ggml-whisper-tiny.bin */; };
 		C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B1D3AE60FAC95D8F162620 /* ExpoModulesProvider.swift */; };
 		C663E379084C45F9BB9251D2 /* YaverActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B6D3B8CC79B4516BFB9D831 /* YaverActivityAttributes.swift */; };
 		C7C722D679704DCDA96138C3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A042BE27882E4C9D8FB1D5B1 /* Assets.xcassets */; };
@@ -188,6 +189,7 @@
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		BD05C0C878BE4583909B2057 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; name = ShareExtension.appex; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFBCBDCEA23E250BCD12802F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Yaver/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		BEEF09180000000200000002 /* ggml-whisper-tiny.bin */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive; name = "ggml-whisper-tiny.bin"; path = "../assets/models/ggml-whisper-tiny.bin"; sourceTree = "<group>"; };
 		D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverKeyboardRouter.swift; sourceTree = "<group>"; };
 		D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverKeyboardRouter.m; sourceTree = "<group>"; };
 		D203874E4A01483A90757AEF /* YaverLiveActivity.m */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.c.objc; name = YaverLiveActivity.m; path = "../native-liveactivity/ios/YaverLiveActivity.m"; sourceTree = "<group>"; };
@@ -253,6 +255,7 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
 				BFBCBDCEA23E250BCD12802F /* PrivacyInfo.xcprivacy */,
+				BEEF09180000000200000002 /* ggml-whisper-tiny.bin */,
 				BA98858350D5EC9E2187C1EE /* YaverHTTPServer.swift */,
 				6A2F41372579DD8DC9D6912E /* YaverInfo.swift */,
 				9F7E1A0B2C3D4E5F60A1B2C4 /* YaverFeedbackPane.swift */,
@@ -552,6 +555,7 @@
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				413A35D852A63899F6BB9167 /* PrivacyInfo.xcprivacy in Resources */,
 				DB1FFFA1C35434307CD5FD2C /* sdk-manifest.json in Resources */,
+				BEEF09180000000100000001 /* ggml-whisper-tiny.bin in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

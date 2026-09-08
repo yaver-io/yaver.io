@@ -27,6 +27,7 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey, setDebugLogsEnabledRuntime } from "../../src/context/DeviceContext";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
+import { SilentInputControlPanel } from "../../src/components/SilentInputControlPanel";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { YaverAgentSettings } from "../../src/components/YaverAgentSettings";
 import { APP_BUILD, APP_VERSION, mobileRuntimeMode, mobileDistributionLabel } from "../../src/lib/appVersion";
@@ -46,8 +47,6 @@ import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../
 import { publishAutoRenderVibing } from "../../src/lib/autoRenderVibing";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useRouteParamsCompat } from "../../src/lib/useRouteParamsCompat";
-import { loadSilentInputConfig, saveSilentInputConfig } from "../../src/lib/silentInput/config";
-import { DEFAULT_SILENT_INPUT_CONFIG, type SilentInputConfig, type VSRBackend } from "../../src/lib/silentInput/types";
 
 import {
   resolveRuntimeProjectPreference,
@@ -320,7 +319,6 @@ export default function SettingsScreen() {
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
   const [showToolchainSync, setShowToolchainSync] = useState(false);
   const [taskVideoSummaryEnabled, setTaskVideoSummaryEnabled] = useState(false);
-  const [silentInputConfig, setSilentInputConfig] = useState<SilentInputConfig>(DEFAULT_SILENT_INPUT_CONFIG);
   const [runtimeProjectCatalogs, setRuntimeProjectCatalogs] = useState<Record<string, RuntimeProjectCatalogRow>>({});
   const [runtimeProjectDefaults, setRuntimeProjectDefaults] = useState<Record<string, RuntimeProjectPreference>>({});
   const [runtimeProjectSaving, setRuntimeProjectSaving] = useState<string | null>(null);
@@ -357,9 +355,6 @@ export default function SettingsScreen() {
     loadTaskVideoSummaryEnabled()
       .then(setTaskVideoSummaryEnabled)
       .catch(() => {});
-  }, []);
-  useEffect(() => {
-    loadSilentInputConfig().then(setSilentInputConfig).catch(() => {});
   }, []);
   const testAbortRef = useRef<AbortController | null>(null);
 
@@ -2850,6 +2845,16 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Silent Input · lip reading</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }] }>
+            <SilentInputControlPanel
+              colors={c}
+              targetDeviceId={activeDevice?.id}
+            />
+          </View>
+        </View>
+
         </>}
 
         {settingsPane === "account" && <>
@@ -4028,51 +4033,6 @@ export default function SettingsScreen() {
                 Saved for this mobile surface.
               </Text>
             </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Lip reading</Text>
-          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }] }>
-            <Text style={{ color: c.textSecondary, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
-              Off by default. Video never includes audio; Yaver crops the mouth on this iPhone before any remote transfer.
-            </Text>
-            {([
-              { id: "off", label: "Off", detail: "No camera control in Tasks" },
-              { id: "mobile", label: "On-device edge", detail: "Requires a verified edge VSR model in this build" },
-              { id: "user-machine", label: "Edge + remote box", detail: "Crop on iPhone, infer on your selected Yaver machine" },
-            ] as const).map((option) => {
-              const selected = option.id === "off"
-                ? !silentInputConfig.enabled
-                : silentInputConfig.enabled && silentInputConfig.backend === option.id;
-              return (
-                <Pressable
-                  key={option.id}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected }}
-                  onPress={() => {
-                    const backend: VSRBackend = option.id === "off" ? "user-machine" : option.id;
-                    const next = { ...silentInputConfig, enabled: option.id !== "off", backend };
-                    setSilentInputConfig(next);
-                    void saveSilentInputConfig(next).catch((error) => {
-                      setSilentInputConfig(silentInputConfig);
-                      Alert.alert("Couldn't save Lip reading", error instanceof Error ? error.message : String(error));
-                    });
-                  }}
-                  style={{
-                    borderWidth: 1,
-                    borderColor: selected ? c.accent : c.border,
-                    backgroundColor: selected ? c.accent + "1f" : c.bgInput,
-                    borderRadius: 10,
-                    padding: 11,
-                    marginTop: 7,
-                  }}
-                >
-                  <Text style={{ color: selected ? c.accent : c.textPrimary, fontWeight: "700" }}>{option.label}</Text>
-                  <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>{option.detail}</Text>
-                </Pressable>
-              );
-            })}
           </View>
         </View>
 

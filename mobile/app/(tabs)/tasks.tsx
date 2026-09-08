@@ -202,6 +202,7 @@ import { taskRunnerControlForMessage } from "../../src/_core/taskRunnerControls"
 import { buildTaskConsolePreview } from "../../src/lib/taskConsolePreview";
 import { taskProjectExecutionSummary, workDirForTaskExecution } from "../../src/lib/taskProjectRouting";
 import { SilentInputModal } from "../../src/components/SilentInputModal";
+import { SilentInputControlPanel } from "../../src/components/SilentInputControlPanel";
 import { DEFAULT_SILENT_INPUT_CONFIG, type VSRBackend } from "../../src/lib/silentInput/types";
 import { loadSilentInputConfig } from "../../src/lib/silentInput/config";
 import {
@@ -2901,6 +2902,19 @@ export default function TasksScreen() {
     });
     return () => { active = false; };
   }, []);
+  // Tasks remains mounted while Settings is open. Re-read the local preference
+  // every time the composer opens, otherwise enabling Silent Input in Settings
+  // leaves the lip button absent until a full app restart.
+  useEffect(() => {
+    if (!showNewTask) return;
+    let active = true;
+    void loadSilentInputConfig().then((config) => {
+      if (!active) return;
+      setSilentInputEnabled(config.enabled);
+      setSilentInputBackend(config.backend);
+    });
+    return () => { active = false; };
+  }, [showNewTask]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlightRef = useRef(false);
   const [taskSubmitError, setTaskSubmitError] = useState<string | null>(null);
@@ -8286,6 +8300,7 @@ export default function TasksScreen() {
                 </> : null}
               </View>
               {showTaskOptions ? (
+              <>
               <View style={s.composerScopeRow}>
                 <Pressable
                   style={({ pressed }) => [
@@ -8310,6 +8325,28 @@ export default function TasksScreen() {
                   <Text style={{ color: c.textMuted, fontSize: 10 }}>▾</Text>
                 </Pressable>
               </View>
+              {Platform.OS === "ios" ? (
+                <View style={{ marginHorizontal: 16, marginTop: 4, borderTopWidth: 1, borderTopColor: c.border }}>
+                  <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700", marginTop: 10 }}>Silent Input · lip reading</Text>
+                  <SilentInputControlPanel
+                    colors={c}
+                    compact
+                    targetDeviceId={runnerSelectionDeviceId}
+                    projectName={selectedComposerProject?.name || projectNameFromPath(projectDir) || undefined}
+                    onConfigChange={(config) => {
+                      setSilentInputEnabled(config.enabled);
+                      setSilentInputBackend(config.backend);
+                    }}
+                    onTestRequested={() => {
+                      Keyboard.dismiss();
+                      setShowTaskOptions(false);
+                      setShowNewTask(false);
+                      setShowSilentInput(true);
+                    }}
+                  />
+                </View>
+              ) : null}
+              </>
               ) : null}
                 <View style={[s.composerShell, { backgroundColor: "transparent" }]}>
                   <TextInput
@@ -8583,6 +8620,13 @@ export default function TasksScreen() {
             onCancel={() => {
               setShowSilentInput(false);
               setShowNewTask(true);
+            }}
+            onConfigure={() => {
+              setShowSilentInput(false);
+              setTimeout(() => {
+                setShowTaskOptions(true);
+                setShowNewTask(true);
+              }, 250);
             }}
             onTranscription={(transcription) => {
               newTaskTextRef.current = transcription;

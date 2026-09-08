@@ -71,7 +71,7 @@ func TestVSRCapabilitiesCarriesHonestTypedRecovery(t *testing.T) {
 	})
 
 	t.Run("available override has no gap", func(t *testing.T) {
-		t.Setenv("YAVER_VSR_COMMAND", "custom-vsr")
+		t.Setenv("YAVER_VSR_COMMAND", os.Args[0])
 		w := httptest.NewRecorder()
 		(&HTTPServer{}).handleVSRCapabilities(w, httptest.NewRequest(http.MethodGet, "/vsr/capabilities", nil))
 		var got map[string]any
@@ -80,6 +80,22 @@ func TestVSRCapabilitiesCarriesHonestTypedRecovery(t *testing.T) {
 		}
 		if got["available"] != true || got["capabilityGap"] != nil || got["remedy"] != nil {
 			t.Fatalf("available VSR must not carry a recovery action: %s", w.Body)
+		}
+	})
+
+	t.Run("broken explicit command is never reported ready", func(t *testing.T) {
+		t.Setenv("YAVER_VSR_COMMAND", "yaver-vsr-command-that-does-not-exist")
+		w := httptest.NewRecorder()
+		(&HTTPServer{}).handleVSRCapabilities(w, httptest.NewRequest(http.MethodGet, "/vsr/capabilities", nil))
+		var got struct {
+			Available     bool           `json:"available"`
+			CapabilityGap *CapabilityGap `json:"capabilityGap"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Available || got.CapabilityGap == nil || got.CapabilityGap.Fix != nil || !strings.Contains(got.CapabilityGap.Summary, "not executable") {
+			t.Fatalf("broken override must be a constrained named failure: %s", w.Body)
 		}
 	})
 }

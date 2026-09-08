@@ -10,6 +10,7 @@
 
 import { Platform } from "react-native";
 import type { SpeechProvider, TtsProvider } from "./auth";
+import { whisperModelOptions } from "./whisperModelAsset";
 
 /**
  * fetchWithTimeout — every network call in this file goes through here.
@@ -155,16 +156,12 @@ export async function initWhisper(
   try {
     const { initWhisper: rnInitWhisper } = require("whisper.rn");
 
-    // Load the bundled ggml model via require() — metro.config.js registers
-    // `.bin` as an asset, so Expo embeds it in the binary and whisper.rn +
-    // expo-asset resolve the on-device path on both iOS and Android. This
-    // replaces the old `isBundleAsset: true` + bare-filename lookup, which
-    // depended on a Copy-Bundle-Resources entry that prebuild never created
-    // (→ "Failed to load the model" on TestFlight/Play builds).
-    whisperContext = await rnInitWhisper({
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      filePath: require("../../assets/models/ggml-whisper-tiny.bin"),
-    });
+    // The platform module is deliberate. iOS uses an explicit Xcode bundle
+    // resource and isBundleAsset lookup; relying on Metro's numeric asset URI
+    // produced the screenshot-level TestFlight failure "Failed to load the
+    // model" even though source inspection claimed it was bundled. Android
+    // keeps the Metro asset path, which whisper.rn resolves correctly there.
+    whisperContext = await rnInitWhisper(whisperModelOptions());
     isModelReady = true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

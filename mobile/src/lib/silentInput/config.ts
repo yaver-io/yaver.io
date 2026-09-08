@@ -8,14 +8,19 @@ export async function loadSilentInputConfig(): Promise<SilentInputConfig> {
   if (!raw) return DEFAULT_SILENT_INPUT_CONFIG;
   try {
     const value = JSON.parse(raw) as Partial<SilentInputConfig>;
+    const supportedBackend = value.backend === "user-machine";
     return {
       ...DEFAULT_SILENT_INPUT_CONFIG,
       ...value,
+      // "mobile" and "cloud" were once selectable despite having no
+      // executable implementation. Migrate those false-green preferences to
+      // Off; never silently redirect camera data to a remote machine.
+      enabled: supportedBackend && value.enabled === true,
       language: "en",
       autoSend: false,
       sendFullVideo: false,
       mouthCropOnly: true,
-      backend: value.backend === "mobile" || value.backend === "cloud" ? value.backend : "user-machine",
+      backend: "user-machine",
     };
   } catch {
     return DEFAULT_SILENT_INPUT_CONFIG;

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,10 @@ func vsrCommand() []string {
 }
 
 func vsrAvailability() (bool, string) {
-	if strings.TrimSpace(os.Getenv("YAVER_VSR_COMMAND")) != "" {
+	if configured := strings.Fields(strings.TrimSpace(os.Getenv("YAVER_VSR_COMMAND"))); len(configured) > 0 {
+		if _, err := exec.LookPath(configured[0]); err != nil {
+			return false, fmt.Sprintf("YAVER_VSR_COMMAND is configured, but %q is not executable on this machine.", configured[0])
+		}
 		return true, ""
 	}
 	if !vsrRuntimeInstalled() {
@@ -85,6 +89,9 @@ func vsrAvailability() (bool, string) {
 	}
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return false, "AUTO_AVSR_ROOT does not point to an installed Auto-AVSR checkout."
+	}
+	if _, err := os.Stat(filepath.Join(root, "infer.py")); err != nil {
+		return false, "AUTO_AVSR_ROOT does not contain the infer.py operation Yaver needs."
 	}
 	if _, err := os.Stat(model); err != nil {
 		return false, "AUTO_AVSR_MODEL does not point to a readable, locally licensed checkpoint."
@@ -108,7 +115,7 @@ func (s *HTTPServer) handleVSRCapabilities(w http.ResponseWriter, r *http.Reques
 	}
 	if !available {
 		var gap *CapabilityGap
-		if !vsrRuntimeInstalled() {
+		if !vsrRuntimeInstalled() && strings.TrimSpace(os.Getenv("YAVER_VSR_COMMAND")) == "" {
 			// Derive the route from the same install registry used by both the
 			// CLI and POST /install/vsr. In particular, GapFix.Stream is the
 			// stream name (install:vsr), not a guessed URL path.
@@ -122,7 +129,7 @@ func (s *HTTPServer) handleVSRCapabilities(w http.ResponseWriter, r *http.Reques
 				Capability: "vsr-model",
 				Summary:    reason,
 				Detail:     reason,
-				Constraint: "Configure a locally licensed Auto-AVSR checkout, config, and checkpoint on this machine; Yaver cannot download or license that model for you.",
+				Constraint: "Configure a working YAVER_VSR_COMMAND or a locally licensed Auto-AVSR checkout, config, and checkpoint on this machine; Yaver cannot download or license that model for you.",
 			}
 		}
 		payload["capabilityGap"] = gap

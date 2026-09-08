@@ -1,25 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Camera, useCameraDevice, useCameraPermission } from "react-native-vision-camera";
-import type { ThemeColors } from "../constants/colors";
 import { RecordedMouthFrameSource } from "../lib/silentInput/nativeSource";
 import { UserMachineVSRRecognizer } from "../lib/silentInput/client";
 import { silentInputContextTerms } from "../lib/silentInput/context";
-import type { MouthFrame, VSRBackend } from "../lib/silentInput/types";
-
-type Props = {
-  visible: boolean;
-  colors: ThemeColors;
-  targetDeviceId: string;
-  projectName?: string;
-  backend: VSRBackend;
-  onCancel(): void;
-  onTranscription(text: string): void;
-};
+import type { MouthFrame } from "../lib/silentInput/types";
+import type { SilentInputModalProps } from "./SilentInputModal.types";
 
 const MAX_CAPTURE_MS = 8_000;
 
-export function SilentInputModal({ visible, colors: c, targetDeviceId, projectName, backend, onCancel, onTranscription }: Props) {
+export function SilentInputModal({ visible, colors: c, targetDeviceId, projectName, backend, onCancel, onTranscription, onConfigure }: SilentInputModalProps) {
   const camera = useRef<Camera>(null);
   const device = useCameraDevice("front");
   const permission = useCameraPermission();
@@ -145,6 +135,14 @@ export function SilentInputModal({ visible, colors: c, targetDeviceId, projectNa
           {processing || backendReady === null ? <ActivityIndicator color={c.accent} style={{ marginVertical: 12 }} /> : null}
           {text ? <Text style={[styles.transcription, { color: c.textPrimary }]}>{text}</Text> : null}
           {error ? <Text accessibilityRole="alert" style={{ color: c.error, marginTop: 10 }}>{error}</Text> : null}
+          {error && backendReady === false && onConfigure ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Configure Silent Input"
+              onPress={onConfigure}
+              style={[styles.configure, { borderColor: c.accent }]}
+            ><Text style={{ color: c.accent, fontWeight: "700" }}>Configure Silent Input</Text></Pressable>
+          ) : null}
           {!text && !processing && backendReady ? (
             <Pressable
               accessibilityRole="button"
@@ -182,6 +180,7 @@ const styles = StyleSheet.create({
   transcription: { fontSize: 22, lineHeight: 30, marginTop: 14 },
   hold: { alignSelf: "center", width: 88, height: 88, borderRadius: 44, alignItems: "center", justifyContent: "center", marginTop: 18 },
   holdText: { color: "white", fontWeight: "800", fontSize: 16 },
+  configure: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 9, paddingHorizontal: 12, paddingVertical: 9, marginTop: 12 },
   actions: { flexDirection: "row", justifyContent: "space-between", marginTop: 18 },
   action: { minHeight: 44, justifyContent: "center", paddingHorizontal: 8 },
   privacy: { fontSize: 11, lineHeight: 16, marginTop: 8 },

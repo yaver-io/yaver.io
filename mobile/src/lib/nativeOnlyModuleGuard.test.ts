@@ -17,9 +17,15 @@
  * RUNTIME, on the surface least likely to be tested. A type-checker cannot see
  * it because `require()` of a native package type-checks fine.
  *
- * So this reads the SOURCE and asserts every known native-only module sits
- * behind a web guard. Source-level because the defect is in control flow around
- * an import, not in a value any unit test could observe.
+ * A second incident on 2026-09-08 was even simpler: SilentInputModal imported
+ * react-native-vision-camera at the top level. VisionCamera deliberately throws
+ * on web, so every RN-web route crashed before Login mounted. The old guard
+ * passed because it knew only about whisper.rn.
+ *
+ * So this reads the SOURCE and asserts every known native-only module either
+ * sits behind a stopping web guard or has a web sibling that never imports the
+ * package. Source-level because the defect is module selection/control flow,
+ * not a value a normal unit test can observe.
  *
  * Run: npx tsx mobile/src/lib/nativeOnlyModuleGuard.test.ts
  */
@@ -40,6 +46,17 @@ const NATIVE_ONLY = [
     module: "whisper.rn",
     file: "speech.ts",
     why: "its entry calls TurboModuleRegistry.get('RNWhisper') at module load; TurboModuleRegistry is undefined on react-native-web",
+  },
+];
+
+const PLATFORM_BOUNDARIES = [
+  {
+    module: "react-native-vision-camera",
+    nativeFile: "../components/SilentInputModal.tsx",
+    webFile: "../components/SilentInputModal.web.tsx",
+    contractFile: "../components/SilentInputModal.types.ts",
+    importers: ["../../app/(tabs)/tasks.tsx", "../components/SilentInputControlPanel.tsx"],
+    why: "VisionCamera throws at module load on RN-web",
   },
 ];
 
@@ -70,6 +87,26 @@ for (const entry of NATIVE_ONLY) {
   // And it must say WHY, so a caller can fall back rather than see a blank mic.
   ok(/native-only|cannot run in a browser/i.test(between),
     `${entry.module}'s web guard NAMES the limitation instead of failing silently`);
+}
+
+for (const entry of PLATFORM_BOUNDARIES) {
+  const nativeSrc = readFileSync(join(here, entry.nativeFile), "utf8");
+  const webSrc = readFileSync(join(here, entry.webFile), "utf8");
+  const contractSrc = readFileSync(join(here, entry.contractFile), "utf8");
+
+  ok(nativeSrc.includes(`from "${entry.module}"`), `${entry.nativeFile} imports ${entry.module} (fixture still valid)`);
+  const webImportsNativeModule = new RegExp(
+    `(?:from\\s+["']${entry.module}["']|import\\s*["']${entry.module}["']|require\\(["']${entry.module}["']\\))`,
+  ).test(webSrc);
+  ok(!webImportsNativeModule, `${entry.webFile} never imports ${entry.module} — ${entry.why}`);
+  ok(/cannot use a camera in RN-web or browser automation/i.test(webSrc), `${entry.webFile} names the browser limitation instead of failing silently`);
+  ok(nativeSrc.includes("SilentInputModalProps") && webSrc.includes("SilentInputModalProps"), "native and web SilentInputModal implementations use the shared prop contract");
+  ok(/export type SilentInputModalProps/.test(contractSrc), "SilentInputModal shared prop contract exists");
+
+  for (const importer of entry.importers) {
+    const importerSrc = readFileSync(join(here, importer), "utf8");
+    ok(/from ["'][^"']*\/SilentInputModal["']/.test(importerSrc), `${importer} imports SilentInputModal extensionlessly so Metro can select the web boundary`);
+  }
 }
 
 // The file must import Platform, or the guard is a ReferenceError at runtime.

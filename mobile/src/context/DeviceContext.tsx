@@ -36,6 +36,7 @@ import { loadConnectionCache } from "../lib/connectionCache";
 import { mostRecentSuccessfulDeviceId } from "../lib/recentConnection";
 import { aliasCollisionOutcome, agentInstanceRelation } from "../lib/aliasShadowing";
 import { resolveIdentityMerge, type IdentityCandidate } from "../lib/deviceIdentityMerge";
+import { normalizeTunnelEndpoint } from "../lib/tunnelEndpoint";
 import {
   allowsRemoteAutoConnect,
   executionModeForAccess,
@@ -102,32 +103,19 @@ function lastSelectedDeviceKey(userId?: string): string { return userKey(userId,
 // HTTPS tunnel URLs from /devices/heartbeat publicEndpoints,
 // per-device and authoritative. Deduplicated, stable order, host-wide
 // tunnel last so per-device endpoints race first.
-const DIRECT_HTTP_HOST_RE = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.)/i;
-
-function isUnsupportedCleartextPublicEndpoint(raw: string): boolean {
-  try {
-    const u = new URL(raw.trim());
-    if (u.protocol !== "http:") return false;
-    return !DIRECT_HTTP_HOST_RE.test(u.hostname);
-  } catch {
-    return false;
-  }
-}
-
 function tunnelServersForDevice(device: Pick<Device, "id" | "name" | "tunnelUrl" | "publicEndpoints">): TunnelServer[] | undefined {
   const seen = new Set<string>();
   const out: TunnelServer[] = [];
   const add = (url: string, priority: number, label: string) => {
-    const trimmed = url.trim().replace(/\/+$/, "");
-    if (!trimmed || seen.has(trimmed)) return;
+    const normalized = normalizeTunnelEndpoint(url);
+    if (!normalized || seen.has(normalized)) return;
     // The tunnel/publicEndpoint stage is for HTTPS tunnels and other
     // browser/mobile-safe origins. Plain HTTP to public IPs is blocked
     // by iOS ATS and Android release cleartext policy, so trying it here
     // only delays relay fallback. LAN/tailnet HTTP still rides the
     // direct localIps path and is intentionally allowed.
-    if (isUnsupportedCleartextPublicEndpoint(trimmed)) return;
-    seen.add(trimmed);
-    out.push({ id: `tunnel-${device.id}-${out.length}`, url: trimmed, label, priority });
+    seen.add(normalized);
+    out.push({ id: `tunnel-${device.id}-${out.length}`, url: normalized, label, priority });
   };
   (device.publicEndpoints ?? []).forEach((u, i) => add(u, i, `${device.name} endpoint #${i + 1}`));
   if (device.tunnelUrl) add(device.tunnelUrl, out.length, `${device.name} shared tunnel`);
