@@ -38,5 +38,17 @@ class UploadPlayStoreTest(unittest.TestCase):
             self.assertTrue(MODULE.track_is_internal(track))
         self.assertFalse(MODULE.track_is_internal("wear:production"))
 
+    def test_build_time_version_code_hint_is_authoritative(self):
+        self.assertEqual(MODULE.parse_version_code_hints("310", 1), [310])
+        self.assertEqual(
+            MODULE.parse_version_code_hints("310, 311", 2), [310, 311]
+        )
+
+    def test_version_code_hint_rejects_mismatch_and_invalid_values(self):
+        for value, count in (("310", 2), ("zero", 1), ("0", 1), ("-1", 1)):
+            with self.subTest(value=value, count=count):
+                with self.assertRaises(ValueError):
+                    MODULE.parse_version_code_hints(value, count)
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,11 +19,6 @@ import zipfile
 # Setting this BEFORE importing google clients so their httplib2.Http picks it up.
 socket.setdefaulttimeout(int(os.environ.get("PLAY_UPLOAD_SOCKET_TIMEOUT", "1800")))
 
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
-
 # Package + track are env-overridable for multi-tenant customer deploys;
 # defaults keep Yaver's own self-deploy working unchanged.
 PACKAGE = os.environ.get("PLAY_PACKAGE_NAME", "io.yaver.mobile")
@@ -100,12 +95,56 @@ def read_gradle_version_code(gradle_path: str):
         return None
 
 
+def parse_version_code_hints(value: str, bundle_count: int):
+    """Parse build-time version codes supplied by the surface deployer.
+
+    Standalone Wear/TV projects receive their version code through Gradle
+    properties, so neither their source file nor the phone build.gradle is an
+    authoritative description of the resulting AAB.  Their deploy scripts
+    pass the exact build-time value through PLAY_VERSION_CODE(S).
+    """
+    if not value:
+        return [None] * bundle_count
+    raw_codes = [item.strip() for item in value.split(",") if item.strip()]
+    if len(raw_codes) != bundle_count:
+        raise ValueError(
+            "PLAY_VERSION_CODES must contain exactly one positive integer "
+            "for each AAB"
+        )
+    try:
+        codes = [int(item) for item in raw_codes]
+    except ValueError as exc:
+        raise ValueError("PLAY_VERSION_CODES must contain only integers") from exc
+    if any(code <= 0 for code in codes):
+        raise ValueError("PLAY_VERSION_CODES must contain only positive integers")
+    return codes
+
+
 def is_form_factor_track(track: str):
     return ":" in track
 
 
 def main():
+    # Keep SDK imports inside the executable path. Pure preflight helpers and
+    # their tests must remain runnable before run-playstore-upload.sh bootstraps
+    # the isolated Google client environment.
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    from googleapiclient.http import MediaFileUpload
+
     print(f"Uploading {len(AAB_PATHS)} AAB(s) to Google Play ({PACKAGE}) - {TRACK} track...", flush=True)
+
+    version_code_value = os.environ.get(
+        "PLAY_VERSION_CODES", os.environ.get("PLAY_VERSION_CODE", "")
+    )
+    try:
+        version_code_hints = parse_version_code_hints(
+            version_code_value, len(AAB_PATHS)
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(2)
 
     credentials = Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES)
     service = build("androidpublisher", "v3", credentials=credentials)
@@ -169,8 +208,10 @@ def main():
             highest = 0
 
     if highest:
-        for aab_path in AAB_PATHS:
-            code = extract_aab_version_code(aab_path)
+        for index, aab_path in enumerate(AAB_PATHS):
+            code = version_code_hints[index]
+            if code is None:
+                code = extract_aab_version_code(aab_path)
             if code is None:
                 # Binary manifests defeat the zip reader; the AAB was built
                 # from mobile/android/app/build.gradle, so read that.

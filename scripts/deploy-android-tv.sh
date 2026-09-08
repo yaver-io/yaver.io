@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPLOAD=0
 SKIP_BUILD=0
+MOBILE_GRADLE="$ROOT/mobile/android/app/build.gradle"
+MOBILE_VERSION_CODE="$(grep 'versionCode ' "$MOBILE_GRADLE" | head -1 | sed 's/[^0-9]//g')"
+MOBILE_VERSION_NAME="$(grep 'versionName ' "$MOBILE_GRADLE" | head -1 | sed 's/.*versionName[[:space:]]*"\([^"]*\)".*/\1/')"
+VERSION_CODE="${TV_VERSION_CODE:-$((MOBILE_VERSION_CODE + 2))}"
+VERSION_NAME="${TV_VERSION_NAME:-${MOBILE_VERSION_NAME}-tv}"
 
 usage() {
   cat <<'EOF'
@@ -15,6 +20,10 @@ io.yaver.tv and is built from androidtv/; it is not the Expo phone AAB.
 Options:
   --upload      Upload the built AAB to Google Play internal testing.
   --skip-build  Reuse the existing app-release.aab and release manifest.
+
+Environment:
+  TV_VERSION_CODE  Version code for Play upload. Defaults to mobile versionCode + 2.
+  TV_VERSION_NAME  Version name. Defaults to mobile versionName + "-tv".
 EOF
 }
 
@@ -55,6 +64,8 @@ if [ "$SKIP_BUILD" != "1" ]; then
     exit 2
   fi
   "$ROOT/mobile/android/gradlew" -p "$ROOT/androidtv" bundleRelease \
+    -PyaverTvVersionCode="$VERSION_CODE" \
+    -PyaverTvVersionName="$VERSION_NAME" \
     "${YAVER_ANDROID_GRADLE_ARGS[@]}"
 fi
 
@@ -108,10 +119,13 @@ if [ ! -f "$AAB" ]; then
 fi
 
 echo "Android TV AAB ready: $AAB"
+echo "  versionCode: $VERSION_CODE"
+echo "  versionName: $VERSION_NAME"
 
 if [ "$UPLOAD" = "1" ]; then
   PLAY_PACKAGE_NAME="io.yaver.tv" \
     AAB_PATH="$AAB" \
+    PLAY_VERSION_CODE="$VERSION_CODE" \
     PLAY_STORE_KEY_FILE="${PLAY_STORE_KEY_FILE:-$ROOT/keys/google-play-service-account.json}" \
     "$ROOT/scripts/run-playstore-upload.sh"
 fi
