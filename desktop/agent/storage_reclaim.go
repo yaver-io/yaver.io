@@ -178,6 +178,7 @@ func buildStorageScan(ctx context.Context) StorageScan {
 	}
 
 	candidates := append(systemCacheCandidates(), projectCacheCandidates(ctx)...)
+	candidates = dedupeReclaimTargets(candidates)
 
 	// Size every candidate in parallel — each is an independent `du`.
 	var wg sync.WaitGroup
@@ -230,6 +231,33 @@ func buildStorageScan(ctx context.Context) StorageScan {
 		return a.SizeBytes > b.SizeBytes
 	})
 	return scan
+}
+
+// dedupeReclaimTargets collapses catalog aliases that resolve to the same
+// physical cache. On Linux, `go env GOCACHE` commonly returns
+// ~/.cache/go-build, which is also the conventional XDG catalog row. Sizing
+// both made the phone promise twice the space and offered two approvals for
+// one directory. Preserve the first (the operation-probed toolchain path), and
+// compare resolved paths so symlinked aliases cannot reintroduce the lie.
+func dedupeReclaimTargets(in []ReclaimTarget) []ReclaimTarget {
+	seen := make(map[string]bool, len(in))
+	out := make([]ReclaimTarget, 0, len(in))
+	for _, target := range in {
+		key := "action\x00" + target.Action
+		if strings.TrimSpace(target.Path) != "" {
+			path := filepath.Clean(target.Path)
+			if resolved, err := filepath.EvalSymlinks(path); err == nil {
+				path = filepath.Clean(resolved)
+			}
+			key = "path\x00" + path
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, target)
+	}
+	return out
 }
 
 // systemMountPrefixes are mounts a human never reasons about when their disk

@@ -419,6 +419,17 @@ func capabilityGapForMissingTools(tools []string) *CapabilityGap {
 
 	endpoint := installEndpointForTool(tools)
 	if !canInstallMissingTool(tools) || endpoint == "" {
+		// WebDriverAgent is a named Apple-only control dependency, not an
+		// arbitrary executable. The generic "install it yourself" dead end hid
+		// the two Yaver routes that actually work when the current host cannot
+		// provide it: select a Mac as primary, or use the WebRTC native-preview
+		// lane. Keep this before the generic constraint so every surface gets a
+		// concrete route instead of an unactionable acronym.
+		if len(tools) == 1 && strings.EqualFold(primary, "wda") {
+			gap.Constraint = "WebDriverAgent is unavailable on this machine. Point Yaver at a Mac with Xcode using `yaver primary set <device>`, or use the WebRTC native-preview lane instead."
+			gap.Detail = gap.Constraint
+			return gap
+		}
 		// No fix on THIS machine — say which one specifically, and say what
 		// the user can do instead. A gap with no Fix and no Constraint is a
 		// dead end with a sentence.

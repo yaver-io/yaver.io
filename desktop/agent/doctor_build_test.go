@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // doctor_build_test.go — pins the deploy env-file secret resolution added
@@ -140,5 +141,28 @@ func TestRunBuildDoctor_FindsSecretsInDeployEnvFiles(t *testing.T) {
 	// it must stay Found=false, proving the resolver doesn't hallucinate.
 	if res, ok := byName["APP_STORE_KEY_ISSUER"]; ok && res.Found {
 		t.Errorf("APP_STORE_KEY_ISSUER: expected not found, got %+v", res)
+	}
+}
+
+func TestProbeToolBoundsInheritedOutputPipe(t *testing.T) {
+	binDir := t.TempDir()
+	toolName := "yaver-hanging-version-probe"
+	toolPath := filepath.Join(binDir, toolName)
+	// The direct tool exits immediately, but its background child inherits the
+	// captured output descriptors. Plain CommandContext+CombinedOutput waits for
+	// that child and turns an advisory doctor check into a multi-minute block.
+	script := "#!/bin/sh\n(sleep 30) &\nprintf 'probe 1.0\\n'\n"
+	if err := os.WriteFile(toolPath, []byte(script), 0700); err != nil {
+		t.Fatalf("write hanging probe: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	started := time.Now()
+	got := probeTool(buildTool{Name: toolName, VersionFlag: "--version", Required: true})
+	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+		t.Fatalf("probe took %v; inherited output pipe was not bounded", elapsed)
+	}
+	if !got.Found || got.Version != "probe 1.0" {
+		t.Fatalf("probe result = %+v", got)
 	}
 }

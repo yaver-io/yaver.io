@@ -514,6 +514,11 @@ func probeTool(t buildTool) BuildToolResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, t.VersionFlag)
+	// CommandContext kills the direct child at its deadline, but Wait can still
+	// block forever when that process spawned a grandchild which inherited the
+	// stdout/stderr pipes. Deployment capability discovery is advisory and runs
+	// in heartbeat/MCP paths, so give pipe cleanup its own hard bound too.
+	cmd.WaitDelay = 250 * time.Millisecond
 	out, err := cmd.CombinedOutput()
 	if err == nil || len(out) > 0 {
 		// Many tools (java) print version to stderr with non-zero exit;

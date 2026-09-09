@@ -153,6 +153,34 @@ func TestParseHumanBytes(t *testing.T) {
 	}
 }
 
+// `go env GOCACHE` and the Linux XDG default often name the exact same
+// directory. The live ubuntu-4gb scan listed and counted it twice, promising
+// space that did not exist.
+func TestDedupeReclaimTargetsCollapsesPhysicalPathAliases(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "go-build")
+	if err := os.Mkdir(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "go-build-alias")
+	if err := os.Symlink(cache, alias); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	got := dedupeReclaimTargets([]ReclaimTarget{
+		newTarget("go_build_cache", "Go build cache", cache, "", "rebuild"),
+		newTarget("go_build_cache_xdg", "Go build cache", alias, "", "rebuild"),
+		{ID: "docker", Kind: "docker", Action: reclaimActionDockerPrune},
+		{ID: "yaver", Kind: "yaver", Action: reclaimActionYaverClean},
+	})
+	if len(got) != 3 {
+		t.Fatalf("physical cache aliases must count once while distinct command actions survive: %+v", got)
+	}
+	if got[0].Kind != "go_build_cache" {
+		t.Fatalf("first operation-probed catalog row must win, got %q", got[0].Kind)
+	}
+}
+
 // macOS reports ~15 APFS synthetic volumes that all echo the same container's
 // free space. Rendering them is 15 rows of noise saying the same thing once,
 // so the collapse must survive.
