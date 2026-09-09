@@ -7,6 +7,7 @@
     "orientation": "default",
     "scheme": "yaver",
     "icon": "./assets/icon.png",
+    "primaryColor": "#050506",
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": [
       "assets/**"

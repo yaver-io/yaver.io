@@ -30,6 +30,12 @@ verify_android_native_tree() {
   require_text "settings.gradle" 'id("expo-autolinking-settings")'
   require_file "gradlew"
   require_file "gradle/wrapper/gradle-wrapper.properties"
+  # Android shows colorPrimary while handing off from the system launch
+  # window. Expo's default is blue, so a stale generated tree produces a blue
+  # flash even though the splash plugin itself is dark. Keep the generated
+  # launch palette on Yaver's existing monochrome background.
+  require_text "app/src/main/res/values/colors.xml" '<color name="colorPrimary">#050506</color>'
+  require_text "app/src/main/res/values/colors.xml" '<color name="splashscreen_background">#050506</color>'
 
   # Force-tracked Yaver host overlays. `expo prebuild --clean` replaces these
   # with Expo templates unless the release path restores them from HEAD.

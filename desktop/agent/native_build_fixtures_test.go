@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,6 +58,25 @@ func haveBin(name string) bool {
 	return err == nil
 }
 
+func gradleSupportsFixture(path string) bool {
+	out, err := exec.Command(path, "--version").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Gradle ") {
+			continue
+		}
+		var major, minor int
+		if _, err := fmt.Sscanf(strings.TrimPrefix(line, "Gradle "), "%d.%d", &major, &minor); err != nil {
+			return false
+		}
+		return major > 8 || (major == 8 && minor >= 9)
+	}
+	return false
+}
+
 // startFixtureBuild kicks off a BuildManager build against the given fixture and
 // blocks (with timeout) until it finishes. Returns the final Build for assertions.
 func startFixtureBuild(t *testing.T, fixtureDir string, platform BuildPlatform, args []string, install bool, timeout time.Duration) *Build {
@@ -91,16 +111,20 @@ func TestFixtureKotlinAndroidBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipped under -short")
 	}
-	if !haveBin("gradle") {
-		// Tolerate ./gradlew if the user has run `gradle wrapper` once;
-		// resolveBuildCommand falls through to plain `gradle` otherwise.
-		if !haveBin("./gradlew") {
-			t.Skip("neither system `gradle` nor a project `gradlew` available")
-		}
-	}
 	dir := fixtureRoot(t, "native-android-kotlin")
 	if dir == "" {
 		t.Skip("tests/fixtures/native-android-kotlin/ not found")
+	}
+	gradlePath := filepath.Join(dir, "gradlew")
+	if st, err := os.Stat(gradlePath); err != nil || st.IsDir() {
+		var lookupErr error
+		gradlePath, lookupErr = exec.LookPath("gradle")
+		if lookupErr != nil {
+			t.Skip("neither system `gradle` nor a project `gradlew` is available")
+		}
+	}
+	if !gradleSupportsFixture(gradlePath) {
+		t.Skip("available Gradle is older than 8.9 required by the fixture's Android Gradle Plugin")
 	}
 	if _, err := exec.LookPath("javac"); err != nil {
 		t.Skip("javac not on PATH — Android build needs JDK 17")
