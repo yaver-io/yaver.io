@@ -25,6 +25,13 @@ react {
     // works correctly with Expo projects.
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
+    // Metro owns an independent jest-worker pool; Gradle --max-workers does
+    // not constrain it. The low-memory release lane exports this value so JS
+    // bundling cannot fan out and exhaust swap alongside the Gradle daemon.
+    def metroWorkers = System.getenv("YAVER_ANDROID_METRO_WORKERS")
+    if (metroWorkers) {
+        extraPackagerArgs = ["--max-workers", metroWorkers]
+    }
 
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'

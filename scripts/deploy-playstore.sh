@@ -41,10 +41,17 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
     # serialize workers for this lane; larger CI/Mac builders retain defaults.
     LOW_MEMORY_GRADLE_ARGS=(
       --max-workers=1
-      '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m'
+      '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=384m'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
     export YAVER_ANDROID_NINJA_JOBS="${YAVER_ANDROID_NINJA_JOBS:-1}"
+    export YAVER_ANDROID_METRO_WORKERS="${YAVER_ANDROID_METRO_WORKERS:-1}"
+    case "$YAVER_ANDROID_METRO_WORKERS" in
+      ''|*[!0-9]*|0)
+        echo "ERROR: YAVER_ANDROID_METRO_WORKERS must be a positive integer; got: $YAVER_ANDROID_METRO_WORKERS" >&2
+        exit 2
+        ;;
+    esac
     yaver_android_limit_ninja_jobs
     yaver_android_probe_ndk_host
   else
