@@ -70,7 +70,10 @@ if grep -q 'sed .*org\\.gradle\\.jvmargs' "$DEPLOY"; then
   echo "Play deploy must keep its larger heap process-local" >&2
   exit 1
 fi
-grep -q 'PreactNativeArchitectures=' "$DEPLOY"
+if [ "$(grep -c 'PreactNativeArchitectures=' "$DEPLOY")" -lt 2 ]; then
+  echo "Every native Gradle phase must receive the requested ABI filter" >&2
+  exit 1
+fi
 if grep -q 'Pandroid\.injected\.build\.abi=' "$DEPLOY"; then
   echo "Play deploy must not use android.injected.build.abi; it marks release bundles testOnly" >&2
   exit 1
@@ -90,7 +93,7 @@ grep -q -- '-Pkotlin.compiler.execution.strategy=in-process' "$GRADLE_MEMORY_HEL
 grep -q -- '--max-workers=1' "$GRADLE_MEMORY_HELPER"
 grep -q 'yaver_android_limit_ninja_jobs' "$DEPLOY"
 grep -q 'yaver_android_probe_ndk_host' "$DEPLOY"
-grep -q 'ninja.yaver-real.*-j' "$NINJA_MEMORY_HELPER"
+grep -q 'ninja.yaver-real" -j"$jobs" "$@"' "$NINJA_MEMORY_HELPER"
 grep -q 'GOMEMLIMIT=.*1536MiB' "$SANDBOX_BUILD"
 grep -q 'GOGC=.*20' "$SANDBOX_BUILD"
 grep -q 'GOMAXPROCS=.*1' "$SANDBOX_BUILD"
@@ -105,7 +108,13 @@ fi
 # Execute the low-memory Ninja guard, not just its wiring. The fake SDK binary
 # records the wrapper's final argv so this fails if -j1 stops reaching Ninja.
 NINJA_TEST_ROOT=$(mktemp -d)
-trap 'rm -rf "$NINJA_TEST_ROOT"' EXIT
+cleanup_ninja_test_root() {
+  if [ -d "$NINJA_TEST_ROOT" ]; then
+    ls -la "$NINJA_TEST_ROOT" >/dev/null
+    rm -rf "$NINJA_TEST_ROOT"
+  fi
+}
+trap cleanup_ninja_test_root EXIT
 mkdir -p "$NINJA_TEST_ROOT/sdk/cmake/3.22.1/bin"
 cat >"$NINJA_TEST_ROOT/sdk/cmake/3.22.1/bin/ninja" <<'EOF'
 #!/bin/sh
@@ -119,12 +128,27 @@ export YAVER_ANDROID_NINJA_FORCE=1
 source "$NINJA_MEMORY_HELPER"
 yaver_android_limit_ninja_jobs
 "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" target
-grep -q '^target -j1$' "$YAVER_NINJA_TEST_LOG"
+"$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" -t restat build.ninja
+grep -q '^-j1 target$' "$YAVER_NINJA_TEST_LOG"
+grep -q '^-j1 -t restat build.ninja$' "$YAVER_NINJA_TEST_LOG"
+# Prove an SDK already wrapped by the original append-style limiter is upgraded
+# in place; otherwise existing workers keep failing CMake tool mode forever.
+cat >"$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" <<'EOF'
+#!/bin/sh
+# yaver-android-ninja-low-memory
+self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$self_dir/ninja.yaver-real" "$@" -j1
+EOF
+chmod +x "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja"
+yaver_android_limit_ninja_jobs
+grep -q '^# yaver-android-ninja-low-memory-v2$' "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja"
+"$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" -t restat build.ninja
+grep -q '^-j1 -t restat build.ninja$' "$YAVER_NINJA_TEST_LOG"
 if YAVER_ANDROID_NINJA_JOBS=0 "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" target >/dev/null 2>&1; then
   echo "Ninja low-memory wrapper accepted an invalid zero job count" >&2
   exit 1
 fi
-rm -rf "$NINJA_TEST_ROOT"
+cleanup_ninja_test_root
 trap - EXIT
 grep -q 'deploy-playstore.sh' "$ANDROID_ALL_DEPLOY"
 grep -q 'deploy-android-auto.sh' "$ANDROID_ALL_DEPLOY"

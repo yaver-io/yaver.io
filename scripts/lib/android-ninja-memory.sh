@@ -31,14 +31,21 @@ yaver_android_limit_ninja_jobs() {
     [ -f "$ninja" ] || continue
     found=1
     real="${ninja}.yaver-real"
-    if grep -q '^# yaver-android-ninja-low-memory$' "$ninja" 2>/dev/null; then
+    if grep -q '^# yaver-android-ninja-low-memory-v2$' "$ninja" 2>/dev/null; then
       [ -x "$real" ] || {
         echo "ERROR: Yaver Ninja wrapper has no executable SDK binary: $real" >&2
         return 2
       }
       continue
     fi
-    if [ -e "$real" ]; then
+    local upgrade_wrapper=0
+    if grep -q '^# yaver-android-ninja-low-memory$' "$ninja" 2>/dev/null; then
+      [ -x "$real" ] || {
+        echo "ERROR: Yaver Ninja wrapper has no executable SDK binary: $real" >&2
+        return 2
+      }
+      upgrade_wrapper=1
+    elif [ -e "$real" ]; then
       echo "ERROR: refusing to replace unrecognized Ninja while $real exists." >&2
       echo "Reinstall the SDK CMake package, then retry the Yaver Android build." >&2
       return 2
@@ -53,11 +60,13 @@ yaver_android_limit_ninja_jobs() {
       return 2
     fi
 
-    mv "$ninja" "$real"
+    if [ "$upgrade_wrapper" != 1 ]; then
+      mv "$ninja" "$real"
+    fi
     tmp=$(mktemp "${ninja}.yaver.XXXXXX")
     cat >"$tmp" <<'EOF'
 #!/bin/sh
-# yaver-android-ninja-low-memory
+# yaver-android-ninja-low-memory-v2
 set -eu
 self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 jobs=${YAVER_ANDROID_NINJA_JOBS:-1}
@@ -67,7 +76,9 @@ case "$jobs" in
     exit 2
     ;;
 esac
-exec "$self_dir/ninja.yaver-real" "$@" -j"$jobs"
+# -j is a Ninja global option and must precede `-t <tool>`. Appending it makes
+# CMake's `ninja -t restat build.ninja` read -j as a restat-specific option.
+exec "$self_dir/ninja.yaver-real" -j"$jobs" "$@"
 EOF
     chmod 755 "$tmp"
     mv "$tmp" "$ninja"

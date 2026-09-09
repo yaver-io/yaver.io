@@ -14,6 +14,8 @@ source "$REPO_ROOT/scripts/lib/android-sdk.sh"
 source "$REPO_ROOT/scripts/lib/java-home.sh"
 # shellcheck source=scripts/lib/android-ninja-memory.sh
 source "$REPO_ROOT/scripts/lib/android-ninja-memory.sh"
+# shellcheck source=scripts/lib/android-aab-signing.sh
+source "$REPO_ROOT/scripts/lib/android-aab-signing.sh"
 yaver_resolve_java_home 17
 yaver_resolve_android_sdk
 
@@ -213,7 +215,9 @@ fi
 # and avoids the chicken-and-egg.
 # Build worklets prefab first — reanimated CMake configure depends on it.
 echo "Building release AAB..."
-"$GRADLE" :react-native-worklets:prefabReleasePackage "${LOW_MEMORY_GRADLE_ARGS[@]}"
+"$GRADLE" :react-native-worklets:prefabReleasePackage \
+  ${YAVER_PLAYSTORE_ABI:+-PreactNativeArchitectures="$YAVER_PLAYSTORE_ABI"} \
+  "${LOW_MEMORY_GRADLE_ARGS[@]}"
 
 # Reanimated 4.x imports libworklets.so from the legacy AGP
 # intermediates/cmake/release path, while the current worklets/AGP build emits
@@ -279,6 +283,8 @@ if [ ! -f "$AAB_PATH" ]; then
   echo "ERROR: AAB not found at $AAB_PATH"
   exit 1
 fi
+
+yaver_verify_aab_signer "$AAB_PATH"
 
 echo ""
 echo "Release AAB built successfully!"

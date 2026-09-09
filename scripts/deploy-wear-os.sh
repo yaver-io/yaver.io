@@ -50,6 +50,8 @@ yaver_resolve_android_sdk
 # shellcheck source=scripts/lib/android-gradle-memory.sh
 source "$ROOT/scripts/lib/android-gradle-memory.sh"
 yaver_android_gradle_memory_args
+# shellcheck source=scripts/lib/android-aab-signing.sh
+source "$ROOT/scripts/lib/android-aab-signing.sh"
 
 "$ROOT/scripts/check-no-native-payment-sdks.sh" source
 
@@ -98,6 +100,8 @@ if [ ! -f "$AAB" ]; then
   echo "ERROR: Wear AAB not found: $AAB" >&2
   exit 1
 fi
+
+yaver_verify_aab_signer "$AAB"
 
 echo "Wear OS AAB ready: $AAB"
 echo "  package: $PACKAGE"

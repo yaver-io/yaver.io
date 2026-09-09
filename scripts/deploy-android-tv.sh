@@ -46,6 +46,8 @@ yaver_resolve_android_sdk
 # shellcheck source=scripts/lib/android-gradle-memory.sh
 source "$ROOT/scripts/lib/android-gradle-memory.sh"
 yaver_android_gradle_memory_args
+# shellcheck source=scripts/lib/android-aab-signing.sh
+source "$ROOT/scripts/lib/android-aab-signing.sh"
 
 if pgrep -f '[x]codebuild' >/dev/null 2>&1; then
   echo "ERROR: refusing Android TV compilation while an Xcode build is active." >&2
@@ -117,6 +119,8 @@ if [ ! -f "$AAB" ]; then
   echo "ERROR: release AAB not found: $AAB" >&2
   exit 1
 fi
+
+yaver_verify_aab_signer "$AAB"
 
 echo "Android TV AAB ready: $AAB"
 echo "  versionCode: $VERSION_CODE"
