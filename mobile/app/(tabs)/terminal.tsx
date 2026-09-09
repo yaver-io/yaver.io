@@ -6,6 +6,8 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 import { isTerminalMetaFrame } from "../../src/lib/xtermBridge";
+import { useDevice, type Device } from "../../src/context/DeviceContext";
+import { addTerminalSSHProfile } from "../../src/lib/sshProfile";
 
 // Native mobile terminal — no WebView. WebSocket to /ws/terminal carries
 // PTY bytes both ways. We strip the most common ANSI escape sequences and
@@ -17,6 +19,7 @@ export default function TerminalScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { activeDevice } = useDevice();
 
   const [buf, setBuf] = useState<string>("");
   const [input, setInput] = useState("");
@@ -28,7 +31,7 @@ export default function TerminalScreen() {
   const pending = useRef<string>("");
 
   useEffect(() => {
-    const url = terminalWsUrl();
+    const url = terminalWsUrl(activeDevice?.sshProfile);
     try {
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
@@ -66,7 +69,7 @@ export default function TerminalScreen() {
       setError(e.message);
     }
     return () => { wsRef.current?.close(); };
-  }, []);
+  }, [activeDevice?.sshProfile?.shell, activeDevice?.sshProfile?.tmux, activeDevice?.sshProfile?.tmuxSession]);
 
   function send(raw: string) {
     const ws = wsRef.current;
@@ -166,11 +169,12 @@ export default function TerminalScreen() {
 
 /** Build the WebSocket URL to the agent's /ws/terminal. Auth token goes in
  *  the query string since browsers + RN WebSockets can't set headers. */
-function terminalWsUrl(): string {
+function terminalWsUrl(profile?: Device["sshProfile"]): string {
   const base = quicClient.baseUrl.replace(/^http/, "ws");
   const h = quicClient.getAuthHeaders();
-  const token = encodeURIComponent((h.Authorization || "").replace("Bearer ", ""));
-  return `${base}/ws/terminal?token=${token}`;
+  const token = (h.Authorization || "").replace("Bearer ", "");
+  const params = addTerminalSSHProfile(new URLSearchParams({ token }), profile);
+  return `${base}/ws/terminal?${params.toString()}`;
 }
 
 /** Strip the most common ANSI escape sequences. We keep newlines + tabs so

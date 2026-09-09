@@ -209,6 +209,9 @@ func runSSHTargetSubcommand(args []string) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "profile":
+		runSSHProfileSubcommand(args[1:])
+		return true
 	case "add":
 		// yaver ssh add <name> <user@host[:port]> [--identity <key>] [--password <pw>]
 		if len(args) < 3 {

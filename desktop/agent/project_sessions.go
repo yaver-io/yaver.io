@@ -39,18 +39,21 @@ type ProjectSession struct {
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 	WorkDir          string    `json:"-"`
+	RepositoryDir    string    `json:"-"`
 }
 
 type persistedProjectSession struct {
 	ProjectSession
-	WorkDir string `json:"workDir"`
+	WorkDir       string `json:"workDir"`
+	RepositoryDir string `json:"repositoryDir,omitempty"`
 }
 
 type ProjectSessionManager struct {
-	mu       sync.RWMutex
-	rootDir  string
-	registry string
-	sessions map[string]*ProjectSession
+	mu           sync.RWMutex
+	stateDir     string
+	worktreeRoot string
+	registry     string
+	sessions     map[string]*ProjectSession
 }
 
 func NewProjectSessionManager() (*ProjectSessionManager, error) {
@@ -58,14 +61,23 @@ func NewProjectSessionManager() (*ProjectSessionManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := filepath.Join(configDir, "project-sessions")
-	if err := os.MkdirAll(root, 0700); err != nil {
+	stateDir := filepath.Join(configDir, "project-sessions")
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		return nil, fmt.Errorf("create project sessions directory: %w", err)
 	}
+	managedWorktrees, err := DefaultWorkspaceWorktreesDir()
+	if err != nil {
+		return nil, err
+	}
+	worktreeRoot := filepath.Join(managedWorktrees, "project-sessions")
+	if err := os.MkdirAll(worktreeRoot, 0700); err != nil {
+		return nil, fmt.Errorf("create project worktree directory: %w", err)
+	}
 	m := &ProjectSessionManager{
-		rootDir:  root,
-		registry: filepath.Join(root, "sessions.json"),
-		sessions: make(map[string]*ProjectSession),
+		stateDir:     stateDir,
+		worktreeRoot: worktreeRoot,
+		registry:     filepath.Join(stateDir, "sessions.json"),
+		sessions:     make(map[string]*ProjectSession),
 	}
 	if err := m.load(); err != nil {
 		return nil, err
@@ -146,6 +158,58 @@ func runProjectSessionGit(ctx context.Context, workDir string, args ...string) (
 	return out, nil
 }
 
+// convergeManagedRepository keeps only Yaver-chosen repository destinations
+// pristine and current. A repo in a user-selected custom hierarchy is never
+// pulled or switched implicitly.
+func convergeManagedRepository(ctx context.Context, projectPath string) error {
+	reposRoot, err := DefaultWorkspaceReposDir()
+	if err != nil || !isPathWithinRoot(projectPath, reposRoot) {
+		return err
+	}
+	status, err := runProjectSessionGit(ctx, projectPath, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(status)) != "" {
+		return fmt.Errorf("managed repository is not pristine; move development work into Workspace/worktrees before opening a new session")
+	}
+	branchOut, err := runProjectSessionGit(ctx, projectPath, "branch", "--show-current")
+	if err != nil {
+		return err
+	}
+	branch := strings.TrimSpace(string(branchOut))
+	if branch == "" {
+		return fmt.Errorf("managed repository is detached; restore its default branch before opening a development worktree")
+	}
+	if _, err := runProjectSessionGit(ctx, projectPath, "fetch", "--prune", "origin"); err != nil {
+		return fmt.Errorf("refresh managed repository: %w", err)
+	}
+	remoteRef := "origin/" + branch
+	if _, mainErr := runProjectSessionGit(ctx, projectPath, "rev-parse", "--verify", "refs/remotes/origin/main"); mainErr == nil {
+		if branch != "main" {
+			return fmt.Errorf("managed repository is on %s; keep Workspace/repos on main and open that branch under Workspace/worktrees", branch)
+		}
+		remoteRef = "origin/main"
+	}
+	counts, err := runProjectSessionGit(ctx, projectPath, "rev-list", "--left-right", "--count", "HEAD..."+remoteRef)
+	if err != nil {
+		return fmt.Errorf("compare managed repository with %s: %w", remoteRef, err)
+	}
+	fields := strings.Fields(string(counts))
+	if len(fields) != 2 {
+		return fmt.Errorf("compare managed repository with %s: unexpected result", remoteRef)
+	}
+	if fields[0] != "0" {
+		return fmt.Errorf("managed repository has %s local commit(s) not on %s; land or preserve them in a development worktree first", fields[0], remoteRef)
+	}
+	if fields[1] != "0" {
+		if _, err := runProjectSessionGit(ctx, projectPath, "merge", "--ff-only", remoteRef); err != nil {
+			return fmt.Errorf("fast-forward managed repository to %s: %w", remoteRef, err)
+		}
+	}
+	return nil
+}
+
 func (m *ProjectSessionManager) Create(repositoryIDValue, baseRef string) (*ProjectSession, error) {
 	catalog, err := repositoryCatalog()
 	if err != nil {
@@ -165,38 +229,26 @@ func (m *ProjectSessionManager) Create(repositoryIDValue, baseRef string) (*Proj
 	if !validGitRef(baseRef) {
 		return nil, fmt.Errorf("invalid base ref")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), projectSessionCommandTimeout)
+	defer cancel()
+	if err := convergeManagedRepository(ctx, project.Path); err != nil {
+		return nil, err
+	}
 
 	id := "ps_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:20]
 	reviewBranch := "yaver/cloud-" + strings.TrimPrefix(id, "ps_")
-	sessionDir := filepath.Join(m.rootDir, id)
-	checkoutDir := filepath.Join(sessionDir, "checkout")
-	if err := os.Mkdir(sessionDir, 0700); err != nil {
-		return nil, fmt.Errorf("create project session: %w", err)
-	}
+	checkoutDir := filepath.Join(m.worktreeRoot, sanitizeBranchName(filepath.Base(project.Path))+"-"+strings.TrimPrefix(id, "ps_"))
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = os.RemoveAll(sessionDir)
+			_, _ = runProjectSessionGit(context.Background(), project.Path, "worktree", "remove", "--force", checkoutDir)
+			if isPathWithinRoot(checkoutDir, m.worktreeRoot) {
+				_ = os.RemoveAll(checkoutDir)
+			}
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), projectSessionCommandTimeout)
-	defer cancel()
-	if _, err := runProjectSessionGit(ctx, sessionDir, "clone", "--no-local", "--no-checkout", project.Path, checkoutDir); err != nil {
-		return nil, err
-	}
-	// A local seed clone would otherwise retain a filesystem origin and could
-	// never publish a review branch. Preserve the seed repository's network
-	// origin when the controller provisioned one.
-	if remoteOut, remoteErr := runProjectSessionGit(ctx, project.Path, "remote", "get-url", "origin"); remoteErr == nil {
-		remote := strings.TrimSpace(string(remoteOut))
-		if isNetworkGitRemote(remote) {
-			if _, err := runProjectSessionGit(ctx, checkoutDir, "remote", "set-url", "origin", remote); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if _, err := runProjectSessionGit(ctx, checkoutDir, "checkout", "-b", reviewBranch, baseRef); err != nil {
+	if _, err := runProjectSessionGit(ctx, project.Path, "worktree", "add", "-b", reviewBranch, checkoutDir, baseRef); err != nil {
 		return nil, err
 	}
 
@@ -211,6 +263,7 @@ func (m *ProjectSessionManager) Create(repositoryIDValue, baseRef string) (*Proj
 		CreatedAt:        now,
 		UpdatedAt:        now,
 		WorkDir:          checkoutDir,
+		RepositoryDir:    project.Path,
 	}
 	m.mu.Lock()
 	m.sessions[id] = session
@@ -273,13 +326,32 @@ func (m *ProjectSessionManager) Delete(id string) (*ProjectSession, error) {
 	copy := *session
 	copy.Status = "stopped"
 	copy.UpdatedAt = time.Now().UTC()
-	sessionDir := filepath.Dir(session.WorkDir)
-	expectedDir := filepath.Join(m.rootDir, id)
-	if filepath.Clean(sessionDir) != filepath.Clean(expectedDir) {
+	isManagedTree := isPathWithinRoot(session.WorkDir, m.worktreeRoot)
+	isLegacySession := isPathWithinRoot(session.WorkDir, m.stateDir)
+	if !isManagedTree && !isLegacySession {
 		return nil, fmt.Errorf("project session cleanup boundary mismatch")
 	}
-	if err := os.RemoveAll(sessionDir); err != nil {
-		return nil, fmt.Errorf("remove project session checkout: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), projectSessionCommandTimeout)
+	defer cancel()
+	if isManagedTree && session.RepositoryDir != "" {
+		status, err := runProjectSessionGit(ctx, session.WorkDir, "status", "--porcelain")
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(string(status)) != "" {
+			return nil, fmt.Errorf("project session worktree has uncommitted changes; commit them before deleting the session")
+		}
+		if _, err := runProjectSessionGit(ctx, session.RepositoryDir, "worktree", "remove", session.WorkDir); err != nil {
+			return nil, fmt.Errorf("remove project session worktree: %w", err)
+		}
+	} else {
+		legacyDir := filepath.Dir(session.WorkDir)
+		if filepath.Clean(legacyDir) != filepath.Join(m.stateDir, id) {
+			return nil, fmt.Errorf("legacy project session cleanup boundary mismatch")
+		}
+		if err := os.RemoveAll(legacyDir); err != nil {
+			return nil, fmt.Errorf("remove legacy project session checkout: %w", err)
+		}
 	}
 	delete(m.sessions, id)
 	if err := m.persistLocked(); err != nil {
@@ -384,12 +456,15 @@ func (m *ProjectSessionManager) load() error {
 	}
 	for _, item := range stored {
 		workDir := filepath.Clean(item.WorkDir)
-		rel, relErr := filepath.Rel(m.rootDir, workDir)
-		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if !isPathWithinRoot(workDir, m.worktreeRoot) && !isPathWithinRoot(workDir, m.stateDir) {
 			continue
 		}
 		copy := item.ProjectSession
 		copy.WorkDir = workDir
+		copy.RepositoryDir = filepath.Clean(item.RepositoryDir)
+		if item.RepositoryDir == "" {
+			copy.RepositoryDir = ""
+		}
 		if _, statErr := os.Stat(workDir); statErr != nil && copy.Status == "ready" {
 			copy.Status = "error"
 		}
@@ -401,7 +476,7 @@ func (m *ProjectSessionManager) load() error {
 func (m *ProjectSessionManager) persistLocked() error {
 	stored := make([]persistedProjectSession, 0, len(m.sessions))
 	for _, session := range m.sessions {
-		stored = append(stored, persistedProjectSession{ProjectSession: *session, WorkDir: session.WorkDir})
+		stored = append(stored, persistedProjectSession{ProjectSession: *session, WorkDir: session.WorkDir, RepositoryDir: session.RepositoryDir})
 	}
 	sort.Slice(stored, func(i, j int) bool { return stored[i].CreatedAt.Before(stored[j].CreatedAt) })
 	data, err := json.MarshalIndent(stored, "", "  ")

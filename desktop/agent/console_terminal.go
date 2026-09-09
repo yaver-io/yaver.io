@@ -256,6 +256,18 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(150 * time.Millisecond)
 			_ = ts.writeInput([]byte(launchCommand + "\n"))
 		}()
+	} else if !resumed {
+		profile := &SSHProfile{
+			Shell:       r.URL.Query().Get("profile_shell"),
+			Tmux:        strings.TrimSpace(r.URL.Query().Get("profile_tmux")) != "",
+			TmuxSession: r.URL.Query().Get("profile_tmux"),
+		}
+		if profileCommand := sshProfileLaunchCommand(profile); profileCommand != "" {
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				_ = ts.writeInput([]byte(profileCommand + "\n"))
+			}()
+		}
 	}
 	defer ts.detach(conn)
 

@@ -174,9 +174,12 @@ changing those.
   - **`git commit -- <paths>` ALWAYS.** Never `-a`, never `add -A`. The index is
     shared and goes stale between two consecutive commands, so a bare commit
     sweeps a sibling's staged files. Pathspec commits are the only atomic form.
-  - **Autorun gets its own clone, never a shared checkout.** A dirty shared tree
-    kills a run at iteration 0. Clone to `~/Workspace/yaver-<topic>-autorun`,
-    give it its own branch, and pass task paths as ABSOLUTE paths.
+  - **Autorun gets its own worktree, never a shared checkout.** A dirty shared
+    tree kills a run at iteration 0. Yaver-managed source checkouts live under
+    `~/Workspace/repos/<repo>` and isolated coding trees under
+    `~/Workspace/worktrees/<task>`. Explicit user-selected paths remain valid;
+    this is a managed default, not a filesystem restriction. Give each tree its
+    own branch, and pass task paths as ABSOLUTE paths.
   - After any deploy from a shared checkout, `grep` the source for a symbol you
     added to confirm it is still there. A green deploy is not evidence the code
     survived the next five minutes.
@@ -842,7 +845,7 @@ yaver ping <alias|deviceId|name>     # same, any device
 # devices
 yaver devices                        # list registered devices
 yaver alias set <name> <deviceId>    # short name for ssh / connect / ping
-yaver ssh <alias|primary>            # OpenSSH wrap, resolves LAN-on-subnet → Tailscale (gated on local 100.x interface up) → device row → ssh config
+yaver ssh <alias|primary>            # Probes inferred TCP/22 routes; fast relay PTY fallback when direct SSH is unavailable
 
 # code
 yaver code                           # local TUI on this machine

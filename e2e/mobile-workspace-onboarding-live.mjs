@@ -119,7 +119,19 @@ page.on("response", async (response) => {
       primaryConfigured: Boolean(body.primaryDeviceId ?? body.settings?.primaryDeviceId),
     };
   } else if (pathname.endsWith("/mobile-workspace/status")) {
-    probes.workspace = { status: response.status(), origin: new URL(response.url()).origin };
+    const body = await response.json().catch(() => ({}));
+    probes.workspace = {
+      status: response.status(),
+      origin: new URL(response.url()).origin,
+      layout: body?.layout ? {
+        managed: body.layout.mode === "managed-default",
+        explicitPathsSupported: body.layout.explicitPathsSupported === true,
+        cleanupRequiresExplicit: body.layout.cleanupRequiresExplicit === true,
+        separated: typeof body.layout.repositories === "string" &&
+          typeof body.layout.worktrees === "string" &&
+          body.layout.repositories !== body.layout.worktrees,
+      } : null,
+    };
   }
 });
 page.on("requestfailed", (request) => {
@@ -204,6 +216,15 @@ try {
   await page.screenshot({ path: `${artifactRoot}/workspace-readiness.png`, fullPage: true });
   assert(!/remoteless/i.test(targetText), "Mobile Workspace must not offer Remoteless placement");
   assert(/Yaver Serverless/i.test(targetText), "fixed Yaver Serverless stack is not visible");
+  if (requireWorkspaceReady) {
+    assert(
+      probes.workspace?.layout?.managed &&
+        probes.workspace.layout.explicitPathsSupported &&
+        probes.workspace.layout.cleanupRequiresExplicit &&
+        probes.workspace.layout.separated,
+      `managed repository/worktree contract missing from the real mobile lane: ${JSON.stringify(probes.workspace)}`,
+    );
+  }
 
   if (await unreachableState.isVisible()) {
     assert(await page.getByText("Retry readiness check →", { exact: true }).count() === 1, "unreachable readiness has no retry action");

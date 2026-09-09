@@ -54,6 +54,7 @@ import {
 import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 import { isTerminalMetaFrame } from "../src/lib/xtermBridge";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
+import { addTerminalSSHProfile } from "../src/lib/sshProfile";
 import {
   runYaverAgent,
   type YaverAgentProgressEvent,
@@ -201,6 +202,7 @@ function projectNameFromWorkDir(pk: ProjectKindResult | null): string {
 
 function ShellPane(props: { focused: boolean; nonce: number }): React.ReactElement {
   const { focused, nonce } = props;
+  const { activeDevice } = useDevice();
   const [lines, setLines] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [input, setInput] = useState("");
@@ -212,7 +214,7 @@ function ShellPane(props: { focused: boolean; nonce: number }): React.ReactEleme
   useEffect(() => {
     let alive = true;
     let url: string;
-    try { url = buildTerminalWsUrl(); }
+    try { url = buildTerminalWsUrl(activeDevice?.sshProfile); }
     catch { setLines(["— no agent · pick a device —"]); return; }
 
     let ws: WebSocket;
@@ -252,7 +254,7 @@ function ShellPane(props: { focused: boolean; nonce: number }): React.ReactEleme
       try { ws.close(); } catch { /* harmless */ }
       if (flush.current) clearTimeout(flush.current);
     };
-  }, [nonce]);
+  }, [activeDevice?.sshProfile?.shell, activeDevice?.sshProfile?.tmux, activeDevice?.sshProfile?.tmuxSession, nonce]);
 
   const send = useCallback(() => {
     const ws = wsRef.current;
@@ -667,13 +669,14 @@ function LogsPane(props: { nonce: number }): React.ReactElement {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function buildTerminalWsUrl(): string {
+function buildTerminalWsUrl(profile?: Device["sshProfile"]): string {
   const base = quicClient.baseUrl;
   if (!base) throw new Error("no device selected");
   const wsBase = base.replace(/^http/, "ws");
   const h = quicClient.getAuthHeaders();
-  const token = encodeURIComponent((h.Authorization || "").replace("Bearer ", ""));
-  return `${wsBase}/ws/terminal?token=${token}`;
+  const token = (h.Authorization || "").replace("Bearer ", "");
+  const params = addTerminalSSHProfile(new URLSearchParams({ token }), profile);
+  return `${wsBase}/ws/terminal?${params.toString()}`;
 }
 
 // eslint-disable-next-line no-control-regex

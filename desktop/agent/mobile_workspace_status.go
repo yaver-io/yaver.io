@@ -32,14 +32,15 @@ type mobileWorkspaceGate struct {
 }
 
 type mobileWorkspaceStatus struct {
-	OK           bool                  `json:"ok"`
-	Ready        bool                  `json:"ready"`
-	Stack        map[string]string     `json:"stack"`
-	Device       mobileWorkspaceGate   `json:"device"`
-	Runners      []mobileWorkspaceGate `json:"runners"`
-	OpenCode     mobileWorkspaceGate   `json:"openCode"`
-	GitProviders []mobileWorkspaceGate `json:"gitProviders"`
-	Backend      mobileWorkspaceGate   `json:"backend"`
+	OK           bool                   `json:"ok"`
+	Ready        bool                   `json:"ready"`
+	Stack        map[string]string      `json:"stack"`
+	Device       mobileWorkspaceGate    `json:"device"`
+	Runners      []mobileWorkspaceGate  `json:"runners"`
+	OpenCode     mobileWorkspaceGate    `json:"openCode"`
+	GitProviders []mobileWorkspaceGate  `json:"gitProviders"`
+	Backend      mobileWorkspaceGate    `json:"backend"`
+	Layout       *WorkspaceLayoutStatus `json:"layout,omitempty"`
 }
 
 func runnerWorkspaceGate(row runnerAuthStatusRow) mobileWorkspaceGate {
@@ -289,5 +290,8 @@ func (s *HTTPServer) handleMobileWorkspaceStatus(w http.ResponseWriter, r *http.
 	status := buildMobileWorkspaceStatus(runners, collectMachineOnboardingStatus(), openCode)
 	applyMobileWorkspaceOpenCodeConfigFailure(&status, err)
 	applyGitProviderOperationalProbes(&status)
+	if layout, layoutErr := CollectWorkspaceLayoutStatus(); layoutErr == nil {
+		status.Layout = &layout
+	}
 	jsonReply(w, http.StatusOK, status)
 }

@@ -530,7 +530,7 @@ func autorunWorkspaceFor(taskPath, sourceWorkDir, seat string) (autorunWorkspace
 		return autorunWorkspace{}, fmt.Errorf("task %s must live inside workDir %s", taskPath, sourceWorkDir)
 	}
 	slot := autorunSlotKey(taskPath, seat)
-	root, err := ConfigDir()
+	root, err := DefaultWorkspaceWorktreesDir()
 	if err != nil {
 		return autorunWorkspace{}, err
 	}
@@ -543,7 +543,7 @@ func autorunWorkspaceFor(taskPath, sourceWorkDir, seat string) (autorunWorkspace
 	// the LAST one in the fallback chain, which is why this read as a runner
 	// problem for so long. Reuse the same sanitizer the branch name has always
 	// used; the slot keeps its shape for the UIs that key off it.
-	worktreePath := filepath.Join(root, "worktrees", autorunSlotDirName(taskPath, seat))
+	worktreePath := filepath.Join(root, "autorun", autorunSlotDirName(taskPath, seat))
 	return autorunWorkspace{
 		Slot:          slot,
 		Branch:        autorunBranchName(taskPath, seat),

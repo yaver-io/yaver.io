@@ -12,6 +12,7 @@ package main
 //   yaver workspace init --app=<name>        # just one app
 //   yaver workspace list                     # apps declared in the manifest
 //   yaver workspace status                   # per-app on-disk + env + init.md status
+//   yaver workspace layout                   # managed repo/worktree destinations
 //   yaver workspace merge <repo...>          # merge multiple repos into a Yaver monorepo
 
 import (
@@ -33,6 +34,8 @@ func runWorkspace(args []string) {
 		runWorkspaceList(args[1:])
 	case "status":
 		runWorkspaceStatus(args[1:])
+	case "layout":
+		runWorkspaceLayout(args[1:])
 	case "merge":
 		runWorkspaceMerge(args[1:])
 	case "help", "-h", "--help":
@@ -59,6 +62,7 @@ Usage:
                                              --autoinit prints per-app 'yaver autoinit' commands.
   yaver workspace list                       List apps declared in the manifest.
   yaver workspace status                     Per-app on-disk + env + init.md status.
+  yaver workspace layout                     Show managed repos/worktrees paths.
   yaver workspace merge [--root <dir>] [--name <workspace>] <repo-or-path>...
                                              Merge separate git repos into one Yaver monorepo.
                                              Preserves full git history and writes yaver.workspace.yaml.
@@ -88,6 +92,22 @@ Example yaver.workspace.yaml:
   shared:
     env: [APPLE_TEAM_ID, CONVEX_URL]
 `)
+}
+
+func runWorkspaceLayout(args []string) {
+	_ = args
+	status, err := CollectWorkspaceLayoutStatus()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return
+	}
+	fmt.Println("Managed workspace defaults:")
+	fmt.Println("  repositories:", status.Repositories)
+	fmt.Println("  worktrees:   ", status.Worktrees)
+	fmt.Printf("  managed:      %d repo(s), %d worktree(s)\n", status.ManagedRepositoryCount, status.ManagedWorktreeCount)
+	if status.OutsideManagedCount > 0 {
+		fmt.Printf("  custom/legacy: %d checkout(s) remain supported and are never removed automatically\n", status.OutsideManagedCount)
+	}
 }
 
 func runWorkspaceInit(args []string) {

@@ -71,6 +71,90 @@ func TestResolveWorkspaceParent_DefaultsToWorkspace(t *testing.T) {
 	}
 }
 
+func TestManagedWorkspaceLayoutSeparatesReposAndWorktrees(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("YAVER_WORKSPACE_DIR", "")
+	t.Setenv("YAVER_REPOS_DIR", "")
+	t.Setenv("YAVER_WORKTREES_DIR", "")
+
+	repos, err := DefaultWorkspaceReposDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktrees, err := DefaultWorkspaceWorktreesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, "Workspace", "repos"); repos != want {
+		t.Fatalf("repos = %q, want %q", repos, want)
+	}
+	if want := filepath.Join(home, "Workspace", "worktrees"); worktrees != want {
+		t.Fatalf("worktrees = %q, want %q", worktrees, want)
+	}
+}
+
+func TestManagedWorkspaceLayoutHonorsExplicitHierarchy(t *testing.T) {
+	customRepoParent := filepath.Join(t.TempDir(), "source")
+	customWorktreeParent := filepath.Join(t.TempDir(), "development")
+	if got := ResolveRepositoryParent(customRepoParent); got != customRepoParent {
+		t.Fatalf("repository parent = %q, want explicit %q", got, customRepoParent)
+	}
+	if got := ResolveWorktreeParent(customWorktreeParent); got != customWorktreeParent {
+		t.Fatalf("worktree parent = %q, want explicit %q", got, customWorktreeParent)
+	}
+}
+
+func TestManagedWorkspaceLayoutHonorsIndependentOverrides(t *testing.T) {
+	repos := filepath.Join(t.TempDir(), "repositories")
+	worktrees := filepath.Join(t.TempDir(), "trees")
+	t.Setenv("YAVER_REPOS_DIR", repos)
+	t.Setenv("YAVER_WORKTREES_DIR", worktrees)
+	gotRepos, err := DefaultWorkspaceReposDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotWorktrees, err := DefaultWorkspaceWorktreesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRepos != repos || gotWorktrees != worktrees {
+		t.Fatalf("overrides = (%q, %q), want (%q, %q)", gotRepos, gotWorktrees, repos, worktrees)
+	}
+}
+
+func TestCollectWorkspaceLayoutReportsManagedAndCustomWithoutDeleting(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("YAVER_WORKSPACE_DIR", "")
+	t.Setenv("YAVER_REPOS_DIR", "")
+	t.Setenv("YAVER_WORKTREES_DIR", "")
+	repos, _ := DefaultWorkspaceReposDir()
+	worktrees, _ := DefaultWorkspaceWorktreesDir()
+	for _, dir := range []string{
+		filepath.Join(repos, "primary"),
+		filepath.Join(worktrees, "project-sessions", "session-a"),
+		filepath.Join(home, "Workspace", "custom-layout"),
+	} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, err := CollectWorkspaceLayoutStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ManagedRepositoryCount != 1 || status.ManagedWorktreeCount != 1 || status.OutsideManagedCount != 1 {
+		t.Fatalf("unexpected layout counts: %#v", status)
+	}
+	if !status.ExplicitPathsSupported || !status.CleanupRequiresExplicit {
+		t.Fatalf("custom path or explicit cleanup contract lost: %#v", status)
+	}
+	if _, err := os.Stat(filepath.Join(home, "Workspace", "custom-layout")); err != nil {
+		t.Fatalf("layout inspection mutated a custom checkout: %v", err)
+	}
+}
+
 func TestResolveWorkspaceParent_NoHomeFallsBackToCwd(t *testing.T) {
 	// Force HOME empty and exercise the runtime fallback.
 	t.Setenv("HOME", "")

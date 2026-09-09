@@ -1,13 +1,19 @@
 package main
 
-// workspace_default.go — single source of truth for "where do new
-// clones / scaffolds / init_project results land by default."
+// workspace_default.go — single source of truth for Yaver-managed repository
+// and development-worktree placement.
 //
-// Decision: $HOME/Workspace (capital W).
+// Decision:
+//
+//   $HOME/Workspace/repos/<repository>       pristine default-branch checkout
+//   $HOME/Workspace/worktrees/<development> isolated development checkout
+//
+// Explicit paths are never rewritten. A self-hosted user can keep any existing
+// hierarchy; this convention applies only when Yaver chooses a destination.
 //
 // Rationale:
-//   - Existing installs already use ~/Workspace/<repo>; this matches the
-//     project-discovery scanner in convex_state_sync.go::discoverProjectDirs.
+//   - Existing installs under ~/Workspace remain discoverable; managed clones
+//     now use its repos child and managed coding trees use worktrees.
 //   - Linux users: same path works. ~/Workspace is a common-enough
 //     convention that auto-creating it doesn't clash with XDG.
 //   - Windows: %USERPROFILE%\Workspace via os.UserHomeDir() — same
@@ -38,6 +44,11 @@ import (
 // match the macOS/dev convention (Finder shows ~/Workspace, not
 // ~/workspace).
 const DefaultWorkspaceDirName = "Workspace"
+
+const (
+	DefaultWorkspaceReposDirName     = "repos"
+	DefaultWorkspaceWorktreesDirName = "worktrees"
+)
 
 // DefaultWorkspaceDir returns the absolute path where new clones,
 // init_project scaffolds, and any other "where do I put this new
@@ -73,8 +84,72 @@ func DefaultWorkspaceDir() (string, error) {
 	return dir, nil
 }
 
-// ResolveWorkspaceParent picks the right parent directory for a new
-// clone / scaffold, with this precedence:
+// DefaultWorkspaceReposDir returns the parent used for repositories Yaver
+// clones or scaffolds when the caller did not choose a directory. Keeping this
+// separate from worktrees makes it possible to keep the checkout on its clean,
+// current default branch while every coding session gets an isolated tree.
+func DefaultWorkspaceReposDir() (string, error) {
+	if v := trimSpace(os.Getenv("YAVER_REPOS_DIR")); v != "" {
+		return ensureWorkspaceDirectory(v)
+	}
+	root, err := DefaultWorkspaceDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureWorkspaceDirectory(filepath.Join(root, DefaultWorkspaceReposDirName))
+}
+
+// DefaultWorkspaceWorktreesDir returns the parent used for Yaver-managed
+// development trees. The operator override is intentionally independent from
+// YAVER_WORKSPACE_DIR so large worktrees can live on another filesystem.
+func DefaultWorkspaceWorktreesDir() (string, error) {
+	if v := trimSpace(os.Getenv("YAVER_WORKTREES_DIR")); v != "" {
+		return ensureWorkspaceDirectory(v)
+	}
+	root, err := DefaultWorkspaceDir()
+	if err != nil {
+		return "", err
+	}
+	return ensureWorkspaceDirectory(filepath.Join(root, DefaultWorkspaceWorktreesDirName))
+}
+
+func ensureWorkspaceDirectory(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace directory %s: %w", dir, err)
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", abs, err)
+	}
+	return abs, nil
+}
+
+// ResolveRepositoryParent honors a user/API-selected path verbatim. Only an
+// omitted path selects the managed Workspace/repos convention.
+func ResolveRepositoryParent(provided string) string {
+	if p := trimSpace(provided); p != "" {
+		return p
+	}
+	if dir, err := DefaultWorkspaceReposDir(); err == nil {
+		return dir
+	}
+	return ResolveWorkspaceParent("")
+}
+
+// ResolveWorktreeParent is the development-tree counterpart of
+// ResolveRepositoryParent. Explicit custom layouts remain supported.
+func ResolveWorktreeParent(provided string) string {
+	if p := trimSpace(provided); p != "" {
+		return p
+	}
+	if dir, err := DefaultWorkspaceWorktreesDir(); err == nil {
+		return dir
+	}
+	return ResolveWorkspaceParent("")
+}
+
+// ResolveWorkspaceParent picks the workspace root. New repositories should
+// use ResolveRepositoryParent; new coding trees use ResolveWorktreeParent.
 //
 //  1. `provided` if non-empty and non-whitespace — user / API
 //     explicitly set it, honor verbatim.

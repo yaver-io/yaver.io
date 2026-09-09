@@ -3977,6 +3977,14 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// --- Monorepo workspace manifest ---
 	monorepoWorkspaceTools := []map[string]interface{}{
 		{
+			"name":        "workspace_layout",
+			"description": "Return the runtime-resolved Yaver-managed repository and development-worktree directories. Explicit custom project paths remain supported, and this read-only tool never moves or deletes them.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
 			"name":        "workspace_init",
 			"description": "Wire every app declared in yaver.workspace.yaml: scaffold init.md, env-check, per-app setup. Call workspace_scaffold first if no manifest exists. Idempotent — re-runs skip already-initialised apps unless force=true.",
 			"inputSchema": map[string]interface{}{

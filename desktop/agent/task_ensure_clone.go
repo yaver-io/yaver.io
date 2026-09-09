@@ -176,17 +176,13 @@ func (tm *TaskManager) clonePlanForTask(task *Task) *taskClonePlan {
 	}
 	dest := strings.TrimSpace(task.WorkDir)
 	if dest == "" {
-		// No explicit workDir: derive ~/Workspace/<repo> at runtime — never a
-		// hardcoded home (Yaver is not single-user).
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil
-		}
+		// No explicit workDir: derive the Yaver-managed repositories parent at
+		// runtime. An explicit WorkDir still preserves any user hierarchy.
 		base := strings.TrimSuffix(filepath.Base(strings.TrimSuffix(remote, "/")), ".git")
 		if base == "" || base == "." || base == string(filepath.Separator) {
 			return nil
 		}
-		dest = filepath.Join(home, "Workspace", base)
+		dest = filepath.Join(ResolveRepositoryParent(""), base)
 		task.WorkDir = dest
 	}
 	if st, err := os.Stat(dest); err == nil && st.IsDir() {

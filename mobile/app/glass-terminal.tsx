@@ -83,6 +83,7 @@ import { resizeFrame, isTerminalMetaFrame } from "../src/lib/xtermBridge";
 import { useHandsFreeVoice } from "../src/lib/voice/useHandsFreeVoice";
 import type { CreateVoiceCoreOptions } from "../src/lib/voice/createVoiceCore";
 import type { VoiceCoreEvent } from "../src/lib/voice/types";
+import { addTerminalSSHProfile } from "../src/lib/sshProfile";
 
 type Mode = "agent" | "shell";
 
@@ -124,7 +125,7 @@ const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
 export default function GlassTerminalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { connectionStatus, lastError, devices, primaryDeviceId, selectDevice } = useDevice();
+  const { activeDevice, connectionStatus, lastError, devices, primaryDeviceId, selectDevice } = useDevice();
 
   const [mode, setMode] = useState<Mode>("agent");
   const [lines, setLines] = useState<Line[]>([
@@ -446,7 +447,7 @@ export default function GlassTerminalScreen() {
 
     let url: string;
     try {
-      url = buildTerminalWsUrl();
+      url = buildTerminalWsUrl(activeDevice?.sshProfile);
     } catch (e: unknown) {
       appendLine("err", e instanceof Error ? e.message : "shell url build failed");
       return;
@@ -511,7 +512,7 @@ export default function GlassTerminalScreen() {
       // onclose will fire right after — log here so the user sees both signals.
       appendLine("err", "shell websocket error");
     };
-  }, [appendLine]);
+  }, [activeDevice?.sshProfile?.shell, activeDevice?.sshProfile?.tmux, activeDevice?.sshProfile?.tmuxSession, appendLine]);
 
   const scheduleReconnect = useCallback(() => {
     if (!shouldStayConnected.current) return;
@@ -1370,11 +1371,12 @@ function colorFor(kind: Line["kind"]): string {
   }
 }
 
-function buildTerminalWsUrl(): string {
+function buildTerminalWsUrl(profile?: Device["sshProfile"]): string {
   const base = quicClient.baseUrl.replace(/^http/, "ws");
   const h = quicClient.getAuthHeaders();
-  const token = encodeURIComponent((h.Authorization || "").replace("Bearer ", ""));
-  return `${base}/ws/terminal?token=${token}`;
+  const token = (h.Authorization || "").replace("Bearer ", "");
+  const params = addTerminalSSHProfile(new URLSearchParams({ token }), profile);
+  return `${base}/ws/terminal?${params.toString()}`;
 }
 
 // eslint-disable-next-line no-control-regex

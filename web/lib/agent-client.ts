@@ -5479,6 +5479,24 @@ export class AgentClient {
     }> : [];
   }
 
+  async getWorkspaceLayout(): Promise<{
+    ok: boolean;
+    mode: string;
+    root: string;
+    repositories: string;
+    worktrees: string;
+    managedRepositoryCount: number;
+    managedWorktreeCount: number;
+    outsideManagedCount: number;
+    explicitPathsSupported: boolean;
+    cleanupRequiresExplicit: boolean;
+  } | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/workspace/layout`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    return res.json();
+  }
+
   /** Capability-filtered project list. Agent v1.99.75+ exposes
    *  `/projects/web` and `/projects/all` alongside the existing
    *  `/projects/mobile`. Each project carries `webCapable` and
@@ -7790,7 +7808,11 @@ export class AgentClient {
   }
   async terminalWsUrl(
     cwd?: string,
-    opts?: { launch?: "claude" | "codex" | "opencode"; tmuxSession?: string },
+    opts?: {
+      launch?: "claude" | "codex" | "opencode";
+      tmuxSession?: string;
+      sshProfile?: { shell: "default" | "bash" | "zsh" | "fish"; tmux: boolean; tmuxSession?: string };
+    },
   ): Promise<string> {
     if (opts?.tmuxSession) {
       // Task tmux sessions live on the box that runs tasks — the runner box
@@ -7804,9 +7826,14 @@ export class AgentClient {
       return this.appendRelayPwToWs(`${base.replace(/^http/, "ws")}/ws/runner?${q.toString()}`);
     }
     const token = await this.issueBrowserSession("/ws/terminal");
-    const c = cwd ? `&cwd=${encodeURIComponent(cwd)}` : "";
-    const launch = opts?.launch ? `&launch=${encodeURIComponent(opts.launch)}` : "";
-    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}${launch}`);
+    const q = new URLSearchParams({ browser_session: token });
+    if (cwd) q.set("cwd", cwd);
+    if (opts?.launch) q.set("launch", opts.launch);
+    if (!opts?.launch && opts?.sshProfile) {
+      q.set("profile_shell", opts.sshProfile.shell);
+      if (opts.sshProfile.tmux) q.set("profile_tmux", opts.sshProfile.tmuxSession || "yaver");
+    }
+    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?${q.toString()}`);
   }
 
   async listTmuxSessions(): Promise<TmuxSessionSummary[]> {

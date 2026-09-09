@@ -120,6 +120,23 @@ func (s *HTTPServer) handleWorkspaceApps(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// handleWorkspaceLayout exposes the runtime-resolved managed defaults. It is
+// intentionally read-only with respect to source trees: the directory helpers
+// may create the two empty parents, but this route never moves or deletes a
+// checkout and never treats a custom hierarchy as invalid.
+func (s *HTTPServer) handleWorkspaceLayout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	status, err := CollectWorkspaceLayoutStatus()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "workspace layout: "+err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, status)
+}
+
 // resolveWorkspaceRoot picks the repo root for manifest lookup.
 // Priority: ?root= query param, then taskMgr.workDir, then cwd.
 func resolveWorkspaceRoot(r *http.Request, s *HTTPServer) string {

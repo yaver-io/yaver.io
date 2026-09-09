@@ -307,6 +307,17 @@ export default defineSchema({
     // setDeviceAlias mutation. Lower-cased and trimmed before storage
     // so lookups don't have to re-normalize.
     alias: v.optional(v.string()),
+    // Owner-chosen interactive shell profile used by `yaver ssh`, the relay
+    // terminal, web, and mobile. Deliberately structured rather than an
+    // arbitrary command: a compromised control-plane session must not become
+    // a silent remote-code-execution primitive. Tool installation is an
+    // explicit, streamed action through /install/<tool>.
+    sshProfile: v.optional(v.object({
+      shell: v.union(v.literal("default"), v.literal("bash"), v.literal("zsh"), v.literal("fish")),
+      tmux: v.boolean(),
+      tmuxSession: v.optional(v.string()),
+      updatedAt: v.number(),
+    })),
     // Free-form spoken names for this machine — "my mac mini", "the box at
     // maltepe", "work laptop". Unlike `alias` (one, short, unique, typed at a
     // shell) these are MANY, natural, and never typed: they exist so a driver

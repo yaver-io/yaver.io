@@ -53,6 +53,10 @@ func startTaskTestServer(t *testing.T) *httptest.Server {
 	// which the mobile app then correctly—but confusingly—surfaced as live work.
 	t.Setenv("YAVER_TASK_TMUX", "0")
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	// Request-shape tests must never spend a real runner turn. This omission
+	// used to launch the developer's installed Codex/OpenCode binaries and made
+	// test cleanup race the production crash-restart loop.
+	tm.DummyMode = true
 	t.Cleanup(func() {
 		tm.Shutdown()
 		tm.DeleteAllTasks()

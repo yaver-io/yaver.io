@@ -1068,6 +1068,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Monorepo workspace manifest (declarative yaver.workspace.yaml)
 	mux.HandleFunc("/workspace", s.auth(s.handleWorkspace))
 	mux.HandleFunc("/workspace/apps", s.auth(s.handleWorkspaceApps))
+	mux.HandleFunc("/workspace/layout", s.auth(s.handleWorkspaceLayout))
 	// Diagnose — one-shot self-check (CLI, HTTP, MCP, mobile, web)
 	mux.HandleFunc("/diagnose", s.auth(s.handleDiagnose))
 	mux.HandleFunc("/diagnose/stream", s.auth(s.handleDiagnoseStream))
@@ -14850,6 +14851,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(fmt.Sprintf("managed.%s updated", args.Subsystem))
 
 	// --- Monorepo workspace manifest ---
+	case "workspace_layout":
+		layout, err := CollectWorkspaceLayoutStatus()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		body, _ := json.MarshalIndent(layout, "", "  ")
+		return mcpToolResult(string(body))
+
 	case "workspace_init":
 		var args opsWorkspacePayload
 		json.Unmarshal(call.Arguments, &args)

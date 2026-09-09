@@ -42,12 +42,14 @@ func TestRedroidNeedsRealLinuxKernel(t *testing.T) {
 	}
 	// Docker on macOS runs in a Linux VM, but Redroid needs host kernel
 	// modules (binder/ashmem) — promising a container that will not start is
-	// worse than refusing.
+	// worse than refusing. A real locally-installed Android emulator remains a
+	// valid fallback, so assert the strategy rather than requiring the whole
+	// Android capability to be disabled on a developer Mac.
 	mac := ResolvePreviewForHost(plan, HostMacOS)
-	if mac.Supported {
+	if mac.Supported && mac.Primary == PreviewRedroidWebRTC {
 		t.Fatal("redroid must not claim support on macOS")
 	}
-	if !strings.Contains(mac.Reason, "Android device") {
+	if !mac.Supported && !strings.Contains(mac.Reason, "Android device") {
 		t.Fatalf("refusal should offer the working alternative: %q", mac.Reason)
 	}
 }

@@ -133,6 +133,13 @@ func findDogfoodCheckouts(seedPaths ...string) []dogfoodCheckoutCandidate {
 	candidates := make([]scoredCandidate, 0)
 	add := func(path string, preference int) {
 		path = filepath.Clean(strings.TrimSpace(path))
+		// macOS commonly exposes /var through /private/var. Git reports the
+		// physical spelling while HOME discovery reports the logical one; without
+		// canonicalizing here the same checkout appears twice and its configured
+		// preference can be displaced by the duplicate conventional-path score.
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = filepath.Clean(resolved)
+		}
 		if path == "." || path == "" || seen[path] {
 			return
 		}
@@ -228,7 +235,7 @@ func dogfoodSourceStatus(workDir string) dogfoodSourceResponse {
 // --work-dir as the first discovery candidate. Absolute paths remain
 // machine-local; HOME-based .git discovery is still the fallback.
 func dogfoodSourceStatusWithSeed(workDir, agentWorkDir string) dogfoodSourceResponse {
-	suggested := filepath.Join(ResolveWorkspaceParent(""), "yaver.io")
+	suggested := filepath.Join(ResolveRepositoryParent(""), "yaver.io")
 	if gitPath, err := exec.LookPath("git"); err != nil || strings.TrimSpace(gitPath) == "" {
 		return dogfoodSourceResponse{
 			Code: "DOGFOOD_GIT_NOT_INSTALLED", SuggestedPath: suggested,

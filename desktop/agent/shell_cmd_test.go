@@ -1,8 +1,13 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestTerminalWSURL(t *testing.T) {
@@ -63,5 +68,58 @@ func TestTerminalWSURL(t *testing.T) {
 				t.Fatalf("token missing from %q", got)
 			}
 		})
+	}
+}
+
+// Regression (2026-09-09): `yaver shell primary` walked an expired Tailscale
+// candidate for 15-40 seconds before trying the healthy relay. The operation
+// probe must promote the relay before any terminal WebSocket is opened.
+func TestDialFirstTerminalCandidatePromotesLiveRelay(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			http.Error(w, "stale route", http.StatusServiceUnavailable)
+			return
+		}
+		<-r.Context().Done()
+	}))
+	defer dead.Close()
+
+	upgrader := websocket.Upgrader{}
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			defer conn.Close()
+		}
+	}))
+	defer live.Close()
+
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: "device-test", BaseURL: dead.URL, Kind: "tailscale"},
+		{DeviceID: "device-test", BaseURL: live.URL, Kind: "relay"},
+	}
+	started := time.Now()
+	conn, label, err := dialFirstTerminalCandidate(candidates, "token", "")
+	if err != nil {
+		t.Fatalf("dial terminal: %v", err)
+	}
+	defer conn.Close()
+	if !strings.Contains(label, "via relay") {
+		t.Fatalf("live relay was not promoted, label=%q", label)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("dead preferred route delayed live relay by %s", elapsed)
+	}
+}
+
+func TestTerminalCandidateTimeoutsAreBounded(t *testing.T) {
+	if got := terminalCandidateTimeout("tailscale"); got > 2*time.Second {
+		t.Fatalf("dead overlay timeout %s is too slow for relay fallback", got)
+	}
+	if got := terminalCandidateTimeout("relay"); got < terminalCandidateTimeout("tailscale") {
+		t.Fatalf("public TLS relay needs at least the direct-route budget, got %s", got)
 	}
 }

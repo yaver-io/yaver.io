@@ -2,6 +2,7 @@ package main
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -231,6 +232,102 @@ func TestTCPPortDialable(t *testing.T) {
 	_ = ln.Close()
 	if tcpPortDialable(host, port, 100*time.Millisecond) {
 		t.Fatalf("tcpPortDialable(%s,%s) = true after close; want false", host, port)
+	}
+}
+
+func TestFirstDialableHostConcurrentKeepsPreferenceWithinOneBudget(t *testing.T) {
+	first, err := listenWithSSHBanner("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := listenWithSSHBanner("127.0.0.2:0")
+	if err != nil {
+		t.Skipf("cannot bind second loopback address: %v", err)
+	}
+	defer second.Close()
+	firstHost, firstPort, _ := net.SplitHostPort(first.Addr().String())
+	secondHost, secondPort, _ := net.SplitHostPort(second.Addr().String())
+	if firstPort != secondPort {
+		// Rebind the second listener on the same port so candidates share the
+		// operation's port, just like SSH routes do.
+		second.Close()
+		second, err = listenWithSSHBanner(net.JoinHostPort(secondHost, firstPort))
+		if err != nil {
+			t.Skipf("cannot bind second loopback address on shared port: %v", err)
+		}
+		defer second.Close()
+	}
+	started := time.Now()
+	got := firstDialableHostConcurrent([]string{"192.0.2.1", firstHost, secondHost}, firstPort, 250*time.Millisecond)
+	if got != firstHost {
+		t.Fatalf("got %q, want highest-preference live host %q", got, firstHost)
+	}
+	if elapsed := time.Since(started); elapsed >= 600*time.Millisecond {
+		t.Fatalf("route probes multiplied their timeout instead of sharing it: %s", elapsed)
+	}
+}
+
+func listenWithSSHBanner(address string) (net.Listener, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = conn.Write([]byte("SSH-2.0-yaver-test\r\n"))
+			}()
+		}
+	}()
+	return listener, nil
+}
+
+func TestSSHHandshakeDialableRejectsAcceptWithoutBanner(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+	host, port, _ := net.SplitHostPort(listener.Addr().String())
+	if sshHandshakeDialable(host, port, 100*time.Millisecond) {
+		t.Fatal("TCP accept without an SSH banner must not be selected")
+	}
+	select {
+	case conn := <-accepted:
+		conn.Close()
+	default:
+	}
+}
+
+func TestOrderedSSHRouteCandidatesSkipsDeadOverlayEligibility(t *testing.T) {
+	dev := &DeviceInfo{
+		LocalIps:        []string{"100.75.123.78", "10.254.253.252"},
+		PublicEndpoints: []string{"https://public.yaver.io/d/device-test", "198.51.100.7:18080"},
+		QuicHost:        "100.75.123.78",
+	}
+	got := orderedSSHRouteCandidates(dev, false, false)
+	joined := strings.Join(got, ",")
+	if strings.Contains(joined, "100.75.123.78") {
+		t.Fatalf("down Tailscale address leaked into candidates: %v", got)
+	}
+	if strings.Contains(joined, "public.yaver.io") {
+		t.Fatalf("HTTP relay host leaked into SSH candidates: %v", got)
+	}
+	if !strings.Contains(joined, "198.51.100.7") {
+		t.Fatalf("public SSH endpoint missing from candidates: %v", got)
 	}
 }
 

@@ -32,6 +32,14 @@ export interface Device {
    * `yaver ssh <alias>` and as the display label whenever it's set.
    */
   alias?: string;
+  /** Safe interactive startup profile shared by CLI/web/mobile. Arbitrary
+   * commands are intentionally not accepted by the backend. */
+  sshProfile?: {
+    shell: "default" | "bash" | "zsh" | "fish";
+    tmux: boolean;
+    tmuxSession?: string;
+    updatedAt?: number;
+  };
   platform: string;
   host: string;
   port: number;
@@ -557,6 +565,25 @@ export async function setDeviceAlias(
   }
 }
 
+export async function setDeviceSSHProfile(
+  token: string,
+  deviceId: string,
+  profile: { shell: "default" | "bash" | "zsh" | "fish"; tmux: boolean; tmuxSession?: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`${CONVEX_URL}/devices/ssh-profile`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceId, ...profile }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body?.ok === false) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function unhideAll(): void {
   writeHiddenIds(new Set());
   if (typeof window !== "undefined") {
@@ -636,6 +663,17 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         id: deviceId,
         name: d.name || d.hostname || "",
         alias: typeof d.alias === "string" && d.alias.trim() !== "" ? d.alias : undefined,
+        sshProfile:
+          d.sshProfile && typeof d.sshProfile === "object"
+            ? {
+                shell: ["default", "bash", "zsh", "fish"].includes(d.sshProfile.shell)
+                  ? d.sshProfile.shell
+                  : "default",
+                tmux: d.sshProfile.tmux === true,
+                tmuxSession: typeof d.sshProfile.tmuxSession === "string" ? d.sshProfile.tmuxSession : undefined,
+                updatedAt: typeof d.sshProfile.updatedAt === "number" ? d.sshProfile.updatedAt : undefined,
+              }
+            : undefined,
         platform: d.platform || "",
         host: d.quicHost || d.host || "",
         port: d.quicPort || d.port || 18080,

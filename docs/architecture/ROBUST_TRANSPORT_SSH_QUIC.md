@@ -342,11 +342,15 @@ typing directly into their PTY is not a continuation. Operator-started runner
 TUIs and adopted sessions remain interactive.
 
 ### Build order — grounded in existing code (after connectivity+UI perfected, before deploy)
-Existing to build ON (do not duplicate): SSH resolution LAN→Tailscale→mesh→device
-lives in `desktop/agent/ssh_resolve_lan.go` / `ssh_resolve_mesh_test.go` /
-`ssh_targets.go`; bootstrap in `ssh_bootstrap.go`; `yaver ssh` in `launch_ssh.go`.
-There is **no** forced-command verb server, no reverse-SSH-via-relay tunnel, no
-mobile `MachineTransport` selector yet — those are the new work.
+Existing to build ON (do not duplicate): SSH resolution and its bounded
+TCP/22 capability probes live in `desktop/agent/main.go` (`runSSHWrap` /
+`resolveSSHHost`) plus `ssh_resolve_lan.go`; bootstrap is in
+`ssh_bootstrap.go`; the NAT-friendly interactive fallback is
+`shell_cmd.go` over `/ws/terminal`. The relay SSH-control bridge and embedded
+forced-command server now exist in `ssh_relay_bridge.go` and
+`ssh_control_server.go`. The mobile `MachineTransport` selector remains future
+work. A returned overlay address is never sufficient: the peer key may have
+expired while `tailscale ip` still returns the stale address.
 
 1. **Agent forced-command server** (`yaver ssh-session --session <id>`): a Go verb
    dispatcher exposing ONLY `health/run-task/attach-tmux/stop-task/list-projects/

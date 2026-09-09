@@ -18,7 +18,9 @@ package main
 // existing Tailscale path — strictly no worse than today.
 
 import (
+	"context"
 	"net"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -158,6 +160,211 @@ func firstDialableHost(candidates []string, port string, timeout time.Duration) 
 		host := strings.TrimSpace(raw)
 		if host != "" && tcpPortDialable(host, port, timeout) {
 			return host
+		}
+	}
+	return ""
+}
+
+// firstDialableHostConcurrent probes all inferred routes within ONE wall-clock
+// budget and returns the earliest candidate (preference order) that answered.
+// Serial per-address timeouts make a fallback ladder slower as it becomes more
+// robust; concurrency keeps added routes from taxing the user when they are
+// stale. The channel is fully buffered so timed-out probe goroutines can finish
+// without being retained by the caller.
+func firstDialableHostConcurrent(candidates []string, port string, timeout time.Duration) string {
+	type result struct {
+		index int
+		ok    bool
+	}
+	unique := make([]string, 0, len(candidates))
+	seen := make(map[string]bool)
+	for _, raw := range candidates {
+		host := strings.TrimSpace(raw)
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		unique = append(unique, host)
+	}
+	if len(unique) == 0 {
+		return ""
+	}
+	results := make(chan result, len(unique))
+	for i, host := range unique {
+		go func(index int, candidate string) {
+			results <- result{index: index, ok: sshHandshakeDialable(candidate, port, timeout)}
+		}(i, host)
+	}
+	timer := time.NewTimer(timeout + 50*time.Millisecond)
+	defer timer.Stop()
+	best := len(unique)
+	for range unique {
+		select {
+		case r := <-results:
+			if r.ok && r.index < best {
+				best = r.index
+			}
+		case <-timer.C:
+			if best < len(unique) {
+				return unique[best]
+			}
+			return ""
+		}
+	}
+	if best < len(unique) {
+		return unique[best]
+	}
+	return ""
+}
+
+// sshHandshakeDialable proves that a listener is actually serving SSH, not
+// merely accepting TCP. A resource-starved sshd can complete the three-way
+// handshake and then never deliver its identification banner; treating that as
+// healthy recreates the exact multi-second stall this selector exists to avoid.
+// RFC 4253 permits informational lines before the SSH identification, so scan a
+// small bounded prefix rather than assuming the first read begins with "SSH-".
+func sshHandshakeDialable(host, port string, timeout time.Duration) bool {
+	host = bareHostNoPort(host)
+	if host == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	buf := make([]byte, 512)
+	prefix := make([]byte, 0, 4096)
+	for len(prefix) < 4096 {
+		n, readErr := conn.Read(buf)
+		if n > 0 {
+			prefix = append(prefix, buf[:n]...)
+			for _, line := range strings.Split(string(prefix), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "SSH-2.0-") || strings.HasPrefix(line, "SSH-1.99-") {
+					return true
+				}
+			}
+		}
+		if readErr != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// orderedSSHRouteCandidates translates one device row into direct SSH
+// candidates. It does no I/O; the concurrent capability probe above is the
+// only authority. Order preserves policy: same-LAN, mesh, routed private,
+// Tailscale, public SSH, then any remaining advertised address.
+func orderedSSHRouteCandidates(dev *DeviceInfo, tailscaleUp, meshUp bool) []string {
+	if dev == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(dev.LocalIps)+len(dev.PublicEndpoints)+1)
+	add := func(raw string) {
+		host := strings.TrimSpace(raw)
+		if host == "" || seen[host] {
+			return
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	locals, _ := localInterfacePrivateIPv4s()
+	for _, raw := range dev.LocalIps {
+		ip := net.ParseIP(strings.TrimSpace(raw)).To4()
+		if ip == nil || !isPrivateLanIPv4(ip) || isLikelyDockerBridgeIP(raw) {
+			continue
+		}
+		for _, local := range locals {
+			if sameIPv4Slash24(ip, local) {
+				add(raw)
+				break
+			}
+		}
+	}
+	if meshUp {
+		for _, ip := range dev.LocalIps {
+			if isMeshOverlayIPv4(ip) {
+				add(ip)
+			}
+		}
+	}
+	for _, raw := range dev.LocalIps {
+		ip := net.ParseIP(strings.TrimSpace(raw)).To4()
+		if ip != nil && isPrivateLanIPv4(ip) && !isLikelyDockerBridgeIP(raw) {
+			add(raw)
+		}
+	}
+	if tailscaleUp {
+		for _, ip := range dev.LocalIps {
+			if isCGNATTailscaleIP(ip) {
+				add(ip)
+			}
+		}
+	}
+	for _, raw := range dev.PublicEndpoints {
+		ep := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(raw), "https://"), "http://")
+		if slash := strings.IndexByte(ep, '/'); slash >= 0 {
+			if strings.HasPrefix(ep[slash:], "/d/") {
+				continue
+			}
+			ep = ep[:slash]
+		}
+		ep = bareHostNoPort(ep)
+		if ep != "" && !isYaverHTTPRelayHost(ep) {
+			add(ep)
+		}
+	}
+	for _, ip := range dev.LocalIps {
+		if ip == "" || strings.HasPrefix(ip, "127.") || ip == "::1" || isLikelyDockerBridgeIP(ip) {
+			continue
+		}
+		if (!tailscaleUp && isCGNATTailscaleIP(ip)) || (!meshUp && isMeshOverlayIPv4(ip)) {
+			continue
+		}
+		add(ip)
+	}
+	if host := strings.TrimSpace(dev.QuicHost); host != "" && host != "0.0.0.0" && !isLikelyDockerBridgeIP(host) {
+		if !(!tailscaleUp && isCGNATTailscaleIP(host)) && !(!meshUp && isMeshOverlayIPv4(host)) {
+			add(host)
+		}
+	}
+	return out
+}
+
+// firstDialableSSHConfigHint preserves real ~/.ssh/config aliases without
+// trusting their presence. `ssh -G` only reads the merged config; the resolved
+// HostName/Port must also accept TCP before the alias can outrank the relay.
+// OpenSSH echoes an unknown hint as `hostname <hint>`, which is deliberately
+// rejected so a registered device name cannot become an unbounded DNS/overlay
+// fallback after every inferred route already failed.
+func firstDialableSSHConfigHint(sshPath string, hints []string, defaultPort string, timeout time.Duration) string {
+	seen := make(map[string]bool)
+	for _, raw := range hints {
+		hint := strings.TrimSpace(raw)
+		if hint == "" || seen[hint] {
+			continue
+		}
+		seen[hint] = true
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		out, err := exec.CommandContext(ctx, sshPath, "-G", hint).Output()
+		cancel()
+		if err != nil {
+			continue
+		}
+		host, port := parseSSHGOutput(string(out))
+		if host == "" || strings.EqualFold(host, hint) {
+			continue
+		}
+		if port == "" {
+			port = defaultPort
+		}
+		if sshHandshakeDialable(host, port, timeout) {
+			return hint // retain the alias so OpenSSH applies the full stanza
 		}
 	}
 	return ""

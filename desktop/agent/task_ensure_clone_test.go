@@ -38,7 +38,7 @@ func TestClonePlanForTask(t *testing.T) {
 	}
 }
 
-// With no workDir at all, the plan derives ~/Workspace/<repo> at runtime —
+// With no workDir at all, the plan derives ~/Workspace/repos/<repo> at runtime —
 // never a hardcoded home — and writes it back onto the task.
 func TestClonePlanDerivesWorkspaceDest(t *testing.T) {
 	tm := &TaskManager{}
@@ -48,7 +48,7 @@ func TestClonePlanDerivesWorkspaceDest(t *testing.T) {
 		t.Fatal("expected a plan for empty workDir + valid remote")
 	}
 	home, _ := os.UserHomeDir()
-	want := filepath.Join(home, "Workspace", "some-project-that-does-not-exist-here")
+	want := filepath.Join(home, "Workspace", "repos", "some-project-that-does-not-exist-here")
 	if plan.Dest != want || task.WorkDir != want {
 		t.Errorf("dest %q / task.WorkDir %q, want %q", plan.Dest, task.WorkDir, want)
 	}

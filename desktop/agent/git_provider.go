@@ -1513,7 +1513,7 @@ func (s *HTTPServer) handleRepoCloneWithMetadata(w http.ResponseWriter, r *http.
 	repoName := repoNameFromURL(req.URL)
 	// Resolve the explicit directory or the runtime user's workspace. This is
 	// intentionally independent of account names and remote-box layouts.
-	targetDir := ResolveWorkspaceParent(req.Dir)
+	targetDir := ResolveRepositoryParent(req.Dir)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		jsonError(w, http.StatusInternalServerError, "cannot create directory: "+err.Error())
 		return

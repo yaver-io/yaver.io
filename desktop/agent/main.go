@@ -922,7 +922,7 @@ Usage:
   yaver devices [remove <device-id>]  List your registered devices or remove one
   yaver flight [--device <alias|id>]  Read a machine's black box: did it stop gracefully, or die?
   yaver alias [set|rm|list] ...  Manage per-user device aliases (used by yaver ssh and the dashboard)
-  yaver ssh <device|alias> [ssh args...]  Wrap OpenSSH; resolves device IP via Tailscale or Convex
+  yaver ssh <device|alias> [ssh args...]  Operation-probe direct SSH; use the relay shell when direct is unavailable
   yaver exec        Execute a command on a remote device (like SSH)
   yaver session     Transfer AI agent sessions between machines
   yaver vault add <name> [--category <cat>] [--value <val>]  Add a secret to the vault
@@ -7994,19 +7994,17 @@ func runAlias(args []string) {
 
 // runSSHWrap implements `yaver ssh <target> [extra ssh args]`. It
 // resolves `<target>` against the user's devices (alias > deviceId
-// prefix > name) and execs the system `ssh` (OpenSSH) binary against
-// an IP it learned from one of three sources, in priority order:
+// prefix > name), operation-probes every inferred direct route, then
+// execs OpenSSH or uses the relay PTY when no direct TCP/22 route works:
 //
-//  1. `tailscale ip <hostname-or-alias>` — when Tailscale is reachable
-//     and knows about the host. This handles "yaver test ephemeral"
-//     style boxes that join the tailnet but never register a public
-//     endpoint with Convex.
-//  2. The device row from Convex — publicEndpoints first (clean DNS
-//     via Cloudflare Tunnel etc.), then localIps that look like
-//     Tailscale (100.64.0.0/10), then the first non-loopback localIp,
-//     then quicHost.
-//  3. The literal target as the SSH host — last-resort so the user
-//     can still type `yaver ssh user@host` for an unregistered box.
+//  1. Same-LAN, Yaver Mesh, routed-private, and Tailscale addresses.
+//     A locally-up overlay and a returned address are inventory only;
+//     TCP/22 must answer inside the short route-probe budget.
+//  2. Public device endpoints and explicit ~/.ssh/config mappings,
+//     under the same operation probe.
+//  3. The relay /ws/terminal path for a known device when direct SSH
+//     is unavailable. Its candidates are liveness-probed concurrently.
+//  4. The literal target as the last resort for an unregistered box.
 //
 // Any extra args after the target are passed through to ssh untouched
 // (so `yaver ssh prod-mac -L 5432:localhost:5432` works). Named
@@ -8023,16 +8021,18 @@ func runSSHWrap(args []string) {
 	// surfaces). `yaver ssh secondary` resolves the secondary slot the
 	// same way. Empty default lets `yaver ssh -L 5432:...` work too —
 	// passthrough flags after the implicit primary target.
+	var resolvedDevice *DeviceInfo
 	if len(args) == 0 || strings.EqualFold(strings.TrimSpace(args[0]), "primary") || strings.EqualFold(strings.TrimSpace(args[0]), "secondary") {
 		slot := "primary"
 		if len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0]), "secondary") {
 			slot = "secondary"
 		}
-		resolved, err := resolveSSHSlot(slot)
+		resolved, device, err := resolveSSHSlotDevice(slot)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
+		resolvedDevice = device
 		// Replace the slot token (or prepend, if there was none) with
 		// the resolved device handle so the rest of the function flows
 		// the normal alias/deviceId/name path.
@@ -8053,41 +8053,32 @@ func runSSHWrap(args []string) {
 		hostPart = target[at+1:]
 	}
 
-	var resolvedDevice *DeviceInfo
-	if cfg, err := LoadConfig(); err == nil && cfg != nil && cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
-		if devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); err == nil {
-			if dev, err := resolveDevice(hostPart, devices); err == nil {
-				resolvedDevice = dev
+	if resolvedDevice == nil {
+		if cfg, err := LoadConfig(); err == nil && cfg != nil && cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
+			if devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); err == nil {
+				if dev, err := resolveDevice(hostPart, devices); err == nil {
+					resolvedDevice = dev
+				}
 			}
 		}
 	}
 
-	// If the input was an alias ("test") and resolved to a device, try
-	// resolving SSH against the device's canonical name FIRST so users
-	// who already have a Host entry for the registered name (e.g.
-	// `Host yaver-test-ephemeral <ip>`) get a hit. Falling
-	// straight back to `ssh test` would skip that.
-	resolutionHints := []string{hostPart}
-	if resolvedDevice != nil {
-		if alias := strings.TrimSpace(resolvedDevice.Alias); alias != "" && !strings.EqualFold(alias, hostPart) {
-			resolutionHints = append(resolutionHints, alias)
+	// resolveSSHHost already expands the resolved device's alias and canonical
+	// name through Tailscale. Calling it once per spelling repeated the same dead
+	// 100.x probe several times before the relay got a chance.
+	host := resolveSSHHostWithDevice(hostPart, resolvedDevice)
+	if host == "" && resolvedDevice != nil {
+		// Preserve explicit ~/.ssh/config routes, but only after resolving their
+		// real HostName/Port and proving that endpoint accepts TCP. Merely having a
+		// Host stanza is inventory; it must not recreate the long dead-route wait.
+		if sshPath, err := osexec.LookPath("ssh"); err == nil {
+			host = firstDialableSSHConfigHint(sshPath, []string{
+				hostPart,
+				strings.TrimSpace(resolvedDevice.Alias),
+				strings.TrimSpace(resolvedDevice.Name),
+				strings.TrimSpace(resolvedDevice.DeviceID),
+			}, "22", 800*time.Millisecond)
 		}
-		if name := strings.TrimSpace(resolvedDevice.Name); name != "" && !strings.EqualFold(name, hostPart) {
-			resolutionHints = append(resolutionHints, name)
-		}
-	}
-	host := ""
-	for _, hint := range resolutionHints {
-		if h := resolveSSHHost(hint); h != "" {
-			host = h
-			break
-		}
-	}
-	if host == "" && resolvedDevice != nil && strings.TrimSpace(resolvedDevice.Name) != "" {
-		// Last fallback before raw input: hand ssh the device Name. The
-		// user's ~/.ssh/config probably aliases the registered name
-		// (`Host yaver-test-ephemeral …`).
-		host = resolvedDevice.Name
 	}
 	if host == "" {
 		// Local device book fallback — works offline / not signed in, the
@@ -8122,7 +8113,7 @@ func runSSHWrap(args []string) {
 		// passthrough args (-L tunnels, remote commands, scp-style use
 		// can't ride a PTY); those keep the original ssh-error behavior.
 		if resolvedDevice != nil && len(passthrough) == 0 {
-			if err := runShellOverRelay(resolvedDevice.DeviceID, ""); err == nil {
+			if err := runShellOverRelayProfile(resolvedDevice.DeviceID, "", resolvedDevice.SSHProfile); err == nil {
 				return
 			} else {
 				fmt.Fprintf(os.Stderr, "→ relay shell unavailable (%v); falling back to ssh\n", err)
@@ -8173,7 +8164,7 @@ func runSSHWrap(args []string) {
 		fmt.Fprintln(os.Stderr, "  recovery ssh couldn't start — falling back to a normal ssh")
 	}
 
-	exitCode, errSummary := runSSHCapturingAuthFailure(sshPath, dest, passthrough)
+	exitCode, errSummary := runSSHCapturingAuthFailure(sshPath, dest, passthrough, resolvedDevice)
 	if exitCode == 0 {
 		return
 	}
@@ -8218,7 +8209,11 @@ func runSSHWrap(args []string) {
 			}
 		}
 		fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
-		cmd := osexec.Command(sshPath, sshArgsWithSurvivability(dest, passthrough)...)
+		var profile *SSHProfile
+		if resolvedDevice != nil {
+			profile = resolvedDevice.SSHProfile
+		}
+		cmd := osexec.Command(sshPath, sshArgsWithProfile(dest, passthrough, profile)...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -8242,7 +8237,7 @@ func runSSHWrap(args []string) {
 	// those keep the raw ssh error instead.
 	if exitCode == 255 && errSummary != sshFailAuth && resolvedDevice != nil && len(passthrough) == 0 {
 		fmt.Fprintf(os.Stderr, "→ direct ssh couldn't connect — falling back to the relay shell (NAT-friendly)…\n")
-		if relayErr := runShellOverRelay(resolvedDevice.DeviceID, ""); relayErr == nil {
+		if relayErr := runShellOverRelayProfile(resolvedDevice.DeviceID, "", resolvedDevice.SSHProfile); relayErr == nil {
 			return
 		} else {
 			fmt.Fprintln(os.Stderr, sshRelayFallbackFailureMessage(relayErr))
@@ -8397,6 +8392,11 @@ func tailscaleStateLabel(up bool) string {
 // 104-char Unix-socket-path limit even with long aliases.
 func sshArgsWithSurvivability(dest string, passthrough []string) []string {
 	args := []string{
+		// Bounds TCP establishment AND the initial SSH handshake. Every
+		// Yaver-inferred route is preflighted, but a peer can disappear between
+		// the probe and exec; that race must still reach the relay promptly.
+		"-o", "ConnectTimeout=5",
+		"-o", "ConnectionAttempts=1",
 		"-o", "ServerAliveInterval=30",
 		"-o", "ServerAliveCountMax=3",
 		"-o", "StrictHostKeyChecking=accept-new",
@@ -8426,9 +8426,13 @@ const sshFailAuth = "auth"
 // user verbatim, and returns (exitCode, summary). summary is
 // sshFailAuth when stderr matched the publickey-denied marker; empty
 // otherwise. exitCode 0 means success — the caller is done.
-func runSSHCapturingAuthFailure(sshPath, dest string, passthrough []string) (int, string) {
+func runSSHCapturingAuthFailure(sshPath, dest string, passthrough []string, device *DeviceInfo) (int, string) {
 	fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
-	cmd := osexec.Command(sshPath, sshArgsWithSurvivability(dest, passthrough)...)
+	var profile *SSHProfile
+	if device != nil {
+		profile = device.SSHProfile
+	}
+	cmd := osexec.Command(sshPath, sshArgsWithProfile(dest, passthrough, profile)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	// Tee stderr through a small ring buffer so we can detect the
@@ -8634,17 +8638,6 @@ func resolveSSHHost(target string) string {
 		return ""
 	}
 
-	var tsPath string
-	if path, err := osexec.LookPath("tailscale"); err == nil {
-		tsPath = path
-	}
-	// Detect locally-up Tailscale by interface inspection — works
-	// regardless of whether the `tailscale` CLI is on PATH (Docker
-	// hosts, headless Linux, etc.). When false, every Tailscale path
-	// below is short-circuited so we don't hand back an unreachable
-	// 100.x address that ssh will block on for 30 s.
-	tsUp := localTailscaleUp()
-
 	// 1. Convex device row first. We need it up front to compare the
 	//    device's announced LAN IPs against our local subnet — that
 	//    comparison is what unlocks the LAN-preferred path. When
@@ -8658,162 +8651,40 @@ func resolveSSHHost(target string) string {
 			}
 		}
 	}
+	return resolveSSHHostWithDevice(target, dev)
+}
 
-	// 2. LAN IP on our /24 wins over everything, but only when TCP/22
-	//    actually answers. A stale same-subnet row is worse than an overlay:
-	//    OpenSSH will sit on it for tens of seconds and never reach the working
-	//    route.
-	if dev != nil {
-		if ip := firstDialableSameSubnetLanIP(dev.LocalIps, "22", 800*time.Millisecond); ip != "" {
-			return ip
-		}
-	}
-
-	// 2.5 Yaver Mesh overlay (100.96/12). When our own mesh is up, the
-	//     target's overlay IP is a real, encrypted, NAT-traversing route
-	//     that does NOT depend on Tailscale at all — so a user who
-	//     dropped Tailscale and runs `yaver mesh up` keeps overlay-SSH.
-	//     Sits above the Tailscale paths on purpose. Gated on our local
-	//     mesh being up so we never hand ssh a 100.96 address we can't
-	//     reach (same 30 s-timeout guard as the Tailscale gate below).
-	meshUp := localMeshUp()
-	if dev != nil && meshUp {
-		for _, ip := range dev.LocalIps {
-			if isMeshOverlayIPv4(ip) {
-				return ip
-			}
-		}
-	}
-
-	// 2.6 Routable private IP we DON'T share a /24 with. This is the gap
-	//     that made `yaver ssh magara` fail while `ssh user@10.0.0.45`
-	//     worked by hand: the box advertises a private LAN IP reachable
-	//     only through a route (Tailscale subnet router, VPN, utun
-	//     tunnel), so pickReachableLanIP's same-/24 test misses it and we
-	//     used to fall through to a public HTTP endpoint that isn't an ssh
-	//     host. A reachable private IP is the best possible ssh target, so
-	//     it sits above Tailscale-by-hint and the public endpoints.
-	//     Reachability-gated (short dial) so an unreachable candidate
-	//     never costs OpenSSH's 30 s connect timeout.
-	if dev != nil {
-		if ip := firstDialablePrivateIP(dev.LocalIps, "22", 800*time.Millisecond); ip != "" {
-			return ip
-		}
-	}
-
-	// 3. Tailscale-by-hint (cheap, handles devices not in Convex).
-	//    Gated on local Tailscale being up.
-	if tsUp {
-		if ip := lookupTailscaleIP(tsPath, target); ip != "" {
-			return ip
-		}
-	}
-
-	if dev == nil {
+// resolveSSHHostWithDevice is the no-refetch route selector. Callers that
+// already resolved a slot/device use this directly so transport selection does
+// not pay another Convex device-list round trip.
+func resolveSSHHostWithDevice(target string, dev *DeviceInfo) string {
+	target = normalizeDeviceHint(target)
+	if target == "" {
 		return ""
 	}
-
-	// 4. Tailscale via device alias / canonical name (same gate).
-	if tsUp {
-		if ip := lookupTailscaleIP(tsPath, dev.Alias, dev.Name, strings.TrimSuffix(dev.Name, ".local")); ip != "" {
-			return ip
-		}
+	var tsPath string
+	if path, err := osexec.LookPath("tailscale"); err == nil {
+		tsPath = path
 	}
+	// Detect locally-up Tailscale by interface inspection — works regardless
+	// of whether the CLI is on PATH. This is only an eligibility gate; each
+	// target address must still pass the TCP/22 operation probe below.
+	tsUp := localTailscaleUp()
+	meshUp := localMeshUp()
 
-	// 4.5 Tailscale CGNAT addresses from the device row. Prefer a proven
-	//     overlay ssh port over public HTTP endpoints, which usually describe
-	//     the agent API and not ssh. This is the Mac mini split-renderer
-	//     recovery case: LAN timed out, 100.x:22 answered.
 	if dev != nil {
-		if ip := firstDialableTailscaleIP(dev.LocalIps, "22", 800*time.Millisecond); ip != "" {
-			return ip
-		}
+		// Probe every advertised route concurrently, then choose the highest-
+		// preference live one. Serial 800ms probes multiplied into a 13-second
+		// startup on the incident box (expired Tailscale, healthy public SSH).
+		return firstDialableHostConcurrent(orderedSSHRouteCandidates(dev, tsUp, meshUp), "22", 800*time.Millisecond)
 	}
 
-	// 5. Public endpoints. Skip Yaver's HTTP relay hostnames —
-	//    `<uuid>.yaver.io` / `<uuid>.dev.yaver.io` terminate HTTPS
-	//    only, so handing ssh one of those just hangs. Strip the
-	//    scheme AND the port: a public endpoint carries the agent's
-	//    HTTP API port (e.g. `157.180.114.179:18080`), which is
-	//    meaningless to ssh — OpenSSH has no `host:port` syntax and
-	//    would treat the whole string as a literal hostname
-	//    ("Could not resolve hostname 157.180.114.179:18080"). ssh
-	//    connects on port 22 (or whatever ~/.ssh/config says), so we
-	//    return only the bare host.
-	publicSSHHosts := make([]string, 0, len(dev.PublicEndpoints))
-	for _, raw := range dev.PublicEndpoints {
-		ep := strings.TrimPrefix(raw, "https://")
-		ep = strings.TrimPrefix(ep, "http://")
-		// Strip any URL path BEFORE host extraction. A relay device-tunnel
-		// path ("/d/<uuid>") means this endpoint is the shared HTTP relay
-		// gateway (public.yaver.io/d/<id>), not a directly ssh-able host —
-		// skip it entirely so we never hand `ssh` a "host/d/uuid" string it
-		// can't resolve (and which it couldn't traverse even if it could).
-		// For any other endpoint, drop the path so ssh gets a bare host:port.
-		if slash := strings.IndexByte(ep, '/'); slash >= 0 {
-			if strings.HasPrefix(ep[slash:], "/d/") {
-				continue
-			}
-			ep = ep[:slash]
-		}
-		ep = bareHostNoPort(ep)
-		if ep == "" || isYaverHTTPRelayHost(ep) {
-			continue
-		}
-		publicSSHHosts = append(publicSSHHosts, ep)
-	}
-	if host := firstDialableHost(publicSSHHosts, "22", 800*time.Millisecond); host != "" {
-		return host
-	}
-	// Preserve the historical diagnostic path when no advertised host answers:
-	// OpenSSH's error is more actionable than silently treating a known device
-	// as an unresolved literal. The relay PTY fallback still follows it.
-	if len(publicSSHHosts) > 0 {
-		return publicSSHHosts[0]
-	}
-
-	// 6. Tailscale CGNAT addresses from the device row — only when
-	//    our overlay is up. Without this gate, a host with Tailscale
-	//    stopped would still get back a 100.x IP and waste 30 s on
-	//    "Operation timed out". Surfaces as fast "no host" instead.
+	// Unregistered literal/SSH-config targets do not have a device row. Keep
+	// the historical Tailscale name lookup, but capability-probe its result.
 	if tsUp {
-		for _, ip := range dev.LocalIps {
-			if isCGNATTailscaleIP(ip) {
-				return ip
-			}
+		if ip := lookupTailscaleIP(tsPath, target); ip != "" {
+			return firstDialableHostConcurrent([]string{ip}, "22", 800*time.Millisecond)
 		}
-	}
-
-	// 7. Any other LAN IP from the device row, even off-subnet —
-	//    better than nothing; ssh will produce a useful error if it's
-	//    really unreachable. Tailscale CGNAT is filtered when local
-	//    overlay is down (already handled above when up).
-	for _, ip := range dev.LocalIps {
-		if ip == "" || strings.HasPrefix(ip, "127.") || ip == "::1" {
-			continue
-		}
-		if isLikelyDockerBridgeIP(ip) {
-			continue
-		}
-		if !tsUp && isCGNATTailscaleIP(ip) {
-			continue
-		}
-		// Mesh overlay IP we can't reach because our own mesh is down —
-		// skip rather than hand ssh a 100.96 address that hangs 30 s.
-		if !meshUp && isMeshOverlayIPv4(ip) {
-			continue
-		}
-		return ip
-	}
-
-	if dev.QuicHost != "" && dev.QuicHost != "0.0.0.0" && !isLikelyDockerBridgeIP(dev.QuicHost) {
-		if !tsUp && isCGNATTailscaleIP(dev.QuicHost) {
-			return ""
-		}
-		if !meshUp && isMeshOverlayIPv4(dev.QuicHost) {
-			return ""
-		}
-		return dev.QuicHost
 	}
 	return ""
 }
@@ -9533,10 +9404,11 @@ type DeviceInfo struct {
 	// "self-hosted" = a machine the user runs `yaver serve` on directly.
 	// Managed/BYO boxes also carry the cloudMachines row id + lifecycle
 	// status so the CLI can show "managed·paused" for an auto-offed box.
-	Hosting       string `json:"hosting,omitempty"`
-	Managed       bool   `json:"managed,omitempty"`
-	MachineID     string `json:"machineId,omitempty"`
-	MachineStatus string `json:"machineStatus,omitempty"`
+	Hosting       string      `json:"hosting,omitempty"`
+	Managed       bool        `json:"managed,omitempty"`
+	MachineID     string      `json:"machineId,omitempty"`
+	MachineStatus string      `json:"machineStatus,omitempty"`
+	SSHProfile    *SSHProfile `json:"sshProfile,omitempty"`
 }
 
 // deviceHostingLabel renders a device's provisioning provenance for the

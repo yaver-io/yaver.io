@@ -14,6 +14,7 @@ package main
 // cases" works the moment you own the box — no sshd, no port-forward.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,6 +67,10 @@ func runShellCmd(args []string) {
 // remote PTY. Also used as the `yaver ssh` fallback when no direct SSH
 // host can be resolved (relay-only boxes).
 func runShellOverRelay(deviceHint, shell string) error {
+	return runShellOverRelayProfile(deviceHint, shell, nil)
+}
+
+func runShellOverRelayProfile(deviceHint, shell string, profile *SSHProfile) error {
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
 		return fmt.Errorf("not signed in — run `yaver auth` first")
@@ -94,7 +99,7 @@ func runShellOverRelay(deviceHint, shell string) error {
 		// can rank ahead of a healthy dual-stack relay on an IPv6-only network;
 		// stopping at candidates[0] made the advertised NAT-friendly fallback a
 		// no-op. Dial every candidate until the operation itself succeeds.
-		conn, connectedLabel, dialErr := dialFirstTerminalCandidate(candidates, token, shell)
+		conn, connectedLabel, dialErr := dialFirstTerminalCandidateProfile(candidates, token, shell, profile)
 		if dialErr != nil {
 			return dialErr
 		}
@@ -103,7 +108,7 @@ func runShellOverRelay(deviceHint, shell string) error {
 		return bridgeTerminal(conn)
 	}
 
-	wsURL, err := terminalWSURL(baseURL, token, shell)
+	wsURL, err := terminalWSURLProfile(baseURL, token, shell, profile)
 	if err != nil {
 		return err
 	}
@@ -123,8 +128,25 @@ func runShellOverRelay(deviceHint, shell string) error {
 }
 
 func dialFirstTerminalCandidate(candidates []RemoteAgentCandidate, defaultToken, shell string) (*websocket.Conn, string, error) {
+	return dialFirstTerminalCandidateProfile(candidates, defaultToken, shell, nil)
+}
+
+func dialFirstTerminalCandidateProfile(candidates []RemoteAgentCandidate, defaultToken, shell string, profile *SSHProfile) (*websocket.Conn, string, error) {
+	// The candidate list is preference-ordered, but preference is not liveness.
+	// Probe /health concurrently and promote the first transport that performs
+	// the real agent operation. This is what keeps an expired Tailscale peer
+	// from consuming one WebSocket handshake timeout before a healthy relay.
+	probed := append([]RemoteAgentCandidate(nil), candidates...)
+	orderRemoteAgentCandidatesByLiveness(
+		context.Background(),
+		remoteHTTPClient(livenessProbeBudget),
+		probed,
+		defaultToken,
+		livenessProbeBudget,
+	)
+
 	var failures []string
-	for _, c := range candidates {
+	for _, c := range probed {
 		baseURL := strings.TrimRight(c.BaseURL, "/")
 		label := fmt.Sprintf("%s via %s", c.DeviceID, c.Kind)
 		token := defaultToken
@@ -135,13 +157,16 @@ func dialFirstTerminalCandidate(candidates []RemoteAgentCandidate, defaultToken,
 				token = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
 			}
 		}
-		wsURL, err := terminalWSURL(baseURL, token, shell)
+		wsURL, err := terminalWSURLProfile(baseURL, token, shell, profile)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", label, err))
 			continue
 		}
-		dialer := &websocket.Dialer{HandshakeTimeout: 15 * time.Second}
-		conn, resp, err := dialer.Dial(wsURL, headers)
+		timeout := terminalCandidateTimeout(c.Kind)
+		dialCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		dialer := &websocket.Dialer{HandshakeTimeout: timeout}
+		conn, resp, err := dialer.DialContext(dialCtx, wsURL, headers)
+		cancel()
 		if err == nil {
 			return conn, label, nil
 		}
@@ -157,11 +182,26 @@ func dialFirstTerminalCandidate(candidates []RemoteAgentCandidate, defaultToken,
 	return nil, "", fmt.Errorf("terminal failed across %d transport candidate(s): %s", len(failures), strings.Join(failures, " | "))
 }
 
+func terminalCandidateTimeout(kind string) time.Duration {
+	switch kind {
+	case "same-lan", "mesh", "tailscale", "direct":
+		return 2 * time.Second
+	default:
+		// Relay/tunnel/hostname paths include public DNS + TLS and deserve a
+		// wider budget, while still remaining wall-clock bounded.
+		return 8 * time.Second
+	}
+}
+
 // terminalWSURL converts an http(s) agent base URL into the ws(s)
 // /ws/terminal URL with the bearer as ?token= (WS clients can't set the
 // Authorization header in browsers; the agent's auth() promotes ?token=).
 // Mirrors the SDK's terminalWsUrl (sdk/js/src/fleet.ts).
 func terminalWSURL(baseURL, token, shell string) (string, error) {
+	return terminalWSURLProfile(baseURL, token, shell, nil)
+}
+
+func terminalWSURLProfile(baseURL, token, shell string, profile *SSHProfile) (string, error) {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	switch {
 	case strings.HasPrefix(base, "https://"):
@@ -174,6 +214,13 @@ func terminalWSURL(baseURL, token, shell string) (string, error) {
 	u := base + "/ws/terminal?token=" + token
 	if strings.TrimSpace(shell) != "" {
 		u += "&shell=" + shell
+	}
+	if launch := sshProfileLaunchCommand(profile); launch != "" {
+		p := normalizeSSHProfile(profile)
+		u += "&profile_shell=" + p.Shell
+		if p.Tmux {
+			u += "&profile_tmux=" + p.TmuxSession
+		}
 	}
 	return u, nil
 }

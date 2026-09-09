@@ -146,9 +146,19 @@ func runElevatedSlotAuth(ctx context.Context, slot string, args []string) {
 // for the named slot. Used by runSSHWrap so `yaver ssh primary` and
 // `yaver ssh secondary` resolve through the same lookup path.
 func resolveSSHSlot(slot string) (string, error) {
+	handle, _, err := resolveSSHSlotDevice(slot)
+	return handle, err
+}
+
+// resolveSSHSlotDevice is the operation form used by `yaver ssh`: it returns
+// the already-fetched device row together with the friendly handle. The old
+// handle-only flow discarded that row, then fetched the same device list two
+// more times during route selection. On a remote/loaded backend those advisory
+// round trips cost seconds before any transport was even tried.
+func resolveSSHSlotDevice(slot string) (string, *DeviceInfo, error) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
-		return "", fmt.Errorf("not signed in — run 'yaver auth' first")
+		return "", nil, fmt.Errorf("not signed in — run 'yaver auth' first")
 	}
 	convex := strings.TrimSpace(cfg.ConvexSiteURL)
 	if convex == "" {
@@ -156,31 +166,58 @@ func resolveSSHSlot(slot string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	var slotID string
-	switch strings.ToLower(slot) {
-	case "secondary":
-		slotID, _ = secondaryGetCurrent(ctx, cfg.AuthToken, convex)
-	default:
-		slotID, _ = primaryGetCurrent(ctx, cfg.AuthToken, convex)
+	// Slot settings and device inventory are independent reads. Fetching them
+	// serially made `yaver ssh primary` pay two full backend latencies before it
+	// could probe a transport; run them under the same bounded wall-clock.
+	type slotResult struct {
+		id  string
+		err error
 	}
+	type devicesResult struct {
+		devices []DeviceInfo
+		err     error
+	}
+	slotCh := make(chan slotResult, 1)
+	devicesCh := make(chan devicesResult, 1)
+	go func() {
+		var id string
+		var getErr error
+		if strings.EqualFold(slot, "secondary") {
+			id, getErr = secondaryGetCurrent(ctx, cfg.AuthToken, convex)
+		} else {
+			id, getErr = primaryGetCurrent(ctx, cfg.AuthToken, convex)
+		}
+		slotCh <- slotResult{id: id, err: getErr}
+	}()
+	go func() {
+		devices, listErr := listDevices(convex, cfg.AuthToken)
+		devicesCh <- devicesResult{devices: devices, err: listErr}
+	}()
+	slotRead := <-slotCh
+	devicesRead := <-devicesCh
+	if slotRead.err != nil {
+		return "", nil, fmt.Errorf("could not read %s device: %w", strings.ToLower(slot), slotRead.err)
+	}
+	slotID := slotRead.id
 	slotID = strings.TrimSpace(slotID)
 	if slotID == "" {
-		return "", fmt.Errorf("no %s device set — run `yaver %s set <deviceId>` first", strings.ToLower(slot), strings.ToLower(slot))
+		return "", nil, fmt.Errorf("no %s device set — run `yaver %s set <deviceId>` first", strings.ToLower(slot), strings.ToLower(slot))
 	}
-	devices, derr := listDevices(convex, cfg.AuthToken)
-	if derr != nil {
-		return "", fmt.Errorf("could not list devices: %w", derr)
+	if devicesRead.err != nil {
+		return "", nil, fmt.Errorf("could not list devices: %w", devicesRead.err)
 	}
-	for _, d := range devices {
+	devices := devicesRead.devices
+	for i := range devices {
+		d := &devices[i]
 		if d.DeviceID == slotID {
 			if a := strings.TrimSpace(d.Alias); a != "" {
-				return a, nil
+				return a, d, nil
 			}
 			if n := strings.TrimSpace(d.Name); n != "" {
-				return n, nil
+				return n, d, nil
 			}
-			return d.DeviceID, nil
+			return d.DeviceID, d, nil
 		}
 	}
-	return "", fmt.Errorf("%s device %s is set but not in the device list — run 'yaver %s clear' to reset", strings.ToLower(slot), slotID[:min(8, len(slotID))], strings.ToLower(slot))
+	return "", nil, fmt.Errorf("%s device %s is set but not in the device list — run 'yaver %s clear' to reset", strings.ToLower(slot), slotID[:min(8, len(slotID))], strings.ToLower(slot))
 }

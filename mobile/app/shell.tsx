@@ -34,6 +34,7 @@ import { isTerminalMetaFrame, resizeFrame } from "../src/lib/xtermBridge";
 import { AGENT_LAUNCHERS, closeLine, type AgentLaunch } from "../src/lib/agentLaunch";
 import { isWhisperReady, startRealtimeTranscribe } from "../src/lib/speech";
 import { OpenCodeConfigModal } from "../src/components/OpenCodeConfigModal";
+import { addTerminalSSHProfile, type TerminalSSHProfile } from "../src/lib/sshProfile";
 
 type PTYTarget =
   | { kind: "shell" }
@@ -43,7 +44,7 @@ type PTYTarget =
   // chip, but not tied to a launcher id.
   | { kind: "tmux"; sessionName: string };
 
-function buildPTYWsUrl(baseUrl: string, token: string, target: PTYTarget): string {
+function buildPTYWsUrl(baseUrl: string, token: string, target: PTYTarget, sshProfile?: TerminalSSHProfile): string {
   const ws = baseUrl.replace(/^http/, "ws").replace(/\/+$/, "");
   const q = new URLSearchParams({ token, term: "xterm-256color" });
   if (target.kind === "runner") {
@@ -55,6 +56,7 @@ function buildPTYWsUrl(baseUrl: string, token: string, target: PTYTarget): strin
     q.set("name", target.sessionName);
     return `${ws}/ws/runner?${q.toString()}`;
   }
+  addTerminalSSHProfile(q, sshProfile);
   return `${ws}/ws/terminal?${q.toString()}`;
 }
 
@@ -139,7 +141,7 @@ export default function ShellScreen() {
     setTaskFollowUpOnly(false);
     setInputReason("");
 
-    const ws = new WebSocket(buildPTYWsUrl(quicClient.baseUrl, token, target));
+    const ws = new WebSocket(buildPTYWsUrl(quicClient.baseUrl, token, target, activeDevice.sshProfile));
     wsRef.current = ws;
     try { (ws as any).binaryType = "arraybuffer"; } catch {}
 

@@ -192,6 +192,7 @@ type ListedDevice = {
    * short name.
    */
   alias?: string;
+  sshProfile?: Doc<"devices">["sshProfile"];
   /**
    * Spoken names — "my mac mini", "the box at maltepe". Many and
    * natural-language, unlike `alias` (one short token you type at a shell).
@@ -1791,6 +1792,7 @@ export const listMyDevices = query({
       deviceId: d.deviceId,
       name: d.name,
       alias: d.alias,
+      sshProfile: d.sshProfile,
       // Spoken names — the phone feeds these to carMachineSwitch.ts so a driver
       // can say "switch to my mac mini" on CarPlay, where no picker is allowed.
       voiceHints: d.voiceHints,
@@ -2338,6 +2340,49 @@ export const setDeviceAlias = mutation({
 
     await ctx.db.patch(device._id, { alias: raw });
     return { ok: true, alias: raw };
+  },
+});
+
+const SSH_PROFILE_SESSION = /^[a-zA-Z0-9_.-]{1,48}$/;
+
+/** Save the owner's structured interactive-shell profile for one device.
+ *
+ * No arbitrary command is accepted or stored. The client may select a known
+ * login shell and an optional tmux session; missing tools are installed only
+ * through the existing explicit, streamed /install/<tool> route. This keeps a
+ * stolen Convex session from turning a harmless preference write into remote
+ * command execution on the next SSH connection.
+ */
+export const setDeviceSSHProfile = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    shell: v.union(v.literal("default"), v.literal("bash"), v.literal("zsh"), v.literal("fish")),
+    tmux: v.boolean(),
+    tmuxSession: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId.trim()))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const tmuxSession = (args.tmuxSession ?? "").trim() || "yaver";
+    if (!SSH_PROFILE_SESSION.test(tmuxSession)) {
+      throw new Error("tmux session invalid: use 1-48 chars from a-z, A-Z, 0-9, '.', '-', '_'");
+    }
+    const sshProfile = {
+      shell: args.shell,
+      tmux: args.tmux,
+      ...(args.tmux ? { tmuxSession } : {}),
+      updatedAt: Date.now(),
+    };
+    await ctx.db.patch(device._id, { sshProfile });
+    return { ok: true, sshProfile };
   },
 });
 

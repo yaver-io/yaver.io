@@ -957,7 +957,7 @@ for (const path of [
   "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
   "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
   "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
-  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/devices/tags", "/devices/select", "/devices/request-update", "/devices/claim-update", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/devices/ssh-profile", "/devices/tags", "/devices/select", "/devices/request-update", "/devices/claim-update", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/mesh/peers", "/mesh/acls", "/mesh/acls/set", "/mesh/tags", "/mesh/tags/set", "/mesh/node/config", "/mesh/join", "/mesh/leave",
   "/shortcuts", "/shortcuts/delete",
   "/subscription",
@@ -3635,6 +3635,41 @@ http.route({
       if (errorMessageIncludes(e, "Device not found")) return errorResponse(msg, 404);
       if (errorMessageIncludes(e, "alias already used")) return errorResponse(msg, 409);
       if (errorMessageIncludes(e, "alias invalid")) return errorResponse(msg, 400);
+      return errorResponse(msg, 400);
+    }
+  }),
+});
+
+/** POST /devices/ssh-profile — save a safe, structured shell startup profile.
+ * Body: {deviceId, shell: default|bash|zsh|fish, tmux, tmuxSession?}.
+ * Arbitrary commands are intentionally rejected by the mutation contract. */
+http.route({
+  path: "/devices/ssh-profile",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string" || !body.deviceId.trim()) {
+      return errorResponse("deviceId required", 400);
+    }
+    if (!["default", "bash", "zsh", "fish"].includes(body.shell)) {
+      return errorResponse("shell must be default, bash, zsh, or fish", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.devices.setDeviceSSHProfile, {
+        tokenHash,
+        deviceId: body.deviceId,
+        shell: body.shell,
+        tmux: body.tmux === true,
+        tmuxSession: typeof body.tmuxSession === "string" ? body.tmuxSession : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      const msg = e?.message || "SSH profile update failed";
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse(msg, 401);
+      if (errorMessageIncludes(e, "Device not found")) return errorResponse(msg, 404);
       return errorResponse(msg, 400);
     }
   }),

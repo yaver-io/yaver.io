@@ -516,6 +516,36 @@ var integrations = []installPlan{
 		},
 	},
 	{
+		name:        "bash",
+		description: "Bash — optional interactive login shell for SSH profiles",
+		macOS:       []string{"brew install bash"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y bash"},
+			{"dnf", "sudo dnf install -y bash"},
+			{"pacman", "sudo pacman -S --noconfirm bash"},
+		},
+	},
+	{
+		name:        "zsh",
+		description: "Z shell — optional interactive login shell for SSH profiles",
+		macOS:       []string{"brew install zsh"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y zsh"},
+			{"dnf", "sudo dnf install -y zsh"},
+			{"pacman", "sudo pacman -S --noconfirm zsh"},
+		},
+	},
+	{
+		name:        "fish",
+		description: "Fish shell — optional interactive login shell for SSH profiles",
+		macOS:       []string{"brew install fish"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y fish"},
+			{"dnf", "sudo dnf install -y fish"},
+			{"pacman", "sudo pacman -S --noconfirm fish"},
+		},
+	},
+	{
 		name:        "ffmpeg",
 		description: "ffmpeg — required for the morning match-report screen recorder (run `yaver record`)",
 		macOS:       []string{"brew install ffmpeg"},
@@ -703,6 +733,9 @@ func checkInstalled(name string) string {
 		"eslint":            {"eslint"},
 		"prettier":          {"prettier"},
 		"tmux":              {"tmux"},
+		"bash":              {"bash"},
+		"zsh":               {"zsh"},
+		"fish":              {"fish"},
 		"ffmpeg":            {"ffmpeg"},
 	}
 	candidates := probe[name]
@@ -1412,6 +1445,39 @@ func metaInstallPlan(name string) (installPlan, bool) {
 				{"apt-get", "sudo apt-get install -y tmux"},
 				{"dnf", "sudo dnf install -y tmux"},
 				{"pacman", "sudo pacman -S --noconfirm tmux"},
+			},
+		}, true
+	case "bash":
+		return installPlan{
+			name:        "bash",
+			description: "Bash — optional interactive login shell for SSH profiles",
+			macOS:       []string{"brew install bash"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y bash"},
+				{"dnf", "sudo dnf install -y bash"},
+				{"pacman", "sudo pacman -S --noconfirm bash"},
+			},
+		}, true
+	case "zsh":
+		return installPlan{
+			name:        "zsh",
+			description: "Z shell — optional interactive login shell for SSH profiles",
+			macOS:       []string{"brew install zsh"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y zsh"},
+				{"dnf", "sudo dnf install -y zsh"},
+				{"pacman", "sudo pacman -S --noconfirm zsh"},
+			},
+		}, true
+	case "fish":
+		return installPlan{
+			name:        "fish",
+			description: "Fish shell — optional interactive login shell for SSH profiles",
+			macOS:       []string{"brew install fish"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y fish"},
+				{"dnf", "sudo dnf install -y fish"},
+				{"pacman", "sudo pacman -S --noconfirm fish"},
 			},
 		}, true
 	case "ffmpeg":

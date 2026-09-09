@@ -272,6 +272,14 @@ export interface Device {
    * `yaver ssh <alias>` and shown as "@alias" next to the name.
    */
   alias?: string;
+  /** Structured interactive-shell preference. It is passed to the agent's
+   * terminal route; arbitrary startup commands are never accepted. */
+  sshProfile?: {
+    shell: "default" | "bash" | "zsh" | "fish";
+    tmux: boolean;
+    tmuxSession?: string;
+    updatedAt?: number;
+  };
   /**
    * Spoken names for this machine — "my mac mini", "the box at maltepe".
    * Many, natural-language, never typed (contrast `alias`, which is one short
@@ -1377,6 +1385,17 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             id: deviceId,
             name: d.name,
             alias: typeof d.alias === "string" && d.alias.trim() !== "" ? d.alias : undefined,
+            sshProfile:
+              d.sshProfile && typeof d.sshProfile === "object"
+                ? {
+                    shell: ["default", "bash", "zsh", "fish"].includes(d.sshProfile.shell)
+                      ? d.sshProfile.shell
+                      : "default",
+                    tmux: d.sshProfile.tmux === true,
+                    tmuxSession: typeof d.sshProfile.tmuxSession === "string" ? d.sshProfile.tmuxSession : undefined,
+                    updatedAt: typeof d.sshProfile.updatedAt === "number" ? d.sshProfile.updatedAt : undefined,
+                  }
+                : undefined,
             voiceHints:
               Array.isArray(d.voiceHints) && d.voiceHints.length > 0
                 ? d.voiceHints.filter((h: unknown): h is string => typeof h === "string")

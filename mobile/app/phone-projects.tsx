@@ -29,6 +29,8 @@ import { HIDE_PAID_UI } from "../src/lib/launchFlags";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
 import { getManagedSubscription } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
+import { connectionManager } from "../src/lib/connectionManager";
+import { workspaceClientRoute } from "../src/lib/workspaceClientRoute";
 import { quicClient, type MobileWorkspaceStatus, type RunnerInfo as DiscoveredRunnerInfo } from "../src/lib/quic";
 import {
   PhoneProject,
@@ -400,6 +402,24 @@ export default function PhoneProjectsScreen() {
   );
   const selectedRunnerDevice = startMode === "dev-hw" ? selectedDevMachine : activeRunnerDevice;
   const selectedRunnerConnected = !!selectedRunnerDevice && connectedDeviceIds.includes(selectedRunnerDevice.id);
+  // A selected box that already has its own pooled connection must be asked
+  // directly. Routing it through whichever unrelated box happens to be
+  // focused makes Mobile Workspace depend on a second machine and is
+  // especially brittle in RN-web, where expected background peer failures can
+  // otherwise mask a healthy primary Ubuntu box. Keep the peer-proxy fallback
+  // only for an online selection whose own pool connection is not ready yet.
+  const workspaceRoute = workspaceClientRoute(
+    selectedRunnerDevice?.id,
+    activeDevice?.id,
+    connectedDeviceIds,
+  );
+  const selectedWorkspaceClient = useMemo(
+    () => selectedRunnerDevice && workspaceRoute.useSelectedClient
+      ? connectionManager.clientFor(selectedRunnerDevice.id)
+      : quicClient,
+    [selectedRunnerDevice, workspaceRoute.useSelectedClient],
+  );
+  const selectedWorkspaceTarget = workspaceRoute.peerTarget;
   const selectedRunnerList = startMode === "dev-hw" ? devMachineRunners : availableRunners;
   const runnerChoiceEnabled = !!activeRunnerDevice;
   useEffect(() => {
@@ -440,14 +460,13 @@ export default function PhoneProjectsScreen() {
       setDiscoveredRunners([]);
       return;
     }
-    const target = selectedRunnerDevice.id === activeDevice?.id ? undefined : selectedRunnerDevice.id;
     setWorkspaceStatusLoading(true);
     setGitIntegrations({ github: "checking", gitlab: "checking" });
     try {
       const [probe, runnerInventory, legacyRunnerStatus] = await Promise.all([
-        quicClient.mobileWorkspaceStatusProbe(target),
-        quicClient.getRunnersForTarget(target),
-        quicClient.runnerAuthStatusOrNull(target),
+        selectedWorkspaceClient.mobileWorkspaceStatusProbe(selectedWorkspaceTarget),
+        selectedWorkspaceClient.getRunnersForTarget(selectedWorkspaceTarget),
+        selectedWorkspaceClient.runnerAuthStatusOrNull(selectedWorkspaceTarget),
       ]);
       const status = probe.status;
       // Some older relay/peer coordinators flatten a target's 404 into a 502.
@@ -481,7 +500,7 @@ export default function PhoneProjectsScreen() {
   // finished connecting. Recreate the probe when that transport transitions
   // so an early honest "unreachable" verdict self-clears instead of sticking
   // until the user manually taps Retry.
-  }, [activeDevice?.id, connected, selectedRunnerConnected, selectedRunnerDevice]);
+  }, [connected, selectedRunnerConnected, selectedRunnerDevice, selectedWorkspaceClient, selectedWorkspaceTarget]);
 
   useEffect(() => () => {
     workspaceAgentUpdateStreamRef.current?.();
@@ -490,12 +509,11 @@ export default function PhoneProjectsScreen() {
 
   const updateWorkspaceAgent = useCallback(async () => {
     if (!selectedRunnerDevice || workspaceAgentUpdate.kind === "updating") return;
-    const target = selectedRunnerDevice.id === activeDevice?.id ? undefined : selectedRunnerDevice.id;
     workspaceAgentUpdateStreamRef.current?.();
     workspaceAgentUpdateStreamRef.current = null;
     setWorkspaceAgentUpdate({ kind: "updating", detail: "Preparing agent update…" });
     try {
-      const result = await quicClient.triggerAgentUpdate(target);
+      const result = await selectedWorkspaceClient.triggerAgentUpdate(selectedWorkspaceTarget);
       if (!result.ok) throw new Error(result.error || "The remote box refused the update.");
       if (result.started === false) {
         setWorkspaceAgentUpdate({
@@ -504,8 +522,8 @@ export default function PhoneProjectsScreen() {
         });
         return;
       }
-      if (!target) {
-        workspaceAgentUpdateStreamRef.current = quicClient.streamAgentUpdate((event) => {
+      if (!selectedWorkspaceTarget) {
+        workspaceAgentUpdateStreamRef.current = selectedWorkspaceClient.streamAgentUpdate((event) => {
           if (event.type !== "progress") return;
           const detail = String(event.text || event.phase || "Updating Yaver agent…").trim();
           if (detail) setWorkspaceAgentUpdate({ kind: "updating", detail });
@@ -514,7 +532,7 @@ export default function PhoneProjectsScreen() {
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 2500));
-        const probe = await quicClient.mobileWorkspaceStatusProbe(target);
+        const probe = await selectedWorkspaceClient.mobileWorkspaceStatusProbe(selectedWorkspaceTarget);
         if (probe.status) {
           workspaceAgentUpdateStreamRef.current?.();
           workspaceAgentUpdateStreamRef.current = null;
@@ -533,7 +551,7 @@ export default function PhoneProjectsScreen() {
       workspaceAgentUpdateStreamRef.current?.();
       workspaceAgentUpdateStreamRef.current = null;
     }
-  }, [activeDevice?.id, loadWorkspaceReadiness, selectedRunnerDevice, workspaceAgentUpdate.kind]);
+  }, [loadWorkspaceReadiness, selectedRunnerDevice, selectedWorkspaceClient, selectedWorkspaceTarget, workspaceAgentUpdate.kind]);
 
   useEffect(() => {
     if (!showForm || (step !== 1 && step !== 2) || !selectedRunnerDevice) return;
@@ -571,11 +589,10 @@ export default function PhoneProjectsScreen() {
   const configureWorkspaceRunner = useCallback(async (runnerId: string, code?: string) => {
     if (code === "mobile_workspace.runner.not_installed") {
       if (!selectedRunnerDevice || runnerInstall) return;
-      const target = selectedRunnerDevice.id === activeDevice?.id ? undefined : selectedRunnerDevice.id;
       setRunnerInstall({ runner: runnerId, line: `Starting ${runnerId} installer…` });
       try {
-        const result = await quicClient.installRunner(runnerId, {
-          target,
+        const result = await selectedWorkspaceClient.installRunner(runnerId, {
+          target: selectedWorkspaceTarget,
           onProgress: (line) => {
             const trimmed = line.trim();
             if (trimmed) setRunnerInstall({ runner: runnerId, line: trimmed.slice(0, 120) });
@@ -597,7 +614,7 @@ export default function PhoneProjectsScreen() {
       return;
     }
     setRunnerAuthModalRunner(runnerId);
-  }, [activeDevice?.id, loadWorkspaceReadiness, runnerInstall, selectedRunnerDevice]);
+  }, [loadWorkspaceReadiness, runnerInstall, selectedRunnerDevice, selectedWorkspaceClient, selectedWorkspaceTarget]);
 
   const testWorkspaceRunner = useCallback(async (runnerId: string) => {
     if (!selectedRunnerDevice) return;
@@ -609,7 +626,7 @@ export default function PhoneProjectsScreen() {
       ? model
       : advertisedDefault || DEFAULT_MODEL_BY_RUNNER[runnerId] || "";
     try {
-      const response = await quicClient.agentRequest(
+      const response = await selectedWorkspaceClient.agentRequest(
         selectedRunnerDevice.id,
         "/agent/runners/test",
         {
@@ -630,14 +647,13 @@ export default function PhoneProjectsScreen() {
     } catch (error) {
       Alert.alert("Runner test failed", error instanceof Error ? error.message : "The remote runner could not be tested.");
     }
-  }, [configureWorkspaceRunner, discoveredRunners, loadWorkspaceReadiness, model, runner, selectedRunnerDevice]);
+  }, [configureWorkspaceRunner, discoveredRunners, loadWorkspaceReadiness, model, runner, selectedRunnerDevice, selectedWorkspaceClient]);
 
   const configureGitProvider = useCallback(async (provider: GitProvider) => {
     if (!selectedRunnerDevice || startingGitOAuth) return;
-    const target = selectedRunnerDevice.id === activeDevice?.id ? undefined : selectedRunnerDevice.id;
     setStartingGitOAuth(provider);
     try {
-      const start = await quicClient.gitOAuthStart(provider, target);
+      const start = await selectedWorkspaceClient.gitOAuthStart(provider, selectedWorkspaceTarget);
       if (!start.ok || !start.sessionId || !start.userCode || !start.verificationUri) {
         throw new Error(start.error || `${provider} sign-in could not start on the remote box.`);
       }
@@ -655,7 +671,7 @@ export default function PhoneProjectsScreen() {
       const deadline = start.expiresAt || Date.now() + 10 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, intervalMs));
-        const status = await quicClient.gitOAuthStatus(start.sessionId, provider, target);
+        const status = await selectedWorkspaceClient.gitOAuthStatus(start.sessionId, provider, selectedWorkspaceTarget);
         if (status.state === "pending") continue;
         if (status.state === "done") {
           await loadWorkspaceReadiness();
@@ -670,7 +686,7 @@ export default function PhoneProjectsScreen() {
     } finally {
       setStartingGitOAuth(null);
     }
-  }, [activeDevice?.id, loadWorkspaceReadiness, selectedRunnerDevice, startingGitOAuth]);
+  }, [loadWorkspaceReadiness, selectedRunnerDevice, selectedWorkspaceClient, selectedWorkspaceTarget, startingGitOAuth]);
   useEffect(() => {
     let cancelled = false;
     const loadMobileAi = async () => {

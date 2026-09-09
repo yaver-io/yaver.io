@@ -16,7 +16,7 @@ import (
 )
 
 type opsWorkspacePayload struct {
-	// Op: "init" | "list" | "status" | "scaffold". Required.
+	// Op: "init" | "list" | "status" | "scaffold" | "layout". Required.
 	Op string `json:"op"`
 	// Root: repo root override. Defaults to agent CWD.
 	Root string `json:"root,omitempty"`
@@ -32,12 +32,12 @@ type opsWorkspacePayload struct {
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "workspace",
-		Description: "Monorepo manifest engine. op=init wires every declared app (init.md scaffolds, env check, per-app primary device). op=list returns apps, op=status returns runtime state, op=scaffold generates a starter yaver.workspace.yaml by detecting apps on disk.",
+		Description: "Workspace engine. op=layout returns the managed repos/worktrees defaults while preserving arbitrary explicit project paths. op=init wires every declared app, op=list returns apps, op=status returns runtime state, and op=scaffold generates a starter manifest.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"op"},
 			"properties": map[string]interface{}{
-				"op":             map[string]interface{}{"type": "string", "enum": []string{"init", "list", "status", "scaffold"}},
+				"op":             map[string]interface{}{"type": "string", "enum": []string{"init", "list", "status", "scaffold", "layout"}},
 				"root":           map[string]interface{}{"type": "string"},
 				"manifestFile":   map[string]interface{}{"type": "string"},
 				"force":          map[string]interface{}{"type": "boolean"},
@@ -78,6 +78,12 @@ func opsWorkspaceHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	defer func() { WorkspaceManifestPathOverride = prevOverride }()
 
 	switch p.Op {
+	case "layout":
+		status, err := CollectWorkspaceLayoutStatus()
+		if err != nil {
+			return OpsResult{OK: false, Code: "workspace_layout_failed", Error: err.Error()}
+		}
+		return OpsResult{OK: true, Initial: map[string]interface{}{"layout": status}}
 	case "scaffold":
 		data, m, err := ScaffoldWorkspaceManifest(root)
 		if err != nil {

@@ -74,6 +74,9 @@ func TestSSHArgsWithSurvivabilityAcceptsNewHostKeys(t *testing.T) {
 	if !strings.Contains(args, "StrictHostKeyChecking=accept-new") {
 		t.Fatalf("watchdog ssh must learn first-contact host keys non-interactively, got %s", args)
 	}
+	if !strings.Contains(args, "ConnectTimeout=5") || !strings.Contains(args, "ConnectionAttempts=1") {
+		t.Fatalf("interactive ssh must bound initial route failure before relay fallback, got %s", args)
+	}
 	// IdentitiesOnly is watchdog-scoped, NOT default: for an interactive
 	// `yaver ssh` it would silently drop agent-held keys (1Password, hardware
 	// tokens) that plain ssh offers — a user whose key exists only in an

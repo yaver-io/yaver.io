@@ -1478,6 +1478,20 @@ export interface MobileWorkspaceStatus {
   openCode: MobileWorkspaceGate;
   gitProviders: MobileWorkspaceGate[];
   backend: MobileWorkspaceGate;
+  layout?: WorkspaceLayoutStatus;
+}
+
+export interface WorkspaceLayoutStatus {
+  ok: boolean;
+  mode: "managed-default" | string;
+  root: string;
+  repositories: string;
+  worktrees: string;
+  managedRepositoryCount: number;
+  managedWorktreeCount: number;
+  outsideManagedCount: number;
+  explicitPathsSupported: boolean;
+  cleanupRequiresExplicit: boolean;
 }
 
 export interface RunnerAuthStatusRow {

@@ -609,7 +609,7 @@ func (s *HTTPServer) handleRepoClone(w http.ResponseWriter, r *http.Request) {
 	// Resolve the caller's explicit directory or the runtime user's workspace.
 	// No account name, home path, or remote-box layout is assumed.
 	repoName := repoNameFromURL(req.URL)
-	targetDir := ResolveWorkspaceParent(req.Dir)
+	targetDir := ResolveRepositoryParent(req.Dir)
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(targetDir, 0755); err != nil {

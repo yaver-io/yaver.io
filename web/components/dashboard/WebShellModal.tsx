@@ -389,6 +389,7 @@ export default function WebShellModal({
                     launch={terminalLaunch}
                     tmuxSession={tmuxSession}
                     tmuxTaskId={tmuxTaskId}
+                    sshProfile={device.sshProfile}
                     onRunnerNeedsAuth={onRunnerNeedsAuth}
                     onCloseTerminal={onClose}
                     onTmuxClosed={onTmuxClosed}

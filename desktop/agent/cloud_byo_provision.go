@@ -64,11 +64,10 @@ func (m *CloudDeployManager) hetznerCreateServerCustom(token, name, plan, region
 	}
 	userData := cloudBootstrapScript()
 	if repoURL != "" {
-		// Clone into the non-root yaver user's $HOME/Workspace/<repo> (git
-		// auto-names the dir from the URL) — projects live under Workspace,
-		// owned by yaver, NOT root (docs §4a/§4b). Shallow + first-boot.
+		// Clone into the non-root yaver user's managed repositories directory.
+		// Development sessions get siblings under Workspace/worktrees.
 		userData += fmt.Sprintf(
-			"\n# Yaver: shallow-clone the user's repo into the yaver user's ~/Workspace on first boot\ninstall -d -o yaver -g yaver -m 0755 /home/yaver/Workspace && sudo -u yaver git -C /home/yaver/Workspace clone --depth 1 %s || echo '[yaver] repo clone skipped'\n",
+			"\n# Yaver: keep pristine repos separate from development worktrees\ninstall -d -o yaver -g yaver -m 0755 /home/yaver/Workspace/repos /home/yaver/Workspace/worktrees && sudo -u yaver git -C /home/yaver/Workspace/repos clone --depth 1 %s || echo '[yaver] repo clone skipped'\n",
 			shellQuote(repoURL),
 		)
 	}

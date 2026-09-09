@@ -42,13 +42,13 @@ func InitProject(opts InitProjectOpts) (*InitProjectResult, error) {
 	if opts.Name == "" {
 		return nil, fmt.Errorf("project name required")
 	}
-	// Default parent is $HOME/Workspace (auto-created), not cwd —
+	// Default parent is $HOME/Workspace/repos (auto-created), not cwd —
 	// matches kivanc's actual macOS pattern + the existing project-
 	// discovery scanner in convex_state_sync.go::discoverProjectDirs.
-	// On managed-cloud boxes this lands at /root/Workspace or
-	// /home/yaver/Workspace, which is what the user sees when they
+	// On managed-cloud boxes this lands below the runtime user's resolved
+	// Workspace/repos directory, which is what the user sees when they
 	// ssh in. Caller-provided opts.ParentDir wins verbatim.
-	parent := ResolveWorkspaceParent(opts.ParentDir)
+	parent := ResolveRepositoryParent(opts.ParentDir)
 	dir := filepath.Join(parent, opts.Name)
 	if _, err := os.Stat(dir); err == nil {
 		return nil, fmt.Errorf("target %s already exists", dir)

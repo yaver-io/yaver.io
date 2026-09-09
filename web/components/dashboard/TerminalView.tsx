@@ -34,6 +34,7 @@ export default function TerminalView({
   launch,
   tmuxSession,
   tmuxTaskId,
+  sshProfile,
   onCloseTerminal,
   onTmuxClosed,
 }: {
@@ -41,6 +42,7 @@ export default function TerminalView({
   launch?: "claude" | "codex" | "opencode";
   tmuxSession?: string;
   tmuxTaskId?: string;
+  sshProfile?: { shell: "default" | "bash" | "zsh" | "fish"; tmux: boolean; tmuxSession?: string };
   onRunnerNeedsAuth?: (runner: "claude" | "codex") => void;
   onCloseTerminal?: () => void;
   onTmuxClosed?: () => void;
@@ -182,7 +184,7 @@ export default function TerminalView({
       const term = termRef.current;
       const fit = fitRef.current;
 
-      const url = await agentClient.terminalWsUrl(cwd, { launch, tmuxSession });
+      const url = await agentClient.terminalWsUrl(cwd, { launch, tmuxSession, sshProfile });
       if (disposed) return;
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
@@ -343,7 +345,7 @@ export default function TerminalView({
       // reconnect attempts so scrollback survives. Component unmount
       // disposes via the second effect below.
     };
-  }, [cwd, launch, tmuxSession, attempt]);
+  }, [cwd, launch, tmuxSession, sshProfile?.shell, sshProfile?.tmux, sshProfile?.tmuxSession, attempt]);
 
   // Dispose the terminal only on full component unmount.
   useEffect(() => {

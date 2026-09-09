@@ -55,7 +55,11 @@ func NewPreviewManager(workDir string) *PreviewManager {
 // If expose is true a public tunnel is opened via ExposeManager.
 func (m *PreviewManager) Create(branch string, port int, expose bool) (*PreviewEnv, error) {
 	id := sanitizeBranchName(branch)
-	worktreePath := filepath.Join("/tmp", "yaver-preview-"+id)
+	worktreeRoot, err := DefaultWorkspaceWorktreesDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve preview worktree directory: %w", err)
+	}
+	worktreePath := filepath.Join(worktreeRoot, "previews", id)
 
 	m.mu.Lock()
 	if existing, ok := m.previews[id]; ok {
@@ -275,7 +279,10 @@ func (m *PreviewManager) findFreePort(base int) int {
 func (m *PreviewManager) setupWorktree(branch, dest string, appendLog func(string)) error {
 	// Remove stale directory from a crashed previous run.
 	if _, err := os.Stat(dest); err == nil {
-		_ = os.RemoveAll(dest)
+		return fmt.Errorf("preview worktree destination already exists at %s; inspect it before cleanup", dest)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("create preview worktree parent: %w", err)
 	}
 
 	cmd := exec.Command("git", "worktree", "add", dest, branch)
@@ -291,11 +298,9 @@ func (m *PreviewManager) setupWorktree(branch, dest string, appendLog func(strin
 
 // removeWorktree removes the git worktree registration and the temp directory.
 func (m *PreviewManager) removeWorktree(worktreePath string) error {
-	cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
+	cmd := exec.Command("git", "worktree", "remove", worktreePath)
 	cmd.Dir = m.workDir
 	out, err := cmd.CombinedOutput()
-	// Always attempt a plain rm in case git left the directory behind.
-	_ = os.RemoveAll(worktreePath)
 	if err != nil {
 		return fmt.Errorf("git worktree remove: %w\n%s", err, string(out))
 	}

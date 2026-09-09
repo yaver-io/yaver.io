@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Device, type DeviceStorage, hideDevice, setDeviceAlias, unhideAll } from "@/lib/use-devices";
+import { type Device, type DeviceStorage, hideDevice, setDeviceAlias, setDeviceSSHProfile, unhideAll } from "@/lib/use-devices";
 import { NetCaptureModal } from "./NetCaptureModal";
 import { DeviceStorageFold } from "./DeviceStorageFold";
 import { DeviceDeployCapabilities } from "./DeviceDeployCapabilities";
@@ -3314,6 +3314,7 @@ export default function DevicesView({
   // (6464e1631412, yaver-standard-*). Owner-only, per-user unique (backend
   // enforces); the menu opens a small inline editor, never a prompt().
   const [renameFor, setRenameFor] = useState<{ id: string; alias: string; name: string } | null>(null);
+  const [sshProfileFor, setSSHProfileFor] = useState<Device | null>(null);
   // Browser-shell modal state. Lives at the DevicesView level so the
   // Shell item in each card's "⋯" menu opens the same modal as the
   // home tab, including the reauth-required guidance when the agent's
@@ -4207,6 +4208,7 @@ export default function DevicesView({
                       onRename={() =>
                         setRenameFor({ id: device.id, alias: device.alias || "", name: device.alias || device.name || device.id })
                       }
+                      onSSHProfile={() => setSSHProfileFor(device)}
                       onPower={() =>
                         setPowerFor({ id: device.id, name: device.alias || device.name || device.id })
                       }
@@ -4477,6 +4479,17 @@ export default function DevicesView({
           onClose={() => setRenameFor(null)}
           onSaved={() => {
             setRenameFor(null);
+            void onRefresh();
+          }}
+        />
+      ) : null}
+      {sshProfileFor && token ? (
+        <DeviceSSHProfileDialog
+          device={sshProfileFor}
+          token={token}
+          onClose={() => setSSHProfileFor(null)}
+          onSaved={() => {
+            setSSHProfileFor(null);
             void onRefresh();
           }}
         />
@@ -5216,6 +5229,103 @@ function DeviceRenameDialog({
   );
 }
 
+function DeviceSSHProfileDialog({
+  device,
+  token,
+  onClose,
+  onSaved,
+}: {
+  device: Device;
+  token: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [shell, setShell] = useState<"default" | "bash" | "zsh" | "fish">(
+    device.sshProfile?.shell ?? "default",
+  );
+  const [tmux, setTmux] = useState(device.sshProfile?.tmux === true);
+  const [tmuxSession, setTmuxSession] = useState(device.sshProfile?.tmuxSession || "yaver");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    const session = tmuxSession.trim() || "yaver";
+    if (tmux && !/^[a-zA-Z0-9_.-]{1,48}$/.test(session)) {
+      setError("tmux session must be 1–48 letters, numbers, dots, dashes, or underscores");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const result = await setDeviceSSHProfile(token, device.id, {
+      shell,
+      tmux,
+      ...(tmux ? { tmuxSession: session } : {}),
+    });
+    if (!result.ok) {
+      setError(result.error);
+      setSaving(false);
+      return;
+    }
+    onSaved();
+  }
+
+  const displayName = device.alias || device.name || device.id;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Shell profile for ${displayName}`}>
+      <button type="button" aria-label="Close shell profile dialog" onClick={onClose} className="fixed inset-0 cursor-default bg-black/50" />
+      <div className="relative w-full max-w-sm rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-surface-700 dark:bg-surface-900">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-surface-50">Shell profile</h3>
+        <p className="mt-1 text-[12px] leading-5 text-slate-500 dark:text-surface-400">
+          Applied to interactive SSH and relay-shell sessions on <span className="font-mono">{displayName}</span>.
+          Missing tools keep the login shell open and show the exact install command.
+        </p>
+        <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-surface-400">
+          Login shell
+          <select
+            value={shell}
+            onChange={(event) => setShell(event.target.value as typeof shell)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900 outline-none focus:border-brand focus:ring-1 focus:ring-brand dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100"
+          >
+            <option value="default">Machine default</option>
+            <option value="bash">Bash</option>
+            <option value="zsh">Zsh</option>
+            <option value="fish">Fish</option>
+          </select>
+        </label>
+        <label className="mt-3 flex items-center gap-2 text-sm text-slate-700 dark:text-surface-200">
+          <input type="checkbox" checked={tmux} onChange={(event) => setTmux(event.target.checked)} />
+          Rejoin a persistent tmux session
+        </label>
+        {tmux ? (
+          <label className="mt-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-surface-400">
+            Session
+            <input
+              value={tmuxSession}
+              onChange={(event) => setTmuxSession(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void save();
+                if (event.key === "Escape") onClose();
+              }}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-normal normal-case tracking-normal text-slate-900 outline-none focus:border-brand focus:ring-1 focus:ring-brand dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+        ) : null}
+        {error ? <p className="mt-2 text-[12px] text-rose-600 dark:text-rose-400">{error}</p> : null}
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-surface-700 dark:text-surface-200 dark:hover:bg-surface-800">
+            Cancel
+          </button>
+          <button type="button" onClick={() => void save()} disabled={saving} className="rounded-md border border-brand bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-60">
+            {saving ? "Saving…" : "Save profile"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Every per-device action except the one CTA the card is for
 // (Open Workspace). They used to sit on the card as ~9 competing
 // buttons across two rows; the card is a status surface first, so
@@ -5243,6 +5353,7 @@ function DeviceActionsMenu({
   onRecycle,
   onRescue,
   onRename,
+  onSSHProfile,
   onPower,
   onShell,
   onLaunchRunner,
@@ -5271,6 +5382,7 @@ function DeviceActionsMenu({
   onRecycle: () => void;
   onRescue: () => void;
   onRename: () => void;
+  onSSHProfile: () => void;
   onPower: () => void;
   onShell: () => void;
   onLaunchRunner: (runner: TerminalLaunchRunner) => void;
@@ -5360,6 +5472,12 @@ function DeviceActionsMenu({
               >
                 <span>{device.alias ? "Rename…" : "Name…"}</span>
                 <span className={hintClass}>ssh @alias</span>
+              </button>
+            ) : null}
+            {canManage ? (
+              <button className={itemClass} onClick={() => { onSSHProfile(); setOpen(false); }}>
+                <span>Shell profile…</span>
+                <span className={hintClass}>{device.sshProfile?.tmux ? `${device.sshProfile.shell} · tmux` : device.sshProfile?.shell || "default"}</span>
               </button>
             ) : null}
             <button className={itemClass} onClick={() => { onShell(); setOpen(false); }}>

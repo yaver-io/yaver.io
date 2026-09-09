@@ -75,7 +75,11 @@ func TestAutorunWorkspaceForUsesStableSlotPath(t *testing.T) {
 	// its own cwd (codex: "No such file or directory (os error 2)") before it
 	// could print a word. Because all seats shared the flaw, the loop walked
 	// the whole fallback chain and blamed whichever runner happened to be last.
-	if got, want := ws.WorkDir, filepath.Join(filepath.Dir(filepath.Dir(ws.WorkDir)), "worktrees", "fix-gate-codex"); got != want {
+	home, err := filepath.Abs(filepath.Join(ws.WorkDir, "..", "..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ws.WorkDir, filepath.Join(home, "Workspace", "worktrees", "autorun", "fix-gate-codex"); got != want {
 		t.Fatalf("worktree path = %q, want %q", got, want)
 	}
 	if got, want := ws.TaskPath, filepath.Join(ws.WorkDir, "tasks", "fix-gate.md"); got != want {

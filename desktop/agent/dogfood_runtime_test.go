@@ -27,6 +27,15 @@ func setupDogfoodRepos(t *testing.T) (seed, local, origin string) {
 	return seed, local, origin
 }
 
+func resolvedDogfoodTestPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
 func TestDogfoodSourceStatusOffersCloneWhenSourceMissing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	status := dogfoodSourceStatus("")
@@ -75,6 +84,8 @@ func TestDogfoodSourceStatusReturnsAllCheckoutsAndSelectsBestDefault(t *testing.
 	}
 
 	status := dogfoodSourceStatus("")
+	namedPath = resolvedDogfoodTestPath(t, namedPath)
+	validationPath = resolvedDogfoodTestPath(t, validationPath)
 	if !status.Ready || status.Path != namedPath {
 		t.Fatalf("named checkout was not selected as the default: %+v", status)
 	}
@@ -119,6 +130,8 @@ func TestDogfoodSourceStatusPrefersCleanCheckoutOverNamedCheckoutWithUnmergedInd
 	}
 
 	status := dogfoodSourceStatus("")
+	namedPath = resolvedDogfoodTestPath(t, namedPath)
+	cleanPath = resolvedDogfoodTestPath(t, cleanPath)
 	if !status.Ready || status.Path != cleanPath {
 		t.Fatalf("clean checkout was not preferred over unresolved named checkout: %+v", status)
 	}
@@ -141,6 +154,7 @@ func TestDogfoodSourceStatusFindsNestedCheckoutOnThisMachine(t *testing.T) {
 	}
 
 	status := dogfoodSourceStatus("")
+	nestedRoot = resolvedDogfoodTestPath(t, nestedRoot)
 	if !status.Ready || status.Path != nestedRoot {
 		t.Fatalf("nested checkout was not discovered on this box: %+v", status)
 	}
@@ -156,14 +170,8 @@ func TestDogfoodSourceStatusPrefersConfiguredWorkDirBeforeHomeWalk(t *testing.T)
 	}
 
 	status := dogfoodSourceStatusWithSeed("", mobileDir)
-	resolvedCheckout, err := filepath.EvalSymlinks(checkout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resolvedStatus, err := filepath.EvalSymlinks(status.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resolvedCheckout := resolvedDogfoodTestPath(t, checkout)
+	resolvedStatus := resolvedDogfoodTestPath(t, status.Path)
 	if !status.Ready || resolvedStatus != resolvedCheckout {
 		t.Fatalf("configured child work dir did not resolve its checkout: %+v", status)
 	}
@@ -192,10 +200,11 @@ func TestDogfoodSourceStatusPrefersConfiguredWorkDirAmongMultipleCheckouts(t *te
 	}
 
 	status := dogfoodSourceStatusWithSeed("", filepath.Join(configuredPath, "mobile"))
-	if !status.Ready || status.Path != configuredPath {
+	resolvedConfiguredPath := resolvedDogfoodTestPath(t, configuredPath)
+	if !status.Ready || status.Path != resolvedConfiguredPath {
 		t.Fatalf("configured checkout lost to a conventional sibling: %+v", status)
 	}
-	if len(status.Candidates) != 2 || status.Candidates[0].Path != configuredPath {
+	if len(status.Candidates) != 2 || status.Candidates[0].Path != resolvedConfiguredPath {
 		t.Fatalf("candidate order = %+v, want configured checkout first", status.Candidates)
 	}
 }
@@ -236,6 +245,7 @@ func TestDogfoodSourceStatusDoesNotPreferConfiguredWorkDirWithUnmergedIndex(t *t
 	}
 
 	status := dogfoodSourceStatusWithSeed("", filepath.Join(configuredPath, "mobile"))
+	conventionalPath = resolvedDogfoodTestPath(t, conventionalPath)
 	if !status.Ready || status.Path != conventionalPath {
 		t.Fatalf("unmerged configured checkout beat the safe sibling: %+v", status)
 	}
@@ -254,6 +264,7 @@ func TestDogfoodSourceStatusReplacesForeignMissingPathWithLocalCheckout(t *testi
 	}
 
 	status := dogfoodSourceStatus("/Users/someone/Workspace/yaver.io")
+	nestedRoot = resolvedDogfoodTestPath(t, nestedRoot)
 	if !status.Ready || status.Path != nestedRoot {
 		t.Fatalf("foreign path did not resolve to this box's checkout: %+v", status)
 	}
