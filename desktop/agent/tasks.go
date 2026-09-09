@@ -3849,12 +3849,18 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		}
 	}()
 
+	// Snapshot this attempt's mutable handles. A later retry replaces task.cmd
+	// and task.doneCh; the old monitor must never wait on, untrack, or close the
+	// next attempt's resources.
+	runCmd := task.cmd
+	runDoneCh := task.doneCh
+
 	// Wait for process to exit; auto-restart on unexpected crash.
 	go func() {
-		err := task.cmd.Wait()
+		err := runCmd.Wait()
 		<-outputDone
-		if task.cmd.Process != nil {
-			untrackForkedPID(task.cmd.Process.Pid)
+		if runCmd.Process != nil {
+			untrackForkedPID(runCmd.Process.Pid)
 		}
 		tm.mu.Lock()
 		if task.Status == TaskStatusRunning {
@@ -3913,6 +3919,11 @@ func (tm *TaskManager) startProcess(task *Task) error {
 				// Claude gets OOM-killed, segfaults, or is terminated externally.
 				if refusedModel == "" && retries < maxProcessRetries && outputLen < 100 {
 					task.retryCount++
+					// A crashed attempt is no longer running while it waits to
+					// retry. Queued keeps StopAllTasks/StopTask able to cancel the
+					// task during backoff; leaving it Running made explicit shutdown
+					// indistinguishable from another crash and resurrected the task.
+					task.Status = TaskStatusQueued
 					backoff := time.Duration(2<<uint(retries)) * time.Second // 2s, 4s, 8s, 16s
 					log.Printf("[task %s] %s crashed (exit: %v, output_len=%d) — auto-restarting in %v (attempt %d/%d)",
 						task.ID, task.runner.Name, err, outputLen, backoff, retries+1, maxProcessRetries)
@@ -3938,14 +3949,25 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 					tm.persist()
 					tm.mu.Unlock()
+					closeTaskDone(runDoneCh)
 
 					time.Sleep(backoff)
 
-					// Re-create channels for the new process
+					// Explicit Stop/Shutdown wins over automatic recovery. Recheck
+					// after the entire backoff, under the same lock that StopTask
+					// uses to publish the stopped state.
+					tm.mu.Lock()
+					if task.Status != TaskStatusQueued {
+						tm.mu.Unlock()
+						return
+					}
+					// Re-create channels for the new process.
 					task.outputCh = make(chan string, taskOutputChannelDepth)
 					task.rawOutputCh = make(chan taskRawFrame, rawOutputChannelDepth)
 					task.eventCh = make(chan map[string]interface{}, 32)
 					task.doneCh = make(chan struct{})
+					restartDoneCh := task.doneCh
+					tm.mu.Unlock()
 
 					if restartErr := tm.startProcess(task); restartErr != nil {
 						log.Printf("[task %s] Auto-restart failed: %v", task.ID, restartErr)
@@ -3957,7 +3979,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 						task.Status = taskUnresolvedStatus(task, task.Status)
 						tm.persist()
 						tm.mu.Unlock()
-						close(task.doneCh)
+						closeTaskDone(restartDoneCh)
 					} else {
 						// Report successful restart
 						go func() {
@@ -4164,7 +4186,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		// Save session file for recent history (non-blocking)
 		go saveSessionFile(task, task.runner.Name, tm.effectiveTaskWorkDir(task))
 		tm.mu.Unlock()
-		close(task.doneCh)
+		closeTaskDone(runDoneCh)
 	}()
 
 	return nil
@@ -4362,7 +4384,7 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 			outputMu.Unlock()
 		}
 	}
-	close(task.outputCh)
+	closeTaskStream(task.outputCh)
 
 	tm.mu.Lock()
 	// task.Output keeps the full raw stream for logs/debug; ResultText
@@ -4810,6 +4832,16 @@ func (tm *TaskManager) StopTask(id string) error {
 		tm.mu.Unlock()
 		return fmt.Errorf("task %s not found", id)
 	}
+	// Publish stop intent before cancellation. Otherwise the process monitor
+	// sees Running after the expected signal exit and schedules an automatic
+	// restart while StopTask is waiting for the old attempt to finish.
+	task.Status = TaskStatusStopped
+	now := time.Now()
+	task.FinishedAt = &now
+	cancel := task.cancel
+	doneCh := task.doneCh
+	cmd := task.cmd
+	tm.persist()
 	tm.mu.Unlock()
 
 	// Unpark any agent_question that's waiting on a human; the
@@ -4821,23 +4853,23 @@ func (tm *TaskManager) StopTask(id string) error {
 	globalQuestionRegistry.CancelTask(id)
 	dropSoftQuestionState(id)
 
-	if task.cancel != nil {
-		task.cancel()
+	if cancel != nil {
+		cancel()
 	}
 
 	// Wait for process to exit.
 	select {
-	case <-task.doneCh:
+	case <-doneCh:
 	case <-time.After(10 * time.Second):
 		// Force kill if still alive.
-		if task.cmd != nil && task.cmd.Process != nil {
-			_ = task.cmd.Process.Kill()
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
 		}
 	}
 
 	tm.mu.Lock()
 	task.Status = TaskStatusStopped
-	now := time.Now()
+	now = time.Now()
 	task.FinishedAt = &now
 	tm.persist()
 	tm.fireTaskDone(task)
