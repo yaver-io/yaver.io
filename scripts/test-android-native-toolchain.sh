@@ -42,6 +42,10 @@ grep -q 'YaverBundleLoaderPackage' "$PREBUILD"
 grep -q 'sandbox/SandboxService.kt' "$PREBUILD"
 grep -q 'car/YaverCarMessagingModule.kt' "$PREBUILD"
 grep -q 'wear/YaverWearListenerService.kt' "$PREBUILD"
+if grep -q "java.srcDir '../../native-" "$ROOT/mobile/android/app/build.gradle"; then
+  echo "Prebuild-copied Android overlays must not also be compiled as source directories" >&2
+  exit 1
+fi
 for workflow in \
   "$ROOT/.github/workflows/release-mobile.yml" \
   "$ROOT/.github/workflows/test-suite.yml" \
