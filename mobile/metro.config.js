@@ -14,6 +14,23 @@ const config = getDefaultConfig(__dirname);
 const mobileNodeModules = path.resolve(__dirname, "node_modules");
 const physicalMobileNodeModules = fs.realpathSync(mobileNodeModules);
 
+// React Native's Gradle task forwards its own worker cap to the first Metro
+// bundle, but expo-updates starts a second Metro instance directly while it
+// creates app.manifest. That path never sees extraPackagerArgs and otherwise
+// starts one jest-worker process per CPU, which can OOM an otherwise bounded
+// Android release on a 4 GiB worker after native compilation has succeeded.
+// Put the cap in Metro's shared config so every Metro entrypoint observes it.
+const configuredMetroWorkers = process.env.YAVER_ANDROID_METRO_WORKERS;
+if (configuredMetroWorkers !== undefined) {
+  const metroWorkers = Number(configuredMetroWorkers);
+  if (!Number.isInteger(metroWorkers) || metroWorkers < 1) {
+    throw new Error(
+      `YAVER_ANDROID_METRO_WORKERS must be a positive integer; got: ${configuredMetroWorkers}`
+    );
+  }
+  config.maxWorkers = metroWorkers;
+}
+
 // Yaver mobile is the first real consumer of the published Dogfood runtime in
 // sdk/feedback/react-native. Watch only that SDK package (not the monorepo root)
 // so Metro can compile the exact source third-party apps receive without
