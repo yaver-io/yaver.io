@@ -40,6 +40,7 @@ esac
 # 4 GiB remote worker into swap before the build even began. Size it from real
 # memory unless the operator already provided an -Xmx override.
 LOW_MEMORY_GRADLE_ARGS=()
+LOW_MEMORY_ASSET_GRADLE_ARGS=()
 if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
   TOTAL_MEMORY_KB=""
   if [ -r /proc/meminfo ]; then
@@ -56,8 +57,21 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
     # bounded build into an OOM. Keep Kotlin inside the 2 GiB Gradle process and
     # serialize workers for this lane; larger CI/Mac builders retain defaults.
     LOW_MEMORY_GRADLE_ARGS=(
+      --no-daemon
       --max-workers=1
       '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=384m'
+      '-Pkotlin.compiler.execution.strategy=in-process'
+    )
+    # The React Native bundle/Hermes task and expo-updates manifest task each
+    # start a large Node process. Keep their Gradle orchestration JVM smaller
+    # and, critically, in separate no-daemon invocations. When both ran inside
+    # bundleRelease, Gradle retained ~2.2 GiB of compilation state while Expo
+    # Updates peaked above 1 GiB, so the kernel killed Gradle despite every
+    # advertised worker count being one.
+    LOW_MEMORY_ASSET_GRADLE_ARGS=(
+      --no-daemon
+      --max-workers=1
+      '-Dorg.gradle.jvmargs=-Xmx768m -XX:MaxMetaspaceSize=384m'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
     export YAVER_ANDROID_NINJA_JOBS="${YAVER_ANDROID_NINJA_JOBS:-1}"
@@ -269,6 +283,23 @@ done
 if [ ! -f "$WORKLETS_EXPECTED/arm64-v8a/libworklets.so" ]; then
   echo "ERROR: react-native-worklets built no arm64 libworklets.so; cannot build Reanimated release." >&2
   exit 1
+fi
+
+# On low-memory workers, materialize the two Node-heavy release outputs in
+# isolated Gradle processes. The final bundleRelease consumes them as
+# up-to-date inputs, so no Gradle process retains native/Kotlin/DEX state while
+# Metro, Hermes, or Expo Updates is resident. Larger builders keep the shorter
+# single-invocation path.
+if [ "${#LOW_MEMORY_ASSET_GRADLE_ARGS[@]}" -gt 0 ]; then
+  echo "Staging React Native release bundle within the low-memory envelope..."
+  "$GRADLE" :app:createBundleReleaseJsAndAssets \
+    ${YAVER_PLAYSTORE_ABI:+-PreactNativeArchitectures="$YAVER_PLAYSTORE_ABI"} \
+    "${LOW_MEMORY_ASSET_GRADLE_ARGS[@]}"
+
+  echo "Staging Expo Updates resources within the low-memory envelope..."
+  "$GRADLE" :app:createReleaseUpdatesResources \
+    ${YAVER_PLAYSTORE_ABI:+-PreactNativeArchitectures="$YAVER_PLAYSTORE_ABI"} \
+    "${LOW_MEMORY_ASSET_GRADLE_ARGS[@]}"
 fi
 
 # bundleRelease with the same lint skip CI uses (release-mobile.yml): local
