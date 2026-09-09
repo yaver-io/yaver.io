@@ -19,6 +19,22 @@ source "$REPO_ROOT/scripts/lib/android-aab-signing.sh"
 yaver_resolve_java_home 17
 yaver_resolve_android_sdk
 
+# React Native ships a Linux x86_64 Hermes compiler but its Gradle host mapper
+# rejects Linux ARM64 before trying it. This worker already executes Google's
+# x86_64-only NDK host tools through binfmt, so resolve and probe Hermes by the
+# real operation as well. Other hosts keep React Native's normal %OS-BIN% path.
+case "$(uname -s):$(uname -m)" in
+  Linux:aarch64|Linux:arm64)
+    export YAVER_ANDROID_HERMES_COMMAND="$REPO_ROOT/mobile/node_modules/react-native/sdks/hermesc/linux64-bin/hermesc"
+    if [ ! -x "$YAVER_ANDROID_HERMES_COMMAND" ] || \
+       ! "$YAVER_ANDROID_HERMES_COMMAND" -version >/dev/null 2>&1; then
+      echo "ERROR: React Native's Linux Hermes compiler cannot execute on $(uname -m)." >&2
+      echo "Install qemu-user-static, binfmt-support, and the amd64 libc/libstdc++ runtime, then retry." >&2
+      exit 2
+    fi
+    ;;
+esac
+
 # The Gradle daemon has its own 3 GiB cap in gradle.properties. This is the
 # short-lived launcher JVM: an unconditional 8 GiB launcher took a nominal
 # 4 GiB remote worker into swap before the build even began. Size it from real
