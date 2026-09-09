@@ -25,7 +25,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
+
+// Ops include bounded long-running work such as a storage scan (45 seconds)
+// and cache reclaim. Reusing auth.go's 10-second client made a healthy daemon
+// look unreachable while that work was still progressing. Keep a generous
+// outer ceiling here; individual verbs retain their own tighter deadlines.
+var opsHTTPClient = &http.Client{Timeout: 15 * time.Minute}
 
 func runOps(args []string) {
 	if len(args) == 0 {
@@ -293,7 +300,7 @@ func opsLocalRequest(ctx context.Context, method, path, token string, body []byt
 		if len(body) > 0 {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := httpClient.Do(req)
+		resp, err := opsHTTPClient.Do(req)
 		if err != nil {
 			return nil, 0, err
 		}
