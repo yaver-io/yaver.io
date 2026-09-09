@@ -89,6 +89,31 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
   fi
 fi
 
+# Metro requires local POSIX create/rename/read semantics for its content
+# cache. A Storage Box is appropriate for immutable SDKs and archived outputs,
+# but using an SSHFS-backed TMPDIR here can fail late with EPERM after the JS
+# graph has been transformed. Remote workers may point this at a small local
+# tmpfs or disk directory; ordinary hosts retain their existing TMPDIR.
+if [ -n "${YAVER_ANDROID_METRO_TMPDIR:-}" ]; then
+  install -d -m 700 "$YAVER_ANDROID_METRO_TMPDIR"
+  METRO_TMP_PROBE=$(mktemp -d "$YAVER_ANDROID_METRO_TMPDIR/.yaver-metro-probe.XXXXXX") || {
+    echo "ERROR: cannot create Metro cache probe in YAVER_ANDROID_METRO_TMPDIR: $YAVER_ANDROID_METRO_TMPDIR" >&2
+    exit 2
+  }
+  printf 'metro-cache-probe\n' >"$METRO_TMP_PROBE/source"
+  if ! mv "$METRO_TMP_PROBE/source" "$METRO_TMP_PROBE/renamed" || \
+     ! grep -q '^metro-cache-probe$' "$METRO_TMP_PROBE/renamed"; then
+    rm -f "$METRO_TMP_PROBE/source" "$METRO_TMP_PROBE/renamed"
+    rmdir "$METRO_TMP_PROBE" 2>/dev/null || true
+    echo "ERROR: Metro cache temp path lacks atomic create/rename/read support: $YAVER_ANDROID_METRO_TMPDIR" >&2
+    echo "Choose a local POSIX disk or tmpfs path; do not use SSHFS/WebDAV for Metro's writable cache." >&2
+    exit 2
+  fi
+  rm -f "$METRO_TMP_PROBE/renamed"
+  rmdir "$METRO_TMP_PROBE"
+  export TMPDIR="$YAVER_ANDROID_METRO_TMPDIR"
+fi
+
 # Android signing creds + Play service account path. ~/.androidplay/yaver.env
 # is gitignored — pre-seed it with the exports the build/upload need
 # (PLAY_STORE_KEY_FILE, ANDROID_RELEASE_SHA256, any keystore overrides). In CI
