@@ -78,8 +78,8 @@ func TestDiskGuardPathAllowedRefusesGitWorkTree(t *testing.T) {
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
+	if out, err := runGit(repo, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 	target := filepath.Join(deep, "build-artifact.bin")
 	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
@@ -101,6 +101,24 @@ func TestDiskGuardPathAllowedRefusesGitWorkTree(t *testing.T) {
 	}
 	if ok, reason := diskGuardPathAllowedWithGitProbe(outside, func(string) (string, bool) { return "", false }); !ok {
 		t.Errorf("guard refused a safe path %s: %s", outside, reason)
+	}
+}
+
+// Regression (2026-09-06, ubuntu-4gb): an empty /root/.git directory was
+// enough to make every ~/.yaver cache look like source code. Diskguard then
+// reported 0 B reclaimable while superseded agents occupied 2 GB and the disk
+// had reached 100%. Only actual Git metadata may establish this boundary.
+func TestDiskGuardIgnoresEmptyGitSentinel(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "cache", "artifact.bin")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if repo, ok := diskGuardInGitWorkTree(target); ok {
+		t.Fatalf("empty .git sentinel classified %s as source rooted at %s", target, repo)
 	}
 }
 
@@ -173,6 +191,39 @@ func TestDiskGuardOldAgentsKeepsCurrentAndNewest(t *testing.T) {
 	}
 }
 
+func TestDiskGuardOldAgentsKeepsSpareWhenCurrentIsNewest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	binDir := filepath.Join(home, ".yaver", "bin")
+	for _, v := range []string{"1.99.450", "1.99.451", "1.99.452"} {
+		d := filepath.Join(binDir, v)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "yaver"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(binDir, "1.99.452"), filepath.Join(binDir, "current")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	cands, err := diskGuardCollectOldAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, c := range cands {
+		got[filepath.Base(c.Path)] = true
+	}
+	if got["1.99.452"] || got["1.99.451"] {
+		t.Fatalf("current and newest spare must survive, candidates: %v", got)
+	}
+	if !got["1.99.450"] {
+		t.Fatalf("oldest version should be reclaimable, candidates: %v", got)
+	}
+}
+
 // Regression (2026-08-10, ubuntu-4gb): `1.99.406-dev` and
 // `current.stale-1.99.299` accumulated because semverDirRe only matched strict
 // `X.Y.Z` — dev builds and pre-swap backup trees were invisible to the guard,
@@ -183,7 +234,7 @@ func TestDiskGuardOldAgentsCatchesDevAndStaleCurrent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	binDir := filepath.Join(home, ".yaver", "bin")
-	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "current.stale-1.99.299"} {
+	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "1.99.411.released-backup", "1.99.411.released-redownload", "current.stale-1.99.299"} {
 		d := filepath.Join(binDir, v)
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -215,7 +266,7 @@ func TestDiskGuardOldAgentsCatchesDevAndStaleCurrent(t *testing.T) {
 	if got["1.99.411"] {
 		t.Error("must never propose the version `current` points to")
 	}
-	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "current.stale-1.99.299"} {
+	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "1.99.411.released-backup", "1.99.411.released-redownload", "current.stale-1.99.299"} {
 		if !got[v] {
 			t.Errorf("expected %q to be reclaimable (dev/stale-current must not accumulate), got %v", v, got)
 		}
