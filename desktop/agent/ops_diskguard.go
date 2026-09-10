@@ -76,7 +76,8 @@ var opencodeArtifactRe = regexp.MustCompile(`^\.[0-9a-f]{8,32}-0{8}\.so$`)
 // (2026-08-10: ubuntu-4gb carried 441M across 1.99.402 + two -dev trees +
 // a stale-current, none of which diskguard could see). The `current` symlink
 // itself is excluded below by resolve, not by this regex.
-var semverDirRe = regexp.MustCompile(`^(?:\d+\.\d+\.\d+(?:-[a-z0-9.]+)?|current\.stale-\d+\.\d+\.\d+(?:-[a-z0-9.]+)?)$`)
+var semverDirRe = regexp.MustCompile(`^(?:\d+\.\d+\.\d+(?:[.-][a-z0-9.-]+)?|current\.stale-\d+\.\d+\.\d+(?:-[a-z0-9.]+)?)$`)
+var releasedAgentVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 // diskGuardProtectedNames are refused anywhere, at any depth. These are the
 // things whose loss is unrecoverable — an auth key, a signing identity, a
@@ -272,8 +273,22 @@ func diskGuardPathAllowedWithGitProbe(path string, inGitWorkTree func(string) (s
 func diskGuardInGitWorkTree(path string) (string, bool) {
 	dir := path
 	for i := 0; i < 40; i++ {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir, true
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil {
+			if !info.IsDir() {
+				// Linked worktrees use a .git file. Treat any such file as
+				// source metadata and fail closed; a malformed worktree is
+				// still not a cache Yaver may reclaim.
+				return dir, true
+			}
+			entries, readErr := os.ReadDir(gitPath)
+			if readErr != nil || len(entries) > 0 {
+				return dir, true
+			}
+			// An empty directory named .git is not a Git repository. This
+			// exact state existed at /root on ubuntu-4gb-hel1-1 and made
+			// diskguard refuse every safe cache beneath HOME while reporting
+			// 0 B reclaimable on a 100%-full disk.
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -395,11 +410,16 @@ func diskGuardCollectOldAgents() ([]diskGuardCandidate, error) {
 	// release). Keeping them meant a stale-current tree sat forever
 	// (2026-08-10: current.stale-1.99.299 was 121M and invisible to the old
 	// regex).
-	for i := 0; i < len(versions) && i < diskGuardKeepAgentVersions; i++ {
-		if strings.HasPrefix(versions[i], "current.stale-") {
+	spares := 0
+	for _, version := range versions {
+		if spares >= diskGuardKeepAgentVersions {
+			break
+		}
+		if keep[version] || !releasedAgentVersionRe.MatchString(version) {
 			continue
 		}
-		keep[versions[i]] = true
+		keep[version] = true
+		spares++
 	}
 
 	var out []diskGuardCandidate
