@@ -55,6 +55,10 @@ export interface YaverSplashProps {
 }
 
 export default function YaverSplash({ onDone }: YaverSplashProps) {
+  // The host supplies an inline callback. Connection/task updates must not
+  // restart the decorative intro's deadline and hide an already usable app.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   const { width, height } = Dimensions.get("window");
   const screen = useRef(new Animated.Value(0)).current; // whole-overlay fade
   const fade = useRef(new Animated.Value(0)).current; // center block fade-in
@@ -87,14 +91,14 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
         duration: 400,
         easing: Easing.in(Easing.quad),
         useNativeDriver: true,
-      }).start(() => onDone?.());
+      }).start(() => onDoneRef.current?.());
     }, 1900);
 
     return () => {
       clearTimeout(timer);
       loop.stop();
     };
-  }, [screen, fade, rise, pulse, onDone]);
+  }, [screen, fade, rise, pulse]);
 
   // Brick-offset tile grid; deterministic rotation (no Math.random at runtime).
   const TILE = 66;
