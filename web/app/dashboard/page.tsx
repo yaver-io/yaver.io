@@ -23,7 +23,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { dedupeScopedTasks, scopedTaskKey } from "@/lib/taskIdentity";
-import { listAgentTaskSnapshots, reconcileTasksWithAgentSnapshots, type AgentTaskSnapshot } from "@/lib/taskSnapshots";
+import { listAgentTaskSnapshots, reconcileTasksWithAgentSnapshots, tombstoneAgentTask, type AgentTaskSnapshot } from "@/lib/taskSnapshots";
 import ProjectsView from "@/components/dashboard/ProjectsView";
 import GitView from "@/components/dashboard/GitView";
 import DownloadsView from "@/components/dashboard/DownloadsView";
@@ -3470,22 +3470,30 @@ export default function DashboardPage() {
       setConnectError("Pending cloud dispatches cannot be deleted from the agent task history.");
       return;
     }
-    if (!window.confirm(`Delete “${displayTaskTitle(task.title || "this task")}”? This removes its local task history.`)) return;
+    if (!window.confirm(`Delete “${displayTaskTitle(task.title || "this task")}"? This removes its local task history.`)) return;
+    const deviceId = task.deviceId || connectedDevice?.id;
     setTaskActionBusy(`delete:${task.id}`);
+    setTasks((prev) => prev.filter((row) => !sameScopedTask(row, task)));
+    if (sameScopedTask(activeTask, task)) {
+      setActiveTask(null);
+      setOutputLines([]);
+      setRawOutput([]);
+      setRawSince(0);
+      setChatMsgs([]);
+      setPendingFollowUps([]);
+    }
+    if (!token || !deviceId) {
+      setTaskActionBusy(null);
+      return;
+    }
     try {
-      await taskClientFor(task).deleteTask(task.id);
-      setTasks((prev) => prev.filter((row) => !sameScopedTask(row, task)));
+      await tombstoneAgentTask(CONVEX_URL, token, deviceId, task.id);
+      // Fast cleanup only. The durable tombstone, not this connection, is the
+      // success boundary; an offline owner reconciles it later.
+      void taskClientFor(task).deleteTask(task.id).catch(() => undefined);
       void refreshAgentTaskSnapshots();
-      if (sameScopedTask(activeTask, task)) {
-        setActiveTask(null);
-        setOutputLines([]);
-        setRawOutput([]);
-        setRawSince(0);
-        setChatMsgs([]);
-        setPendingFollowUps([]);
-      }
-    } catch (err) {
-      setConnectError(err instanceof Error ? err.message : "Failed to delete task.");
+    } catch {
+      // Browser outbox retries without reopening or blocking this surface.
     } finally {
       setTaskActionBusy(null);
     }

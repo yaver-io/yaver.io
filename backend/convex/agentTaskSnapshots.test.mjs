@@ -29,7 +29,7 @@ test("host kind is a closed, non-sensitive enum", () => {
 test("snapshot sync is one bounded row per owned device", () => {
   assert.match(moduleSource, /resolveUser\(ctx\)/);
   assert.match(moduleSource, /Device ownership mismatch/);
-  assert.match(moduleSource, /args\.tasks\.slice\(0, 200\)/);
+  assert.match(moduleSource, /args\.tasks\.filter\([\s\S]{0,100}\.slice\(0, 200\)/);
   assert.match(moduleSource, /withIndex\("by_device"/);
   assert.match(moduleSource, /observedAt: Date\.now\(\)/);
 

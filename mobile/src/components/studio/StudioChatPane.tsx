@@ -36,6 +36,8 @@ import { isTaskPresentationEvent, reduceTaskPresentation } from "../../_core/tas
 import { useColors } from "../../context/ThemeContext";
 import { useDevice } from "../../context/DeviceContext";
 import type { ClientSessionSettings } from "../../lib/appVersion";
+import { tombstoneAgentTask } from "../../lib/taskSnapshots";
+import { markTaskDeleted } from "../../lib/storage";
 
 interface StudioChatPaneProps {
   /** Selected project the vibe prompt runs against (box-side workDir). */
@@ -403,14 +405,16 @@ export function StudioChatPane({
   );
 
   const removeTask = useCallback(async (task: Task) => {
+    const deviceId = task.deviceId || activeDevice?.id;
+    if (activeTask?.id === task.id) resetConversation();
+    setTasks((prev) => prev.filter((item) => item.id !== task.id));
+    void markTaskDeleted(task.id);
+    if (!deviceId) return;
     try {
-      await taskClient.deleteTask(task.id);
-      if (activeTask?.id === task.id) resetConversation();
-      setTasks((prev) => prev.filter((item) => item.id !== task.id));
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : "Could not remove topic");
-    }
-  }, [activeTask?.id, resetConversation, taskClient]);
+      await tombstoneAgentTask(deviceId, task.id);
+      if (taskClient.isConnected) void taskClient.deleteTask(task.id).catch(() => undefined);
+    } catch {}
+  }, [activeDevice?.id, activeTask?.id, resetConversation, taskClient]);
 
   const confirmRemoveTask = useCallback((task: Task) => {
     const message = task.status === "running" || task.status === "queued"

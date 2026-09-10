@@ -30,6 +30,7 @@ import { useAuth } from "@/lib/use-auth";
 import { isExplicitRenderPrompt, useAutoRenderVibing } from "@/lib/autoRenderVibing";
 import { collapseTopLevelProjects, mergeConvexCatalogIntoProjects } from "@/lib/projectTopLevel";
 import { CONVEX_URL } from "@/lib/constants";
+import { tombstoneAgentTask } from "@/lib/taskSnapshots";
 import { detectAskBreadth, detectAskIntent } from "@/lib/ask-intent";
 import { ScreenContextChip } from "@/components/dashboard/ScreenContextChip";
 import {
@@ -3406,21 +3407,23 @@ export default function VibeCodingView({
                           type="button"
                           disabled={selectedTaskIds.size === 0}
                           onClick={async () => {
-                            const deleted = new Set<string>();
+                            const selected = taskList.filter((row) => selectedTaskIds.has(row.id));
+                            const deleted = new Set(selected.map((task) => task.id));
                             const failed: string[] = [];
-                            for (const task of taskList.filter((row) => selectedTaskIds.has(row.id))) {
-                              try {
-                                await agentClient.deleteTask(task.id);
-                                deleted.add(task.id);
-                              } catch {
-                                failed.push(task.id);
-                              }
-                            }
                             setTaskList((previous) => previous.filter((task) => !deleted.has(task.id)));
                             if (deleted.has(activeTaskId)) setActiveTaskId("");
+                            for (const task of selected) {
+                              const deviceId = task.deviceId || connectedDevice?.id;
+                              if (!token || !deviceId) continue;
+                              try {
+                                await tombstoneAgentTask(CONVEX_URL, token, deviceId, task.id);
+                                if (connectedDevice?.id === deviceId) void agentClient.deleteTask(task.id).catch(() => undefined);
+                              } catch {
+                                // Browser outbox retries centrally; keep the row removed.
+                              }
+                            }
                             setSelectedTaskIds(new Set(failed));
                             if (failed.length === 0) setSelectingTasks(false);
-                            else setBusy(`${failed.length} task${failed.length === 1 ? "" : "s"} remained because the agent did not acknowledge deletion.`);
                           }}
                           className="rounded-lg border border-red-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 dark:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
                         >

@@ -72,13 +72,14 @@ test("the latest human-readable task update stays outside the scrolling transcri
   );
 });
 
-test("bulk selection deletes only after each owning agent acknowledges", () => {
+test("bulk selection removes immediately and uses durable central tombstones", () => {
   assert.match(tasks, /accessibilityLabel="Select tasks"/);
   assert.match(tasks, /accessibilityLabel="Select all visible tasks"/);
   assert.match(tasks, /Delete · \{selectedBulkTaskKeys\.size\}/);
   assert.match(tasks, /for \(const task of selected\)[\s\S]{0,180}await handleDeleteTask\(task, true\)/);
-  assert.match(tasks, /connectionManager\.clientFor\(owner\.id\)[\s\S]{0,500}await client\.deleteTask\(taskId\)/,
-    "bulk delete must reuse the owning-agent ACK path");
-  assert.match(tasks, /Those tasks remain selected/,
-    "failed remote deletions must remain visible and selected");
+  assert.match(tasks, /await tombstoneAgentTask\(deviceId, taskId\)/,
+    "box reachability must not gate the durable deletion record");
+  assert.match(tasks, /if \(client\.isConnected\) void client\.deleteTask\(taskId\)\.catch/,
+    "direct agent cleanup is a best-effort fast path");
+  assert.doesNotMatch(tasks.slice(tasks.indexOf("const handleDeleteTask"), tasks.indexOf("const handleCompleteTask")), /if \(!client\.isConnected\)/);
 });

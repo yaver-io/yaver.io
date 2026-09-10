@@ -93,7 +93,7 @@ import {
 } from "../../src/lib/quic";
 import { connectionManager } from "../../src/lib/connectionManager";
 import { goalFromSlashCommand } from "../../src/lib/goalSlashCommand";
-import { cacheTaskTurns, getCachedTaskTurns, cacheTaskList, getCachedTaskList } from "../../src/lib/storage";
+import { cacheTaskTurns, getCachedTaskTurns, cacheTaskList, getCachedTaskList, markTaskDeleted } from "../../src/lib/storage";
 import {
   activateTaskPlacement,
   getTaskPlacementStatus,
@@ -102,7 +102,7 @@ import {
   updateTaskDispatchIntent,
 } from "../../src/lib/taskPlacement";
 import { activationBlockReason } from "../../src/lib/taskPlacementCore";
-import { listAgentTaskSnapshots, type AgentTaskSnapshot } from "../../src/lib/taskSnapshots";
+import { listAgentTaskSnapshots, tombstoneAgentTask, type AgentTaskSnapshot } from "../../src/lib/taskSnapshots";
 import { reconcileTasksWithAgentSnapshots, scopedTaskIdentity } from "../../src/lib/taskSnapshotMerge";
 import { taskOwnerDeviceId, taskOwnerNeedsConnection } from "../../src/lib/taskOwnerRouting";
 import {
@@ -6588,29 +6588,31 @@ export default function TasksScreen() {
       void cacheTaskList(next);
       return true;
     }
+    const owner = deviceForTask(task);
+    const deviceId = task.deviceId || owner?.id;
+    const key = scopedTaskIdentity(deviceId, task.id);
+    // Removal is a user intent, not a connectivity operation. Hide and cache
+    // it immediately; the durable Convex outbox survives app restarts.
+    setTasks((previous) => {
+      const next = previous.filter((candidate) => scopedTaskIdentity(candidate.deviceId, candidate.id) !== key);
+      void cacheTaskList(next);
+      return next;
+    });
+    if (selectedTask && scopedTaskIdentity(selectedTask.deviceId, selectedTask.id) === key) setSelectedTask(null);
+    void markTaskDeleted(taskId);
+    if (!deviceId) return true;
     try {
-      const owner = deviceForTask(task);
-      const client = owner?.id ? connectionManager.clientFor(owner.id) : quicClient;
-      if (!client.isConnected) {
-        throw new Error(`${owner?.name || task.deviceName || "The owning machine"} is offline. The session was not deleted.`);
-      }
-      // DELETE is the one lifecycle operation: the owning agent closes the
-      // retained runner seat, verifies local state, persists the tombstone and
-      // schedules the Convex snapshot. Never pre-close through another client.
-      await client.deleteTask(taskId);
-      const key = scopedTaskIdentity(task.deviceId || owner?.id, task.id);
-      setTasks((previous) => {
-        const next = previous.filter((candidate) => scopedTaskIdentity(candidate.deviceId, candidate.id) !== key);
-        void cacheTaskList(next);
-        return next;
-      });
-      if (selectedTask && scopedTaskIdentity(selectedTask.deviceId, selectedTask.id) === key) setSelectedTask(null);
-      void refreshAgentTaskSnapshots();
+      await tombstoneAgentTask(deviceId, taskId);
+    } catch {
+      // Still removed locally. The outbox retries whenever snapshots refresh.
       return true;
-    } catch (e) {
-      if (!quiet) Alert.alert("Delete failed", e instanceof Error ? e.message : String(e));
-      return false;
     }
+    // Best-effort fast path. If the box is offline, its minute reconciliation
+    // feed closes the runner as soon as it can reach Convex again.
+    const client = owner?.id ? connectionManager.clientFor(owner.id) : quicClient;
+    if (client.isConnected) void client.deleteTask(taskId).catch(() => undefined);
+    void refreshAgentTaskSnapshots();
+    return true;
   };
 
   const handleCompleteTask = async (taskId: string) => {
@@ -6724,17 +6726,11 @@ export default function TasksScreen() {
     const selected = tasks.filter((task) => selectedBulkTaskKeys.has(taskBulkKey(task)));
     if (selected.length === 0) return;
     const failed: Task[] = [];
-    // Preserve the single-task guarantee for every row: each owning agent
-    // closes/verifies its own runner seat before that row disappears locally.
     for (const task of selected) {
       if (!(await handleDeleteTask(task, true))) failed.push(task);
     }
     if (failed.length > 0) {
       setSelectedBulkTaskKeys(new Set(failed.map(taskBulkKey)));
-      Alert.alert(
-        "Some tasks were not deleted",
-        `${failed.length} owning machine${failed.length === 1 ? " is" : "s are"} offline or did not acknowledge deletion. Those tasks remain selected.`,
-      );
     } else {
       cancelTaskSelection();
     }

@@ -1441,6 +1441,13 @@ export default defineSchema({
       ),
       updatedAt: v.number(),
     })),
+    // Durable, prompt-free user intent. A client can remove a task while its
+    // owning box is offline; every client filters it immediately and the box
+    // closes the local runner when it next reaches Convex.
+    deletedTasks: v.optional(v.array(v.object({
+      taskId: v.string(),
+      deletedAt: v.number(),
+    }))),
   })
     .index("by_user", ["userId"])
     .index("by_device", ["deviceId"]),

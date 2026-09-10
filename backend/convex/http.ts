@@ -4121,6 +4121,53 @@ http.route({
   }),
 });
 
+/** POST /task-tombstones — durable user delete intent. The owning agent does
+ * not need to be reachable; it reconciles the opaque task id later. */
+http.route({
+  path: "/task-tombstones",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    let body: any;
+    try { body = await request.json(); } catch { return errorResponse("Malformed JSON body", 400); }
+    const denied = promptFreeMetadataBodyDeniedReason(body);
+    if (denied) return errorResponse(denied, 400);
+    if (!body || typeof body.deviceId !== "string" || !body.deviceId.trim()) return errorResponse("deviceId is required", 400);
+    if (typeof body.taskId !== "string" || !body.taskId.trim()) return errorResponse("taskId is required", 400);
+    try {
+      return jsonResponse(await ctx.runMutation(internal.agentTaskSnapshots.tombstoneByToken, {
+        tokenHash, deviceId: body.deviceId.trim(), taskId: body.taskId.trim(),
+      }));
+    } catch (e: any) {
+      const message = e.message || "Failed to delete task";
+      if (String(message).includes("Unauthorized")) return errorResponse("Unauthorized", 401);
+      return errorResponse(message, 500);
+    }
+  }),
+});
+
+/** GET /task-tombstones — the box-side reconciliation feed. */
+http.route({
+  path: "/task-tombstones",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const deviceId = new URL(request.url).searchParams.get("deviceId")?.trim() ?? "";
+    if (!deviceId) return errorResponse("deviceId is required", 400);
+    try {
+      return jsonResponse(await ctx.runQuery(internal.agentTaskSnapshots.listDeletedByToken, { tokenHash, deviceId }));
+    } catch (e: any) {
+      const message = e.message || "Failed to list deleted tasks";
+      if (String(message).includes("Unauthorized")) return errorResponse("Unauthorized", 401);
+      return errorResponse(message, 500);
+    }
+  }),
+});
+
 /** GET /task-snapshots — prompt-free authoritative lifecycle snapshots from
  * each owned Go agent. Clients use this to invalidate cached Review/Active
  * rows; task content is still fetched P2P from the owning machine. */

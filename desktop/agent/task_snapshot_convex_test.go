@@ -20,6 +20,28 @@ func resetTaskSnapshotSyncState(t *testing.T, previous *convexSyncer) {
 	globalConvexSync = previous
 }
 
+func TestReconcileTaskTombstonesClosesTaskAfterBoxReconnects(t *testing.T) {
+	const token = "session-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/task-tombstones" || r.URL.Query().Get("deviceId") != "box one" {
+			t.Fatalf("unexpected tombstone request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			t.Fatal("missing bearer authentication")
+		}
+		_, _ = w.Write([]byte(`[{"taskId":"offline-task","deletedAt":123}]`))
+	}))
+	defer server.Close()
+	tm := &TaskManager{tasks: map[string]*Task{
+		"offline-task": {ID: "offline-task", Status: TaskStatusReview, CreatedAt: time.Now()},
+	}}
+	syncer := &convexSyncer{convexURL: server.URL, authToken: token, deviceID: "box one", client: server.Client()}
+	syncer.reconcileTaskTombstonesFromConvex(context.Background(), tm)
+	if tm.tasks["offline-task"].DeletedAt == nil {
+		t.Fatal("central tombstone did not close and tombstone the local task")
+	}
+}
+
 func TestTaskSnapshotConvexPayloadIsPromptFreeAndDeduplicated(t *testing.T) {
 	buf, teardown := installConvexRecorder(t)
 	defer teardown()

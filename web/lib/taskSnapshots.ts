@@ -15,17 +15,60 @@ export interface AgentTaskSnapshot {
   deviceLastHeartbeat: number;
   observedAt: number;
   tasks: AgentTaskLifecycle[];
+  deletedTasks?: Array<{ taskId: string; deletedAt: number }>;
 }
 
 export const TASK_SNAPSHOT_FRESH_MS = 3 * 60 * 60 * 1000;
+const TASK_DELETION_OUTBOX = "yaver.task_deletion_outbox.v1";
+
+type PendingDeletion = { deviceId: string; taskId: string; deletedAt: number };
+function deletionOutbox(): PendingDeletion[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const rows = JSON.parse(localStorage.getItem(TASK_DELETION_OUTBOX) || "[]");
+    return Array.isArray(rows) ? rows.filter((row) => row?.deviceId && row?.taskId) : [];
+  } catch { return []; }
+}
+function saveDeletionOutbox(rows: PendingDeletion[]) {
+  if (typeof window !== "undefined") localStorage.setItem(TASK_DELETION_OUTBOX, JSON.stringify(rows.slice(-1000)));
+}
+
+async function postTaskTombstone(convexUrl: string, token: string, deviceId: string, taskId: string): Promise<void> {
+  const response = await fetch(`${convexUrl}/task-tombstones`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceId, taskId }),
+  });
+  const payload = await response.json().catch(() => undefined);
+  if (!response.ok) throw new Error(payload?.error || `Could not synchronize task removal (${response.status})`);
+}
+
+async function flushTaskDeletionOutbox(convexUrl: string, token: string) {
+  for (const row of deletionOutbox()) {
+    try {
+      await postTaskTombstone(convexUrl, token, row.deviceId, row.taskId);
+      saveDeletionOutbox(deletionOutbox().filter((candidate) => !(candidate.deviceId === row.deviceId && candidate.taskId === row.taskId)));
+    } catch { return; }
+  }
+}
 
 export async function listAgentTaskSnapshots(convexUrl: string, token: string): Promise<AgentTaskSnapshot[]> {
+  await flushTaskDeletionOutbox(convexUrl, token);
   const response = await fetch(`${convexUrl}/task-snapshots`, {
     headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
   });
   const payload = await response.json().catch(() => undefined);
   if (!response.ok) throw new Error(payload?.error || `Failed to synchronize sessions (${response.status})`);
   return Array.isArray(payload) ? payload as AgentTaskSnapshot[] : [];
+}
+
+export async function tombstoneAgentTask(convexUrl: string, token: string, deviceId: string, taskId: string): Promise<void> {
+  saveDeletionOutbox([
+    ...deletionOutbox().filter((row) => !(row.deviceId === deviceId && row.taskId === taskId)),
+    { deviceId, taskId, deletedAt: Date.now() },
+  ]);
+  await postTaskTombstone(convexUrl, token, deviceId, taskId);
+  saveDeletionOutbox(deletionOutbox().filter((row) => !(row.deviceId === deviceId && row.taskId === taskId)));
 }
 
 function taskKey(deviceId: string | undefined, taskId: string): string {
@@ -43,6 +86,9 @@ export function reconcileTasksWithAgentSnapshots(
   snapshots: AgentTaskSnapshot[],
   now = Date.now(),
 ): Task[] {
+  const deleted = new Set(snapshots.flatMap((snapshot) =>
+    (snapshot.deletedTasks ?? []).map((task) => taskKey(snapshot.deviceId, task.taskId)),
+  ));
   const fresh = new Map(snapshots
     .filter((snapshot) => snapshot.deviceId && now - snapshot.observedAt <= TASK_SNAPSHOT_FRESH_MS)
     .map((snapshot) => [snapshot.deviceId, snapshot]));
@@ -55,6 +101,7 @@ export function reconcileTasksWithAgentSnapshots(
   const present = new Set<string>();
   for (const task of current) {
     const key = taskKey(task.deviceId, task.id);
+    if (deleted.has(key)) continue;
     if (localOnly(task) || !task.deviceId || !fresh.has(task.deviceId)) {
       result.push(task);
       present.add(key);
@@ -67,6 +114,7 @@ export function reconcileTasksWithAgentSnapshots(
   }
 
   for (const [key, lifecycle] of indexed) {
+    if (deleted.has(key)) continue;
     if (present.has(key)) continue;
     const label = lifecycle.snapshot.deviceName || lifecycle.snapshot.deviceId.slice(0, 8);
     result.push({

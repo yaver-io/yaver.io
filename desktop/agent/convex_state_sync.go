@@ -172,6 +172,7 @@ func (s *convexSyncer) syncLifecycleState(ctx context.Context) {
 	// reconciliation so they cannot publish an older view after a newer one.
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
+	s.reconcileTaskTombstonesFromConvex(ctx, s.taskMgr)
 	// Tasks are the only session contract. The old tmux ledger duplicated this
 	// roster, exposed session-name implementation detail, and added a second
 	// periodic write. The authenticated /task-snapshots publication removes

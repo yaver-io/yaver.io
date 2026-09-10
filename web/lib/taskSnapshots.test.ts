@@ -29,3 +29,14 @@ test("cross-surface placeholder contains no user content", () => {
   assert.equal(tasks[0].title, "Task on A");
   assert.equal(tasks[0].description, "Connect to this machine to load the conversation.");
 });
+
+test("central deletion hides stale agent and cached rows", () => {
+  const tasks = reconcileTasksWithAgentSnapshots([
+    { id: "gone", title: "Gone", description: "", status: "running", deviceId: "box-a", output: [], createdAt: 1, updatedAt: 1 },
+  ], [{
+    deviceId: "box-a", deviceName: "A", deviceOnline: false, deviceLastHeartbeat: 1, observedAt: 1,
+    tasks: [{ taskId: "gone", status: "running", updatedAt: 1 }],
+    deletedTasks: [{ taskId: "gone", deletedAt: now }],
+  }], now + 4 * 60 * 60 * 1000);
+  assert.deepEqual(tasks, []);
+});

@@ -37,6 +37,7 @@ import {
   newlineIsNative,
 } from "@/lib/composerKeys";
 import { streamTaskOutputWithRecovery, type TaskStreamHealth } from "@/lib/taskStreamWithRecovery";
+import { tombstoneAgentTask } from "@/lib/taskSnapshots";
 import { AnsiConsoleText, hasConsoleMarkup } from "./AnsiConsoleText";
 import RemoteRuntimeViewer from "./RemoteRuntimeViewer";
 import { StreamHealthNotice } from "./StreamHealthNotice";
@@ -1145,6 +1146,7 @@ export default function RuntimeLabView({
   const [recentTasks, setRecentTasks] = useState<Task[]>([]);
   const [activeTaskStream, setActiveTaskStream] = useState<{
     id: string;
+    deviceId?: string;
     title: string;
     status: TaskStatus;
     lines: string[];
@@ -2285,6 +2287,7 @@ export default function RuntimeLabView({
     const turns = taskConversationTurns(task);
     const initial = {
       id: task.id,
+      deviceId: task.deviceId || connectedDevice?.id,
       title: task.title,
       status: task.status,
       lines: taskOutputLines(task),
@@ -2382,7 +2385,7 @@ export default function RuntimeLabView({
         }
       });
     }, 2000);
-  }, [stopActiveTaskStream]);
+  }, [connectedDevice?.id, stopActiveTaskStream]);
 
   const startProject = useCallback(async () => {
     const name = projectStartName.trim();
@@ -2481,16 +2484,17 @@ export default function RuntimeLabView({
     const confirmed = typeof window === "undefined" || window.confirm(`Delete chat session "${activeTaskStream.title}"?`);
     if (!confirmed) return;
     const taskId = activeTaskStream.id;
+    const deviceId = activeTaskStream.deviceId || connectedDevice?.id;
+    stopActiveTaskStream();
+    setActiveTaskStream(null);
+    setRecentTasks((prev) => prev.filter((task) => task.id !== taskId));
+    if (!token || !deviceId) return;
     try {
-      stopActiveTaskStream();
-      await agentClient.deleteTask(taskId);
-      setActiveTaskStream(null);
-      setRecentTasks((prev) => prev.filter((task) => task.id !== taskId));
+      await tombstoneAgentTask(CONVEX_URL, token, deviceId, taskId);
+      void agentClient.deleteTask(taskId).catch(() => undefined);
       appendLog(`deleted chat session ${taskId}`);
-    } catch (err) {
-      appendLog(`delete chat session failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }, [activeTaskStream?.id, activeTaskStream?.title, appendLog, stopActiveTaskStream]);
+    } catch {}
+  }, [activeTaskStream?.id, activeTaskStream?.title, activeTaskStream?.deviceId, appendLog, connectedDevice?.id, stopActiveTaskStream, token]);
 
   const startNewChatSession = useCallback(() => {
     closeChatSession();

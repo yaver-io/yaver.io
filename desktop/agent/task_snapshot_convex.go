@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +27,57 @@ type convexTaskLifecycle struct {
 	Status         string `json:"status"`
 	HostKind       string `json:"hostKind,omitempty"`
 	UpdatedAt      int64  `json:"updatedAt"`
+}
+
+type convexTaskDeletion struct {
+	TaskID    string `json:"taskId"`
+	DeletedAt int64  `json:"deletedAt"`
+}
+
+// reconcileTaskTombstonesFromConvex consumes durable delete intent before
+// publishing local lifecycle. It runs on every one-minute state-sync tick, so
+// a box that was offline closes the task promptly after connectivity returns.
+func (s *convexSyncer) reconcileTaskTombstonesFromConvex(ctx context.Context, tm *TaskManager) {
+	if s == nil || tm == nil || strings.TrimSpace(s.deviceID) == "" {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(s.convexURL, "/")+"/task-tombstones?deviceId="+url.QueryEscape(s.deviceID), nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.authToken)
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= http.StatusBadRequest {
+		_, _ = io.Copy(io.Discard, res.Body)
+		return
+	}
+	var rows []convexTaskDeletion
+	if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&rows) != nil {
+		return
+	}
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return
+		}
+		tm.mu.RLock()
+		task := tm.tasks[strings.TrimSpace(row.TaskID)]
+		needsDelete := task != nil && task.DeletedAt == nil
+		tm.mu.RUnlock()
+		if needsDelete {
+			if err := tm.DeleteTask(row.TaskID); err != nil {
+				log.Printf("[task %s] central deletion reconciliation: %v", row.TaskID, err)
+			}
+		}
+	}
 }
 
 type taskSnapshotSyncState struct {

@@ -38,3 +38,13 @@ test("unknown cross-surface session is represented without private content", () 
   assert.equal(result[0].description, "Connect to this machine to load the conversation.");
   assert.equal(result[0].executionSession?.yaverSessionId, "ys_1");
 });
+
+test("a central tombstone wins even when the owning snapshot is stale or still lists the task", () => {
+  const cached = [{ id: "gone", title: "gone", status: "running", output: [], deviceId: "box-a", createdAt: 1, updatedAt: 1 }] as any;
+  const result = reconcileTasksWithAgentSnapshots(cached, [{
+    deviceId: "box-a", deviceName: "Box", deviceOnline: false, deviceLastHeartbeat: 1, observedAt: 1,
+    tasks: [{ taskId: "gone", status: "running", updatedAt: 1 }],
+    deletedTasks: [{ taskId: "gone", deletedAt: now }],
+  }] as any, now + 4 * 60 * 60 * 1000);
+  assert.deepEqual(result, []);
+});

@@ -17,6 +17,7 @@ const KEYS = {
   TASK_TURNS_PREFIX: "@yaver/task_turns/",
   TASK_TURNS_INDEX: "@yaver/task_turns_index",
   DELETED_TASKS: "@yaver/deleted_tasks",
+  TASK_DELETION_OUTBOX: "@yaver/task_deletion_outbox/v1",
 } as const;
 
 // Bound the persisted conversation cache. A phone can accumulate thousands of
@@ -173,6 +174,31 @@ export async function getDeletedTaskIds(): Promise<Set<string>> {
   } catch {
     return new Set();
   }
+}
+
+export type PendingTaskDeletion = { deviceId: string; taskId: string; deletedAt: number };
+
+export async function queueTaskDeletion(deviceId: string, taskId: string): Promise<void> {
+  try {
+    const rows = await getPendingTaskDeletions();
+    const next = [...rows.filter((row) => !(row.deviceId === deviceId && row.taskId === taskId)), { deviceId, taskId, deletedAt: Date.now() }];
+    await AsyncStorage.setItem(KEYS.TASK_DELETION_OUTBOX, JSON.stringify(next.slice(-1000)));
+  } catch {}
+}
+
+export async function getPendingTaskDeletions(): Promise<PendingTaskDeletion[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.TASK_DELETION_OUTBOX);
+    const rows = raw ? JSON.parse(raw) : [];
+    return Array.isArray(rows) ? rows.filter((row) => row?.deviceId && row?.taskId) : [];
+  } catch { return []; }
+}
+
+export async function acknowledgeTaskDeletion(deviceId: string, taskId: string): Promise<void> {
+  try {
+    const rows = await getPendingTaskDeletions();
+    await AsyncStorage.setItem(KEYS.TASK_DELETION_OUTBOX, JSON.stringify(rows.filter((row) => !(row.deviceId === deviceId && row.taskId === taskId))));
+  } catch {}
 }
 
 /** Remove task cache but preserve user-scoped settings (relays, tunnels, etc). */

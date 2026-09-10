@@ -35,3 +35,7 @@ CLI 1.99.462 is available on npm as `latest` and is serving on Ubuntu: authentic
 Shared SDK 0.9.21 is verified on npm. Local npm authentication was unavailable; the existing protected feedback-SDK workflow succeeded instead.
 
 Local iOS storage is below the 10 GiB archive floor. The CI fallback uses the same canonical deploy implementation; an upload or physical-device result must be checked separately and must not be inferred from a workflow dispatch.
+
+## Offline task deletion follow-up
+
+Deleting a remote task is now user intent rather than a reachability operation. Mobile and web remove it immediately, persist an offline outbox entry, and write an opaque device/task tombstone to Convex without task content. Every client filters central tombstones even when the last agent snapshot is stale. The owning Go agent consumes the tombstone feed before publishing its next lifecycle snapshot and closes the retained runner when connectivity returns. A direct agent DELETE remains only a best-effort fast path; its failure never blocks, restores, or leaves the task selected in the client UI.

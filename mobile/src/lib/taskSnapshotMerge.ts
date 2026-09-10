@@ -22,6 +22,9 @@ export function reconcileTasksWithAgentSnapshots(
   snapshots: AgentTaskSnapshot[],
   now = Date.now(),
 ): Task[] {
+  const deleted = new Set(snapshots.flatMap((snapshot) =>
+    (snapshot.deletedTasks ?? []).map((task) => scopedTaskIdentity(snapshot.deviceId, task.taskId)),
+  ));
   const freshSnapshots = new Map(
     snapshots
       .filter((snapshot) => snapshot.deviceId && now - snapshot.observedAt <= TASK_SNAPSHOT_FRESH_MS)
@@ -37,6 +40,7 @@ export function reconcileTasksWithAgentSnapshots(
   const reconciled: Task[] = [];
   const present = new Set<string>();
   for (const task of cached) {
+    if (deleted.has(scopedTaskIdentity(task.deviceId, task.id))) continue;
     if (localOnly(task) || !task.deviceId || !freshSnapshots.has(task.deviceId)) {
       reconciled.push(task);
       present.add(scopedTaskIdentity(task.deviceId, task.id));
@@ -57,6 +61,7 @@ export function reconcileTasksWithAgentSnapshots(
   }
 
   for (const [key, authoritative] of lifecycle) {
+    if (deleted.has(key)) continue;
     if (present.has(key)) continue;
     const { snapshot, task } = authoritative;
     reconciled.push({

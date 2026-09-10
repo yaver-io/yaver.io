@@ -28,7 +28,10 @@ test("desktop dashboard consumes task history and supports task selection", () =
 
 test("ongoing and terminal tasks expose their real agent operations", () => {
   assert.match(page, /await taskClientFor\(task\)\.stopTask\(task\.id\)/);
-  assert.match(page, /await taskClientFor\(task\)\.deleteTask\(task\.id\)/);
+  assert.match(page, /await tombstoneAgentTask\(CONVEX_URL, token, deviceId, task\.id\)/,
+    "delete intent must be durable before direct agent cleanup");
+  assert.match(page, /void taskClientFor\(task\)\.deleteTask\(task\.id\)\.catch/,
+    "an unreachable agent must not block removal from the UI");
   assert.match(page, /window\.confirm\(/, "delete must stay an explicit user action");
 });
 
