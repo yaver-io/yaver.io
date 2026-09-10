@@ -92,7 +92,7 @@ const SETTINGS_PANES: ReadonlyArray<{
 }> = [
   { id: "coding-agent", title: "Coding Agent", subtitle: "Runner, model, sign-in, and updates", icon: "sparkles-outline" },
   { id: "machines", title: "Machines & Sandbox", subtitle: "Routing, projects, and phone runtimes", icon: "hardware-chip-outline" },
-  { id: "voice", title: "Voice", subtitle: "Agent voice loop, dictation, and readback", icon: "mic-outline" },
+  { id: "voice", title: "Voice & Lip Reading", subtitle: "Voice, dictation, readback, and silent input", icon: "mic-outline" },
   { id: "account", title: "Account & Security", subtitle: "Profile, sign-in methods, passkeys, and devices", icon: "person-circle-outline" },
   { id: "preferences", title: "App Preferences", subtitle: "Vibing, appearance, opening screen, and tasks", icon: "options-outline" },
   { id: "developer", title: "Developer Tools", subtitle: "Toolchain sync, feedback, metrics, and usage", icon: "construct-outline" },
@@ -2846,8 +2846,8 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Silent Input · lip reading</Text>
-          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }] }>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Silent input</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 0 }] }>
             <SilentInputControlPanel
               colors={c}
               targetDeviceId={activeDevice?.id}
