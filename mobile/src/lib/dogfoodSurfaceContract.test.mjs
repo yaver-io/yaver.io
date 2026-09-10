@@ -111,6 +111,29 @@ test("Metro pins core runtimes and preserves nested package resolution", () => {
   assert.equal(resolved[3].moduleName, "semver/functions/satisfies");
 });
 
+test("Metro removes Dogfood proxy mounts from Expo web HMR entry points", () => {
+  const config = require(join(mobile, "metro.config.js"));
+  const resolved = [];
+  const context = {
+    resolveRequest(_context, moduleName, platform) {
+      resolved.push({ moduleName, platform });
+      return { type: "sourceFile", filePath: moduleName };
+    },
+  };
+
+  config.resolver.resolveRequest(context, "./dev/node_modules/expo-router/entry", "web");
+  config.resolver.resolveRequest(context, "./d/device-1/dev-web/node_modules/expo-router/entry", "web");
+  config.resolver.resolveRequest(context, "./peer/device-1/dev/node_modules/expo-router/entry", "web");
+  config.resolver.resolveRequest(context, "./dev/node_modules/expo-router/entry", "ios");
+
+  assert.deepEqual(resolved.map(({ moduleName }) => moduleName), [
+    "./node_modules/expo-router/entry",
+    "./node_modules/expo-router/entry",
+    "./node_modules/expo-router/entry",
+    "./dev/node_modules/expo-router/entry",
+  ]);
+});
+
 test("More has one Dogfood destination for every contributor", () => {
   assert.doesNotMatch(more, /accessibilityLabel="Open Vibing"|>Vibing<|navigate\("\/vibing"/);
   assert.match(more, />Dogfood<\/Text>/);

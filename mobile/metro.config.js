@@ -71,6 +71,20 @@ config.resolver.extraNodeModules = {
   ...pinnedCoreModules,
 };
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Expo Web derives its HMR entry point from document.currentScript.src.
+  // When Dogfood is mounted through the agent proxy, that URL contains the
+  // transport prefix (`/dev/`, `/dev-web/`, or the device-scoped equivalent).
+  // Metro interprets the prefix as a project directory and otherwise crashes
+  // after the first successful paint trying to resolve
+  // `./dev/node_modules/expo-router/entry`. The agent strips this on current
+  // builds; keep the app-side resolver tolerant so Dogfood also recovers on a
+  // box that is still running the previous agent binary.
+  const resolvedModuleName = platform === "web"
+    ? moduleName.replace(
+        /^\.\/(?:(?:d|peer)\/[^/]+\/)?dev(?:-web)?\/(?=node_modules\/)/,
+        "./"
+      )
+    : moduleName;
   // isomorphic-git exposes a Node-specific CommonJS condition that imports
   // the built-in `crypto` module. Expo's release asset pass can assert that
   // condition even for an iOS archive, which makes Metro select index.cjs and
@@ -78,19 +92,19 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // entry is the package's portable implementation (sha.js + Web APIs), so
   // pin it for every React Native surface. Do the same for its web transport
   // subpath to keep both imports on one module format.
-  const portableGitModule = moduleName === "isomorphic-git"
+  const portableGitModule = resolvedModuleName === "isomorphic-git"
     ? path.join(mobileNodeModules, "isomorphic-git", "index.js")
-    : moduleName === "isomorphic-git/http/web"
+    : resolvedModuleName === "isomorphic-git/http/web"
       ? path.join(mobileNodeModules, "isomorphic-git", "http", "web", "index.js")
       : null;
   // Expo normally aliases react-native to react-native-web. The shared-SDK
   // pin must preserve that platform decision; forcing the native package on
   // web imports ReactFabric and fails the entire RN-web bundle before #root
   // can mount.
-  const pinned = moduleName === "react-native" && platform === "web"
+  const pinned = resolvedModuleName === "react-native" && platform === "web"
     ? path.join(mobileNodeModules, "react-native-web")
-    : pinnedCoreModules[moduleName];
-  return context.resolveRequest(context, portableGitModule || pinned || moduleName, platform);
+    : pinnedCoreModules[resolvedModuleName];
+  return context.resolveRequest(context, portableGitModule || pinned || resolvedModuleName, platform);
 };
 
 if (!config.resolver.assetExts.includes("bin")) {

@@ -290,6 +290,29 @@ func TestPreviewTransportShimRebasesExpoSplitBundles(t *testing.T) {
 	}
 }
 
+// Expo Web derives its HMR entry point from document.currentScript.src. The
+// proxy mount is therefore present in the URL even though Metro must resolve
+// the project-relative path. Measured live on Dogfood: first paint succeeded,
+// then Metro received ./dev/node_modules/expo-router/entry and crashed, leaving
+// the visible reload URL on HTTP 502. The early shim must sanitize only the
+// register-entrypoints message before it crosses the HMR WebSocket.
+func TestPreviewTransportShimStripsProxyMountFromExpoHMREntryPoint(t *testing.T) {
+	for _, want := range []string{
+		`var wp=window.WebSocket&&window.WebSocket.prototype;`,
+		`m.type==="register-entrypoints"`,
+		`u.pathname.indexOf(base)===0`,
+		`u.pathname="/"+u.pathname.slice(base.length).replace(/^\/+/,"")`,
+		`return os.call(this,d);`,
+	} {
+		if !strings.Contains(previewAuthShimJS, want) {
+			t.Fatalf("preview transport shim does not normalize Expo HMR entry points; missing %q", want)
+		}
+	}
+	if strings.Index(previewAuthShimJS, `var wp=window.WebSocket`) > strings.Index(previewAuthShimJS, `var of=window.fetch`) {
+		t.Fatal("HMR WebSocket shim must be installed before the entry bundle can initialize Expo HMR")
+	}
+}
+
 // Expo Router renders navigation controls as dynamically-created anchors.
 // Rebasing fetch/XHR/scripts but not <a href> lets an authenticated preview
 // mount successfully and then escape /d/<id>/dev/ (or /peer/<id>/dev/) on its

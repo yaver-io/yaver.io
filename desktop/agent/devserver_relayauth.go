@@ -195,6 +195,28 @@ function A(u){try{
  return url.toString();
 }catch(e){return u;}}
 window.__yaverPreviewURL=A;
+// Expo's web HMR client registers document.currentScript.src with Metro. Under
+// the preview proxy that URL contains the transport mount (/dev/ or
+// /d/<device>/dev/), which is not part of the project entry path. Metro then
+// tries to resolve "./dev/node_modules/..." and terminates the otherwise
+// healthy server immediately after the first paint. Keep the WebSocket route
+// itself unchanged, but remove the captured mount from register-entrypoints
+// messages before Metro sees them.
+var wp=window.WebSocket&&window.WebSocket.prototype;
+if(wp&&wp.send){var os=wp.send;wp.send=function(d){try{
+ if(base&&typeof d==="string"){var m=JSON.parse(d);
+  if(m&&m.type==="register-entrypoints"&&Array.isArray(m.entryPoints)){
+   m.entryPoints=m.entryPoints.map(function(e){try{
+    var u=new URL(String(e),location.href);
+    if(u.origin===location.origin&&u.pathname.indexOf(base)===0){
+     u.pathname="/"+u.pathname.slice(base.length).replace(/^\/+/,"");
+     return u.toString();
+    }
+   }catch(x){}return e;});
+   d=JSON.stringify(m);
+  }
+ }
+}catch(e){}return os.call(this,d);};}
 var of=window.fetch;
 if(of)window.fetch=function(i,init){try{
  if(typeof i==="string")return of(A(i),init);
