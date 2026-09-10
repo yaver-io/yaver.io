@@ -2192,14 +2192,6 @@ export default function TasksScreen() {
   // confusing Yaver-inside-Yaver control that can stop its own host surface.
   const attachedDogfoodRuntime = dogfoodRuntime.active ||
     (Platform.OS === "web" && isAttachedDogfoodWebRuntime());
-  // Follow-up composer height cap. RN 0.81.5's Modal cannot compile
-  // softwareKeyboardLayoutMode (see the note above the task-detail Modal),
-  // so on Android behavior="height" shrank the sheet until the Send button
-  // hid behind the keyboard. A bounded, scrollable sheet keeps the bottom
-  // (Send) row reachable on every screen/keyboard and leaves part of the
-  // streaming console visible while typing a follow-up.
-  const winHeight = Dimensions.get("window").height;
-  const followUpComposerMaxHeight = Math.round(winHeight * 0.62);
   // "wide" (960pt) over "regular" (720pt) on tablet. The DevPreview
   // serving banner + filter chip row + task list all read better at
   // wider clamp on a tablet — at 720pt the chips wrapped to 2 lines
@@ -4877,6 +4869,12 @@ export default function TasksScreen() {
     if (lastSubmitModeRef.current === "voice") {
       setTimeout(() => { void startRecording("followup"); }, 250);
     }
+  };
+
+  const closeFollowUpComposer = () => {
+    Keyboard.dismiss();
+    setShowFollowUpOptions(false);
+    setFollowUpExpanded(false);
   };
 
   const startRecording = async (target: "task" | "followup" = "task") => {
@@ -9009,12 +9007,14 @@ export default function TasksScreen() {
           visible={!!selectedTask}
           animationType={tabletDualPane ? "fade" : "slide"}
           transparent
-          // NOTE: softwareKeyboardLayoutMode ("resize") is NOT in RN 0.81.5's
-          // Modal types — it cannot compile against this React Native. The
-          // Android keyboard-panning issue it was meant to fix (follow-up
-          // Send button hidden) must be revisited with the KeyboardAvoidingView
-          // below once the RN version supports the prop.
-          onRequestClose={() => setSelectedTask(null)}
+          // softwareKeyboardLayoutMode ("resize") is not in RN 0.81.5's Modal
+          // types. KeyboardAvoidingView therefore owns the resized detail
+          // frame; the expanded follow-up renders as an absolute bottom sheet
+          // inside that frame so its footer stays above either keyboard.
+          onRequestClose={() => {
+            closeFollowUpComposer();
+            setSelectedTask(null);
+          }}
         >
           <KeyboardAvoidingView
             style={[
@@ -9126,7 +9126,7 @@ export default function TasksScreen() {
                 />
               </View>
             ) : (
-              <Pressable style={s.chatModalDismissArea} onPress={() => setSelectedTask(null)} />
+              <Pressable style={s.chatModalDismissArea} onPress={() => { closeFollowUpComposer(); setSelectedTask(null); }} />
             )}
             {selectedTask && (
               <View
@@ -9168,7 +9168,7 @@ export default function TasksScreen() {
                   onRunnerPress={() => { void openRunnerControl("model"); }}
                   runnerActionLabel="Change model for the next turn"
                   modelLabel={undefined}
-                  onBack={() => { setSelectedTask(null); setFollowUpText(""); }}
+                  onBack={() => { closeFollowUpComposer(); setSelectedTask(null); setFollowUpText(""); }}
                   onOpenLogs={() => setShowLogs(true)}
                   primaryAction={
                     taskHasUnresolvedFailure(selectedTask) ? "retry"
@@ -9750,13 +9750,45 @@ export default function TasksScreen() {
 
                 {/* Follow-up input: compact bar, expands to full card on tap */}
                 {followUpExpanded ? (
-                  <View style={[s.modalContent, { backgroundColor: c.bgCard, borderTopWidth: 1, borderTopColor: c.border, paddingBottom: Math.max(insets.bottom + 28, 72), maxHeight: followUpComposerMaxHeight }]}>
-                    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                    <View style={s.modalHeader}>
-                      <Text style={[s.modalTitle, { color: c.textPrimary }]}>Follow Up</Text>
+                  <View
+                    style={s.followUpModalOverlay}
+                    accessibilityViewIsModal
+                    testID="followup-modal-overlay"
+                  >
+                    <Pressable
+                      style={s.followUpModalDismiss}
+                      onPress={closeFollowUpComposer}
+                      accessible={false}
+                    />
+                    <View
+                      style={[
+                        s.modalContent,
+                        {
+                          backgroundColor: c.bgCard,
+                          borderTopWidth: 1,
+                          borderTopColor: c.border,
+                          maxHeight: "92%",
+                          flexShrink: 1,
+                          overflow: "hidden",
+                          paddingBottom: 0,
+                        },
+                      ]}
+                    >
+                    <ScrollView
+                      style={{ flexShrink: 1 }}
+                      contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) }}
+                      keyboardShouldPersistTaps="handled"
+                      keyboardDismissMode="interactive"
+                      showsVerticalScrollIndicator
+                      testID="followup-scroll"
+                    >
+                    <View style={s.modalHeaderStack}>
+                      <View style={s.modalHeaderRow}>
+                        <Text style={[s.modalTitle, { color: c.textPrimary }]}>Follow Up</Text>
+                        <View style={s.modalHeaderActions}>
                       <Pressable
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                        style={({ pressed }) => [s.modalCloseButton, { marginLeft: "auto" }, pressed && { opacity: 0.55 }]}
+                        style={({ pressed }) => [s.modalCloseButton, pressed && { opacity: 0.55 }]}
                         onPress={() => setShowFollowUpOptions((visible) => !visible)}
                         accessibilityRole="button"
                         accessibilityLabel={showFollowUpOptions ? "Hide follow-up options" : "More follow-up options"}
@@ -9765,22 +9797,34 @@ export default function TasksScreen() {
                       >
                         <Ionicons name="ellipsis-horizontal" size={23} color={c.textSecondary} />
                       </Pressable>
+                      <Pressable
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        style={({ pressed }) => [s.modalCloseButton, pressed && { opacity: 0.55 }]}
+                        onPress={closeFollowUpComposer}
+                        accessibilityRole="button"
+                        accessibilityLabel="Close follow-up"
+                        testID="close-followup"
+                      >
+                        <Ionicons name="close" size={24} color={c.textSecondary} />
+                      </Pressable>
+                        </View>
+                      </View>
                       {/* Runtime agent switch. Use an action sheet here rather
                           than mounting the New Task native Modal on top of the
                           task-detail native Modal: iOS mounts the second modal
                           invisibly, making the control look dead. */}
-                      {showFollowUpOptions ? <Pressable
+                      {showFollowUpOptions ? <View style={s.modalTargetRow}><Pressable
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         style={({ pressed }) => [
                           s.agentBadge,
-                          { backgroundColor: c.bgCardElevated, borderColor: c.border, marginLeft: "auto", marginRight: 10 },
+                          { backgroundColor: c.bgCardElevated, borderColor: c.border, maxWidth: "100%" },
                           pressed && { opacity: 0.55 },
                         ]}
                         onPress={openFollowUpRunnerPicker}
                         accessibilityRole="button"
                         accessibilityLabel="Change coding agent for the next turn"
                       >
-                        <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
+                        <Text style={[s.agentBadgeText, { color: c.textSecondary, flexShrink: 1 }]} numberOfLines={1}>
                           {(() => {
                             // Show the parent task's runner by default, but
                             // reflect a pending picker change if the user
@@ -9800,7 +9844,7 @@ export default function TasksScreen() {
                           })()}
                         </Text>
                         <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
-                      </Pressable> : null}
+                      </Pressable></View> : null}
                       {/* NO running spinner here (2026-08-09, user call): the
                           runner is already named by the chip + the status
                           pill + the header Stop action + PhaseStatusLine. A pulsing
@@ -9882,7 +9926,16 @@ export default function TasksScreen() {
                       // Without them the flow has to guess at text/index
                       // selectors, which break on every copy change.
                       testID="followup-input"
-                      style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
+                      style={[
+                        s.inputMultiline,
+                        s.composerInput,
+                        {
+                          backgroundColor: c.bg,
+                          borderColor: c.border,
+                          borderWidth: 1,
+                          color: c.textPrimary,
+                        },
+                      ]}
                       placeholder={isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                       placeholderTextColor={c.textMuted}
                       value={followUpText}
@@ -9910,29 +9963,25 @@ export default function TasksScreen() {
                         ))}
                       </ScrollView>
                     )}
-                    <View style={s.modalButtons}>
-                      <Pressable style={[s.cancelButton, { backgroundColor: c.bgCardElevated }]} onPress={() => { Keyboard.dismiss(); setShowFollowUpOptions(false); setFollowUpExpanded(false); }}>
-                        <Text style={[s.cancelButtonText, { color: c.textSecondary }]}>Cancel</Text>
+                    <View style={[s.composerFooter, { borderTopColor: withAlpha(c.border, "cc") }]}>
+                      <Pressable
+                        style={({ pressed }) => [
+                          s.composerActionButton,
+                          { backgroundColor: c.bgCardElevated },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                        onPress={() => handlePickImage("followup")}
+                        disabled={followUpImages.length >= 5}
+                        accessibilityRole="button"
+                        accessibilityLabel="Attach an image"
+                      >
+                        <Ionicons name="add" size={26} color={c.textPrimary} />
                       </Pressable>
-                      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <View style={s.composerFooterRight}>
                         <Pressable
                           style={({ pressed }) => [
-                            { width: 44, height: 44, borderRadius: 22, backgroundColor: c.bgCardElevated, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: c.border },
-                            pressed && { opacity: 0.7 },
-                          ]}
-                          onPress={() => handlePickImage("followup")}
-                          disabled={followUpImages.length >= 5}
-                        >
-                          <Ionicons name="add" size={24} color={c.textPrimary} />
-                        </Pressable>
-                        <Pressable
-                          style={({ pressed }) => [
-                            {
-                              width: 44, height: 44, borderRadius: 22,
-                              backgroundColor: isRecording ? "#ef4444" : c.bgCardElevated,
-                              alignItems: "center", justifyContent: "center",
-                              borderWidth: 1, borderColor: isRecording ? "#ef4444" : c.border,
-                            },
+                            s.composerActionButton,
+                            { backgroundColor: isRecording ? c.error : c.bgCardElevated },
                             pressed && { opacity: 0.7 },
                           ]}
                           onPress={() => {
@@ -9947,12 +9996,19 @@ export default function TasksScreen() {
                             }
                           }}
                           disabled={isTranscribing}
+                          accessibilityRole="button"
+                          accessibilityLabel={isRecording ? "Stop recording" : "Dictate follow-up"}
                         >
-                          <Ionicons name={isRecording ? "stop" : "mic-outline"} size={20} color={isRecording ? "#fff" : c.textPrimary} />
+                          <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
                         </Pressable>
                         <Pressable
                           testID="followup-send"
-                          style={[s.submitButton, { backgroundColor: c.accent }, ((!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing) && s.submitButtonDisabled]}
+                          style={({ pressed }) => [
+                            s.sendButtonLarge,
+                            { backgroundColor: c.brandPrimary },
+                            ((!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing) && { backgroundColor: c.surfaceMuted },
+                            pressed && { opacity: 0.78, transform: [{ scale: 0.96 }] },
+                          ]}
                           onPress={() => {
                             const submit = isRecording
                               ? finishVoiceAndSubmit("followup")
@@ -9963,11 +10019,19 @@ export default function TasksScreen() {
                           }}
                           disabled={(!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing}
                         >
-                          <Text style={s.submitButtonText}>{isSendingFollowUp ? "Sending..." : "Send"}</Text>
+                          <Text
+                            style={[
+                              s.submitButtonText,
+                              ((!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing) && { color: c.textTertiary },
+                            ]}
+                          >
+                            {isSendingFollowUp ? "Sending…" : "Send"}
+                          </Text>
                         </Pressable>
                       </View>
                     </View>
                     </ScrollView>
+                  </View>
                   </View>
                 ) : (
                   <View
@@ -10320,6 +10384,18 @@ const s = StyleSheet.create({
   // New task modal
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   modalDismiss: { flex: 1 },
+  // Follow Up lives inside the task-detail Modal, so it cannot open a second
+  // native Modal on iOS. Make it an absolute in-detail bottom sheet instead.
+  // This removes it from the chat's flex column: when KeyboardAvoidingView
+  // shrinks the detail, the entire sheet (including Send) now sits above the
+  // keyboard exactly like New Task.
+  followUpModalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "flex-end",
+  },
+  followUpModalDismiss: { flex: 1 },
   modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 20, paddingTop: 22, paddingBottom: 32 },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
   modalHeaderStack: { marginBottom: 12 },
