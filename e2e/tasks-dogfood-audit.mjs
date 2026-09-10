@@ -109,7 +109,11 @@ try {
   await expect(page.getByRole('radio', { name: /Browser lane/ })).toBeVisible();
   await expect(page.getByRole('radio', { name: /Hermes/ })).toBeVisible();
   await expect(page.getByRole('radio', { name: /WebRTC native/ })).toBeVisible();
-  await lanes.screenshot({ path: join(artifacts, 'dogfood-lanes.png') });
+  // Layout visibility alone can pass during a modal's entrance animation,
+  // while its pixels still show the underlying startup surface. Prove the
+  // enabled lane actually receives input before recording its pixels.
+  await page.getByRole('radio', { name: /Browser lane/ }).click({ trial: true });
+  await lanes.screenshot({ path: join(artifacts, 'dogfood-lanes.png'), animations: 'disabled' });
   const runners = page.getByRole('button', { name: /^(Change|Set up) Runner$/ });
   await runners.scrollIntoViewIfNeeded();
   await runners.click();
