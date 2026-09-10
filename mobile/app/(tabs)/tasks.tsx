@@ -2856,6 +2856,12 @@ export default function TasksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [followUpText, setFollowUpText] = useState("");
   const followUpTextRef = useRef("");
+  const followUpInputRef = useRef<TextInput>(null);
+  // A delayed focus belongs only to the explicit "Follow up" tap that
+  // requested it. Opening a task card must be able to invalidate that request
+  // before the expanded input mounts, otherwise iOS opens the keyboard while
+  // the user is only trying to read the task.
+  const followUpFocusRequestRef = useRef(0);
   followUpTextRef.current = followUpText;
   const [isSendingFollowUp, setIsSendingFollowUp] = useState(false);
   const [followUpExpanded, setFollowUpExpanded] = useState(false);
@@ -4766,10 +4772,33 @@ export default function TasksScreen() {
   // tick so the expanded composer is mounted first; otherwise the recording
   // UI attaches to a view that is about to unmount.
   const openFollowUpComposer = () => {
+    const focusRequest = ++followUpFocusRequestRef.current;
     setFollowUpExpanded(true);
     if (lastSubmitModeRef.current === "voice") {
       setTimeout(() => { void startRecording("followup"); }, 250);
+    } else {
+      requestAnimationFrame(() => {
+        if (followUpFocusRequestRef.current === focusRequest) {
+          followUpInputRef.current?.focus();
+        }
+      });
     }
+  };
+
+  const closeFollowUpComposer = () => {
+    // Invalidate a focus queued by openFollowUpComposer before changing task
+    // detail. `autoFocus` cannot express this distinction and was the reason a
+    // plain task-card tap could summon the software keyboard.
+    followUpFocusRequestRef.current += 1;
+    followUpInputRef.current?.blur();
+    Keyboard.dismiss();
+    setShowFollowUpOptions(false);
+    setFollowUpExpanded(false);
+  };
+
+  const openTaskDetails = (task: Task) => {
+    closeFollowUpComposer();
+    setSelectedTask(task);
   };
 
   const startRecording = async (target: "task" | "followup" = "task") => {
@@ -7645,7 +7674,7 @@ export default function TasksScreen() {
             const card = (
               <TaskCard
                 item={item}
-                onPress={() => setSelectedTask(item)}
+                onPress={() => openTaskDetails(item)}
                 onDelete={() => handleDeleteTask(item.id)}
                 onComplete={() => handleCompleteTask(item.id)}
                 onBlockedAction={handlePendingCloudBlockedAction}
@@ -9002,7 +9031,7 @@ export default function TasksScreen() {
                       <View style={[s.cockpitSelWrap, active && { backgroundColor: c.accentSoft }]}>
                         <TaskCard
                           item={item}
-                          onPress={() => setSelectedTask(item)}
+                          onPress={() => openTaskDetails(item)}
                           onDelete={() => handleDeleteTask(item.id)}
                           onComplete={() => handleCompleteTask(item.id)}
                           onBlockedAction={handlePendingCloudBlockedAction}
@@ -9758,12 +9787,13 @@ export default function TasksScreen() {
                       // Without them the flow has to guess at text/index
                       // selectors, which break on every copy change.
                       testID="followup-input"
+                      ref={followUpInputRef}
                       style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
                       placeholder={isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                       placeholderTextColor={c.textMuted}
                       value={followUpText}
                       onChangeText={(t) => { followUpTextRef.current = t; setFollowUpText(t); setInputFromSpeech(false); }}
-                      multiline numberOfLines={4} textAlignVertical="top" autoFocus
+                      multiline numberOfLines={4} textAlignVertical="top"
                       autoCorrect={textCorrectionEnabled}
                       spellCheck={textCorrectionEnabled}
                       autoCapitalize={textCorrectionEnabled ? "sentences" : "none"}
