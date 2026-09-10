@@ -94,7 +94,14 @@ try {
 
   // Fresh navigation proves ordinary task entry never inherits input focus.
   await page.goto(new URL('/tasks', appURL).href, { waitUntil: 'domcontentloaded', timeout: 120000 });
-  await page.getByRole('button', { name: 'Show all tasks', exact: true }).first().click({ timeout: 60000 });
+  const allTasks = page.getByRole('button', { name: 'Show all tasks', exact: true }).first();
+  // Device restoration can remount the list during initial navigation. Wait
+  // for the requested filter AND its data, not just a successful early tap.
+  await expect(async () => {
+    await allTasks.click();
+    await expect(allTasks).toHaveAttribute('aria-selected', 'true', { timeout: 1500 });
+    await expect(page.getByText(task.title, { exact: true }).first()).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 60000 });
   await page.getByText(task.title, { exact: true }).first().click({ timeout: 60000 });
   await expect(composer).toBeVisible();
   expect(await focusedInput()).toBe(false);
