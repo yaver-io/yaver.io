@@ -69,6 +69,8 @@ jobs:
     # carries Xcode 16 / iOS 18.5 and can archive successfully only to fail
     # during export after the expensive build. Pin the matching GitHub image.
     runs-on: macos-26
+    environment: production
+    timeout-minutes: 90
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -81,29 +83,6 @@ jobs:
         run: |
           . scripts/apple-xcode-auth.sh
           apple_require_store_sdk iphoneos 26
-
-      - name: Install dependencies
-        run: cd mobile && npm ci --legacy-peer-deps
-
-      - name: Prebuild native projects
-        run: |
-          # A fresh checkout intentionally contains a partial iOS project:
-          # Expo owns the generated scaffold while Yaver force-tracks native
-          # host/bridge overlays. Clean prebuild is required to create the
-          # scaffold, then the overlays and companion targets must be restored
-          # before CocoaPods or the archive. Otherwise CI silently ships an
-          # Expo template without Yaver's native Dogfood escape/reload path.
-          (cd mobile && EXPO_NO_GIT_STATUS=1 npx expo prebuild --platform ios --clean --no-install)
-          git restore --source=HEAD --worktree -- mobile/ios
-          cp mobile/sdk-manifest.json mobile/ios/Yaver/sdk-manifest.json
-          node scripts/add-watch-ios-target.js
-          node scripts/add-liveactivity-ios-target.js
-          node scripts/restore-ios-share-extension.js
-          node scripts/restore-ios-splash-storyboard.js
-          node scripts/configure-vision-camera-podfile.js mobile/ios/Podfile
-
-      - name: Install CocoaPods
-        run: cd mobile/ios && pod install
 
       - name: Import Apple certificate
         env:
@@ -153,58 +132,25 @@ jobs:
           fi
           echo "p8 header: $(grep -m1 'BEGIN' "$KEYFILE")"
 
-      - name: Bump build number
-        run: |
-          PLIST="mobile/ios/Yaver/Info.plist"
-          NEW_BUILD=$((100 + ${{ github.run_number }}))
-          /usr/libexec/PlistBuddy -c "Set CFBundleVersion $NEW_BUILD" "$PLIST"
-          echo "Build number: $NEW_BUILD"
-
-      - name: Archive
+      # Keep CI and local uploads on one archive/native-overlay/build-number path.
+      - name: Configure canonical Apple deploy environment
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          cd mobile/ios
-          xcodebuild -workspace Yaver.xcworkspace -scheme Yaver -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath /tmp/Yaver.xcarchive archive \
-            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} CODE_SIGN_STYLE=Automatic \
-            ENABLE_USER_SCRIPT_SANDBOXING=NO -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8 \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
-            -derivedDataPath /tmp/YaverBuild
+          {
+            echo "APP_STORE_KEY_PATH=$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+            echo "APP_STORE_KEY_ID=$APP_STORE_CONNECT_KEY_ID"
+            echo "APP_STORE_KEY_ISSUER=$APP_STORE_CONNECT_ISSUER_ID"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET"
+          } >> "$GITHUB_ENV"
+          python3 -m venv "$RUNNER_TEMP/apple-release-venv"
+          "$RUNNER_TEMP/apple-release-venv/bin/python" -m pip install --disable-pip-version-check PyJWT cryptography requests
+          echo "YAVER_PYTHON=$RUNNER_TEMP/apple-release-venv/bin/python" >> "$GITHUB_ENV"
 
-      - name: Export and upload to TestFlight
-        # Tag-triggered runs always upload. workflow_dispatch runs honour the
-        # upload_testflight input so manual runs can build-only for testing.
-        if: github.event_name == 'push' || github.event.inputs.upload_testflight == 'true'
-        env:
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: |
-          cat > /tmp/ExportOptions.plist <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key><string>app-store</string>
-              <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
-              <key>signingStyle</key><string>automatic</string>
-              <key>destination</key><string>upload</string>
-          </dict>
-          </plist>
-          EOF
-
-          xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
-            -exportOptionsPlist /tmp/ExportOptions.plist \
-            -exportPath /tmp/YaverExport -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8 \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
-
-          echo "TestFlight upload complete for v${VERSION}"
+      - name: Archive and upload through canonical deploy
+        run: ./deploy/deploy.sh ios
 
       - name: Cleanup keychain
         if: always()
