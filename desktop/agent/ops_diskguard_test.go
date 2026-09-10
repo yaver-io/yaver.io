@@ -254,7 +254,7 @@ func TestDiskGuardOldAgentsCatchesDevAndStaleCurrent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	binDir := filepath.Join(home, ".yaver", "bin")
-	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "1.99.411.released-backup", "1.99.411.released-redownload", "current.stale-1.99.299"} {
+	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "1.99.410", "1.99.411.released-backup", "1.99.411.released-redownload", "current.stale-1.99.299"} {
 		d := filepath.Join(binDir, v)
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -263,7 +263,8 @@ func TestDiskGuardOldAgentsCatchesDevAndStaleCurrent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// current → 1.99.411 (a real release; the newest real version is the spare).
+	// current → 1.99.411; 1.99.410 is the newest other real release and is the
+	// one rollback spare. All older and non-release trees remain reclaimable.
 	if err := os.Symlink(filepath.Join(binDir, "1.99.411"), filepath.Join(binDir, "current")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
@@ -285,6 +286,9 @@ func TestDiskGuardOldAgentsCatchesDevAndStaleCurrent(t *testing.T) {
 	}
 	if got["1.99.411"] {
 		t.Error("must never propose the version `current` points to")
+	}
+	if got["1.99.410"] {
+		t.Error("must keep the newest real release as the rollback spare")
 	}
 	for _, v := range []string{"1.99.100", "1.99.406-dev", "1.99.408-dev", "1.99.411.released-backup", "1.99.411.released-redownload", "current.stale-1.99.299"} {
 		if !got[v] {
