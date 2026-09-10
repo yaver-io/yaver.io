@@ -349,6 +349,10 @@ export class DogfoodController {
     const generation = ++this.generation;
     const attempt = this.state.attempt + 1;
     await this.runCleanups('all');
+    if (generation !== this.generation) throw new DogfoodRuntimeError({
+      code: 'DOGFOOD_ATTEMPT_REPLACED', error: 'A newer Dogfood attempt replaced this one.',
+      remedy: 'Wait for the newer attempt.', retryable: true,
+    });
     const abortController = new AbortController();
     this.activeAbortController = abortController;
     const invalid = validateDogfoodProject(this.project);
@@ -418,12 +422,14 @@ export class DogfoodController {
         const primaryFailure = failureFrom(primaryError);
         const fallbackLane = activeProject.fallbackLane;
         const mayFallback = !!fallbackLane
+          && context.isCurrent()
           && fallbackLane !== activeProject.lane
           && primaryFailure.retryable
           && primaryFailure.code !== 'DOGFOOD_ATTEMPT_REPLACED';
         if (!mayFallback) throw primaryError;
 
         await this.runCleanups('all', generation);
+        if (!context.isCurrent()) throw primaryError;
         const fallbackProject: DogfoodProject = {
           ...activeProject,
           lane: fallbackLane!,
@@ -481,13 +487,17 @@ export class DogfoodController {
 
   /** Stop the active/partial run and release every resource. Idempotent. */
   async stop(): Promise<void> {
-    ++this.generation;
+    const generation = ++this.generation;
     this.runPromise = null;
     this.activeAbortController?.abort();
     this.activeAbortController = null;
     this.replace({ ...this.state, phase: 'stopping', message: `Stopping ${this.project.name}…` });
     await this.runCleanups('all');
-    this.replace({ ...this.state, phase: 'stopped', message: `${this.project.name} stopped`, result: undefined });
+    // A Retry may already own a new ready runtime while remote cleanup is
+    // finishing. An older Stop must never erase that runtime from the UI.
+    if (generation === this.generation) {
+      this.replace({ ...this.state, phase: 'stopped', message: `${this.project.name} stopped`, result: undefined });
+    }
   }
 
   /**
@@ -497,11 +507,14 @@ export class DogfoodController {
    */
   async handoff(): Promise<DogfoodResult | undefined> {
     if (this.state.phase !== 'ready') return undefined;
-    await this.runCleanups('transient', this.generation);
+    const generation = this.generation;
+    const result = this.state.result;
+    await this.runCleanups('transient', generation);
+    if (generation !== this.generation) return undefined;
     // The receiving screen now owns the live session. Forget its session
     // cleanup without touching cleanups belonging to any other generation.
-    this.cleanups.delete(this.generation);
-    return this.state.result;
+    this.cleanups.delete(generation);
+    return result;
   }
 
   private async runCleanups(which: 'all' | 'transient', generation?: number): Promise<void> {

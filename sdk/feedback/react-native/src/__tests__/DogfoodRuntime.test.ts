@@ -15,6 +15,58 @@ const expo: DogfoodProject = {
 };
 
 describe('DogfoodController', () => {
+  test('stopping immediately prevents a queued launch from starting', async () => {
+    const start = jest.fn(async () => ({ lane: 'browser' as const }));
+    const controller = new DogfoodController(expo, { start });
+    const run = controller.trigger();
+    await controller.stop();
+    await expect(run).rejects.toMatchObject({ failure: { code: 'DOGFOOD_ATTEMPT_REPLACED' } });
+    expect(start).not.toHaveBeenCalled();
+    expect(controller.snapshot().phase).toBe('stopped');
+  });
+
+  test('a slow Stop cannot overwrite a successful Retry', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let starts = 0;
+    const controller = new DogfoodController(expo, {
+      async start(ctx) {
+        starts += 1;
+        if (starts === 1) ctx.registerCleanup(() => gate);
+        return { lane: 'browser', sessionId: `session-${starts}` };
+      },
+    });
+    await controller.trigger();
+    const stopping = controller.stop();
+    await controller.retry();
+    release();
+    await stopping;
+    expect(controller.snapshot()).toMatchObject({ phase: 'ready', result: { sessionId: 'session-2' } });
+  });
+
+  test('a delayed handoff cannot discard the replacement runtime cleanup', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const stopNew = jest.fn();
+    let starts = 0;
+    const controller = new DogfoodController(expo, {
+      async start(ctx) {
+        starts += 1;
+        if (starts === 1) ctx.registerCleanup(() => gate, 'transient');
+        else ctx.registerCleanup(stopNew);
+        return { lane: 'browser', sessionId: `session-${starts}` };
+      },
+    });
+    await controller.trigger();
+    const handingOff = controller.handoff();
+    await controller.stop();
+    await controller.retry();
+    release();
+    expect(await handingOff).toBeUndefined();
+    await controller.stop();
+    expect(stopNew).toHaveBeenCalledTimes(1);
+  });
+
   test('does no work before the explicit trigger', () => {
     const driver: DogfoodDriver = { start: jest.fn(async () => ({ lane: 'browser' as const })) };
     const controller = new DogfoodController(expo, driver);
