@@ -32,6 +32,11 @@ class YaverScreenRecorder: NSObject, RCTBridgeModule {
             return
         }
 
+        // Feedback screen capture records app audio only. Make the default
+        // explicit: ReplayKit is process-global, and inheriting a stale true
+        // value here would claim the microphone and disrupt Bluetooth music.
+        recorder.isMicrophoneEnabled = false
+
         // Prepare output file.
         let timestamp = Int(Date().timeIntervalSince1970)
         let path = NSTemporaryDirectory() + "mobile-screen-\(timestamp).mp4"
@@ -84,10 +89,14 @@ class YaverScreenRecorder: NSObject, RCTBridgeModule {
                 if let vi = self.videoInput, vi.isReadyForMoreMediaData {
                     vi.append(sampleBuffer)
                 }
-            case .audioApp, .audioMic:
+            case .audioApp:
                 if let ai = self.audioInput, ai.isReadyForMoreMediaData {
                     ai.append(sampleBuffer)
                 }
+            case .audioMic:
+                // The mic is intentionally disabled above. Ignore this stream
+                // defensively if ReplayKit ever delivers one anyway.
+                break
             @unknown default:
                 break
             }

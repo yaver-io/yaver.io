@@ -302,6 +302,12 @@ export default function GlassTerminalScreen() {
     }
   }, [appendLine]);
 
+  useEffect(() => () => {
+    const recording = recorderRef.current;
+    recorderRef.current = null;
+    if (recording) void recording.stop().catch(() => {});
+  }, []);
+
   // ── Voice: TTS speaker for model output ────────────────────────────────
   const speakIfEnabled = useCallback((text: string) => {
     if (!autoTts) return;

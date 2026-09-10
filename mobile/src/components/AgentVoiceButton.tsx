@@ -13,6 +13,7 @@ import { Alert, Animated, Dimensions, Easing, Linking, Pressable, StyleSheet, Te
 import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "../context/ThemeContext";
 import { AgentVoiceSession, pcmToTempWavURI } from "../lib/agentVoice";
+import { createMicrophoneRecording, discardMicrophoneRecording, prepareNonInterruptingPlaybackAudioMode, stopMicrophoneRecording } from "../lib/microphoneAudioSession";
 import { YaverGlass } from "./YaverGlass";
 
 /** Map the runtime device shape to the Go-side TaskViewport.Surface enum.
@@ -101,15 +102,8 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
   const cleanupRecording = useCallback(async () => {
     const rec = recordingRef.current;
     if (!rec) return;
-    try {
-      const st = await rec.getStatusAsync();
-      if (st.isRecording) {
-        await rec.stopAndUnloadAsync();
-      }
-    } catch {
-      // ignore — recorder may already be stopped
-    }
     recordingRef.current = null;
+    await discardMicrophoneRecording(rec);
   }, []);
 
   const reset = useCallback(async () => {
@@ -137,8 +131,6 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
         return;
       }
     }
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-
     // Raw PCM 16-bit LE, 16kHz mono — what Deepgram Flux expects. We
     // strip the WAV header on the way to the backend.
     const recordingOptions: any = {
@@ -168,8 +160,7 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
     };
 
     try {
-      const { recording } = await Audio.Recording.createAsync(recordingOptions);
-      recordingRef.current = recording;
+      recordingRef.current = await createMicrophoneRecording(recordingOptions);
       setStatus("recording");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -187,15 +178,14 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
     setStatus("uploading");
     let uri: string | undefined;
     try {
-      await rec.stopAndUnloadAsync();
-      uri = rec.getURI() ?? undefined;
+      recordingRef.current = null;
+      uri = (await stopMicrophoneRecording(rec)) ?? undefined;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMsg(msg);
       setStatus("error");
       return;
     }
-    recordingRef.current = null;
     if (!uri) {
       setErrorMsg("recording produced no file");
       setStatus("error");
@@ -216,6 +206,7 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
         try {
           const wavURI = await pcmToTempWavURI(pcm, sampleRate);
           const { Audio } = require("expo-av");
+          await prepareNonInterruptingPlaybackAudioMode();
           const { sound } = await Audio.Sound.createAsync({ uri: wavURI }, { shouldPlay: true });
           sound.setOnPlaybackStatusUpdate((st: any) => {
             if (st.didJustFinish) sound.unloadAsync().catch(() => {});

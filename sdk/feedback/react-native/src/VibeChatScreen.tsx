@@ -30,7 +30,7 @@ import {
 import type { ClientSessionSettings, P2PClient, TaskRunnerControlCatalog, VibeThreadSummary } from './P2PClient';
 import type { DogfoodRenderBehavior } from './dogfoodPolicy';
 import { SDKVoiceSession, pcmToTempWavURI, isVoiceStreamSupported } from './voice';
-import { startPcmRecording, stopPcmRecording, isVoiceCaptureSupported } from './capture';
+import { prepareNonInterruptingAudioPlayback, startPcmRecording, stopPcmRecording, isVoiceCaptureSupported } from './capture';
 import {
   friendlyTaskPresentation,
   isTaskPresentationEvent,
@@ -599,7 +599,10 @@ export function VibeChatScreen({
     return () => { cancelled = true; };
   }, [client, voiceInputEnabled]);
 
-  useEffect(() => () => { voiceSessionRef.current?.close(); }, []);
+  useEffect(() => () => {
+    voiceSessionRef.current?.close();
+    void stopPcmRecording().catch(() => {});
+  }, []);
 
   // Local TTS: the agent streams no audio for "local"/"device" engines,
   // so the client speaks the result text with the device synthesizer.
@@ -611,7 +614,9 @@ export function VibeChatScreen({
       const Speech = require('expo-speech');
       const headline = text.length > 280 ? `${text.slice(0, 280)} — see screen for the rest.` : text;
       Speech.stop?.();
-      Speech.speak?.(headline);
+      void prepareNonInterruptingAudioPlayback()
+        .catch(() => {})
+        .then(() => Speech.speak?.(headline));
     } catch { /* expo-speech not installed — text remains visible */ }
   }, []);
 
@@ -620,6 +625,7 @@ export function VibeChatScreen({
       const wavUri = await pcmToTempWavURI(pcm, sampleRate);
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Audio } = require('expo-av');
+      await prepareNonInterruptingAudioPlayback();
       const { sound } = await Audio.Sound.createAsync({ uri: wavUri }, { shouldPlay: true });
       sound.setOnPlaybackStatusUpdate((st: any) => {
         if (st.didJustFinish) sound.unloadAsync().catch(() => {});

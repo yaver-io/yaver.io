@@ -36,6 +36,7 @@ import {
   TTS_VOICES,
   DEFAULT_TTS_VOICE,
 } from "../lib/speech";
+import { createMicrophoneRecording, discardMicrophoneRecording, stopMicrophoneRecording } from "../lib/microphoneAudioSession";
 
 type Status = { kind: "idle" | "ok" | "error" | "busy"; msg?: string };
 
@@ -70,6 +71,15 @@ export default function VoiceTestPanel() {
     });
   }, []);
 
+  useEffect(() => () => {
+    const realtime = realtimeRef.current;
+    realtimeRef.current = null;
+    if (realtime) void realtime.stop().catch(() => {});
+    const recording = cloudRecRef.current;
+    cloudRecRef.current = null;
+    if (recording) void discardMicrophoneRecording(recording);
+  }, []);
+
   const sttInfo = SPEECH_PROVIDERS.find((p) => p.id === sttProvider);
   const ttsInfo = TTS_PROVIDERS.find((p) => p.id === ttsProvider);
   const sttNeedsKey = !!sttInfo?.requiresKey;
@@ -90,8 +100,7 @@ export default function VoiceTestPanel() {
         if (sttNeedsKey && !sttKey.trim()) throw new Error("API key required for this provider");
         const { Audio } = require("expo-av");
         await Audio.requestPermissionsAsync();
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording: rec } = await Audio.Recording.createAsync(
+        const rec = await createMicrophoneRecording(
           Audio.RecordingOptionsPresets.HIGH_QUALITY,
         );
         cloudRecRef.current = rec;
@@ -110,15 +119,16 @@ export default function VoiceTestPanel() {
     setSttStatus({ kind: "busy", msg: "transcribing…" });
     try {
       if (sttProvider === "on-device") {
-        const final = await realtimeRef.current!.stop();
+        const realtime = realtimeRef.current;
         realtimeRef.current = null;
+        if (!realtime) throw new Error("No active recording");
+        const final = await realtime.stop();
         setTranscript(final);
         setSttStatus({ kind: "ok", msg: "on-device transcript ready" });
       } else {
         const rec = cloudRecRef.current;
         cloudRecRef.current = null;
-        await rec.stopAndUnloadAsync();
-        const uri = rec.getURI();
+        const uri = await stopMicrophoneRecording(rec);
         if (!uri) throw new Error("no recording URI");
         const res = await transcribe(uri, { provider: sttProvider, apiKey: sttKey.trim() });
         setTranscript(res.text);

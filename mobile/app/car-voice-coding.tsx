@@ -46,6 +46,12 @@ import { loadLocalSpeechConfig } from "../src/lib/auth";
 import { loadKeepLastProjectEnabled, loadLastTaskProject, loadLastTaskProjectFromConvex, loadMCPServersFromConvex, loadUseLatestMCPEnabled } from "../src/lib/taskComposerPrefs";
 import { speakText } from "../src/lib/speech";
 import {
+  createMicrophoneRecording,
+  discardMicrophoneRecording,
+  prepareNonInterruptingPlaybackAudioMode,
+  stopMicrophoneRecording,
+} from "../src/lib/microphoneAudioSession";
+import {
   makeRealCarVoiceDeps,
   runCarVoiceTurn,
   type CarVoiceConfig,
@@ -140,6 +146,10 @@ export default function CarVoiceCodingScreen() {
   useEffect(
     () => () => {
       liveRef.current = false;
+      const recording = recordingRef.current;
+      recordingRef.current = null;
+      if (recording) void discardMicrophoneRecording(recording);
+      else void prepareNonInterruptingPlaybackAudioMode();
     },
     [],
   );
@@ -426,14 +436,10 @@ export default function CarVoiceCodingScreen() {
     // locks or backgrounds in a cradle — without it the session is torn down
     // mid-turn and the driver gets silence. Paired with UIBackgroundModes
     // "audio" in Info.plist / app.json; the plist key alone does nothing.
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-    });
     try {
-      const { recording } = await Audio.Recording.createAsync(
+      const recording = await createMicrophoneRecording(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        true,
       );
       recordingRef.current = recording;
       setStatus("recording");
@@ -455,13 +461,7 @@ export default function CarVoiceCodingScreen() {
    */
   const releaseAudioSession = useCallback(async () => {
     try {
-      // expo-av is required lazily here, same as the recording path above.
-      const { Audio } = require("expo-av");
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-      });
+      await prepareNonInterruptingPlaybackAudioMode();
     } catch {
       // Never let session teardown surface as a driving-time error.
     }
@@ -558,8 +558,9 @@ export default function CarVoiceCodingScreen() {
     if (!rec) return null;
     let uri: string | null = null;
     try {
-      await rec.stopAndUnloadAsync();
-      uri = rec.getURI() ?? null;
+      // Keep playback eligible in the background for the spoken reply, but
+      // switch away from PlayAndRecord immediately after mic capture ends.
+      uri = await stopMicrophoneRecording(rec, true);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setStatus("error");

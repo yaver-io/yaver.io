@@ -8,9 +8,10 @@
  *            User provides their own API key.
  */
 
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import type { SpeechProvider, TtsProvider } from "./auth";
 import { whisperModelOptions } from "./whisperModelAsset";
+import { prepareNonInterruptingPlaybackAudioMode } from "./microphoneAudioSession";
 
 /**
  * fetchWithTimeout — every network call in this file goes through here.
@@ -191,11 +192,14 @@ export interface RealtimeTranscribeOptions {
    * iOS AVAudioSession to acquire on start. Hands-free surfaces on a car/BT
    * route MUST pass a .playAndRecord + .voiceChat + Bluetooth-input config or
    * the mic captures silence over CarPlay. Shape matches whisper.rn's
-   * AudioSessionIos. Left undefined, whisper.rn does not touch the session
-   * (the historical Tasks-screen behaviour).
+   * AudioSessionIos. Left undefined, Yaver acquires a voice session just for
+   * this capture and restores/deactivates it on stop.
    */
   audioSessionOnStartIos?: unknown;
   audioSessionOnStopIos?: unknown;
+  /** Car voice may keep listening while the phone is locked. All other
+   * captures stop automatically when the app leaves the foreground. */
+  keepRecordingInBackground?: boolean;
 }
 
 export async function startRealtimeTranscribe(
@@ -209,18 +213,37 @@ export async function startRealtimeTranscribe(
     }
   }
 
-  let finalText = "";
+  await ensureRealtimeMicrophonePermission();
 
-  const { stop, subscribe } = await whisperContext.transcribeRealtime({
-    language: opts.language || "en",
-    realtimeAudioSec: 60,
-    realtimeAudioSliceSec: opts.sliceSec ?? 5,
-    realtimeAudioMinSec: 1,
-    // By default do NOT touch the session (Tasks screen pre-configures it).
-    // Hands-free car/glass surfaces pass an explicit voice-chat session.
-    audioSessionOnStartIos: opts.audioSessionOnStartIos,
-    audioSessionOnStopIos: opts.audioSessionOnStopIos,
-  });
+  let finalText = "";
+  const defaults = defaultRealtimeAudioSessionIos();
+  const audioSessionOnStartIos = opts.audioSessionOnStartIos ?? defaults.start;
+  const audioSessionOnStopIos = opts.audioSessionOnStopIos ?? (
+    audioSessionOnStartIos ? "restore" : undefined
+  );
+  const startedIosSession = Platform.OS === "ios" && !!audioSessionOnStartIos;
+
+  let realtime: { stop: () => Promise<void>; subscribe: (cb: (event: any) => void) => void };
+  try {
+    realtime = await whisperContext.transcribeRealtime({
+      language: opts.language || "en",
+      realtimeAudioSec: 60,
+      realtimeAudioSliceSec: opts.sliceSec ?? 5,
+      realtimeAudioMinSec: 1,
+      // The session exists only for the capture. whisper.rn snapshots the
+      // previous category/mode and restores it inactive when stop() completes.
+      audioSessionOnStartIos,
+      audioSessionOnStopIos,
+    });
+  } catch (error) {
+    // whisper.rn restores after a native start failure, but an earlier failure
+    // while setting category/mode sits outside its try/catch. Never strand the
+    // phone on Bluetooth HFP when opening the mic fails halfway through.
+    if (startedIosSession) await deactivateRealtimeAudioSessionIos();
+    throw error;
+  }
+
+  const { stop, subscribe } = realtime;
 
   subscribe((event: any) => {
     if (event.isCapturing) {
@@ -232,12 +255,95 @@ export async function startRealtimeTranscribe(
     }
   });
 
-  return {
-    stop: async () => {
-      await stop();
+  let stopPromise: Promise<string> | null = null;
+  let appStateSubscription: { remove: () => void } | null = null;
+  const stopCapture = (): Promise<string> => {
+    if (stopPromise) return stopPromise;
+    appStateSubscription?.remove();
+    appStateSubscription = null;
+    stopPromise = (async () => {
+      try {
+        await stop();
+      } catch (error) {
+        // abortTranscribe precedes whisper.rn's restore call. If abort throws,
+        // explicitly deactivate so external Bluetooth audio resumes anyway.
+        if (startedIosSession) await deactivateRealtimeAudioSessionIos();
+        throw error;
+      }
       return finalText;
-    },
+    })();
+    return stopPromise;
   };
+
+  if (!opts.keepRecordingInBackground) {
+    appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") void stopCapture().catch(() => {});
+    });
+    if (AppState.currentState !== "active") {
+      await stopCapture();
+      throw new Error("Recording cancelled because Yaver left the foreground.");
+    }
+  }
+
+  return {
+    stop: stopCapture,
+  };
+}
+
+/**
+ * Ask for mic access only in direct response to a recording action. Merely
+ * opening Yaver must never claim an input route or disturb another app's audio.
+ */
+async function ensureRealtimeMicrophonePermission(): Promise<void> {
+  const { Audio } = require("expo-av");
+  let permission = await Audio.getPermissionsAsync();
+  if (permission.status !== "granted" && permission.canAskAgain) {
+    permission = await Audio.requestPermissionsAsync();
+  }
+  if (permission.status !== "granted") {
+    throw new Error("Microphone permission is denied. Enable Microphone for Yaver in Settings.");
+  }
+}
+
+/**
+ * Default iOS capture route. `restore` is applied by the caller so the session
+ * is deactivated as soon as recording stops and Bluetooth music can reclaim
+ * A2DP. Android/web return no override.
+ */
+function defaultRealtimeAudioSessionIos(): { start?: unknown } {
+  if (Platform.OS !== "ios") return {};
+  try {
+    const { AudioSessionIos } = require("whisper.rn");
+    const Cat = AudioSessionIos?.Category;
+    const Opt = AudioSessionIos?.CategoryOption;
+    const Mode = AudioSessionIos?.Mode;
+    if (!Cat || !Opt || !Mode) return {};
+    return {
+      start: {
+        category: Cat.PlayAndRecord,
+        options: [
+          Opt.AllowBluetooth,
+          Opt.AllowBluetoothA2DP,
+          Opt.DefaultToSpeaker,
+          Opt.DuckOthers,
+        ].filter((x) => x !== undefined),
+        mode: Mode.VoiceChat,
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function deactivateRealtimeAudioSessionIos(): Promise<void> {
+  if (Platform.OS !== "ios") return;
+  try {
+    const { AudioSessionIos } = require("whisper.rn");
+    await AudioSessionIos.setActive(false);
+  } catch {
+    // Preserve the original start/stop error. This is a best-effort safety net
+    // for the dependency's own restore path, not a new user-facing failure.
+  }
 }
 
 async function transcribeWithWhisper(audioUri: string): Promise<string> {
@@ -559,6 +665,7 @@ async function speakWithOpenAICompat(
   });
   const uri = `${FileSystem.cacheDirectory}yaver-openai-tts-${Date.now()}.mp3`;
   await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+  await prepareNonInterruptingPlaybackAudioMode();
   const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
   activeSound = sound;
   // Resolve when playback finishes OR when stopSpeaking() cuts it off (barge-in),
@@ -633,6 +740,7 @@ export async function speakText(
   if (config.provider === "cartesia") {
     throw new Error("Cartesia TTS is handled by the agent voice loop; configure it in Settings > Voice > Agent voice loop.");
   }
+  await prepareNonInterruptingPlaybackAudioMode();
   const Speech = require("expo-speech");
   // Await completion (or barge-in stop) so callers get a real turn boundary —
   // expo-speech is otherwise fire-and-forget.

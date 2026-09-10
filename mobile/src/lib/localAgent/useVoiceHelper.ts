@@ -9,7 +9,7 @@
 // runs safe device actions. When llama.rn lands, wire engine.loadModel(...).
 // complete into the session for the free-form direct-command path.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useDevice, type Device, type DeviceState } from "../../context/DeviceContext";
 import { startRealtimeTranscribe, speakText } from "../speech";
@@ -93,6 +93,14 @@ export function useVoiceHelper(opts: { localTier?: ModelTier } = {}): UseVoiceHe
 
   const recRef = useRef<{ stop: () => Promise<string> } | null>(null);
   const sessionRef = useRef<ReturnType<typeof createVoiceSession> | null>(null);
+
+  useEffect(() => () => {
+    const recording = recRef.current;
+    recRef.current = null;
+    if (recording) void recording.stop().catch(() => {});
+    sessionRef.current?.reset();
+    sessionRef.current = null;
+  }, []);
 
   if (!sessionRef.current) {
     sessionRef.current = createVoiceSession({

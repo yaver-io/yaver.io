@@ -11,3 +11,16 @@ index 1111111..2222222 100644
      "jsSrcsDir": "./src/"
    },
    "packageManager": "yarn@1.22.22",
+diff --git a/node_modules/whisper.rn/ios/RNWhisperAudioSessionUtils.m b/node_modules/whisper.rn/ios/RNWhisperAudioSessionUtils.m
+--- a/node_modules/whisper.rn/ios/RNWhisperAudioSessionUtils.m
++++ b/node_modules/whisper.rn/ios/RNWhisperAudioSessionUtils.m
+@@ -85,4 +85,8 @@
+ +(void)setActive:(BOOL)active error:(NSError **)error {
+     AVAudioSession *session = [AVAudioSession sharedInstance];
+-    [session setActive:active error:error];
++    if (active) {
++        [session setActive:YES error:error];
++    } else {
++        [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:error];
++    }
+ }

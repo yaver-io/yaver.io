@@ -236,6 +236,9 @@ export function isVideoRecording(): boolean {
 
 let audioRecorderRef: any = null;
 let audioRecorderActive = false;
+let pcmRecorderRef: any = null;
+let pcmRecorderActive = false;
+let audioBackgroundGuardInstalled = false;
 
 function loadExpoAvOrThrow(): any {
   try {
@@ -251,6 +254,72 @@ function loadExpoAvOrThrow(): any {
         String(err),
     );
   }
+}
+
+function anyMicrophoneRecordingActive(): boolean {
+  return audioRecorderActive || pcmRecorderActive;
+}
+
+/**
+ * Return expo-av to playback-only + mix-with-others after the last SDK mic
+ * owner stops. This prevents a host app from being left on iOS
+ * PlayAndRecord/Bluetooth HFP after closing Yaver feedback voice UI.
+ */
+export async function prepareNonInterruptingAudioPlayback(): Promise<void> {
+  if (anyMicrophoneRecordingActive()) return;
+  const ExpoAv = loadExpoAvOrThrow();
+  await ExpoAv.Audio.setAudioModeAsync({
+    allowsRecordingIOS: false,
+    interruptionModeIOS: ExpoAv.InterruptionModeIOS?.MixWithOthers ?? 0,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+  });
+}
+
+async function discardSdkMicrophoneRecordings(): Promise<void> {
+  const recordings = [audioRecorderRef, pcmRecorderRef].filter(Boolean);
+  audioRecorderRef = null;
+  audioRecorderActive = false;
+  pcmRecorderRef = null;
+  pcmRecorderActive = false;
+  await Promise.all(recordings.map(async (recording) => {
+    try { await recording.stopAndUnloadAsync(); } catch { /* already stopped */ }
+  }));
+  await prepareNonInterruptingAudioPlayback().catch(() => {});
+}
+
+function ensureAudioBackgroundGuard(): void {
+  if (audioBackgroundGuardInstalled) return;
+  try {
+    const { AppState } = require('react-native');
+    AppState.addEventListener('change', (state: string) => {
+      if (state !== 'active' && anyMicrophoneRecordingActive()) {
+        void discardSdkMicrophoneRecordings();
+      }
+    });
+    audioBackgroundGuardInstalled = true;
+  } catch {
+    // The package can be imported by non-RN build tooling. Recording itself
+    // still restores the session through its stop and failure paths.
+  }
+}
+
+function appIsActive(): boolean {
+  try {
+    const { AppState } = require('react-native');
+    return !AppState.currentState || AppState.currentState === 'active';
+  } catch {
+    return true;
+  }
+}
+
+async function configureSdkMicrophoneMode(ExpoAv: any): Promise<void> {
+  await ExpoAv.Audio.setAudioModeAsync({
+    allowsRecordingIOS: true,
+    interruptionModeIOS: ExpoAv.InterruptionModeIOS?.MixWithOthers ?? 0,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+  });
 }
 
 /**
@@ -273,7 +342,7 @@ export function isVoiceCaptureSupported(): boolean {
  * actually started, so the UI can flip to "Stop" immediately.
  */
 export async function startAudioRecording(): Promise<void> {
-  if (audioRecorderActive) {
+  if (anyMicrophoneRecordingActive()) {
     throw new Error('[YaverFeedback] An audio recording is already in progress.');
   }
   const ExpoAv = loadExpoAvOrThrow();
@@ -289,17 +358,23 @@ export async function startAudioRecording(): Promise<void> {
   // Use the iOS/Android high-quality preset — transcription providers
   // (Whisper / Deepgram / OpenAI) prefer 16 kHz+ mono but also handle
   // the higher sample rates fine. Default preset is portable.
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: false,
-  });
-
   const recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-  await recording.startAsync();
-  audioRecorderRef = recording;
-  audioRecorderActive = true;
+  try {
+    await configureSdkMicrophoneMode(ExpoAv);
+    await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+    await recording.startAsync();
+    audioRecorderRef = recording;
+    audioRecorderActive = true;
+    ensureAudioBackgroundGuard();
+    if (!appIsActive()) {
+      await discardSdkMicrophoneRecordings();
+      throw new Error('[YaverFeedback] Recording cancelled because the app left the foreground.');
+    }
+  } catch (error) {
+    try { await recording.stopAndUnloadAsync(); } catch { /* not prepared */ }
+    await prepareNonInterruptingAudioPlayback().catch(() => {});
+    throw error;
+  }
 }
 
 /**
@@ -313,23 +388,27 @@ export async function stopAudioRecording(): Promise<{ path: string; duration: nu
   audioRecorderRef = null;
   audioRecorderActive = false;
   try {
-    await recording.stopAndUnloadAsync();
-  } catch {
-    // Second stop calls throw; ignore and use whatever state we have.
+    try {
+      await recording.stopAndUnloadAsync();
+    } catch {
+      // Second stop calls throw; ignore and use whatever state we have.
+    }
+    const uri = typeof recording.getURI === 'function' ? recording.getURI() : null;
+    if (!uri) {
+      throw new Error('[YaverFeedback] Audio recording produced no file.');
+    }
+    let durationMs = 0;
+    try {
+      const status = await recording.getStatusAsync();
+      durationMs = status?.durationMillis ?? 0;
+    } catch {
+      // Status can fail after unload; leave duration at 0, transcription
+      // still works.
+    }
+    return { path: uri, duration: durationMs / 1000 };
+  } finally {
+    await prepareNonInterruptingAudioPlayback().catch(() => {});
   }
-  const uri = typeof recording.getURI === 'function' ? recording.getURI() : null;
-  if (!uri) {
-    throw new Error('[YaverFeedback] Audio recording produced no file.');
-  }
-  let durationMs = 0;
-  try {
-    const status = await recording.getStatusAsync();
-    durationMs = status?.durationMillis ?? 0;
-  } catch {
-    // Status can fail after unload; leave duration at 0, transcription
-    // still works.
-  }
-  return { path: uri, duration: durationMs / 1000 };
 }
 
 /** Whether a voice-note recording is currently active. */
@@ -345,9 +424,6 @@ export function isAudioRecording(): boolean {
 // this uses its own recording options, mirroring the Yaver app's
 // AgentVoiceButton.
 
-let pcmRecorderRef: any = null;
-let pcmRecorderActive = false;
-
 // Raw LPCM 16-bit LE, 16 kHz mono. iOS uses lpcm; Android records WAV.
 const PCM_RECORDING_OPTIONS: any = {
   android: { extension: '.wav', outputFormat: 2, audioEncoder: 3, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
@@ -360,17 +436,31 @@ const PCM_RECORDING_OPTIONS: any = {
 
 /** Begin a raw-PCM recording for the voice stream. */
 export async function startPcmRecording(): Promise<void> {
-  if (pcmRecorderActive) throw new Error('[YaverFeedback] A voice recording is already in progress.');
+  if (anyMicrophoneRecordingActive()) throw new Error('[YaverFeedback] A voice recording is already in progress.');
   const ExpoAv = loadExpoAvOrThrow();
   const { Audio } = ExpoAv;
   const perm = await Audio.requestPermissionsAsync();
   if (!perm.granted) {
     throw new Error('[YaverFeedback] Microphone permission denied. Enable it in Settings ▸ Your App ▸ Microphone.');
   }
-  await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: false });
-  const { recording } = await Audio.Recording.createAsync(PCM_RECORDING_OPTIONS);
-  pcmRecorderRef = recording;
-  pcmRecorderActive = true;
+  let recording: any = null;
+  try {
+    await configureSdkMicrophoneMode(ExpoAv);
+    ({ recording } = await Audio.Recording.createAsync(PCM_RECORDING_OPTIONS));
+    pcmRecorderRef = recording;
+    pcmRecorderActive = true;
+    ensureAudioBackgroundGuard();
+    if (!appIsActive()) {
+      await discardSdkMicrophoneRecordings();
+      throw new Error('[YaverFeedback] Recording cancelled because the app left the foreground.');
+    }
+  } catch (error) {
+    if (recording) {
+      try { await recording.stopAndUnloadAsync(); } catch { /* not started */ }
+    }
+    await prepareNonInterruptingAudioPlayback().catch(() => {});
+    throw error;
+  }
 }
 
 /** Stop the voice recording; returns the WAV file:// URI (or null). */
@@ -379,8 +469,12 @@ export async function stopPcmRecording(): Promise<string | null> {
   const recording = pcmRecorderRef;
   pcmRecorderRef = null;
   pcmRecorderActive = false;
-  try { await recording.stopAndUnloadAsync(); } catch { /* already stopped */ }
-  return typeof recording.getURI === 'function' ? recording.getURI() : null;
+  try {
+    try { await recording.stopAndUnloadAsync(); } catch { /* already stopped */ }
+    return typeof recording.getURI === 'function' ? recording.getURI() : null;
+  } finally {
+    await prepareNonInterruptingAudioPlayback().catch(() => {});
+  }
 }
 
 /** Whether a voice-stream recording is currently active. */
