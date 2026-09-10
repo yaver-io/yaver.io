@@ -30,6 +30,8 @@ Removed 14 clean, inactive linked Yaver worktrees without force. Their branch re
 
 ## Release evidence and limits
 
-CLI 1.99.462 was dispatched through the canonical npm deploy target. Shared SDK 0.9.21 was prepared; local npm authentication was unavailable, so the existing protected feedback-SDK workflow was used. Check the corresponding GitHub Actions runs and registry before treating either publish as complete.
+CLI 1.99.462 is available on npm as `latest` and is serving on Ubuntu: authenticated `/info` returned 200 and the new live `exec_status` tool recovered a real command's output. Its original workflow falsely failed after a 75-second propagation window; registry verification now waits up to ten minutes and retries never republish an existing immutable version. The incorrect prerelease label was corrected after registry verification.
+
+Shared SDK 0.9.21 is verified on npm. Local npm authentication was unavailable; the existing protected feedback-SDK workflow succeeded instead.
 
 Local iOS storage is below the 10 GiB archive floor. The CI fallback uses the same canonical deploy implementation; an upload or physical-device result must be checked separately and must not be inferred from a workflow dispatch.
