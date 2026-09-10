@@ -41,13 +41,17 @@ await lease.writeFile(`${process.pid}\n`);
 const artifacts = join(process.cwd(), 'test-results', `tasks-dogfood-${Date.now()}`);
 await mkdir(artifacts, { recursive: true });
 let browser;
+let page;
 try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.YAVER_CHROMIUM_PATH || '/usr/local/bin/chromium' });
   const profile = profileFor('mobile');
   const context = await browser.newContext({ ...devices['iPhone 15 Pro'] });
-  const page = await context.newPage();
+  page = await context.newPage();
   const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => {
+    errors.push(error.message);
+    console.log(`RN-web exception: ${error.message.replace(/https?:\/\/\S+/g, '[url]').slice(0, 300)}`);
+  });
   await page.addInitScript(({ token, user, deviceId }) => {
     localStorage.setItem('yaver_installed', '1');
     localStorage.setItem('yaver.secure.yaver_auth_token', token);
@@ -115,6 +119,13 @@ try {
   expect(errors.length, 'RN-web emitted an unhandled JavaScript exception').toBe(0);
   console.log(`PIXELS/PASS artifacts: test-results/${artifacts.split('/').pop()}`);
   console.log('LIMIT: browser focus/layout verified; physical iOS keyboard occlusion needs native-device validation.');
+} catch (error) {
+  if (page) {
+    await page.screenshot({ path: join(artifacts, 'failure.png') }).catch(() => {});
+    console.log('Browser failure surface:', await page.locator('body').innerText().then(text => text.replace(/https?:\/\/\S+/g, '[url]').slice(0, 1600)).catch(() => 'unavailable'));
+    console.log(`Failure artifact: test-results/${artifacts.split('/').pop()}/failure.png`);
+  }
+  throw error;
 } finally {
   await browser?.close();
   await lease.close();
