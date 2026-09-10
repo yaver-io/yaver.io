@@ -45,9 +45,18 @@ page.on("console", (message) => {
   if (message.type() === "error") consoleErrors.push(message.text().slice(0, 300));
 });
 page.on("pageerror", (error) => consoleErrors.push(error.message.slice(0, 300)));
+page.on("request", (request) => {
+  const url = new URL(request.url());
+  if (request.method() === "POST" && url.pathname.endsWith("/tasks")) {
+    console.log(`[audit] task POST target ${url.origin}${url.pathname}`);
+  }
+});
 page.on("response", (response) => {
+  const url = new URL(response.url());
+  if (response.request().method() === "POST" && url.pathname.endsWith("/tasks")) {
+    console.log(`[audit] task POST response ${response.status()} ${response.headers()["content-type"] || "no-content-type"}`);
+  }
   if (response.status() >= 400) {
-    const url = new URL(response.url());
     failedResponses.push(`${response.status()} ${url.origin}${url.pathname}`);
   }
 });

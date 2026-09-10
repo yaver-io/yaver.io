@@ -66,6 +66,7 @@ import NetInfo, { type NetInfoState } from "@react-native-community/netinfo";
 import { recoverStaleConnectionOnForeground } from "./foregroundConnectionRecovery";
 import { withDeadline, ConnectAttemptGuard } from "./connectGuard";
 import { isRelayAuthFailure } from "./relayAuth";
+import { readAgentHealth } from "./agentHealth";
 
 // Longer than the sum of every BOUNDED connect leg (NetInfo ≤3s + direct phase
 // + 8s/tunnel + 8s/relay). A held guard older than this is hung on an UNBOUNDED
@@ -2188,7 +2189,7 @@ export class QuicClient {
         headers: this.authHeaders,
         signal: ctrl.signal,
       });
-      if (res.ok) {
+      if (await readAgentHealth(res)) {
         this._lastHealthOkAt = Date.now();
         return true;
       }
@@ -2498,7 +2499,7 @@ export class QuicClient {
             const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
               headers: probeHeaders,
             }, 8000);
-            if (res.ok) {
+            if (await readAgentHealth(res)) {
               this.activeRelayUrl = relay.httpUrl;
               this.activeRelayPassword = relay.password || null;
               this.setConnectionMode("relay");
@@ -2517,7 +2518,7 @@ export class QuicClient {
           const res = await this.fetchWithTimeout(`${directUrl}/health`, {
             headers: this.authHeaders,
           }, 5000);
-          if (res.ok) {
+          if (await readAgentHealth(res)) {
             this.activeRelayUrl = null;
             this.activeRelayPassword = null;
             this.setConnectionMode("direct");
@@ -6068,8 +6069,8 @@ export class QuicClient {
       });
       clearTimeout(timeout);
       const rttMs = Date.now() - start;
-      if (!res.ok) return { ok: false, rttMs };
-      const data = await res.json();
+      const data = await readAgentHealth(res);
+      if (!data) return { ok: false, rttMs };
       return {
         ok: true,
         rttMs,
@@ -8663,8 +8664,8 @@ export class QuicClient {
       return this.fetchWithTimeout(url, { headers: this.authHeaders, signal: ctrl.signal })
         .then(async (res) => {
           clearTimeout(timer);
-          if (!res.ok) throw new Error(`status ${res.status}`);
-          const body = await res.json().catch(() => ({}));
+          const body = await readAgentHealth(res);
+          if (!body) throw new Error(res.ok ? "200 response was not Yaver agent health JSON" : `status ${res.status}`);
           // Positive proof: this path label works on the current network.
           // Enables observedTailnetUp() to relax the exploration budget on
           // the NEXT race (audit §2).
@@ -8763,12 +8764,14 @@ export class QuicClient {
         const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
           headers: probeHeaders,
         }, 8000);
-        if (res.ok) {
-          const healthData = await res.json().catch(() => ({}));
+        const healthData = await readAgentHealth(res);
+        if (healthData) {
           appLog("info", `[relay] ${relay.id} reachable — agent answered via relay`);
-          return { relay, authExpired: !!healthData.authExpired };
+          return { relay, authExpired: healthData.authExpired };
         }
-        this._lastTransportError = await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
+        this._lastTransportError = res.ok
+          ? `Relay ${relay.id} returned 200, but the body was not Yaver agent health JSON`
+          : await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
         // relayStatusHint already turns the common codes into something
         // actionable (rate limited / overloaded / auth failed) — surface it
         // rather than a bare status number.
@@ -9005,9 +9008,9 @@ export class QuicClient {
             const res = await this.fetchWithTimeout(`${tunnel.url}/health`, {
               headers: probeHeaders,
             }, 8000);
-            if (res.ok) {
-              const healthData = await res.json().catch(() => ({}));
-              this.agentAuthExpired = !!healthData.authExpired;
+            const healthData = await readAgentHealth(res);
+            if (healthData) {
+              this.agentAuthExpired = healthData.authExpired;
               // Tunnel works like a direct connection — no relay proxy path needed
               this.activeRelayUrl = null;
               this.activeRelayPassword = null;
@@ -9164,9 +9167,8 @@ export class QuicClient {
     };
     try {
       const res = await this.fetchWithTimeout(`${base}/health`, { headers }, 2500);
-      if (!res.ok) return null;
-      const body = await res.json().catch(() => ({} as { authExpired?: boolean }));
-      return { authExpired: !!body.authExpired };
+      const body = await readAgentHealth(res);
+      return body ? { authExpired: body.authExpired } : null;
     } catch {
       return null;
     }
@@ -9490,7 +9492,7 @@ export class QuicClient {
             const probeRes = await this.fetchWithTimeout(`${directUrl}/health`, {
               headers: this.authHeaders,
             }, 2000);
-            if (probeRes.ok) {
+            if (await readAgentHealth(probeRes)) {
               // Switch to direct — update host/port so baseUrl getter returns the LAN address
               this.host = lanInfo.ip;
               this.port = lanInfo.port;
@@ -9514,7 +9516,7 @@ export class QuicClient {
         const res = await this.fetchWithTimeout(`${this.baseUrl}/health`, {
           headers: this.authHeaders,
         }, 10000);
-        if (res.ok) {
+        if (await readAgentHealth(res)) {
           this._consecutiveHeartbeatFailures = 0;
           return;
         }
@@ -9560,7 +9562,7 @@ export class QuicClient {
         const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
           headers: probeHeaders,
         }, 8000);
-        if (res.ok) {
+        if (await readAgentHealth(res)) {
           this.activeRelayUrl = relay.httpUrl;
           this.activeRelayPassword = relay.password || null;
           this.setConnectionMode("relay");
