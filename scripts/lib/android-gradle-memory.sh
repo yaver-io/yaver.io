@@ -3,7 +3,9 @@
 # Populates YAVER_ANDROID_GRADLE_ARGS for standalone Android-family builds.
 # `--no-daemon` still launches a single-use Gradle process, and Kotlin may start
 # additional compiler daemons unless explicitly kept in-process. A nominal
-# 4 GiB worker therefore needs one worker and one shared 2 GiB JVM ceiling.
+# 4 GiB worker therefore needs one worker and a 1 GiB shared JVM ceiling;
+# the remaining memory is required by aapt2, signing, the operating system, and
+# the agent workloads the box is still serving during a release.
 yaver_android_gradle_memory_args() {
   local total_memory_kb=""
   if [ -r /proc/meminfo ]; then
@@ -18,7 +20,7 @@ yaver_android_gradle_memory_args() {
     YAVER_ANDROID_GRADLE_ARGS=(
       --no-daemon
       --max-workers=1
-      '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m'
+      '-Dorg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
   else
