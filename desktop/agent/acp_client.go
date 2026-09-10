@@ -839,10 +839,22 @@ func acpExternalMCPServer(srv ExternalMCPServer) acpMCPServer {
 // acpMCPServersForTask assembles the mcpServers array for a task session:
 // the yaver MCP (unless explicitly deselected) plus the allowed external
 // servers. Mirrors prepareRunnerMCPScope's includeYaverMcp sentinel semantics.
-func acpMCPServersForTask(yaverPath string, servers []ExternalMCPServer, includeYaverMcp bool) []acpMCPServer {
+func acpMCPServersForTask(yaverPath string, servers []ExternalMCPServer, includeYaverMcp bool, task *Task) []acpMCPServer {
 	var out []acpMCPServer
 	if includeYaverMcp {
-		out = append(out, acpYaverMCPServer(yaverPath))
+		yaver := acpYaverMCPServer(yaverPath)
+		// 2026-09-10: an ACP Codex task completed its UI fix, then its
+		// yaver_request_render failed with YAVER_TASK_ID missing. Adapters
+		// need not pass their own environment to MCP children. Bind the
+		// descriptor to this task explicitly; never inherit the daemon's
+		// possibly unrelated task ID or copy host secrets to external MCPs.
+		if task != nil {
+			yaver.Env = []acpMCPEnvVar{
+				{Name: "YAVER_TASK_ID", Value: strings.TrimSpace(task.ID)},
+				{Name: "YAVER_TASK_SOURCE", Value: strings.TrimSpace(task.Source)},
+			}
+		}
+		out = append(out, yaver)
 	}
 	for _, srv := range servers {
 		out = append(out, acpExternalMCPServer(srv))

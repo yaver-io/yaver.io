@@ -4869,33 +4869,20 @@ export default function TasksScreen() {
     if (recording) void discardMicrophoneRecording(recording);
   }, [followUpExpanded, isRecording, showNewTask]);
 
-  // Sticky input mode. The initial mode is keyboard text, and a follow-up defaults to
-  // whatever method the user submitted the PRIOR message with. So this starts
-  // text; every submit records how it was actually sent (inputFromSpeech),
-  // and opening the follow-up composer re-arms dictation when the last send was
-  // voice. A ref, not state — it must be read synchronously inside the open
-  // handler without forcing a re-render.
-  const lastSubmitModeRef = useRef<"voice" | "text">("text");
-
-  // Open the follow-up composer, honouring the sticky mode: re-arm dictation
-  // when the previous message went out by voice. startRecording is deferred a
-  // tick so the expanded composer is mounted first; otherwise the recording
-  // UI attaches to a view that is about to unmount.
+  // The text area is an explicit keyboard request, just like New Task.
+  // Dictation belongs to the microphone button, not a delayed callback that
+  // could start recording after the user has already closed this sheet.
   const openFollowUpComposer = () => {
     const focusRequest = ++followUpFocusRequestRef.current;
     setFollowUpExpanded(true);
-    if (lastSubmitModeRef.current === "voice") {
-      setTimeout(() => { void startRecording("followup"); }, 250);
-    } else {
-      requestAnimationFrame(() => {
-        if (followUpFocusRequestRef.current === focusRequest) {
-          followUpInputRef.current?.focus();
-        }
-      });
-    }
+    requestAnimationFrame(() => {
+      if (followUpFocusRequestRef.current === focusRequest) {
+        followUpInputRef.current?.focus();
+      }
+    });
   };
 
-  const closeFollowUpComposer = () => {
+  const closeFollowUpComposer = useCallback(() => {
     // Invalidate a focus queued by openFollowUpComposer before changing task
     // detail. `autoFocus` cannot express this distinction and was the reason a
     // plain task-card tap could summon the software keyboard.
@@ -4904,7 +4891,14 @@ export default function TasksScreen() {
     Keyboard.dismiss();
     setShowFollowUpOptions(false);
     setFollowUpExpanded(false);
-  };
+  }, []);
+
+  // Task cards are only one entry point. Deep links, the running-task pill,
+  // forks and tablet navigation must also open in reading mode. Depend on
+  // identity only so streamed replies never dismiss an actively edited input.
+  useEffect(() => {
+    closeFollowUpComposer();
+  }, [selectedTask?.id, selectedTask?.deviceId, closeFollowUpComposer]);
 
   const openTaskDetails = (task: Task) => {
     closeFollowUpComposer();
@@ -5355,7 +5349,6 @@ export default function TasksScreen() {
 
     // Remember how this task went out so the follow-up composer defaults to the
     // same input mode (voice ↔ text).
-    lastSubmitModeRef.current = inputFromSpeech ? "voice" : "text";
 
     // Hermes-reload fast-path: a bare "reload"/"hot reload"/"hermes"
     // command — typed or dictated into the composer — shouldn't spin up a
@@ -6174,7 +6167,6 @@ export default function TasksScreen() {
       return;
     }
     // Remember how this went out so the NEXT follow-up defaults to the same mode.
-    lastSubmitModeRef.current = inputFromSpeech ? "voice" : "text";
     // Stop any active recording before sending
     if (isRecording && promptOverride === undefined) {
       try { await stopRecordingAndTranscribe(); } catch {}
@@ -10050,8 +10042,7 @@ export default function TasksScreen() {
                               ? finishVoiceAndSubmit("followup")
                               : handleFollowUp();
                             void submit;
-                            setShowFollowUpOptions(false);
-                            setFollowUpExpanded(false);
+                            closeFollowUpComposer();
                           }}
                           disabled={(!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing}
                         >
@@ -10090,6 +10081,9 @@ export default function TasksScreen() {
                     <Pressable
                       style={{ flex: 1 }}
                       onPress={openFollowUpComposer}
+                      accessibilityRole="button"
+                      accessibilityLabel="Write a follow-up"
+                      testID="open-followup"
                     >
                       <View
                         style={[

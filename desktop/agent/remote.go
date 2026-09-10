@@ -627,7 +627,7 @@ func (m *RemoteManager) Exec(machineID, command string) (string, error) {
 	rm, ok := m.machines[machineID]
 	if !ok {
 		m.mu.Unlock()
-		return "", fmt.Errorf("machine %q not found", machineID)
+		return "", fmt.Errorf("provisioned machine %q not found; for a Yaver mesh device from list_machines, use exec_command with device_id; remote_exec accepts IDs from remote_list", machineID)
 	}
 	host, user := rm.Host, rm.User
 	m.mu.Unlock()

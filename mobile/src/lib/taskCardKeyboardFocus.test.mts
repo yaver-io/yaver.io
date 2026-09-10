@@ -41,3 +41,14 @@ test("the follow-up field focuses only after an explicit composer tap", () => {
   assert.match(input, /ref=\{followUpInputRef\}/);
   assert.doesNotMatch(input, /\bautoFocus\b/);
 });
+
+test("text taps do not start a delayed microphone session", () => {
+  const open = functionBody("openFollowUpComposer", "closeFollowUpComposer");
+  assert.doesNotMatch(open, /startRecording|lastSubmitModeRef|setTimeout/);
+});
+
+test("task identity changes close the composer even through links and the running-task pill", () => {
+  assert.match(tasksSource, /useEffect\(\(\) => \{\s*closeFollowUpComposer\(\);\s*\}, \[selectedTask\?\.id, selectedTask\?\.deviceId, closeFollowUpComposer\]\)/);
+  assert.match(tasksSource, /const closeFollowUpComposer = useCallback\(/,
+    "streamed task updates must not reset focus through an unstable callback");
+});

@@ -145,7 +145,7 @@ func (tm *TaskManager) tryStartRunnerACP(ctx context.Context, task *Task, prompt
 		return false, fmt.Errorf("initialize: %w", err)
 	}
 
-	mcpServers := acpMCPServersForTask(findYaverBinary(), enabledExternalServersFor(task.MCPServers), task.IncludeYaverMcp)
+	mcpServers := acpMCPServersForTask(findYaverBinary(), enabledExternalServersFor(task.MCPServers), task.IncludeYaverMcp, task)
 	sessionCtx, sessionCancel := context.WithTimeout(ctx, 30*time.Second)
 	sessionID, configOptions, err := client.NewSession(sessionCtx, taskDir, mcpServers)
 	sessionCancel()

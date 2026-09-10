@@ -660,11 +660,11 @@ func getWorkspaceMCPTools() []map[string]interface{} {
 		},
 		{
 			"name":        "remote_exec",
-			"description": "Execute a command on a remote machine.",
+			"description": "Execute SSH on a provisioned machine from remote_list. For a Yaver mesh device from list_machines, use exec_command with device_id instead.",
 			"inputSchema": map[string]interface{}{
 				"type": "object", "required": []string{"machine_id", "command"},
 				"properties": map[string]interface{}{
-					"machine_id": map[string]interface{}{"type": "string"},
+					"machine_id": map[string]interface{}{"type": "string", "description": "Provisioned machine ID from remote_list, not a mesh device ID from list_machines."},
 					"command":    map[string]interface{}{"type": "string"},
 				},
 			},
