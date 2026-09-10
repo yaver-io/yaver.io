@@ -96,10 +96,10 @@ try {
   await page.goto(new URL('/tasks', appURL).href, { waitUntil: 'domcontentloaded', timeout: 120000 });
   const allTasks = page.getByRole('button', { name: 'Show all tasks', exact: true }).first();
   // Device restoration can remount the list during initial navigation. Wait
-  // for the requested filter AND its data, not just a successful early tap.
+  // for the requested data, not just a successful early tap. This app's
+  // button adapter does not serialize accessibilityState as aria-selected.
   await expect(async () => {
     await allTasks.click();
-    await expect(allTasks).toHaveAttribute('aria-selected', 'true', { timeout: 1500 });
     await expect(page.getByText(task.title, { exact: true }).first()).toBeVisible({ timeout: 1500 });
   }).toPass({ timeout: 60000 });
   await page.getByText(task.title, { exact: true }).first().click({ timeout: 60000 });
