@@ -94,6 +94,7 @@ try {
 
   // Fresh navigation proves ordinary task entry never inherits input focus.
   await page.goto(new URL('/tasks', appURL).href, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await page.getByRole('button', { name: 'Show all tasks', exact: true }).click({ timeout: 60000 });
   await page.getByText(task.title, { exact: true }).first().click({ timeout: 60000 });
   await expect(composer).toBeVisible();
   expect(await focusedInput()).toBe(false);

@@ -7511,6 +7511,9 @@ export default function TasksScreen() {
               ] as const).map(chip => (
                 <Pressable
                   key={chip.key}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Show ${chip.key === "all" ? "all" : chip.label.toLowerCase()} tasks`}
+                  accessibilityState={{ selected: effectiveFilter === chip.key }}
                   onPress={() => {
                     // Tapping the Active chip while it's already selected opens
                     // the bulk-action popup (stop / remove all active); the first
@@ -7587,9 +7590,9 @@ export default function TasksScreen() {
             canComposeTask ? (
               <EmptyState
                 icon="file-tray-outline"
-                title="All Clear"
-                body="No tasks yet. Start one here or in a coding terminal on your machine."
-                action={{ label: "New task", onPress: openCreateTask }}
+                title={tasks.length > 0 ? "No tasks in this view" : "All Clear"}
+                body={tasks.length > 0 ? "Your other tasks are still available. Show all tasks to find them." : "No tasks yet. Start one here or in a coding terminal on your machine."}
+                action={tasks.length > 0 ? { label: "Show all tasks", onPress: () => setStatusFilter("all") } : { label: "New task", onPress: openCreateTask }}
               />
             ) : codingMode === "local-only" ? (
               <EmptyState
