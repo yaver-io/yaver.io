@@ -61,6 +61,7 @@ type TmuxManager struct {
 	adopted  map[string]string // tmux session name -> task ID
 	taskMgr  *TaskManager
 	pollStop map[string]context.CancelFunc // per-session poll cancellation
+	discoveryStop context.CancelFunc
 }
 
 // knownAgentBinaries maps binary substrings to friendly agent type names.
@@ -571,6 +572,78 @@ func (m *TmuxManager) AdoptTarget(sessionName, paneID string) (*Task, error) {
 	return task, nil
 }
 
+// ReconcileLiveAgentPanes exposes every confirmed coding-agent pane through
+// the shared Tasks API, so every client surface sees the same inventory.
+func (m *TmuxManager) ReconcileLiveAgentPanes() {
+	if m == nil || m.taskMgr == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), vibeDefaultDeadline)
+	panes, err := ListVibePanes(ctx)
+	cancel()
+	if err != nil {
+		log.Printf("[tmux] live pane reconciliation failed: %v", err)
+		return
+	}
+
+	for _, pane := range panes {
+		if !pane.AgentConfirmed || normalizeRunnerID(pane.Agent) == "" || paneManagedByTask(m.taskMgr, pane) {
+			continue
+		}
+		if _, err := m.AdoptTarget(pane.SessionName, pane.PaneID); err != nil {
+			log.Printf("[tmux] could not expose live pane %s in Tasks: %v", pane.PaneID, err)
+		}
+	}
+}
+
+func paneManagedByTask(taskMgr *TaskManager, pane VibePane) bool {
+	taskMgr.mu.RLock()
+	defer taskMgr.mu.RUnlock()
+	for _, task := range taskMgr.tasks {
+		if task == nil || (task.Status != TaskStatusRunning && task.Status != TaskStatusQueued) {
+			continue
+		}
+		if task.TmuxPaneID != "" && task.TmuxPaneID == pane.PaneID {
+			return true
+		}
+		// Older Yaver-created tasks did not persist pane ids. Their one-pane
+		// session still belongs to that task and must not gain a duplicate.
+		if task.TmuxPaneID == "" && task.TmuxSession != "" && task.TmuxSession == pane.SessionName {
+			return true
+		}
+	}
+	return false
+}
+
+// StartLivePaneDiscovery also catches panes created after the agent starts.
+func (m *TmuxManager) StartLivePaneDiscovery() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.discoveryStop != nil {
+		m.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.discoveryStop = cancel
+	m.mu.Unlock()
+
+	m.ReconcileLiveAgentPanes()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				m.ReconcileLiveAgentPanes()
+			}
+		}
+	}()
+}
+
 // DetachSession stops monitoring an adopted tmux session without killing it.
 // The task is marked as stopped but the tmux session continues running.
 func (m *TmuxManager) DetachSession(taskID string) error {
@@ -947,6 +1020,8 @@ func (m *TmuxManager) SendTmuxInputWithIntent(taskID, input string, allowShell b
 // forever against a pane nobody can reach.
 func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, key, target string) {
 	var prevCapture string
+	var agentMissingSince time.Time
+	var lastAgentProbe time.Time
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -980,6 +1055,38 @@ func (m *TmuxManager) pollTmuxOutput(ctx context.Context, taskID, key, target st
 				delete(m.pollStop, key)
 				m.mu.Unlock()
 				return
+			}
+
+			// A runner's own /exit drops back to a shell while tmux stays alive.
+			// Once that transition is stable, close the empty pane; the next tick
+			// completes the task through the normal disappeared-target path.
+			if time.Since(lastAgentProbe) >= 2*time.Second {
+				lastAgentProbe = time.Now()
+				m.taskMgr.mu.RLock()
+				task := m.taskMgr.tasks[taskID]
+				runnerID := ""
+				if task != nil {
+					runnerID = normalizeRunnerID(task.RunnerID)
+				}
+				m.taskMgr.mu.RUnlock()
+				if runnerID != "" && runnerID != "unknown" {
+					probeCtx, cancel := context.WithTimeout(context.Background(), vibeDefaultDeadline)
+					_, confirmed := tmuxTargetAgent(probeCtx, target)
+					cancel()
+					if confirmed {
+						agentMissingSince = time.Time{}
+					} else if agentMissingSince.IsZero() {
+						agentMissingSince = time.Now()
+					} else if time.Since(agentMissingSince) >= 3*time.Second {
+						log.Printf("[tmux] runner exited in %s — closing completed task pane %s", target, taskID)
+						if strings.HasPrefix(target, "%") {
+							_ = exec.Command(tmuxCmdName(), "kill-pane", "-t", target).Run()
+						} else {
+							_ = exec.Command(tmuxCmdName(), "kill-session", "-t", target).Run()
+						}
+						continue
+					}
+				}
 			}
 
 			// Capture current pane content (last 200 lines for reasonable diff window)
@@ -1091,6 +1198,10 @@ func (m *TmuxManager) ReAdoptOnStartup() {
 func (m *TmuxManager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.discoveryStop != nil {
+		m.discoveryStop()
+		m.discoveryStop = nil
+	}
 	for name, cancel := range m.pollStop {
 		cancel()
 		log.Printf("[tmux] Stopped polling for session %q", name)

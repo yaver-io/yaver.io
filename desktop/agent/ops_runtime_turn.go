@@ -500,21 +500,53 @@ func runtimeTurnSpokenFromTask(task *Task) string {
 	if task == nil {
 		return ""
 	}
+	summary := runtimeTurnTaskSummary(task)
 	switch task.Status {
 	case TaskStatusFinished:
 		// Deliberately not "you can test it" — nothing has reloaded yet. The
 		// user has to ask for that, and runtime_turn_verify reports whether a
 		// device was actually listening.
+		if summary != "" {
+			return watchClampSentence("Code's done. " + summary + " Say test it to push it to your phone.")
+		}
 		return "Code's done. Say test it to push it to your phone."
 	case TaskStatusFailed:
+		if summary != "" {
+			return watchClampSentence("That failed. " + summary)
+		}
 		return "That failed. I sent the details to your phone."
 	case TaskStatusReview:
+		if summary != "" {
+			return watchClampSentence("It needs your review. " + summary)
+		}
 		return "It needs your review."
 	case TaskStatusQueued:
+		if summary != "" {
+			return watchClampSentence("Queued. " + summary)
+		}
 		return "Queued."
 	default:
+		if summary != "" {
+			return watchClampSentence("Working. " + summary)
+		}
 		return "Working."
 	}
+}
+
+func runtimeTurnTaskSummary(task *Task) string {
+	if task == nil {
+		return ""
+	}
+	if clause := watchFirstStatusClause(runtimeTurnTaskText(task)); clause != "" {
+		return clause
+	}
+	if clause := watchFirstStatusClause(task.Description); clause != "" {
+		return clause
+	}
+	if clause := watchFirstStatusClause(task.Title); clause != "" {
+		return clause
+	}
+	return ""
 }
 
 func runtimeTurnTaskText(task *Task) string {

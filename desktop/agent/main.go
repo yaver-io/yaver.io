@@ -3253,6 +3253,7 @@ func runServe(args []string) {
 		} else if sessions, _ := taskMgr.TmuxMgr.ListTmuxSessions(); len(sessions) == 1 && sessions[0].Name == "yaver" {
 			log.Println("Tmux: bootstrapped fresh 'yaver' session — /spatial will attach to it")
 		}
+		taskMgr.TmuxMgr.StartLivePaneDiscovery()
 	} else {
 		// Say what actually breaks. The old wording named only /spatial and the
 		// Terminal tab, so an operator whose autorun never started had no way to

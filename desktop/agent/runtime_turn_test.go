@@ -218,6 +218,47 @@ func TestRuntimeTurnReadyToTestIsUnverifiedUntilReloadAttempted(t *testing.T) {
 	}
 }
 
+func TestRuntimeTurnStatusIncludesHumanReadableTaskSummary(t *testing.T) {
+	withIsolatedRuntimeQueue(t)
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	tm.DummyMode = true
+	server := &HTTPServer{taskMgr: tm}
+	resp := executeRuntimeTurn(OpsContext{Ctx: context.Background(), Server: server}, RuntimeTurnRequest{
+		Utterance:   "fix the startup flicker",
+		Development: RuntimeTurnDevelopment{Queue: RuntimeTurnQueuePrefs{Mode: "run"}},
+	})
+	task, _ := tm.GetTask(resp.Queue.TaskID)
+	task.Status = TaskStatusRunning
+	task.ResultText = "Updated the loading spinner and tightened the transition timing."
+
+	status := runtimeTurnStatus(OpsContext{Server: server}, resp.Queue.ItemID)
+	if !strings.Contains(status.Spoken, "Updated the loading spinner") {
+		t.Fatalf("spoken summary dropped task result text: %q", status.Spoken)
+	}
+}
+
+func TestRuntimeTurnStatusSummaryNeverLeaksCode(t *testing.T) {
+	withIsolatedRuntimeQueue(t)
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	tm.DummyMode = true
+	server := &HTTPServer{taskMgr: tm}
+	resp := executeRuntimeTurn(OpsContext{Ctx: context.Background(), Server: server}, RuntimeTurnRequest{
+		Utterance:   "fix the startup flicker",
+		Development: RuntimeTurnDevelopment{Queue: RuntimeTurnQueuePrefs{Mode: "run"}},
+	})
+	task, _ := tm.GetTask(resp.Queue.TaskID)
+	task.Status = TaskStatusRunning
+	task.ResultText = "const broken = true;"
+
+	status := runtimeTurnStatus(OpsContext{Server: server}, resp.Queue.ItemID)
+	if strings.Contains(status.Spoken, "const broken") {
+		t.Fatalf("spoken summary leaked code: %q", status.Spoken)
+	}
+	if status.Spoken != "Working." {
+		t.Fatalf("spoken summary = %q, want plain fallback", status.Spoken)
+	}
+}
+
 // The whole point of verify: report the REAL delivery result. A phone that
 // registered a session but is not holding the command stream must count as
 // unreachable, not as success.

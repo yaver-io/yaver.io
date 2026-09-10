@@ -47,6 +47,7 @@ package main
 // entirely and only the scoped route pin remains active.
 
 import (
+	"encoding/base64"
 	"net/url"
 	"regexp"
 	"strings"
@@ -83,6 +84,17 @@ func extractPreviewAuthQuery(rawQuery string) string {
 // (scheme, //host) and data:/blob:/# are left alone — only same-document
 // relative references need the auth appended.
 var staticAssetAttrRe = regexp.MustCompile(`(?i)\b(src|href)\s*=\s*"([^"]+)"`)
+
+// staticScriptTagRe finds parser-created external scripts. The relay consumes
+// `__rp` before forwarding the document request to the agent, so the static
+// rewrite below can see `token` but not the relay credential. Relative URLs do
+// not inherit the document query and parser-created scripts start fetching
+// before a MutationObserver can repair them. Turn them into tiny inline
+// loaders; the loader runs at the same parser position, clones every original
+// attribute, and asks the already-injected runtime shim to add the document's
+// complete auth query before inserting the executable script.
+var staticScriptTagRe = regexp.MustCompile(`(?is)<script\b[^>]*>\s*</script>`)
+var scriptSrcAttrRe = regexp.MustCompile(`(?i)\bsrc\s*=\s*"([^"]+)"`)
 
 // appendAuthToStaticAssets rewrites relative src/href values to carry authQuery.
 func appendAuthToStaticAssets(html, authQuery string) string {
@@ -128,6 +140,26 @@ func isRelativeAssetRef(v string) bool {
 	return true
 }
 
+func deferStaticScriptsToPreviewShim(html string) string {
+	return staticScriptTagRe.ReplaceAllStringFunc(html, func(tag string) string {
+		sub := scriptSrcAttrRe.FindStringSubmatch(tag)
+		if len(sub) != 2 || !isRelativeAssetRef(sub[1]) {
+			return tag
+		}
+		// Base64 keeps guest-controlled attributes out of the inline script's
+		// source grammar (including a literal </script>). The DOM parser restores
+		// the original element inertly; createElement makes the replacement live.
+		encoded := base64.StdEncoding.EncodeToString([]byte(tag))
+		return `<script data-yaver="preview-static-loader">(function(){try{` +
+			`var d=document.createElement("div");d.innerHTML=atob("` + encoded + `");` +
+			`var o=d.querySelector("script"),s=document.createElement("script");` +
+			`Array.prototype.forEach.call(o.attributes,function(a){if(a.name!=="src")s.setAttribute(a.name,a.value);});` +
+			`s.src=window.__yaverPreviewURL?window.__yaverPreviewURL(o.getAttribute("src")):o.getAttribute("src");` +
+			`document.currentScript.replaceWith(s);` +
+			`}catch(e){}})();</script>`
+	})
+}
+
 // previewAuthShimJS keeps same-origin dynamic requests inside the browser
 // preview's scoped proxy lane and propagates the page's own auth query when
 // present. The lane is captured before devRouterBasePathScript replaces the
@@ -153,11 +185,10 @@ function A(u){try{
   url=new URL(s,base?new URL(base,location.origin):location.href);
  }
  if(url.origin!==location.origin)return u;
- if(q&&!url.searchParams.has("__rp")&&!url.searchParams.has("token")){
-  keep.forEach(function(v,k){url.searchParams.set(k,v);});
- }
+ if(q){keep.forEach(function(v,k){if(!url.searchParams.has(k))url.searchParams.set(k,v);});}
  return url.toString();
 }catch(e){return u;}}
+window.__yaverPreviewURL=A;
 var of=window.fetch;
 if(of)window.fetch=function(i,init){try{
  if(typeof i==="string")return of(A(i),init);
@@ -198,5 +229,15 @@ func injectPreviewAuthShim(html string) string {
 // applyPreviewRelayAuth is the whole transform: static rewrite + runtime shim.
 func applyPreviewRelayAuth(html, rawQuery string) string {
 	authQuery := extractPreviewAuthQuery(rawQuery)
-	return injectPreviewAuthShim(appendAuthToStaticAssets(html, authQuery))
+	rewritten := html
+	// The shared relay strips its own password before forwarding. Seeing an
+	// agent token without __rp is therefore the exact half-authenticated shape
+	// that produced HTML 200 + entry.bundle 401. Defer external scripts so the
+	// runtime can read __rp from the browser's unchanged location.search.
+	vals, _ := url.ParseQuery(rawQuery)
+	if vals.Get("token") != "" && vals.Get("__rp") == "" {
+		rewritten = deferStaticScriptsToPreviewShim(rewritten)
+	}
+	rewritten = appendAuthToStaticAssets(rewritten, authQuery)
+	return injectPreviewAuthShim(rewritten)
 }
