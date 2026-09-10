@@ -119,6 +119,7 @@ import {
 import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, loadLocalSpeechConfig, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS, speakText as speakConfiguredText } from "../../src/lib/speech";
+import { createMicrophoneRecording, discardMicrophoneRecording, stopMicrophoneRecording } from "../../src/lib/microphoneAudioSession";
 import { useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import { Badge } from "../../src/components/Badge";
@@ -3267,6 +3268,16 @@ export default function TasksScreen() {
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [preRecordText, setPreRecordText] = useState(""); // text before recording started
 
+  useEffect(() => () => {
+    if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+    const realtime = realtimeRef.current;
+    realtimeRef.current = null;
+    if (realtime) void realtime.stop().catch(() => {});
+    const recording = audioRecordingRef.current;
+    audioRecordingRef.current = null;
+    if (recording) void discardMicrophoneRecording(recording);
+  }, []);
+
   // Load speech settings from Convex (default: on-device whisper). We track
   // the whisper init error so the mic button can warn up-front instead of
   // failing with a cryptic message when the user actually taps it.
@@ -4825,32 +4836,13 @@ export default function TasksScreen() {
 
   // ── Voice recording ─────────────────────────────────────────────────
 
-  // Pre-init: request mic permission, configure iOS audio session, init whisper — all on mount
-  // BEFORE any Modal opens (iOS blocks audio session activation from inside a <Modal> context).
+  // Warm only the speech model on mount. Microphone permission and the iOS
+  // PlayAndRecord session are deliberately acquired inside
+  // startRealtimeTranscribe, after the user taps a mic. Activating that session
+  // here switched connected cars/headphones from A2DP music to the call route
+  // for the entire time Yaver was open, even when voice input was idle.
   useEffect(() => {
-    (async () => {
-      try {
-        // Request mic permission early so the OS prompt appears at app launch
-        const { Audio } = require("expo-av");
-        const perm = await Audio.requestPermissionsAsync();
-        // Give OS time to finalize permission grant before configuring audio session
-        if (perm.status === "granted") {
-          await new Promise((r) => setTimeout(r, 500));
-        }
-      } catch (e) {
-        console.warn("[audio] Failed to request mic permission:", e);
-      }
-      try {
-        if (Platform.OS === "ios") {
-          const { AudioSessionIos } = require("whisper.rn");
-          await AudioSessionIos.setCategory("PlayAndRecord", ["DefaultToSpeaker", "AllowBluetooth"]);
-          await AudioSessionIos.setActive(true);
-        }
-      } catch (e) {
-        console.warn("[audio] Failed to pre-configure audio session:", e);
-      }
-      initWhisper().catch((e) => console.warn("[speech] Pre-init failed:", e));
-    })();
+    initWhisper().catch((e) => console.warn("[speech] Pre-init failed:", e));
   }, []);
 
   // Shared screenshots now route to ShareComposeModal (the WhatsApp-style
@@ -4859,6 +4851,25 @@ export default function TasksScreen() {
 
   // target: which text field to write into ("task" = new task, "followup" = follow-up input)
   const recordingTargetRef = useRef<"task" | "followup">("task");
+
+  // Closing either composer is also a mic-stop action. Without this, swiping a
+  // modal away hid the red mic while its recorder kept the Bluetooth call
+  // route alive in the background.
+  useEffect(() => {
+    if (!isRecording) return;
+    const target = recordingTargetRef.current;
+    if ((target === "task" && showNewTask) || (target === "followup" && followUpExpanded)) return;
+
+    setIsRecording(false);
+    if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+    recordingTimeoutRef.current = null;
+    const realtime = realtimeRef.current;
+    realtimeRef.current = null;
+    if (realtime) void realtime.stop().catch(() => {});
+    const recording = audioRecordingRef.current;
+    audioRecordingRef.current = null;
+    if (recording) void discardMicrophoneRecording(recording);
+  }, [followUpExpanded, isRecording, showNewTask]);
 
   // Sticky input mode. The initial mode is keyboard text, and a follow-up defaults to
   // whatever method the user submitted the PRIOR message with. So this starts
@@ -4938,9 +4949,9 @@ export default function TasksScreen() {
         setInputFromSpeech(true);
       } else {
         // Cloud providers: record with expo-av, then send file
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-        audioRecordingRef.current = recording;
+        audioRecordingRef.current = await createMicrophoneRecording(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        );
         setIsRecording(true);
       }
       // Auto-stop recording after 5 minutes for privacy
@@ -4971,9 +4982,10 @@ export default function TasksScreen() {
 
     if (speechProvider === "on-device" && realtimeRef.current) {
       // Realtime: stop and get final text (already streamed into input)
+      const realtime = realtimeRef.current;
+      realtimeRef.current = null;
       try {
-        const finalText = await realtimeRef.current.stop();
-        realtimeRef.current = null;
+        const finalText = await realtime.stop();
         if (finalText) {
           const base = preRecordText;
           commitText(base ? base + " " + finalText : finalText);
@@ -4987,12 +4999,12 @@ export default function TasksScreen() {
     }
 
     // Cloud providers: stop recording, upload file
-    if (!audioRecordingRef.current) return textRef.current;
+    const recording = audioRecordingRef.current;
+    audioRecordingRef.current = null;
+    if (!recording) return textRef.current;
     setIsTranscribing(true);
     try {
-      await audioRecordingRef.current.stopAndUnloadAsync();
-      const uri = audioRecordingRef.current.getURI();
-      audioRecordingRef.current = null;
+      const uri = await stopMicrophoneRecording(recording);
       if (!uri) throw new Error("No recording URI");
       if (!speechProvider) throw new Error("No speech provider configured.");
 

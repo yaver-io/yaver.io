@@ -82,6 +82,20 @@ export function DogfoodAnnotateModal({
   penColorRef.current = penColor;
   const primaryModeLabel = dogfoodUser ? "Dogfood" : "Vibe";
 
+  React.useEffect(() => {
+    if (visible) return;
+    const recording = sttRef.current;
+    sttRef.current = null;
+    if (recording) void recording.stop().catch(() => {});
+    setRecording(false);
+  }, [visible]);
+
+  React.useEffect(() => () => {
+    const recording = sttRef.current;
+    sttRef.current = null;
+    if (recording) void recording.stop().catch(() => {});
+  }, []);
+
   // Reset per-open.
   React.useEffect(() => {
     if (visible) {

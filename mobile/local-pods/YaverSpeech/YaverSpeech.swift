@@ -16,6 +16,13 @@ class YaverSpeech: RCTEventEmitter {
   private var audioFile: AVAudioFile?
   private var recordUrl: URL?
   private var isRecording = false
+  private var hasInputTap = false
+
+  private func releaseRecordingSession() {
+    let session = AVAudioSession.sharedInstance()
+    try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+    try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+  }
 
   override static func moduleName() -> String! {
     return "YaverSpeech"
@@ -60,6 +67,7 @@ class YaverSpeech: RCTEventEmitter {
       try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
       try session.setActive(true, options: [])
     } catch {
+      releaseRecordingSession()
       reject("audio", "Failed to start audio session: \(error.localizedDescription)", error)
       return
     }
@@ -74,6 +82,7 @@ class YaverSpeech: RCTEventEmitter {
       inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
         try? self?.audioFile?.write(from: buffer)
       }
+      hasInputTap = true
       audioEngine.prepare()
       try audioEngine.start()
       self.audioFile = file
@@ -81,6 +90,15 @@ class YaverSpeech: RCTEventEmitter {
       self.isRecording = true
       resolve(true)
     } catch {
+      if audioEngine.isRunning { audioEngine.stop() }
+      if hasInputTap {
+        audioEngine.inputNode.removeTap(onBus: 0)
+        hasInputTap = false
+      }
+      audioFile = nil
+      recordUrl = nil
+      isRecording = false
+      releaseRecordingSession()
       reject("record", "Failed to start recording: \(error.localizedDescription)", error)
     }
   }
@@ -89,10 +107,14 @@ class YaverSpeech: RCTEventEmitter {
   @objc func stopListening(_ resolve: RCTPromiseResolveBlock, reject: @escaping RCTPromiseRejectBlock) {
     if audioEngine.isRunning {
       audioEngine.stop()
+    }
+    if hasInputTap {
       audioEngine.inputNode.removeTap(onBus: 0)
+      hasInputTap = false
     }
     audioFile = nil
     isRecording = false
+    releaseRecordingSession()
     if let url = recordUrl, FileManager.default.fileExists(atPath: url.path) {
       recordUrl = nil
       resolve(url.path)

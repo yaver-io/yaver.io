@@ -108,6 +108,14 @@ export default function ShellScreen() {
   const sizeRef = useRef<{ cols: number; rows: number }>({ cols: 80, rows: 24 });
   const recRef = useRef<{ stop: () => Promise<string> } | null>(null);
 
+  // A swipe-back/navigation unmount must stop dictation; otherwise the hidden
+  // recorder keeps the process on Bluetooth HFP with no visible mic state.
+  useEffect(() => () => {
+    const recording = recRef.current;
+    recRef.current = null;
+    if (recording) void recording.stop().catch(() => {});
+  }, []);
+
   // Fullscreen = landscape + hide chrome, so the VT grid gets the whole screen.
   const toggleFullscreen = useCallback(async () => {
     try {

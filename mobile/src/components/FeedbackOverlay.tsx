@@ -27,6 +27,7 @@ import { getLocalSecret, getUserSettings, LOCAL_KEYS, type SpeechProvider, type 
 import { transcribe, initWhisper, speakText as speakConfiguredText } from "../lib/speech";
 import { containsYaverFraming } from "../lib/promptFraming";
 import { friendlyTaskPresentation, type TaskPresentationMessage } from "../_core/taskPresentation";
+import { createMicrophoneRecording, discardMicrophoneRecording, stopMicrophoneRecording } from "../lib/microphoneAudioSession";
 
 function feedbackTaskNarrative(task: { presentation?: TaskPresentationMessage[]; resultText?: unknown }) {
   const friendly = friendlyTaskPresentation(task.presentation);
@@ -112,6 +113,21 @@ export function FeedbackOverlay() {
   const isDragging = useRef(false);
   const buttonPosX = useRef(0);
   const voiceRecordingRef = useRef<any>(null);
+
+  useEffect(() => () => {
+    const recording = voiceRecordingRef.current;
+    voiceRecordingRef.current = null;
+    if (recording) void discardMicrophoneRecording(recording);
+  }, []);
+
+  useEffect(() => {
+    if (chatOpen) return;
+    const recording = voiceRecordingRef.current;
+    voiceRecordingRef.current = null;
+    if (!recording) return;
+    setRecordingVoice(false);
+    void discardMicrophoneRecording(recording);
+  }, [chatOpen]);
   // Source of the latest subscribeFeedbackLaunch event. When this is
   // "native-guest-shake" we route handleSend to /vibing/execute (with
   // bundleId + projectName from the loaded guest) instead of the
@@ -256,8 +272,7 @@ export function FeedbackOverlay() {
         const recording = voiceRecordingRef.current;
         voiceRecordingRef.current = null;
         if (!recording) return;
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
+        const uri = await stopMicrophoneRecording(recording);
         if (!uri) throw new Error("No recording URI");
         if (!speechProvider) throw new Error("Voice input is disabled in Settings.");
         const result = await transcribe(uri, { provider: speechProvider, apiKey: speechApiKey });
@@ -292,9 +307,9 @@ export function FeedbackOverlay() {
         }
         throw new Error("Microphone access is needed for voice input. Allow it when prompted and try again.");
       }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      voiceRecordingRef.current = recording;
+      voiceRecordingRef.current = await createMicrophoneRecording(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
       setRecordingVoice(true);
     } catch (err) {
       Alert.alert("Voice unavailable", err instanceof Error ? err.message : String(err));
