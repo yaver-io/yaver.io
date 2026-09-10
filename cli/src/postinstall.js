@@ -544,7 +544,11 @@ async function main() {
     log(`Skipping mobile bootstrap: ${error.message}`);
   }
 
-  if (!envEnabled("YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME")) {
+  // Keep the default install focused on the complete React Native / Expo
+  // bundle-push path above. Native mirroring is a separate, multi-gigabyte
+  // capability (Android SDK + system image, Flutter, WebRTC helpers) and must
+  // follow explicit user intent instead of blocking a routine CLI update.
+  if (envEnabled("YAVER_POSTINSTALL_REMOTE_RUNTIME") && !envEnabled("YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME")) {
     try {
       await runAgentCommand(["install", "remote-runtime"], { quiet: true });
       log("Provisioned native remote-runtime host tools (Android everywhere; macOS host helpers where supported).");
@@ -557,7 +561,7 @@ async function main() {
   // the Go agent so remote lip reading has an invocable backend after npm
   // install. Checkpoints are deliberately not downloaded: their dataset/model
   // terms require the user to provide a licensed Auto-AVSR model explicitly.
-  if (!envEnabled("YAVER_SKIP_POSTINSTALL_VSR")) {
+  if (envEnabled("YAVER_POSTINSTALL_VSR") && !envEnabled("YAVER_SKIP_POSTINSTALL_VSR")) {
     try {
       await runAgentCommand(["install", "vsr"], { quiet: true });
       log("Provisioned private remote lip-reading adapter and mouth-video libraries.");
@@ -577,11 +581,11 @@ async function main() {
 
   await installDesktopCompanion();
 
-  // Vibe Preview tool stack — best-effort provisioning so a fresh
-  // global npm install gives the user a working chromium-based frame
-  // capture + maestro-driven clip exercises out of the box. Opt out
-  // with YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW=1.
-  if (!envEnabled("YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW")) {
+  // Vibe Preview is an explicit native/browser lab choice. It includes an
+  // Android system image, Appium and Maestro; silently running it during
+  // `yaver update` exhausted disk and kept an already-downloaded agent stale
+  // under launchd on macOS (2026-09-10).
+  if (envEnabled("YAVER_POSTINSTALL_VIBE_PREVIEW") && !envEnabled("YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW")) {
     try {
       await runAgentCommand(["install", "vibe-preview"], { quiet: true });
       log("Provisioned Vibe Preview tool stack (chromium + ffmpeg + maestro + appium + adb).");
@@ -590,9 +594,9 @@ async function main() {
     }
   }
 
-  // Test runner stack — Playwright web driver (chromium + ffmpeg come from
-  // vibe-preview above). Opt out with YAVER_SKIP_POSTINSTALL_TESTKIT=1.
-  if (!envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
+  // Optional browser test lab, also positive opt-in because it downloads a
+  // browser. `yaver test` can offer this route when the user chooses it.
+  if (envEnabled("YAVER_POSTINSTALL_TESTKIT") && !envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
     installTestRunnerTools();
   }
 
@@ -601,7 +605,7 @@ async function main() {
   // of the box with no API key and no cost. Best-effort; cloud STT
   // (Deepgram/OpenAI) needs none of this. Opt out with
   // YAVER_SKIP_POSTINSTALL_VOICE=1.
-  if (!envEnabled("YAVER_SKIP_POSTINSTALL_VOICE")) {
+  if (envEnabled("YAVER_POSTINSTALL_VOICE") && !envEnabled("YAVER_SKIP_POSTINSTALL_VOICE")) {
     try {
       await runAgentCommand(["voice", "deps", "--install", "--quiet"], { quiet: true });
       log("Provisioned free voice stack (ffmpeg + whisper.cpp + model).");
@@ -609,6 +613,8 @@ async function main() {
       log(`Skipping voice deps bootstrap: ${error.message}`);
     }
   }
+
+  log("React Native / Expo core is ready. Native runtime, Vibe Preview, browser-test, voice, and VSR labs install on demand when selected.");
 }
 
 main()

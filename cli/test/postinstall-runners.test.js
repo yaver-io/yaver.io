@@ -57,3 +57,15 @@ test("Linux global upgrades bounce both supported system service names", () => {
   assert.match(source, /systemctl is-active \$\{unit\}/);
   assert.match(source, /systemctl restart \$\{unit\}/);
 });
+
+test("default postinstall is React Native first and heavy labs require positive opt-in", () => {
+  assert.match(source, /runAgentCommand\(\["install", "mobile"\]/,
+    "Hermes bundle push remains part of the default install");
+  assert.match(source, /installMissingMobileTools\(\)/,
+    "Expo and EAS remain part of complete React Native support");
+  for (const name of ["REMOTE_RUNTIME", "VSR", "VIBE_PREVIEW", "TESTKIT", "VOICE"]) {
+    assert.match(source, new RegExp(`envEnabled\\("YAVER_POSTINSTALL_${name}"\\)`),
+      `${name} must require explicit opt-in`);
+  }
+  assert.match(source, /React Native \/ Expo core is ready/);
+});

@@ -959,8 +959,9 @@ var (
 	piDevNodePlanNames = []string{"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "opencode", "tdd", "backend-dev"}
 	// CHROME, NOT CHROMIUM — and this ordering is the whole fix.
 	//
-	// This plan is what `npm i -g yaver-cli` provisions (cli/src/postinstall.js
-	// runs `yaver install vibe-preview`). It used to name "chromium", whose Linux
+	// This plan is what an explicit `yaver install vibe-preview` provisions.
+	// Routine npm install/update is React Native-first and leaves this heavyweight
+	// lab on demand. It used to name "chromium", whose Linux
 	// step is `apt-get install -y chromium || snap install chromium` — and on
 	// stock Ubuntu there IS no apt candidate, so every fresh install landed on
 	// the SNAP. A snap Chromium cannot create its temp dir when launched from a
