@@ -66,6 +66,7 @@ try {
   taskRoute.searchParams.set('taskId', task.id);
   taskRoute.searchParams.set('taskDeviceId', config.device_id);
   await page.goto(taskRoute.href, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await expect(page.getByText('Starting Yaver…', { exact: true })).toBeHidden({ timeout: 15000 });
   const viewport = page.viewportSize();
   const signals = await page.evaluate(() => ({ isMobile: /Mobile|iPhone|Android/.test(navigator.userAgent), hasTouch: navigator.maxTouchPoints > 0 }));
   expect(viewport.width).toBe(profile.width);
@@ -94,6 +95,7 @@ try {
 
   // Fresh navigation proves ordinary task entry never inherits input focus.
   await page.goto(new URL('/tasks', appURL).href, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await expect(page.getByText('Starting Yaver…', { exact: true })).toBeHidden({ timeout: 15000 });
   const allTasks = page.getByRole('button', { name: 'Show all tasks', exact: true }).first();
   // Device restoration can remount the list during initial navigation. Wait
   // for the requested data, not just a successful early tap. This app's
@@ -108,6 +110,7 @@ try {
   console.log('PASS task-card navigation keeps the keyboard closed');
 
   await page.goto(new URL('/dogfood', appURL).href, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await expect(page.getByText('Starting Yaver…', { exact: true })).toBeHidden({ timeout: 15000 });
   await page.getByRole('button', { name: 'Open Dogfood settings' }).click({ timeout: 120000 });
   await expect(page.getByText('Dogfood Settings', { exact: true }).first()).toBeVisible();
   const lanes = page.getByRole('radiogroup', { name: 'Dogfood runtime lane' });
@@ -120,6 +123,7 @@ try {
   // while its pixels still show the underlying startup surface. Prove the
   // enabled lane actually receives input before recording its pixels.
   await page.getByRole('radio', { name: /Browser lane/ }).click({ trial: true });
+  await expect(page.getByText('Starting Yaver…', { exact: true })).toBeHidden({ timeout: 15000 });
   await lanes.screenshot({ path: join(artifacts, 'dogfood-lanes.png'), animations: 'disabled' });
   const runners = page.getByRole('button', { name: /^(Change|Set up) Runner$/ });
   await runners.scrollIntoViewIfNeeded();
