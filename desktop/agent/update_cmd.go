@@ -15,12 +15,15 @@ package main
 // scripted / terminal-driven fleet upgrades).
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -125,12 +128,7 @@ func runManualUpdateViaNPM() (bool, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	cmd := osexec.CommandContext(ctx, npm, "install", "-g", pkg+"@latest")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
-	if err := cmd.Run(); err != nil {
+	if err := runNPMUpgrade(ctx, npm, pkg); err != nil {
 		return true, err
 	}
 
@@ -138,4 +136,73 @@ func runManualUpdateViaNPM() (bool, error) {
 	fmt.Println("npm upgrade complete.")
 	fmt.Println("Tip: `yaver --version` prints the active agent version after the wrapper refreshes.")
 	return true, nil
+}
+
+// runNPMUpgrade repairs the one safe, deterministic npm failure we have seen
+// in production: an interrupted global upgrade can leave npm's hidden rename
+// destination (for example .yaver-cli-AbCd1234) behind. The next upgrade then
+// fails ENOTEMPTY before postinstall can run. We only remove the exact `dest`
+// npm reported, and only when it is a direct child of this npm's global root
+// with the expected package-specific staging prefix; every other failure is
+// returned untouched.
+func runNPMUpgrade(ctx context.Context, npm, pkg string) error {
+	run := func() (string, error) {
+		var stderr bytes.Buffer
+		cmd := osexec.CommandContext(ctx, npm, "install", "-g", pkg+"@latest")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+		cmd.Stdin = os.Stdin
+		cmd.Env = os.Environ()
+		return stderr.String(), cmd.Run()
+	}
+
+	stderr, err := run()
+	if err == nil {
+		return nil
+	}
+	rootOut, rootErr := osexec.CommandContext(ctx, npm, "root", "-g").Output()
+	if rootErr != nil {
+		return err
+	}
+	stale := npmStaleRenameDestination(stderr, strings.TrimSpace(string(rootOut)), pkg)
+	if stale == "" {
+		return err
+	}
+	if info, statErr := os.Lstat(stale); statErr != nil || !info.IsDir() {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "[yaver] Removing stale npm upgrade staging directory %s and retrying once.\n", filepath.Base(stale))
+	if removeErr := os.RemoveAll(stale); removeErr != nil {
+		return fmt.Errorf("remove stale npm staging directory: %w (original upgrade error: %v)", removeErr, err)
+	}
+	_, retryErr := run()
+	return retryErr
+}
+
+func npmStaleRenameDestination(stderr, globalRoot, pkg string) string {
+	if !strings.Contains(stderr, "ENOTEMPTY") || !strings.Contains(stderr, "rename") {
+		return ""
+	}
+	pkgBase := pkg
+	if slash := strings.LastIndex(pkgBase, "/"); slash >= 0 {
+		pkgBase = pkgBase[slash+1:]
+	}
+	wantPrefix := "." + pkgBase + "-"
+	cleanRoot, err := filepath.Abs(globalRoot)
+	if err != nil || strings.TrimSpace(globalRoot) == "" {
+		return ""
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		idx := strings.Index(line, " dest ")
+		if idx < 0 {
+			continue
+		}
+		candidate := strings.Trim(strings.TrimSpace(line[idx+len(" dest "):]), "'\"")
+		candidate, err = filepath.Abs(candidate)
+		if err == nil && filepath.Dir(candidate) == cleanRoot && strings.HasPrefix(filepath.Base(candidate), wantPrefix) {
+			return candidate
+		}
+	}
+	return ""
 }
