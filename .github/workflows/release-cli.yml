@@ -109,7 +109,12 @@ jobs:
         run: |
           cd cli
           npm ci
-          npm publish --access public
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$(npm view "yaver-cli@$VERSION" version 2>/dev/null || true)" = "$VERSION" ]; then
+            echo "Immutable yaver-cli@$VERSION already exists; verifying it without publishing twice."
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -118,17 +123,21 @@ jobs:
       - name: Verify version is live on npm
         run: |
           WANT="${{ needs.validate.outputs.version }}"
-          for i in 1 2 3 4 5; do
+          # 1.99.462 was accepted but took longer than the old 75-second
+          # window to propagate. Do not falsely label accepted work absent.
+          deadline=$((SECONDS + 600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
             GOT=$(npm view yaver-cli version 2>/dev/null || true)
-            if [ "$GOT" = "$WANT" ]; then
+            EXACT=$(npm view "yaver-cli@$WANT" version 2>/dev/null || true)
+            if [ "$GOT" = "$WANT" ] && [ "$EXACT" = "$WANT" ]; then
               echo "npm serves yaver-cli@$GOT"
               exit 0
             fi
-            echo "attempt $i: npm serves '$GOT', want '$WANT' — retrying in 15s (registry propagation)"
+            echo "npm latest='$GOT', exact='$EXACT', want '$WANT' — retrying in 15s (registry propagation)"
             sleep 15
           done
-          echo "::error::npm does NOT serve yaver-cli@$WANT after publish reported success."
-          echo "::error::'npm install -g yaver-cli' is the ONLY supported install path — this release did not ship."
+          echo "::error::npm availability is still unverified after 10 minutes. Publishing may still be processing."
+          echo "::error::Check both npm view yaver-cli@$WANT version and npm view yaver-cli version before retrying."
           exit 1
 
       # Without this, a failed publish leaves GitHub release v$VERSION standing
@@ -142,9 +151,9 @@ jobs:
           VERSION="${{ needs.validate.outputs.version }}"
           REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
           gh release edit "v${VERSION}" --repo "$REPO" \
-            --title "Yaver CLI v${VERSION} — NOT PUBLISHED TO NPM" \
+            --title "Yaver CLI v${VERSION} — NPM AVAILABILITY UNVERIFIED" \
             --prerelease || true
-          echo "::error::Release v${VERSION} flagged: binaries exist, npm package does not."
+          echo "::error::Release v${VERSION} flagged: binaries exist, but npm availability has not been verified."
 
   publish-mcp-registry:
     # Publish Yaver's server.json to the official MCP Registry
