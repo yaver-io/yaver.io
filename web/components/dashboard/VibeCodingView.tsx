@@ -3409,7 +3409,6 @@ export default function VibeCodingView({
                           onClick={async () => {
                             const selected = taskList.filter((row) => selectedTaskIds.has(row.id));
                             const deleted = new Set(selected.map((task) => task.id));
-                            const failed: string[] = [];
                             setTaskList((previous) => previous.filter((task) => !deleted.has(task.id)));
                             if (deleted.has(activeTaskId)) setActiveTaskId("");
                             for (const task of selected) {
@@ -3422,8 +3421,8 @@ export default function VibeCodingView({
                                 // Browser outbox retries centrally; keep the row removed.
                               }
                             }
-                            setSelectedTaskIds(new Set(failed));
-                            if (failed.length === 0) setSelectingTasks(false);
+                            setSelectedTaskIds(new Set());
+                            setSelectingTasks(false);
                           }}
                           className="rounded-lg border border-red-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 dark:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
                         >

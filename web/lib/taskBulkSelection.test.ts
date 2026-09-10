@@ -8,7 +8,7 @@ const source = readFileSync(join(process.cwd(), "components/dashboard/VibeCoding
 test("web Tasks support select all and prompt-free offline bulk deletion", () => {
   assert.match(source, />\s*Select all\s*</);
   assert.match(source, /Delete · \{selectedTaskIds\.size\}/);
-  assert.match(source, /setTaskList\(\(current\) => current\.filter\(\(task\) => !selected\.has\(task\.id\)\)\)/,
+  assert.match(source, /setTaskList\(\(previous\) => previous\.filter\(\(task\) => !deleted\.has\(task\.id\)\)\)/,
     "selected rows must disappear immediately");
   assert.match(source, /await tombstoneAgentTask\(CONVEX_URL, token, deviceId, task\.id\)/,
     "central deletion intent must not depend on agent reachability");
