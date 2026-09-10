@@ -1,6 +1,53 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestInterruptedExecOffersReadOnlyRecovery(t *testing.T) {
+	result := remoteExecObservationInterrupted("box", "exec-one", "connection lost").(map[string]interface{})
+	content := result["content"].([]map[string]interface{})
+	var body struct {
+		OK     bool   `json:"ok"`
+		Code   string `json:"code"`
+		Status string `json:"status"`
+		Action struct {
+			Tool      string            `json:"tool"`
+			Arguments map[string]string `json:"arguments"`
+		} `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(content[0]["text"].(string)), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.OK || body.Code != "EXEC_OBSERVATION_INTERRUPTED" || body.Status != "unknown" || body.Action.Tool != "exec_status" || body.Action.Arguments["exec_id"] != "exec-one" || body.Action.Arguments["device_id"] != "box" {
+		t.Fatalf("lost observation must preserve the exact read-only recovery: %+v", body)
+	}
+}
+
+func TestMCPExecStatusReadsExistingExecution(t *testing.T) {
+	manager := NewExecManager(t.TempDir(), nil)
+	session, err := manager.StartExec("printf audit-output", "", "", nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-session.doneCh:
+	case <-time.After(15 * time.Second):
+		t.Fatal("fixture command did not complete")
+	}
+	server := &HTTPServer{execMgr: manager}
+	args, _ := json.Marshal(map[string]any{"name": "exec_status", "arguments": map[string]string{"exec_id": session.ID}})
+	result := server.handleMCPToolCall(args)
+	wire, _ := json.Marshal(result)
+	if !strings.Contains(string(wire), "audit-output") || !strings.Contains(string(wire), "Exec ID: "+session.ID) {
+		t.Fatalf("exec_status did not return the existing session: %s", wire)
+	}
+	tools := server.getMCPToolsList().(map[string]interface{})["tools"].([]map[string]interface{})
+	findMCPToolForTest(t, tools, "exec_status")
+}
 
 // Regression (2026-08-10, ubuntu-4gb-hel1-1): mcpRemoteExecCommand parsed the
 // /exec/{id} poll response RAW — `{"ok":true,"exec":{...}}` — as the snapshot

@@ -9112,6 +9112,41 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(result)
 
 	// --- Exec ---
+	case "exec_status":
+		var args struct {
+			DeviceID string `json:"device_id"`
+			ExecID   string `json:"exec_id"`
+		}
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("invalid arguments: " + err.Error())
+		}
+		args.ExecID = strings.TrimSpace(args.ExecID)
+		if args.ExecID == "" || strings.ContainsAny(args.ExecID, "/\\?#") || args.ExecID == "." || args.ExecID == ".." {
+			return mcpToolError("a valid exec_id is required")
+		}
+		if strings.TrimSpace(args.DeviceID) != "" {
+			status, raw, err := proxyToDevice(context.Background(), "exec_status", strings.TrimSpace(args.DeviceID), http.MethodGet, "/exec/"+args.ExecID, nil)
+			if err != nil {
+				return remoteExecObservationInterrupted(args.DeviceID, args.ExecID, err.Error())
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("exec_status: remote returned HTTP %d", status))
+			}
+			snapshot, err := decodeRemoteExecSnapshot(raw)
+			if err != nil {
+				return remoteExecObservationInterrupted(args.DeviceID, args.ExecID, err.Error())
+			}
+			return mcpToolResult(formatExecSnapshot(snapshot))
+		}
+		if s.execMgr == nil {
+			return mcpToolError("exec is not enabled on this agent")
+		}
+		sess, ok := s.execMgr.GetExec(args.ExecID)
+		if !ok {
+			return mcpToolError("exec session not found")
+		}
+		return mcpToolResult(formatExecSnapshot(sess.Snapshot()))
+
 	case "exec_command":
 		var args struct {
 			DeviceID string `json:"device_id"`

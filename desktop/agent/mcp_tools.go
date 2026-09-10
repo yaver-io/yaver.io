@@ -1457,6 +1457,17 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// --- Exec (Remote Command Execution) ---
 	execTools := []map[string]interface{}{
 		{
+			"name":        "exec_status",
+			"description": "Read the status and captured output of an existing exec_command without running it again. Use after a polling/connection interruption; the command may still be running.",
+			"inputSchema": map[string]interface{}{
+				"type": "object", "required": []string{"exec_id"},
+				"properties": map[string]interface{}{
+					"exec_id":   map[string]interface{}{"type": "string", "description": "Execution ID returned by exec_command."},
+					"device_id": map[string]interface{}{"type": "string", "description": "The same owned device used for exec_command; omit for local execution."},
+				},
+			},
+		},
+		{
 			"name":        "exec_command",
 			"description": "Execute a shell command on this machine or an owned remote Yaver device and return the output. Commands are validated through the sandbox (dangerous patterns like rm -rf / are blocked). Use this for quick commands — for long-running tasks, use create_task instead.",
 			"inputSchema": map[string]interface{}{

@@ -11,6 +11,9 @@ import (
 
 func formatExecSnapshot(snapshot map[string]any) string {
 	var sb strings.Builder
+	if id, ok := snapshot["id"].(string); ok && id != "" {
+		fmt.Fprintf(&sb, "Exec ID: %s\n", id)
+	}
 	sb.WriteString(fmt.Sprintf("Status: %v\n", snapshot["status"]))
 	if _, ok := snapshot["exitCode"]; ok {
 		sb.WriteString(fmt.Sprintf("Exit code: %v\n", snapshot["exitCode"]))
@@ -57,14 +60,14 @@ func mcpRemoteExecCommand(deviceID, command, workDir string, timeout int) interf
 	for {
 		status, raw, err = proxyToDevice(context.Background(), "exec_command", strings.TrimSpace(deviceID), http.MethodGet, "/exec/"+execID, nil)
 		if err != nil {
-			return mcpToolError(fmt.Sprintf("exec_command: poll remote: %v", err))
+			return remoteExecObservationInterrupted(deviceID, execID, err.Error())
 		}
 		if status >= 300 {
-			return mcpToolError(fmt.Sprintf("exec_command: poll remote returned %d: %s", status, string(raw)))
+			return remoteExecObservationInterrupted(deviceID, execID, fmt.Sprintf("HTTP %d", status))
 		}
 		snapshot, err = decodeRemoteExecSnapshot(raw)
 		if err != nil {
-			return mcpToolError(fmt.Sprintf("exec_command: decode remote snapshot: %v", err))
+			return remoteExecObservationInterrupted(deviceID, execID, err.Error())
 		}
 		if fmt.Sprint(snapshot["status"]) != "running" {
 			break
@@ -78,6 +81,19 @@ func mcpRemoteExecCommand(deviceID, command, workDir string, timeout int) interf
 		return mcpToolError("exec_command: no remote snapshot")
 	}
 	return mcpToolResult(formatExecSnapshot(snapshot))
+}
+
+// A lost poll is not a failed command. In the 2026-09-10 Dogfood audit,
+// compilation completed successfully after MCP lost the response. Preserve
+// its identity and offer a read-only recovery, never a duplicate execution.
+func remoteExecObservationInterrupted(deviceID, execID, detail string) interface{} {
+	return mcpToolJSON(map[string]any{
+		"ok": false, "code": "EXEC_OBSERVATION_INTERRUPTED",
+		"execId": execID, "deviceId": strings.TrimSpace(deviceID), "status": "unknown",
+		"message": "The command was started, but its current status could not be read. It may still be running. Do not run it again to recover output.",
+		"detail":  detail,
+		"action":  map[string]any{"tool": "exec_status", "arguments": map[string]string{"device_id": strings.TrimSpace(deviceID), "exec_id": execID}},
+	})
 }
 
 // decodeRemoteExecSnapshot parses a /exec/{id} poll response into the exec
