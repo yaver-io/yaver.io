@@ -410,9 +410,9 @@ export function StudioChatPane({
     setTasks((prev) => prev.filter((item) => item.id !== task.id));
     void markTaskDeleted(task.id);
     if (!deviceId) return;
+    if (taskClient.isConnected) void taskClient.deleteTask(task.id).catch(() => undefined);
     try {
       await tombstoneAgentTask(deviceId, task.id);
-      if (taskClient.isConnected) void taskClient.deleteTask(task.id).catch(() => undefined);
     } catch {}
   }, [activeDevice?.id, activeTask?.id, resetConversation, taskClient]);
 

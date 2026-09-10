@@ -3486,11 +3486,10 @@ export default function DashboardPage() {
       setTaskActionBusy(null);
       return;
     }
+    // LAN cleanup and central persistence are independent best-effort lanes.
+    void taskClientFor(task).deleteTask(task.id).catch(() => undefined);
     try {
       await tombstoneAgentTask(CONVEX_URL, token, deviceId, task.id);
-      // Fast cleanup only. The durable tombstone, not this connection, is the
-      // success boundary; an offline owner reconciles it later.
-      void taskClientFor(task).deleteTask(task.id).catch(() => undefined);
       void refreshAgentTaskSnapshots();
     } catch {
       // Browser outbox retries without reopening or blocking this surface.

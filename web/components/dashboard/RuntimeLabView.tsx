@@ -2489,9 +2489,9 @@ export default function RuntimeLabView({
     setActiveTaskStream(null);
     setRecentTasks((prev) => prev.filter((task) => task.id !== taskId));
     if (!token || !deviceId) return;
+    void agentClient.deleteTask(taskId).catch(() => undefined);
     try {
       await tombstoneAgentTask(CONVEX_URL, token, deviceId, taskId);
-      void agentClient.deleteTask(taskId).catch(() => undefined);
       appendLog(`deleted chat session ${taskId}`);
     } catch {}
   }, [activeTaskStream?.id, activeTaskStream?.title, activeTaskStream?.deviceId, appendLog, connectedDevice?.id, stopActiveTaskStream, token]);

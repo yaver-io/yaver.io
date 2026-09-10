@@ -3414,9 +3414,9 @@ export default function VibeCodingView({
                             for (const task of selected) {
                               const deviceId = task.deviceId || connectedDevice?.id;
                               if (!token || !deviceId) continue;
+                              if (connectedDevice?.id === deviceId) void agentClient.deleteTask(task.id).catch(() => undefined);
                               try {
                                 await tombstoneAgentTask(CONVEX_URL, token, deviceId, task.id);
-                                if (connectedDevice?.id === deviceId) void agentClient.deleteTask(task.id).catch(() => undefined);
                               } catch {
                                 // Browser outbox retries centrally; keep the row removed.
                               }

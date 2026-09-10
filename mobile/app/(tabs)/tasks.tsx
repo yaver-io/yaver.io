@@ -6601,16 +6601,15 @@ export default function TasksScreen() {
     if (selectedTask && scopedTaskIdentity(selectedTask.deviceId, selectedTask.id) === key) setSelectedTask(null);
     void markTaskDeleted(taskId);
     if (!deviceId) return true;
+    // LAN cleanup and central persistence are independent best-effort lanes.
+    const client = owner?.id ? connectionManager.clientFor(owner.id) : quicClient;
+    if (client.isConnected) void client.deleteTask(taskId).catch(() => undefined);
     try {
       await tombstoneAgentTask(deviceId, taskId);
     } catch {
       // Still removed locally. The outbox retries whenever snapshots refresh.
       return true;
     }
-    // Best-effort fast path. If the box is offline, its minute reconciliation
-    // feed closes the runner as soon as it can reach Convex again.
-    const client = owner?.id ? connectionManager.clientFor(owner.id) : quicClient;
-    if (client.isConnected) void client.deleteTask(taskId).catch(() => undefined);
     void refreshAgentTaskSnapshots();
     return true;
   };
