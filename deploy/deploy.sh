@@ -133,6 +133,17 @@ for arg in "$@"; do
   esac
 done
 
+# Android's official Linux host tools are x86_64. On an ARM64 Linux release
+# worker, preserve this canonical entrypoint but execute it inside Yaver's
+# bounded hybrid builder. The marker prevents recursion inside the container.
+if [ "${YAVER_ANDROID_CONTAINER:-0}" != 1 ] && [ "$(uname -s)" = Linux ]; then
+  case "$(uname -m):$target" in
+    aarch64:android|aarch64:playstore|aarch64:android-all|aarch64:android-package|aarch64:apk|aarch64:android-upload|aarch64:playstore-upload|aarch64:android-tv|aarch64:wear-os|aarch64:wearos|aarch64:wear|aarch64:android-auto|aarch64:androidauto|aarch64:auto|aarch64:android-xr|aarch64:xr-android|arm64:android|arm64:playstore|arm64:android-all|arm64:android-package|arm64:apk|arm64:android-upload|arm64:playstore-upload|arm64:android-tv|arm64:wear-os|arm64:wearos|arm64:wear|arm64:android-auto|arm64:androidauto|arm64:auto|arm64:android-xr|arm64:xr-android)
+      exec "$ROOT/scripts/android-builder-container.sh" run "$target" ${pass_args[@]+"${pass_args[@]}"}
+      ;;
+  esac
+fi
+
 # Expand pass_args SAFELY under `set -u`.
 #
 # macOS ships bash 3.2, where "${empty_array[@]}" is an UNBOUND VARIABLE error
