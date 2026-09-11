@@ -38,4 +38,11 @@ RUN apt-get update \
     && /opt/android-sdk-linux/cmake/3.22.1/bin/ninja --version \
     && /opt/android-sdk-linux/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --version
 
+RUN python3 -m venv /opt/yaver-play-python \
+    && /opt/yaver-play-python/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/yaver-play-python/bin/pip install --no-cache-dir \
+      google-auth google-auth-httplib2 google-api-python-client
+
+ENV PATH="/opt/yaver-play-python/bin:${PATH}"
+
 WORKDIR /workspace
