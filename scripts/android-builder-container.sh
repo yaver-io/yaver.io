@@ -53,7 +53,7 @@ runtime_dir() {
 run_release() {
   shift
   [ "$#" -gt 0 ] || fail "missing canonical deploy target"
-  local node_root git_common_dir min_disk_gib disk_kib
+  local node_root git_common_dir git_worktree_dir min_disk_gib disk_kib
   node_root="$(runtime_dir)"
   [ -x "$node_root/bin/node" ] && [ -x "$node_root/bin/npm" ] \
     || fail "YAVER_NODE_RUNTIME_DIR must contain executable bin/node and bin/npm"
@@ -66,6 +66,7 @@ run_release() {
 
   install -d -m 700 "$CACHE_ROOT/gradle" "$CACHE_ROOT/npm" "$CACHE_ROOT/xdg" "$CACHE_ROOT/metro"
   git_common_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
+  git_worktree_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --absolute-git-dir)"
 
   local docker_args=(
     run --rm --init --platform linux/arm64
@@ -75,6 +76,7 @@ run_release() {
     --workdir "$ROOT"
     --volume "$ROOT:$ROOT"
     --volume "$git_common_dir:$git_common_dir:ro"
+    --volume "$git_worktree_dir:$git_worktree_dir"
     --volume "$node_root:/opt/node:ro"
     --volume "$CACHE_ROOT/gradle:/root/.gradle"
     --volume "$CACHE_ROOT/npm:/root/.npm"
