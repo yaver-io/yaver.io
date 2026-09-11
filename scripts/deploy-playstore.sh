@@ -50,17 +50,20 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
     [ -n "$TOTAL_MEMORY_BYTES" ] && TOTAL_MEMORY_KB=$((TOTAL_MEMORY_BYTES / 1024))
   fi
   if [ -n "$TOTAL_MEMORY_KB" ] && [ "$TOTAL_MEMORY_KB" -lt $((10 * 1024 * 1024)) ]; then
-    export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx768m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC"
+    export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx768m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC"
     # The project default caps the Gradle daemon at 3 GiB, but Kotlin may also
     # start multiple independent 3 GiB compiler daemons (different plugin
     # versions can require one each). On a 4 GiB worker that turns an apparently
     # bounded build into an OOM. Keep Kotlin inside a 1 GiB Gradle process, use
-    # the lower-footprint serial collector, and serialize workers for this lane;
+    # the lower-footprint serial collector, and serialize workers for this lane.
+    # Expo/React Native's combined Kotlin plugin graph exceeds 256 MiB of
+    # metaspace on a cold cache, so reserve 512 MiB without increasing worker
+    # concurrency;
     # larger CI/Mac builders retain defaults.
     LOW_MEMORY_GRADLE_ARGS=(
       --no-daemon
       --max-workers=1
-      '-Dorg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC'
+      '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -XX:+UseSerialGC'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
     # The React Native bundle/Hermes task and expo-updates manifest task each
@@ -72,7 +75,7 @@ if [[ " ${GRADLE_OPTS:-} " != *" -Xmx"* ]]; then
     LOW_MEMORY_ASSET_GRADLE_ARGS=(
       --no-daemon
       --max-workers=1
-      '-Dorg.gradle.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC'
+      '-Dorg.gradle.jvmargs=-Xmx768m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
     export YAVER_ANDROID_NINJA_JOBS="${YAVER_ANDROID_NINJA_JOBS:-1}"

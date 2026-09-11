@@ -3,7 +3,9 @@
 # Populates YAVER_ANDROID_GRADLE_ARGS for standalone Android-family builds.
 # `--no-daemon` still launches a single-use Gradle process, and Kotlin may start
 # additional compiler daemons unless explicitly kept in-process. A nominal
-# 4 GiB worker therefore needs one worker and a 1 GiB shared JVM ceiling;
+# 4 GiB worker therefore needs one worker and a bounded shared JVM. The cold
+# Expo/React Native Kotlin plugin graph needs more than 256 MiB metaspace, so
+# keep 1.5 GiB heap plus 512 MiB metaspace while retaining one worker;
 # the remaining memory is required by aapt2, signing, the operating system, and
 # the agent workloads the box is still serving during a release.
 yaver_android_gradle_memory_args() {
@@ -20,7 +22,7 @@ yaver_android_gradle_memory_args() {
     YAVER_ANDROID_GRADLE_ARGS=(
       --no-daemon
       --max-workers=1
-      '-Dorg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC'
+      '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -XX:+UseSerialGC'
       '-Pkotlin.compiler.execution.strategy=in-process'
     )
   else
