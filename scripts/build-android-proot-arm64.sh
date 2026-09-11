@@ -38,9 +38,9 @@ trap 'rm -rf "$BUILD_CTX"' EXIT
 cat > "$BUILD_CTX/Dockerfile" <<DOCKERFILE
 # syntax=docker/dockerfile:1
 FROM --platform=linux/arm64 alpine:${ALPINE_TAG}
-# proot itself depends only on libtalloc; libarchive is for the optional `care`
+# proot itself depends only on libtalloc; libarchive is for the optional care
 # tool which we don't build. Static build needs the .a archives.
-# proot itself depends only on libtalloc; libarchive is for the optional `care`
+# proot itself depends only on libtalloc; libarchive is for the optional care
 # tool which we don't build. bsd-compat-headers supplies <sys/queue.h> which
 # musl omits (proot uses LIST_* from it). Static build needs the .a archives.
 RUN apk add --no-cache \
@@ -54,8 +54,8 @@ WORKDIR /build/proot
 # itself, fully static. CARE flag set off (no libarchive runtime) keeps it lean;
 # if a host's proot needs --link2symlink etc. it still works.
 RUN make -C src loader.elf build.h GIT=false || (echo "loader build failed" >&2; exit 1)
-# Pass -static via ENVIRONMENT (not make-args) so proot's GNUmakefile `LDFLAGS +=`
-# keeps appending `-ltalloc` (pkg-config) AFTER the objects — a make-arg override
+# Pass -static via ENVIRONMENT (not make-args) so proot's GNUmakefile LDFLAGS +=
+# keeps appending -ltalloc (pkg-config) AFTER the objects — a make-arg override
 # would wipe it and the static link fails on undefined talloc_* symbols.
 RUN CFLAGS="-O2 -static" LDFLAGS="-static" make -C src proot GIT=false \
  && strip src/proot
