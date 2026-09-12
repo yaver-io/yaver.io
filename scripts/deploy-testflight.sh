@@ -63,6 +63,7 @@ apple_ensure_simulator_runtime iOS iphonesimulator
 # clean checkout died with a raw "Cannot find module .../node_modules/xcode"
 # stack trace even though the canonical deploy already knew how to run npm ci.
 ensure_mobile_dependencies() {
+  local retry="${1:-0}"
   local mobile_dir="$ROOT/mobile"
   local xcode_package="$mobile_dir/node_modules/xcode/package.json"
   local sqlite_package="$mobile_dir/node_modules/expo-sqlite/package.json"
@@ -75,6 +76,8 @@ ensure_mobile_dependencies() {
   local metro_transitive_ok=0
   local reanimated_transitive_ok=0
   local expo_plist_compat_ok=0
+  local lockfile_versions_ok=0
+  local expo_config_ok=0
   (cd "$mobile_dir" && node -e \
     "const p=require('path'); require.resolve('is-arrayish',{paths:[p.dirname(require.resolve('simple-swizzle/package.json'))]})" \
     >/dev/null 2>&1) && metro_transitive_ok=1
@@ -89,10 +92,35 @@ ensure_mobile_dependencies() {
   (cd "$mobile_dir" && node -e \
     "require('@expo/plist').default.parse('\\n<?xml version=\"1.0\"?><plist version=\"1.0\"><dict/></plist>')" \
     >/dev/null 2>&1) && expo_plist_compat_ok=1
+  # A stale node_modules tree can satisfy every file-exists probe while
+  # containing a different package than package-lock.json. On 2026-09-12 the
+  # lock pinned react-native-vision-camera 4.7.3, node_modules held 5.0.1, and
+  # Expo config crashed only inside Xcode's EXConstants phase after a five-minute
+  # archive. Compare installed package versions to the lockfile and probe the
+  # exact Expo config operation that EXConstants performs.
+  (cd "$mobile_dir" && node <<'NODE'
+const lock = require('./package-lock.json');
+const checked = [
+  'react-native-vision-camera',
+  'react-native-reanimated',
+  'expo',
+  'expo-constants',
+];
+for (const name of checked) {
+  const locked = lock.packages?.[`node_modules/${name}`]?.version;
+  const installed = require(`./node_modules/${name}/package.json`).version;
+  if (!locked || locked !== installed) {
+    throw new Error(`${name} installed=${installed || '<missing>'} lockfile=${locked || '<missing>'}`);
+  }
+}
+NODE
+  ) >/dev/null 2>&1 && lockfile_versions_ok=1
+  (cd "$mobile_dir" && NODE_ENV=production npx expo config --json >/dev/null 2>&1) && expo_config_ok=1
 
   if [ -f "$xcode_package" ] && [ -f "$sqlite_package" ] && [ -f "$audio_package" ] && \
      [ "$metro_transitive_ok" -eq 1 ] && [ "$reanimated_transitive_ok" -eq 1 ] && \
-     [ "$expo_plist_compat_ok" -eq 1 ]; then
+     [ "$expo_plist_compat_ok" -eq 1 ] && [ "$lockfile_versions_ok" -eq 1 ] && \
+     [ "$expo_config_ok" -eq 1 ]; then
     return 0
   fi
 
@@ -106,10 +134,17 @@ ensure_mobile_dependencies() {
     echo "       Restore the tracked lockfile before deploying; refusing an unpinned install." >&2
     exit 1
   fi
+  if [ "$retry" = "1" ]; then
+    echo "ERROR: mobile dependencies are still inconsistent after npm ci." >&2
+    echo "       Check package-lock.json, node_modules package versions, and Expo config plugins." >&2
+    echo "       The archive would fail later while generating expo-constants app.config." >&2
+    exit 1
+  fi
 
   echo "Mobile native dependencies are incomplete — restoring mobile/package-lock.json with npm ci."
   echo "Install output follows; the deploy will resume automatically when it finishes."
   (cd "$mobile_dir" && npm ci --legacy-peer-deps --no-audit --no-fund)
+  ensure_mobile_dependencies 1
 }
 
 ensure_mobile_dependencies
