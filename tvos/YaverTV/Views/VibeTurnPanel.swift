@@ -973,78 +973,82 @@ struct VibeTurnPanel: View {
         }
         let relayFallback = store.runnerClient()
         appConsoleTask = Task {
-            var client = preferredClient
-            // Seed late subscribers from the agent's bounded Node/Metro
-            // stdout tail before waiting for new SSE events. Otherwise a
-            // render that already failed can leave the console looking empty
-            // even though /dev/status has the useful npm/node lines.
-            var status = try? await client.devServerStatus()
-            if status == nil, let fallback = relayFallback {
-                // A split render box can be stale/offline while the runner is
-                // healthy through Yaver relay. Do not leave Vibing's console
-                // blank just because the preferred render leg failed.
-                client = fallback
-                status = try? await client.devServerStatus()
-                await MainActor.run {
-                    appConsole = "[console] render leg unavailable; using runner relay…"
-                }
-            }
-            if let status {
-                await MainActor.run {
-                    if let recent = status.recentLogs, !recent.isEmpty {
-                        appConsole = recent.joined(separator: "\n")
-                    } else if let error = status.error, !error.isEmpty {
-                        appConsole = "[dev-server] \(error)"
-                    } else if let label = status.servingLabel, !label.isEmpty {
-                        appConsole = "[dev-server] \(label)"
-                    } else {
-                        appConsole = "[dev-server] connected; no recent output"
-                    }
-                }
-            }
-            // SSE is the live path, but a restarted dev server can have a
-            // useful bounded tail without emitting a new event. Poll that
-            // authoritative tail while subscribed so App console never
-            // depends on one missed event to become permanently empty.
-            appConsoleRetryTask?.cancel()
-            appConsoleRetryTask = Task { @MainActor in
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    guard !Task.isCancelled, let latest = try? await client.devServerStatus() else { continue }
-                    if let recent = latest.recentLogs, !recent.isEmpty {
-                        appConsole = recent.joined(separator: "\n")
-                    }
-                }
-            }
-            let stream = await client.subscribeDevEvents { event in
-                let line = event.logLine ?? event.message
-                guard let line, !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                Task { @MainActor in
-                    appConsole = String((appConsole + (appConsole.isEmpty ? "" : "\n") + line).suffix(512 * 1024))
-                }
-            } onGap: { gap in
-                Task { @MainActor in
-                    appConsole = String((appConsole + (appConsole.isEmpty ? "" : "\n") + gap.summary).suffix(512 * 1024))
-                }
-            } onEnd: { kind, reason in
-                guard kind != .cancelled else { return }
-                Task { @MainActor in
-                    let line = "[console stream interrupted] \(reason ?? "connection closed")"
-                    appConsole = String((appConsole + (appConsole.isEmpty ? "" : "\n") + line).suffix(512 * 1024))
-                    appConsoleRetryTask?.cancel()
-                    appConsoleRetryTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
-                        guard !Task.isCancelled else { return }
-                        startAppConsole()
-                    }
-                }
-            } onError: { message in
-                Task { @MainActor in
-                    appConsole = String((appConsole + (appConsole.isEmpty ? "" : "\n") + "[console] " + message).suffix(512 * 1024))
-                }
-            }
-            await stream.value
+            await runAppConsole(preferredClient: preferredClient, relayFallback: relayFallback)
         }
+    }
+
+    @MainActor
+    private func runAppConsole(preferredClient: AgentClient, relayFallback: AgentClient?) async {
+        var client = preferredClient
+        // Seed late subscribers from the bounded Node/Metro tail before
+        // waiting for new SSE events.
+        var status = try? await client.devServerStatus()
+        if status == nil, let fallback = relayFallback {
+            client = fallback
+            status = try? await client.devServerStatus()
+            appConsole = "[console] render leg unavailable; using runner relay…"
+        }
+        if let status {
+            if let recent = status.recentLogs, !recent.isEmpty {
+                appConsole = recent.joined(separator: "\n")
+            } else if let error = status.error, !error.isEmpty {
+                appConsole = "[dev-server] \(error)"
+            } else if let label = status.servingLabel, !label.isEmpty {
+                appConsole = "[dev-server] \(label)"
+            } else {
+                appConsole = "[dev-server] connected; no recent output"
+            }
+        }
+
+        // Poll the authoritative tail while subscribed so one missed event
+        // cannot leave the console permanently empty.
+        appConsoleRetryTask?.cancel()
+        appConsoleRetryTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled, let latest = try? await client.devServerStatus() else { continue }
+                if let recent = latest.recentLogs, !recent.isEmpty {
+                    appConsole = recent.joined(separator: "\n")
+                }
+            }
+        }
+
+        let onEvent: @Sendable (AgentClient.DevServerEvent) -> Void = { event in
+            guard let line = event.logLine ?? event.message,
+                  !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            Task { @MainActor in appendAppConsoleLine(line) }
+        }
+        let onGap: @Sendable (CapabilityGap) -> Void = { gap in
+            Task { @MainActor in appendAppConsoleLine(gap.summary) }
+        }
+        let onEnd: @Sendable (FailureSignals.StreamEndKind, String?) -> Void = { kind, reason in
+            guard kind != .cancelled else { return }
+            Task { @MainActor in
+                appendAppConsoleLine("[console stream interrupted] \(reason ?? "connection closed")")
+                appConsoleRetryTask?.cancel()
+                appConsoleRetryTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    startAppConsole()
+                }
+            }
+        }
+        let onError: @Sendable (String) -> Void = { message in
+            Task { @MainActor in appendAppConsoleLine("[console] \(message)") }
+        }
+        let stream = await client.subscribeDevEvents(
+            onEvent: onEvent,
+            onGap: onGap,
+            onEnd: onEnd,
+            onError: onError
+        )
+        await stream.value
+    }
+
+    @MainActor
+    private func appendAppConsoleLine(_ line: String) {
+        let separator = appConsole.isEmpty ? "" : "\n"
+        appConsole = String((appConsole + separator + line).suffix(512 * 1024))
     }
 
     private func send() {
