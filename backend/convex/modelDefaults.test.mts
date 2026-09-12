@@ -84,8 +84,11 @@ test("global-default mutation is full-session and owner gated", () => {
 
 test("canonical backend deploy synchronizes model rows without invoking the vault", () => {
   const deploy = fs.readFileSync(new URL("../../scripts/deploy-convex.sh", import.meta.url), "utf8");
+  const installIndex = deploy.indexOf("npm ci --no-audit --no-fund");
   const deployIndex = deploy.indexOf("npx convex deploy --yes");
   const seedIndex = deploy.indexOf("npx convex run aiModels:seed --prod");
+  assert.ok(installIndex >= 0, "a clean release worktree must restore pinned backend dependencies");
+  assert.ok(installIndex < deployIndex, "backend dependencies must be restored before Convex bundles the deployment");
   assert.ok(deployIndex >= 0, "Convex code deploy must remain present");
   assert.ok(seedIndex > deployIndex, "production model rows must sync after the code deploy");
   assert.doesNotMatch(deploy, /echo\s+"[^"\n]*`yaver vault`/,

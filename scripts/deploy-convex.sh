@@ -54,6 +54,11 @@ fi
 
 echo "Deploying backend/convex to Convex prod..."
 cd backend
+# A clean release worktree intentionally has no node_modules. Letting npx fetch
+# only the Convex CLI is insufficient because esbuild must also resolve the
+# pinned convex/server package while bundling convex.config.js.
+echo "Restoring pinned backend dependencies..."
+npm ci --no-audit --no-fund
 npx convex deploy --yes
 
 # A schema/function deploy does not mutate existing catalog rows. Keep the
