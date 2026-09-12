@@ -18,13 +18,13 @@
     "source": "github",
     "id": "1186019621"
   },
-  "version": "1.99.462",
+  "version": "1.99.466",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "yaver-cli",
-      "version": "1.99.462",
+      "version": "1.99.466",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
