@@ -5,6 +5,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +98,127 @@ func TestPathsSameFile_DistinctFilesAreNotSame(t *testing.T) {
 	}
 	if pathsSameFile(a, filepath.Join(dir, "missing")) {
 		t.Fatal("a missing path must never compare equal")
+	}
+}
+
+// The 2026-09-12 Silent Input 404, as a test.
+//
+// A LaunchAgent plist that hardcodes ~/.yaver/bin/1.99.411/darwin-arm64/yaver
+// kept launching the old binary after auto-update repointed `current` at
+// 1.99.465, so /vsr/* routes 404'd while the box looked online. reconcile must
+// rewrite ONLY the ProgramArguments binary to the stable current path and leave
+// every other byte — args, KeepAlive, log paths — untouched.
+func TestRewriteLaunchdProgramBinary_RepointsVersionedPathOnly(t *testing.T) {
+	home, realExe := layoutWithCurrentSymlink(t)
+	_ = realExe
+	stable := filepath.Join(home, ".yaver", "bin", "current", "linux-arm64", "yaver")
+	stale := filepath.Join(home, ".yaver", "bin", "1.99.411", "darwin-arm64", "yaver")
+
+	plist := filepath.Join(t.TempDir(), "io.yaver.agent.plist")
+	body := `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.yaver.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>` + stale + `</string>
+        <string>serve</string>
+        <string>--debug</string>
+        <string>--work-dir=/Users/someone/Workspace/yaver.io</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+`
+	if err := os.WriteFile(plist, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old, changed := rewriteLaunchdProgramBinary(plist, stable)
+	if !changed {
+		t.Fatal("a versioned ProgramArguments binary must be rewritten")
+	}
+	if old != stale {
+		t.Fatalf("returned old %q, want %q", old, stale)
+	}
+	updated, err := os.ReadFile(plist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "<string>"+stable+"</string>") {
+		t.Fatal("stable current path was not written into ProgramArguments")
+	}
+	if strings.Contains(string(updated), stale) {
+		t.Fatal("stale versioned path survived the rewrite")
+	}
+	// Everything after the binary must be byte-identical.
+	if !strings.Contains(string(updated), "<string>serve</string>") ||
+		!strings.Contains(string(updated), "<key>KeepAlive</key>") {
+		t.Fatal("rewrite touched bytes outside the first ProgramArguments string")
+	}
+}
+
+func TestRewriteLaunchdProgramBinary_IdempotentAndSafe(t *testing.T) {
+	stable := "/home/u/.yaver/bin/current/darwin-arm64/yaver"
+	dir := t.TempDir()
+	plist := filepath.Join(dir, "io.yaver.agent.plist")
+
+	// Already stable → no rewrite.
+	if err := os.WriteFile(plist, []byte("<key>ProgramArguments</key><array><string>"+stable+"</string></array>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed := rewriteLaunchdProgramBinary(plist, stable); changed {
+		t.Fatal("an already-stable plist must not be rewritten on every startup")
+	}
+
+	// Missing plist → no rewrite, no panic.
+	if _, changed := rewriteLaunchdProgramBinary(filepath.Join(dir, "nope.plist"), stable); changed {
+		t.Fatal("a missing plist must not report a rewrite")
+	}
+
+	// No ProgramArguments → no rewrite.
+	noArgs := filepath.Join(dir, "noargs.plist")
+	if err := os.WriteFile(noArgs, []byte("<key>Label</key><string>x</string>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed := rewriteLaunchdProgramBinary(noArgs, stable); changed {
+		t.Fatal("a plist without ProgramArguments must not be rewritten")
+	}
+
+	// A plist at the expected path may have been replaced or corrupted. Never
+	// turn this helper into a general launchd-program rewrite primitive.
+	unrelated := filepath.Join(dir, "unrelated.plist")
+	if err := os.WriteFile(unrelated, []byte("<key>ProgramArguments</key><array><string>/usr/bin/true</string></array>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed := rewriteLaunchdProgramBinary(unrelated, stable); changed {
+		t.Fatal("a non-Yaver launchd program must not be rewritten")
+	}
+}
+
+// The stable path must be the version-independent `current` symlink target, not
+// whichever version directory it happens to point at today.
+func TestStableCachedYaverBinary_UsesCurrentSymlink(t *testing.T) {
+	home := t.TempDir()
+	versionDir := filepath.Join(home, ".yaver", "bin", "1.99.999", runtime.GOOS+"-"+runtime.GOARCH)
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "yaver"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(home, ".yaver", "bin", "current")
+	if err := os.Symlink(filepath.Join(home, ".yaver", "bin", "1.99.999"), current); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	got := stableCachedYaverBinary()
+	want := filepath.Join(home, ".yaver", "bin", "current", runtime.GOOS+"-"+runtime.GOARCH, "yaver")
+	if got != want {
+		t.Fatalf("got %q, want the stable current path %q", got, want)
 	}
 }
 

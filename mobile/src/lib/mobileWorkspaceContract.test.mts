@@ -24,7 +24,7 @@ test("Mobile Workspace consumes the agent readiness contract and exposes fixes",
   assert.ok(wizard.includes("mobileWorkspaceStatus"));
   assert.ok(wizard.includes("getRunnersForTarget"));
   assert.ok(wizard.includes("setOpenCodeConfigVisible(true)"));
-  assert.ok(wizard.includes("quicClient.installRunner"));
+  assert.ok(wizard.includes("selectedWorkspaceClient.installRunner"));
   assert.ok(wizard.includes("configureGitProvider(gitProvider)"));
   assert.ok(wizard.includes("Test on remote box"));
 });
@@ -32,8 +32,8 @@ test("Mobile Workspace consumes the agent readiness contract and exposes fixes",
 test("Mobile Workspace retries readiness when the selected transport connects", () => {
   assert.match(
     wizard,
-    /\}, \[activeDevice\?\.id, connected, selectedRunnerConnected, selectedRunnerDevice\]\);/,
-    "readiness callback must be recreated when connection state changes",
+    /\}, \[connected, selectedRunnerConnected, selectedRunnerDevice, selectedWorkspaceClient, selectedWorkspaceTarget\]\);/,
+    "readiness callback must be recreated when connection state or resolved transport changes",
   );
 });
 

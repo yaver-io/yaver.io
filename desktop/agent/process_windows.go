@@ -301,3 +301,8 @@ var _ = unsafe.Pointer(nil)
 // reconcileSystemdBinaryPath is a no-op on Windows — there is no systemd unit
 // whose ExecStart could drift. The Unix implementation lives in process_unix.go.
 func reconcileSystemdBinaryPath() {}
+
+// reconcileDarwinLaunchdBinaryPath is a no-op on Windows — there is no launchd
+// plist whose ProgramArguments could drift. The Darwin implementation lives in
+// process_unix.go.
+func reconcileDarwinLaunchdBinaryPath() {}

@@ -2607,6 +2607,11 @@ func runServe(args []string) {
 	// but whose unit still points at the old path would keep restarting stale
 	// code (and stale relay logic). Repoint drifted units at ~/.yaver/bin/current.
 	reconcileSystemdBinaryPath()
+	// Same class, macOS half: a LaunchAgent/LaunchDaemon plist that hardcodes a
+	// versioned binary path keeps launching the old binary after auto-update, so
+	// routes added since (e.g. /vsr/*) 404 while the box looks "online". Repoint
+	// drifted plists at the same stable current symlink.
+	reconcileDarwinLaunchdBinaryPath()
 
 	// Bootstrap mode: if we have no token yet, don't exit with
 	// "Not signed in" — run a minimal pairing HTTP server so the

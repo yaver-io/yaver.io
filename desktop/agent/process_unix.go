@@ -496,6 +496,119 @@ func reconcileSystemdBinaryPath() {
 	}
 }
 
+// reconcileDarwinLaunchdBinaryPath is the macOS analogue of
+// reconcileSystemdBinaryPath above — and it exists because the launchd side had
+// NO self-heal at all.
+//
+// The 2026-09-12 Silent Input incident: the LaunchAgent plist hardcoded
+// ~/.yaver/bin/1.99.411/darwin-arm64/yaver. npm auto-update installed
+// 1.99.465, repointed ~/.yaver/bin/current, and re-exec'd — but the plist was
+// never rewritten. The box kept serving the OLD binary, so every /vsr/* route
+// added since (GET /vsr/capabilities, POST /vsr/session/start) 404'd and the
+// phone's "Hold to Lip Read" modal showed "VSR request failed (404)". The
+// inventory (a running agent) said yes; the operation (the route) said no.
+//
+// systemd boxes self-healed via reconcileSystemdBinaryPath; Macs did not.
+// This repoints a drifted plist at the stable ~/.yaver/bin/current symlink so
+// every future launchd restart runs the newest binary. Best-effort; never
+// blocks serve.
+//
+// It rewrites the plist FILE only. launchd caches the loaded job config, so the
+// change takes effect on the next bootout/bootstrap or reboot; it deliberately
+// does NOT bootout the running agent, because that would kill the very process
+// calling this (and any coding task under it). The rewrite makes the next
+// restart correct; the one-time cutover for an already-drifted box is
+// `launchctl bootout gui/<uid>/io.yaver.agent && launchctl bootstrap gui/<uid>
+// <plist>`.
+func reconcileDarwinLaunchdBinaryPath() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	stable := stableCachedYaverBinary()
+	if stable == "" {
+		return // no cached-binary layout to point at
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	for _, plistPath := range []string{filepath.Join(home, darwinLaunchAgentPath), darwinLaunchDaemonPath} {
+		old, changed := rewriteLaunchdProgramBinary(plistPath, stable)
+		if !changed {
+			continue
+		}
+		log.Printf("[binary-paths] repointed %s ProgramArguments %s → %s (self-heal so a launchd restart runs the newest binary; effective on next bootout/bootstrap or reboot)", plistPath, old, stable)
+	}
+}
+
+// stableCachedYaverBinary returns the first real file under
+// ~/.yaver/bin/current/<platform>/yaver — the version-independent path the npm
+// launcher and both updaters maintain. "" when that layout is absent.
+func stableCachedYaverBinary() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(home, ".yaver", "bin", "current", runtime.GOOS+"-"+runtime.GOARCH, "yaver")
+	if fi, statErr := os.Stat(candidate); statErr == nil && !fi.IsDir() {
+		return candidate
+	}
+	return ""
+}
+
+// rewriteLaunchdProgramBinary rewrites ONLY the first <string> inside a plist's
+// ProgramArguments <array> to newBinary, preserving every other byte. Returns
+// the previous binary and whether the file was rewritten. A missing plist, a
+// plist without ProgramArguments, or one already naming newBinary returns
+// ("", false). Comparison is exact-string: a plist that names a versioned path
+// (…/bin/1.99.411/…) is rewritten to the stable current path even when both
+// resolve to the same inode, because the versioned spelling is exactly what
+// drifts on the next update.
+func rewriteLaunchdProgramBinary(plistPath, newBinary string) (string, bool) {
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		return "", false
+	}
+	content := string(data)
+	keyIdx := strings.Index(content, "<key>ProgramArguments</key>")
+	if keyIdx < 0 {
+		return "", false
+	}
+	arrayIdx := strings.Index(content[keyIdx:], "<array>")
+	if arrayIdx < 0 {
+		return "", false
+	}
+	arrayIdx += keyIdx + len("<array>")
+	openIdx := strings.Index(content[arrayIdx:], "<string>")
+	if openIdx < 0 {
+		return "", false
+	}
+	openIdx += arrayIdx + len("<string>")
+	closeIdx := strings.Index(content[openIdx:], "</string>")
+	if closeIdx < 0 {
+		return "", false
+	}
+	closeIdx += openIdx
+	old := strings.TrimSpace(content[openIdx:closeIdx])
+	if old == newBinary {
+		return "", false
+	}
+	// This is a repair for Yaver's own cached binary layout, not a general
+	// launchd editor. A malformed or replaced plist must fail closed.
+	if filepath.Base(old) != "yaver" || !strings.Contains(filepath.ToSlash(old), "/.yaver/bin/") {
+		return "", false
+	}
+	mode := os.FileMode(0644)
+	if info, statErr := os.Stat(plistPath); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	updated := content[:openIdx] + newBinary + content[closeIdx:]
+	if err := os.WriteFile(plistPath, []byte(updated), mode); err != nil {
+		return "", false
+	}
+	return old, true
+}
+
 // rewriteUnitExecStartBinary rewrites ONLY the binary (first field) of a unit's
 // ExecStart line to newBinary, preserving indentation, an optional leading '-',
 // and all args + the rest of the unit body. Returns true if it changed + wrote.

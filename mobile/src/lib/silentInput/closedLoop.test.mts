@@ -13,7 +13,8 @@ test("Settings and Tasks More consume the same operational VSR control", () => {
   assert.match(panel, /runCapabilityGapFix\(/, "the typed agent recovery route must be invocable");
   assert.match(panel, /formatFixElapsed\(/, "an install must narrate elapsed time");
   assert.match(panel, /<SilentInputModal/, "Settings needs a real camera-to-inference test");
-  assert.match(panel, /this build contains no verified mobile VSR model/, "unimplemented on-device VSR must not be selectable");
+  assert.match(panel, /backend:\s*"user-machine"/, "the only selectable VSR backend must be the user machine");
+  assert.doesNotMatch(panel, /<Choice[^>]+label="(?:On-device|Cloud)"/, "unimplemented VSR backends must not be selectable");
 
   const settings = read("app/(tabs)/settings.tsx");
   assert.match(settings, /settingsPane === "voice"[\s\S]*<SilentInputControlPanel/, "VSR test belongs in Voice settings");
