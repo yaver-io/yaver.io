@@ -500,12 +500,14 @@ func writeProjects(sb *strings.Builder) {
 }
 
 type projectInfo struct {
-	Path       string
-	Branch     string
-	LastCommit string
-	Languages  []string
-	Tree       string // limited directory tree
-	ReadmePath string // path to copied README in ~/.yaver/projects/
+	Path        string
+	Branch      string
+	Name        string // manifest app name; empty means basename(Path)
+	ManifestApp bool   // declared nested apps remain pickable beside their repo root
+	LastCommit  string
+	Languages   []string
+	Tree        string // limited directory tree
+	ReadmePath  string // path to copied README in ~/.yaver/projects/
 }
 
 // collapseNestedRepos drops any repo that lives INSIDE another discovered repo
@@ -559,6 +561,9 @@ func collapseNestedReposOutsideHome(projects []projectInfo, home string) []proje
 		path := filepath.Clean(p.Path)
 		nested := false
 		for _, k := range kept {
+			if p.ManifestApp {
+				break
+			}
 			rel, err := filepath.Rel(filepath.Clean(k.Path), path)
 			if err != nil {
 				continue

@@ -76,7 +76,8 @@ func TestMergeLiveWorkspaceReposIntoProjectsAddsWorkspaceRepoRoots(t *testing.T)
 // projects ("no tvos at all too"). The manifest merge must surface every
 // declared app whose path exists.
 func TestMergeLiveWorkspaceReposAddsManifestApps(t *testing.T) {
-	root := t.TempDir()
+	home := withHome(t)
+	root := mkRepo(t, filepath.Join(home, "Workspace"), "declared-monorepo")
 	for _, app := range []string{"tvos", "watch", "visionos", "wear"} {
 		if err := os.MkdirAll(filepath.Join(root, app), 0o755); err != nil {
 			t.Fatal(err)
@@ -91,18 +92,24 @@ func TestMergeLiveWorkspaceReposAddsManifestApps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldOverride := WorkspaceManifestPathOverride
-	WorkspaceManifestPathOverride = filepath.Join(root, "yaver.workspace.yaml")
-	defer func() { WorkspaceManifestPathOverride = oldOverride }()
-
 	got := mergeLiveWorkspaceReposIntoProjects(nil)
 	found := map[string]bool{}
 	for _, project := range got {
-		found[filepath.Base(project.Path)] = true
+		found[project.Name] = project.ManifestApp
 	}
-	for _, want := range []string{"tvos", "watch", "visionos", "wear"} {
+	for _, want := range []string{"tvos", "watchos", "visionos", "wear-os"} {
 		if !found[want] {
 			t.Errorf("manifest app %q not merged into /projects (got %v)", want, found)
+		}
+	}
+	collapsed := collapseNestedReposOutsideHome(got, home)
+	for _, want := range []string{"tvos", "watchos", "visionos", "wear-os"} {
+		kept := false
+		for _, project := range collapsed {
+			kept = kept || project.Name == want
+		}
+		if !kept {
+			t.Errorf("declared nested app %q was collapsed under its repo root", want)
 		}
 	}
 }

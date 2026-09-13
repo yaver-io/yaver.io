@@ -102,7 +102,11 @@ export function createP2PDogfoodDriver(
       }
       let latest = status;
       let reported = reportedPreview(latest);
-      if (project.lane === 'browser' && !reported) {
+      // /dev/start may return the stable /dev/ proxy path before the child
+      // process has bound a port. A URL is inventory; running/serving is the
+      // operation. Poll until both are true so a stale bundleUrl cannot close
+      // the setup sheet while Expo is actually failing in the background.
+      if (project.lane === 'browser' && (!reported || !(latest.running || latest.serving))) {
         context.setPhase('compiling', `Compiling ${project.name} for the browser…`);
         const deadline = Date.now() + startupTimeoutMs;
         while (context.isCurrent() && Date.now() < deadline) {
@@ -125,7 +129,7 @@ export function createP2PDogfoodDriver(
             remedy: 'Wait for the newer attempt.', retryable: true,
           });
         }
-        if (!reported) {
+        if (!reported || !(latest.running || latest.serving)) {
           throw new DogfoodRuntimeError({
             code: 'DOGFOOD_NO_RENDER_URL',
             error: `The dev server did not report a browser preview URL within ${Math.ceil(startupTimeoutMs / 1000)} seconds.`,

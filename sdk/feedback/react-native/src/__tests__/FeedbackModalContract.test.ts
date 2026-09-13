@@ -82,6 +82,8 @@ describe('FeedbackModal authenticated chat contract', () => {
     expect(source).toContain('Browser Logs open first');
     expect(source).toContain('{!dogfoodOnboarding ? <>');
     expect(source).toContain("? `Set up ${dogfoodOnboarding.projectName || dogfoodOnboarding.label || 'this app'} Dogfood`");
+    expect(source).toContain('void loadRoutingPrefs()');
+    expect(source).toContain('[loadDogfoodOnboarding, loadRoutingPrefs, loadRunnerStatuses, loadSelectedMachine]');
   });
 
   it('passes the selected native target and labels the live log source', () => {

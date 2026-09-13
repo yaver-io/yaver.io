@@ -54,6 +54,7 @@ import {
 } from "../../../sdk/feedback/react-native/src/DogfoodRuntime";
 import {
   DogfoodLanePicker,
+  DogfoodLaunchingWidget,
 } from "../../../sdk/feedback/react-native/src/DogfoodSessionUi";
 import {
   getDogfoodUsageMode,
@@ -156,6 +157,7 @@ export default function AttachModeSection({
   const [nestingReason, setNestingReason] = useState<string | undefined>();
   const [expandedStep, setExpandedStep] = useState<AttachPanelKey | null>(null);
   const shortcutController = useRef(new BrowserShortcutController());
+  const usageAutoLaunchRef = useRef(false);
   const primaryAutoConnectAttemptRef = useRef<string | null>(null);
   const [shortcutOrigin, setShortcutOrigin] = useState("");
   const [shortcutSnapshot, setShortcutSnapshot] = useState<BrowserShortcutSnapshot>({
@@ -500,6 +502,12 @@ export default function AttachModeSection({
     } as any);
   }, [checkoutDir, gate.canAttach, lane, laneHydrated, lanePolicy.fallback, renderBehavior, runner, sessionBehavior, startBehavior, targetDevice?.id, targetDevice?.name, usageMode]);
 
+  useEffect(() => {
+    if (surface !== "usage" || !gate.canAttach || !laneHydrated || usageAutoLaunchRef.current) return;
+    usageAutoLaunchRef.current = true;
+    attach();
+  }, [attach, gate.canAttach, laneHydrated, surface]);
+
   const shortcutBusy = ["checking", "building", "publishing", "verifying"].includes(shortcutSnapshot.phase);
   const shortcutCheckoutReady = targetConnected && checkoutDeviceId === targetDevice?.id && verified === true && !!checkoutDir.trim();
   const visibleShortcutSnapshot = useMemo<BrowserShortcutSnapshot>(() => {
@@ -650,17 +658,14 @@ export default function AttachModeSection({
         <View style={{ gap: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, borderRadius: 16, padding: 16 }}>
           <Text style={{ color: c.textPrimary, fontSize: 17, fontWeight: "800" }}>Dogfood</Text>
           <Text style={{ color: c.textSecondary, fontSize: 12, lineHeight: 18 }}>
-            Launch opens the selected lane's live console before rendering the app.
+            The selected lane opens its live console before rendering the app.
           </Text>
           {gate.canAttach && laneHydrated ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Launch Dogfood"
-              onPress={() => void attach()}
-              style={({ pressed }) => ({ marginTop: 6, borderRadius: 12, backgroundColor: c.accent, paddingVertical: 13, alignItems: "center", opacity: pressed ? 0.75 : 1 })}
-            >
-              <Text style={{ color: "#fff", fontWeight: "800" }}>Launch Dogfood</Text>
-            </Pressable>
+            <DogfoodLaunchingWidget
+              message="Launching Dogfood…"
+              detail="Opening the selected checkout automatically."
+              colors={{ background: c.bgCard, border: c.border, text: c.textPrimary, muted: c.textMuted, accent: c.accent, accentSoft: c.accentSoft }}
+            />
           ) : (
             <Text style={{ color: c.warn, fontSize: 12, lineHeight: 17 }}>
               {!laneHydrated ? "Loading your Dogfood runtime choice…" : gate.nextStep?.detail || "Complete Dogfood Settings before launching."}

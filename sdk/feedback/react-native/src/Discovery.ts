@@ -159,21 +159,25 @@ export class YaverDiscovery {
   ): Promise<DiscoveryResult | null> {
     const base = convexUrl.replace(/\/$/, '');
     try {
-      // Try cloud machines first (CPU/GPU managed machines). These are
-      // long-lived with stable IPs so the direct probe is cheap.
-      const machinesRes = await fetch(`${base}/machines`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (machinesRes.ok) {
-        const { machines } = await machinesRes.json();
-        const activeMachine = (machines ?? []).find(
-          (m: { status: string; serverIp?: string }) =>
-            m.status === 'active' && m.serverIp,
-        );
-        if (activeMachine?.serverIp) {
-          const url = agentHttpBase(activeMachine.serverIp, DEFAULT_PORT);
-          const probed = await YaverDiscovery.probe(url);
-          if (probed) return probed;
+      // With no explicit device choice, an active managed CPU/GPU machine is
+      // a useful default. Once the user selects a device, however, routing to
+      // an unrelated cloud machine violates the selection and can open the
+      // wrong checkout. Resolve that exact personal device below instead.
+      if (!preferredDeviceId) {
+        const machinesRes = await fetch(`${base}/machines`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (machinesRes.ok) {
+          const { machines } = await machinesRes.json();
+          const activeMachine = (machines ?? []).find(
+            (m: { status: string; serverIp?: string }) =>
+              m.status === 'active' && m.serverIp,
+          );
+          if (activeMachine?.serverIp) {
+            const url = agentHttpBase(activeMachine.serverIp, DEFAULT_PORT);
+            const probed = await YaverDiscovery.probe(url);
+            if (probed) return probed;
+          }
         }
       }
 

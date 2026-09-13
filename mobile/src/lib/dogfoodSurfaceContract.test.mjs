@@ -149,7 +149,7 @@ test("Dogfood Settings and Dogfood Usage share a signed-in contributor gate", ()
   assert.match(dogfood, /<DogfoodNativeMenu/);
   assert.match(dogfood, /surface="settings"/);
   assert.match(dogfood, /surface="usage"/);
-  assert.match(gate, /Launch opens the selected lane's live console before rendering the app/);
+  assert.match(gate, /The selected lane opens its live console before rendering the app/);
   const usageSurface = gate.match(/if \(surface === "usage"\) \{([\s\S]*?)\n  \}\n\n  return \(/)?.[1] || "";
   assert.doesNotMatch(usageSurface, /targetDevice\?\.name|checkoutLabel|startBehavior ===/,
     "the launch card must not repeat runtime inventory already available in Settings");
@@ -260,6 +260,12 @@ test("Dogfood launch shows the real runtime console before opening the app", () 
     "Stop must reach the agent operation rather than only clearing local state");
   assert.match(quic, /\/dev\/reload-app[\s\S]{0,600}155_000/,
     "Hermes builds must not inherit the generic 12-second request timeout");
+});
+
+test("Dogfood usage auto-launches with an animated status instead of a Launch button", () => {
+  assert.match(gate, /surface !== ["']usage["'].*usageAutoLaunchRef\.current/s);
+  assert.match(gate, /<DogfoodLaunchingWidget/);
+  assert.doesNotMatch(gate, /accessibilityLabel=["']Launch Dogfood["']/);
 });
 
 test("Dogfood AI repair stays on the selected checkout when cloud placement is unavailable", () => {

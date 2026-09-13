@@ -39,6 +39,48 @@ beforeEach(() => {
 });
 
 describe('YaverDiscovery', () => {
+  describe('discoverFromConvex()', () => {
+    it('honors an explicit personal device instead of substituting an active cloud machine', async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url.endsWith('/devices/list')) {
+          return {
+            ok: true,
+            json: async () => [{
+              deviceId: 'selected-mac',
+              name: 'Selected Mac',
+              platform: 'macos',
+              isOnline: true,
+              needsAuth: false,
+              lastHeartbeat: Date.now(),
+              quicHost: '192.168.1.20',
+              quicPort: 18080,
+            }],
+          };
+        }
+        throw new Error(`unexpected request: ${url}`);
+      });
+      jest.spyOn(YaverDiscovery, 'raceProbe').mockResolvedValueOnce({
+        url: 'http://192.168.1.20:18080',
+        hostname: 'Selected Mac',
+        version: 'test',
+        latency: 1,
+      });
+
+      const result = await YaverDiscovery.discoverFromConvex(
+        'https://example.convex.site',
+        'owner-token',
+        'selected-mac',
+      );
+
+      expect(result?.url).toBe('http://192.168.1.20:18080');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://example.convex.site/devices/list',
+        expect.any(Object),
+      );
+      expect(mockFetch.mock.calls.some(([url]) => String(url).endsWith('/machines'))).toBe(false);
+    });
+  });
+
   describe('probe()', () => {
     it('returns null for unreachable URLs', async () => {
       mockFetch.mockRejectedValue(new Error('Network error'));

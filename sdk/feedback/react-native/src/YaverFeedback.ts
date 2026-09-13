@@ -1044,6 +1044,12 @@ export class YaverFeedback {
         return state;
       }
     }
+    // Opening Dogfood is explicit user intent. Show the SDK-owned setup
+    // surface before network/account verification so slow, denied, and failed
+    // checks all have visible progress and a route to recovery. Previously the
+    // modal opened only after a successful verification, turning every other
+    // result into a silent no-op in embedded hosts.
+    DeviceEventEmitter.emit('yaverFeedback:startReport');
     return YaverFeedback.continueDogfoodOnboarding();
   }
 
@@ -1562,9 +1568,28 @@ export class YaverFeedback {
   static async openDogfoodUsage(): Promise<DogfoodFlowState> {
     await YaverFeedback.hydrateSession();
     const access = await YaverFeedback.getDogfoodAccess();
-    if (!access.yaverAuthenticated || !access.authorized) {
+    if (!access.yaverAuthenticated || !access.authorized || !YaverFeedback.getDogfoodStatus().active) {
       return YaverFeedback.openDogfood();
     }
+    const selection = await YaverFeedback.getDogfoodRuntimeSelection();
+    let runtimeActive = false;
+    if (selection?.lane === 'browser' && selection.projectPath) {
+      const client = YaverFeedback.getP2PClient();
+      const status = client ? await client.getDogfoodDevServerStatus() : null;
+      runtimeActive = status?.running === true
+        && status.serving === true
+        && status.workDir === selection.projectPath;
+    } else if (selection?.lane === 'hermes') {
+      runtimeActive = BlackBox.isStreaming
+        && BlackBox.isCommandChannelConnected
+        && Boolean(BlackBox.currentDeviceId);
+    } else if (selection?.lane === 'webrtc') {
+      runtimeActive = Boolean(selection.runtimeSessionId);
+    }
+    // Approval, a cached checkout, and a past successful launch are inventory.
+    // The compact controls are useful only while their real runtime is alive;
+    // otherwise the host entry must reopen setup and auto-launch it.
+    if (!runtimeActive) return YaverFeedback.openDogfood();
     try {
       const { DeviceEventEmitter } = require('react-native');
       DeviceEventEmitter.emit('yaverFeedback:dogfoodUsageRequested');

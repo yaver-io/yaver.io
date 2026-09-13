@@ -3015,21 +3015,22 @@ func projectListHasRunnableSignal(projectPath string) bool {
 
 func mergeLiveWorkspaceReposIntoProjects(projects []projectInfo) []projectInfo {
 	seen := map[string]bool{}
+	manifestRoots := map[string]bool{}
 	out := make([]projectInfo, 0, len(projects)+8)
-	add := func(path, branch string) {
+	add := func(path, branch, name string, manifestApp bool) {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "" || seen[path] {
 			return
 		}
 		seen[path] = true
-		out = append(out, projectInfo{Path: path, Branch: branch})
+		out = append(out, projectInfo{Path: path, Branch: branch, Name: name, ManifestApp: manifestApp})
 	}
 	for _, p := range projects {
-		add(p.Path, p.Branch)
+		add(p.Path, p.Branch, p.Name, p.ManifestApp)
 	}
 	for _, root := range projectDiscoveryRoots() {
 		for _, repo := range scanDirForRepos(root) {
-			add(repo.Path, repo.Branch)
+			add(repo.Path, repo.Branch, "", false)
 		}
 	}
 	// Manifest-declared apps that are NOT their own git repos (tvos/, watch/,
@@ -3039,15 +3040,34 @@ func mergeLiveWorkspaceReposIntoProjects(projects []projectInfo) []projectInfo {
 	// were unreachable from the chat (2026-08-12: "no tvos at all too").
 	// A manifest app is a declared, deployable surface even when it shares
 	// the repo root's .git. Best-effort: a malformed manifest is skipped.
-	// Walk up from CWD to find the manifest (the agent may serve from a
-	// subdirectory); its apps resolve against the manifest's own root.
-	if root, m := loadNearestWorkspaceManifest("."); m != nil {
+	addManifest := func(root string, m *WorkspaceManifest, branch string) {
+		root = filepath.Clean(root)
+		if m == nil || manifestRoots[root] {
+			return
+		}
+		manifestRoots[root] = true
 		for _, app := range m.Apps {
 			appPath := filepath.Clean(filepath.Join(root, app.Path))
 			if _, err := os.Stat(appPath); err == nil {
-				add(appPath, "")
+				add(appPath, branch, app.Name, true)
 			}
 		}
+	}
+	// Every discovered repo owns its own manifest. Looking only above the
+	// daemon CWD made launchd ignore sibling monorepos and silently choose their
+	// generic root instead of a declared mobile app.
+	for _, repo := range append([]projectInfo(nil), out...) {
+		if _, err := os.Stat(filepath.Join(repo.Path, WorkspaceManifestPath)); err != nil {
+			continue
+		}
+		if m, err := LoadWorkspaceManifest(repo.Path); err == nil {
+			addManifest(repo.Path, m, repo.Branch)
+		}
+	}
+	// Preserve support for an agent launched from inside a manifest workspace
+	// whose root has not reached the discovery cache yet.
+	if root, m := loadNearestWorkspaceManifest("."); m != nil {
+		addManifest(root, m, "")
 	}
 	return out
 }
@@ -3117,7 +3137,10 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]projectResp, 0, len(projects))
 	for _, p := range projects {
-		name := filepath.Base(p.Path)
+		name := p.Name
+		if name == "" {
+			name = filepath.Base(p.Path)
+		}
 		// Skip dotfiles and config dirs
 		skip := false
 		for _, prefix := range skipPrefixes {

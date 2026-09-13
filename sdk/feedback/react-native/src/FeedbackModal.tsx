@@ -697,6 +697,7 @@ export const FeedbackModal: React.FC = () => {
           .catch(() => {});
         void loadSelectedMachine();
         void loadRunnerStatuses();
+        void loadRoutingPrefs();
       }
     });
     const dogfoodSub = DeviceEventEmitter.addListener(
@@ -804,7 +805,7 @@ export const FeedbackModal: React.FC = () => {
       dogfoodNewChatSub.remove();
       statusSub.remove();
     };
-  }, [loadDogfoodOnboarding, loadRunnerStatuses, loadSelectedMachine]);
+  }, [loadDogfoodOnboarding, loadRoutingPrefs, loadRunnerStatuses, loadSelectedMachine]);
 
   useEffect(() => {
     if (!visible) return;

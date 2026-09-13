@@ -3,6 +3,22 @@ import { Buffer } from 'buffer';
 import { webcrypto } from 'crypto';
 import { YaverDeviceDogfood } from '../deviceDogfood';
 
+const mockBrowserValues = new Map<string, string>();
+const mockBrowserStorage = {
+  getItem: jest.fn(async (key: string) => mockBrowserValues.get(key) ?? null),
+  setItem: jest.fn(async (key: string, value: string) => { mockBrowserValues.set(key, value); }),
+  removeItem: jest.fn(async (key: string) => { mockBrowserValues.delete(key); }),
+};
+const mockNativeSecureStore = {
+  getItemAsync: jest.fn(async () => { throw new Error('web stub called native'); }),
+  setItemAsync: jest.fn(async () => { throw new Error('web stub called native'); }),
+  deleteItemAsync: jest.fn(async () => { throw new Error('web stub called native'); }),
+};
+
+jest.mock('react-native', () => ({ Platform: { OS: 'web' } }));
+jest.mock('@react-native-async-storage/async-storage', () => ({ default: mockBrowserStorage }));
+jest.mock('expo-secure-store', () => mockNativeSecureStore, { virtual: true });
+
 class MemorySecureStore {
   values = new Map<string, string>();
   async getItemAsync(key: string) { return this.values.get(key) ?? null; }
@@ -20,6 +36,16 @@ describe('YaverDeviceDogfood', () => {
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
+
+  test('persists the browser signing identity with the RN-web storage adapter', async () => {
+    mockBrowserValues.clear();
+    const firstClient = new YaverDeviceDogfood({ appId: 'io.example.browser' });
+    const first = await firstClient.enrollmentInfo();
+    const secondClient = new YaverDeviceDogfood({ appId: 'io.example.browser' });
+    expect(await secondClient.enrollmentInfo()).toEqual(first);
+    expect(mockBrowserStorage.setItem).toHaveBeenCalled();
+    expect(mockNativeSecureStore.getItemAsync).not.toHaveBeenCalled();
+  });
 
   test('keeps identity stable and proves possession rather than trusting the UUID', async () => {
     const store = new MemorySecureStore();

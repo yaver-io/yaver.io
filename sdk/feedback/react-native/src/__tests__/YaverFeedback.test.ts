@@ -96,6 +96,81 @@ function initActiveDogfood(options: { authToken?: string; controlGesture?: true 
 
 describe('YaverFeedback', () => {
   describe('Dogfood onboarding', () => {
+    it('routes compact Usage through onboarding when the cached browser runtime is no longer serving', async () => {
+      YaverFeedback.init({
+        enabled: true,
+        authToken: 'owner-token',
+        bundleId: 'io.example.app',
+        preferredDeviceId: 'device-1',
+        dogfood: { framework: 'expo' },
+      });
+      Object.assign(YaverFeedback.getConfig()!.dogfood!, activeDogfood());
+      jest.spyOn(YaverFeedback, 'getDogfoodAccess').mockResolvedValueOnce({
+        appId: 'io.example.app',
+        yaverAuthenticated: true,
+        ownerAuthorized: true,
+        accountAuthorized: true,
+        installationId: 'phone-1',
+        deviceState: 'active',
+        authorized: true,
+      });
+      jest.spyOn(YaverFeedback, 'getDogfoodRuntimeSelection').mockResolvedValueOnce({
+        lane: 'browser',
+        projectName: 'Example',
+        projectPath: '/workspace/example',
+      });
+      jest.spyOn(YaverFeedback, 'getP2PClient').mockReturnValueOnce({
+        getDogfoodDevServerStatus: jest.fn(async () => ({
+          running: false,
+          serving: false,
+          workDir: '/workspace/example',
+        })),
+      } as any);
+      const open = jest.spyOn(YaverFeedback, 'openDogfood').mockResolvedValueOnce({
+        phase: 'opening',
+        appId: 'io.example.app',
+      });
+
+      await expect(YaverFeedback.openDogfoodUsage()).resolves.toMatchObject({ phase: 'opening' });
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(DeviceEventEmitter.emit).not.toHaveBeenCalledWith('yaverFeedback:dogfoodUsageRequested');
+    });
+
+    it('opens compact Usage only when the selected browser checkout is actually serving', async () => {
+      YaverFeedback.init({
+        enabled: true,
+        authToken: 'owner-token',
+        bundleId: 'io.example.app',
+        preferredDeviceId: 'device-1',
+        dogfood: { framework: 'expo' },
+      });
+      Object.assign(YaverFeedback.getConfig()!.dogfood!, activeDogfood());
+      jest.spyOn(YaverFeedback, 'getDogfoodAccess').mockResolvedValueOnce({
+        appId: 'io.example.app',
+        yaverAuthenticated: true,
+        ownerAuthorized: true,
+        accountAuthorized: true,
+        installationId: 'phone-1',
+        deviceState: 'active',
+        authorized: true,
+      });
+      jest.spyOn(YaverFeedback, 'getDogfoodRuntimeSelection').mockResolvedValueOnce({
+        lane: 'browser',
+        projectName: 'Example',
+        projectPath: '/workspace/example',
+      });
+      jest.spyOn(YaverFeedback, 'getP2PClient').mockReturnValueOnce({
+        getDogfoodDevServerStatus: jest.fn(async () => ({
+          running: true,
+          serving: true,
+          workDir: '/workspace/example',
+        })),
+      } as any);
+
+      await expect(YaverFeedback.openDogfoodUsage()).resolves.toMatchObject({ phase: 'opening' });
+      expect(DeviceEventEmitter.emit).toHaveBeenCalledWith('yaverFeedback:dogfoodUsageRequested');
+    });
+
     it('starts with Yaver OAuth when the host has no session', async () => {
       YaverFeedback.init({ enabled: true });
       await YaverFeedback.beginDogfoodOnboarding({ appId: 'io.example.app', label: 'Example' });
@@ -135,15 +210,20 @@ describe('YaverFeedback', () => {
     });
 
     it('returns a visible structured error when access verification fails', async () => {
-      YaverFeedback.init({ enabled: true, authToken: 'owner-token' });
+      YaverFeedback.init({
+        enabled: true,
+        authToken: 'owner-token',
+        bundleId: 'io.example.app',
+        dogfood: {},
+      });
       (getDogfoodAccountAccess as jest.Mock).mockRejectedValueOnce(new Error('Access service unavailable'));
-      const state = await YaverFeedback.beginDogfoodOnboarding({ appId: 'io.example.app' });
+      const state = await YaverFeedback.openDogfood();
       expect(state).toEqual({
         phase: 'error',
         appId: 'io.example.app',
         error: 'Access service unavailable',
       });
-      expect(DeviceEventEmitter.emit).not.toHaveBeenCalledWith('yaverFeedback:startReport');
+      expect(DeviceEventEmitter.emit).toHaveBeenCalledWith('yaverFeedback:startReport');
     });
 
     it('lets a host ACL hide its affordance without opening auth UI', async () => {

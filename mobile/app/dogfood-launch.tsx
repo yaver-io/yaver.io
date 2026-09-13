@@ -123,7 +123,7 @@ export default function DogfoodLaunchScreen() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      <AppScreenHeader title="Launch Dogfood" onBack={() => void stopAndReturn()} />
+      <AppScreenHeader title="Dogfood" onBack={() => void stopAndReturn()} />
       <ScrollView contentContainerStyle={styles.content}>
         <View style={[styles.summary, { backgroundColor: c.bgCard, borderColor: c.border }]}>
           <Text style={[styles.title, { color: c.textPrimary }]}>

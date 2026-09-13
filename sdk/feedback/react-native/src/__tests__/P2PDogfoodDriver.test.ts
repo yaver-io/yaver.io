@@ -35,6 +35,41 @@ describe('createP2PDogfoodDriver', () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a stale proxy URL when the browser process fails before serving', async () => {
+    const stop = jest.fn(async () => {});
+    const client = {
+      subscribeDogfoodDevEvents: () => jest.fn(),
+      startDogfoodDevServer: jest.fn(async () => ({
+        building: true,
+        framework: 'expo',
+        bundleUrl: '/dev/',
+      })),
+      getDogfoodDevServerStatus: jest.fn(async () => ({
+        running: false,
+        serving: false,
+        building: false,
+        framework: 'expo',
+        bundleUrl: '/dev/',
+        error: 'package.json contains conflict markers',
+      })),
+      stopDogfoodDevServer: stop,
+      resolveDogfoodUrl: (path: string) => `http://agent.test${path}`,
+    } as unknown as P2PClient;
+    const controller = new DogfoodController(
+      { name: 'RN app', framework: 'expo', workDir: '/workspace/app', lane: 'browser' },
+      createP2PDogfoodDriver(client, { pollIntervalMs: 1, startupTimeoutMs: 100 }),
+    );
+
+    await expect(controller.trigger()).rejects.toMatchObject({
+      failure: {
+        code: 'DOGFOOD_DEV_SERVER_FAILED',
+        error: 'package.json contains conflict markers',
+      },
+    });
+    expect(controller.snapshot().phase).toBe('failed');
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
   it('starts and cleans up an available native WebRTC runtime', async () => {
     const closeRuntime = jest.fn(async () => {});
     const client = {

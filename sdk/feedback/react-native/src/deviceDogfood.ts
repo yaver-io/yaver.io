@@ -61,9 +61,30 @@ function randomBytes(length: number): Uint8Array {
 }
 
 function defaultSecureStore(): SecureStoreLike {
+  let isWeb = false;
+  try { isWeb = require('react-native').Platform?.OS === 'web'; } catch { /* native fallback below */ }
+  if (!isWeb) {
+    try {
+      const store = require('expo-secure-store');
+      if (store?.getItemAsync && store?.setItemAsync) return store;
+    } catch { /* named error below */ }
+  }
+  // expo-secure-store deliberately has no browser implementation. RN-web
+  // still needs a stable per-browser signing identity, and AsyncStorage maps
+  // to the browser's origin-scoped storage. Keep this fallback web-only:
+  // native installations must continue to require Keychain/Keystore rather
+  // than silently persisting a private installation key in plaintext.
   try {
-    const store = require('expo-secure-store');
-    if (store?.getItemAsync && store?.setItemAsync) return store;
+    if (isWeb) {
+      const storage = require('@react-native-async-storage/async-storage')?.default;
+      if (storage?.getItem && storage?.setItem && storage?.removeItem) {
+        return {
+          getItemAsync: (key) => storage.getItem(key),
+          setItemAsync: (key, value) => storage.setItem(key, value),
+          deleteItemAsync: (key) => storage.removeItem(key),
+        };
+      }
+    }
   } catch { /* named error below */ }
   throw new Error('Secure Dogfood identity storage is unavailable. Install expo-secure-store or pass secureStore.');
 }
