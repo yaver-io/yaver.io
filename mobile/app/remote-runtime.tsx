@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { describeLaneProgress } from "../src/lib/laneProgress";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
@@ -16,6 +16,7 @@ import { initialRemoteRuntimeTransport, shouldFallbackToRelayFrames } from "../s
 export default function RemoteRuntimeScreen() {
   const c = useColors();
   const router = useRouter();
+  const pathname = usePathname();
   const { end: endDogfoodOverlay, goHome } = useDogfoodOverlay();
   const { width } = useWindowDimensions();
   const params = useRouteParamsCompat<{ project?: string; path?: string; framework?: string; usageMode?: string; renderBehavior?: string; sessionBehavior?: string }>();
@@ -506,7 +507,7 @@ export default function RemoteRuntimeScreen() {
           </View>
         </View>
       ) : null}
-      <BrowserVibeBubble
+      {pathname === "/remote-runtime" ? <BrowserVibeBubble
         projectPath={path}
         projectName={project}
         usageMode={usageMode}
@@ -516,7 +517,7 @@ export default function RemoteRuntimeScreen() {
         onGoHome={goHome}
         onExitPreview={exitRuntime}
         onReload={reloadRuntime}
-      />
+      /> : null}
     </SafeAreaView>
   );
 }

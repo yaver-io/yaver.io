@@ -149,6 +149,7 @@ export function DomInspectChip({
           hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
           accessibilityRole="radio"
           accessibilityState={{ checked: !inspect }}
+          aria-checked={!inspect}
           style={{
             borderRadius: 6,
             paddingHorizontal: 10,
@@ -166,6 +167,7 @@ export function DomInspectChip({
           hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
           accessibilityRole="radio"
           accessibilityState={{ checked: inspect, disabled: !domAvailable }}
+          aria-checked={inspect}
           style={{
             borderRadius: 6,
             paddingHorizontal: 10,

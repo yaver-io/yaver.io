@@ -1559,6 +1559,24 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       // explicit choice. User taps still intentionally exit local-only mode.
       if (automatic && !allowsRemoteAutoConnect(codingModeRef.current)) return;
 
+      // A manual pick also outranks an auto-connect that was already probing a
+      // different box. Persisting the new sticky id is too late on its own:
+      // the in-flight sweep already captured its ordered candidates and can
+      // otherwise call selectDevice(..., true) after this invocation returns,
+      // stealing focus back and leaving checkout-scoped surfaces stuck on
+      // "checking <the manually selected box>…" forever.
+      if (!automatic) {
+        autoConnectCancelRef.current = true;
+        autoConnectInFlightRef.current = false;
+        // This manual connection replaces the cancelled sweep. Mark its nonce
+        // consumed so the render below cannot immediately start a second
+        // ensureConnected call beside the user's explicit choice.
+        autoConnectAttemptedNonceRef.current = autoConnectNonce;
+        setAutoConnecting(false);
+        setAutoConnectTarget(null);
+        setAutoConnectStage(null);
+      }
+
       // A real machine selection exits phone-only mode. Flip synchronously so
       // the connection cannot be suppressed by the previous local-only choice;
       // persistence is local and best-effort for this explicit action.
@@ -1717,7 +1735,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         markDeviceUnreachable(device.id);
       }
     },
-    [RELAY_CACHE_KEY, token, user?.id]
+    [RELAY_CACHE_KEY, autoConnectNonce, token, user?.id]
   );
 
   const pendingDeepLinkDeviceHintRef = useRef<string | null>(null);

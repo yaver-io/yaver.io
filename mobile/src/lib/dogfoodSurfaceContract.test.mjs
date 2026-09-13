@@ -296,6 +296,8 @@ test("Yaver Chat Only, Reload Only, and combined modes survive every handoff", (
   assert.match(gate, /getDogfoodUsageMode/);
   assert.match(gate, /setDogfoodUsageMode/);
   assert.match(gate, /"chat-only", "reload-only", "reload-and-chat"/);
+  assert.match(gate, /accessibilityRole="radio"[\s\S]{0,160}aria-checked=\{selected\}/,
+    "named browser automation and assistive technology must observe the selected Dogfood mode");
   assert.match(gate, /usageMode,/,
     "the selected UI mode must be part of the launch request");
   assert.match(overlay, /pathname: "\/remote-runtime"[\s\S]{0,260}usageMode/,
@@ -386,6 +388,8 @@ test("an explicitly selected browser Dogfood lane is fail-closed until rendering
 });
 
 test("Dogfood exposes framework-aware Browser, Hermes, and WebRTC lanes after checkout", () => {
+  assert.match(gate, /accessibilityLabel="Enter Dogfood mode"/,
+    "the primary Dogfood action must be named for assistive technology and browser automation");
   assert.match(gate, /dogfoodLanePlan\("expo"/);
   assert.match(gate, /useState<DogfoodLane>\("browser"\)/);
   assert.match(gate, /YAVER_DOGFOOD_APP_ID/);
@@ -407,8 +411,12 @@ test("Dogfood exposes framework-aware Browser, Hermes, and WebRTC lanes after ch
     "WebRTC Dogfood must reuse the Projects native runtime surface");
   assert.match(attached, /<BrowserVibeBubble/,
     "browser Dogfood must expose Vibing and routing on the live surface");
+  assert.match(attached, /pathname === "\/attach" \? <BrowserVibeBubble/,
+    "a retained Attach route must not duplicate the global Dogfood entry on Tasks");
   assert.match(remoteRuntime, /<BrowserVibeBubble/,
     "WebRTC Dogfood must expose Vibing and routing on the live surface");
+  assert.match(remoteRuntime, /pathname === "\/remote-runtime" \? <BrowserVibeBubble/,
+    "a retained remote-runtime route must not duplicate the global Dogfood entry on Tasks");
   assert.match(remoteRuntime, /onGoHome=\{goHome\}/,
     "the Y must return WebRTC Dogfood to its native menu");
   assert.match(nativeMenu, /testID="dogfood-native-reload"/,

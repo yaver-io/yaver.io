@@ -42,6 +42,12 @@ func TestSecurityCORSAllowsFirstPartyAndNoOriginClients(t *testing.T) {
 	if got := resp.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-Client-Platform") {
 		t.Fatalf("expected platform header to be allowed for RN-web/Selenium clients, got %q", got)
 	}
+	if got := resp.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Cache-Control") {
+		t.Fatalf("expected cache-control header to be allowed for browser Dogfood preview probes, got %q", got)
+	}
+	if got := resp.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "X-Yaver-DevServer") || !strings.Contains(got, "Retry-After") {
+		t.Fatalf("expected browser Dogfood startup headers to be exposed, got %q", got)
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/health", nil)
 	resp = httptest.NewRecorder()

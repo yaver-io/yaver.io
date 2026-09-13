@@ -119,6 +119,7 @@ export const DogfoodLanePicker: React.FC<{
               onPress={() => onSelect(option.lane)}
               accessibilityRole="radio"
               accessibilityState={{ checked: active, disabled: !option.supported }}
+              aria-checked={active}
               style={({ pressed }) => [
                 styles.choice,
                 {

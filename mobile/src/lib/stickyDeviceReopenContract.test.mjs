@@ -17,3 +17,17 @@ test("explicit device picks persist across a cold reopen", () => {
   assert.match(source, /await selectDeviceRef\.current\(device, true\);\s*if \(connectionManager\.clientFor\(device\.id\)\.isConnected\) return;/,
     "a probe success is not a connect success; failed primary connects must continue to secondary");
 });
+
+test("a manual device pick cancels any already-running automatic selection", () => {
+  const selectStart = source.indexOf("const selectDevice = useCallback(");
+  const stickyWrite = source.indexOf("userSelectedDeviceIdRef.current = device.id", selectStart);
+  const manualCancel = source.indexOf("if (!automatic) {", selectStart);
+  assert.ok(selectStart >= 0 && manualCancel > selectStart && manualCancel < stickyWrite,
+    "manual cancellation must happen synchronously before the selected device is persisted");
+  const block = source.slice(manualCancel, stickyWrite);
+  assert.match(block, /autoConnectCancelRef\.current = true/);
+  assert.match(block, /autoConnectInFlightRef\.current = false/);
+  assert.match(block, /autoConnectAttemptedNonceRef\.current = autoConnectNonce/,
+    "the cancelled nonce must not immediately re-arm beside the manual connection");
+  assert.match(block, /setAutoConnectTarget\(null\)/);
+});

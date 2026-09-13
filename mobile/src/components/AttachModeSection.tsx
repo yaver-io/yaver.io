@@ -756,7 +756,8 @@ export default function AttachModeSection({
                 <Pressable
                   key={mode}
                   accessibilityRole="radio"
-                  accessibilityState={{ selected }}
+                  accessibilityState={{ checked: selected }}
+                  aria-checked={selected}
                   onPress={() => {
                     setUsageModeState(mode);
                     void setDogfoodUsageMode(mode, YAVER_DOGFOOD_MODE_SCOPE);
@@ -774,21 +775,21 @@ export default function AttachModeSection({
           <View style={{ flexDirection: "row", gap: 8 }}>
             {(["vibe-first", "render-on-open"] as const).map((value) => {
               const selected = startBehavior === value;
-              return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => { setStartBehaviorState(value); void setDogfoodStartBehavior(value, YAVER_DOGFOOD_MODE_SCOPE); }} style={{ flex: 1, borderRadius: 9, borderWidth: 1, borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accentSoft : c.bg, padding: 9 }}><Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{value === "vibe-first" ? "Vibe first" : "Render on open"}</Text></Pressable>;
+              return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: selected }} aria-checked={selected} onPress={() => { setStartBehaviorState(value); void setDogfoodStartBehavior(value, YAVER_DOGFOOD_MODE_SCOPE); }} style={{ flex: 1, borderRadius: 9, borderWidth: 1, borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accentSoft : c.bg, padding: 9 }}><Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{value === "vibe-first" ? "Vibe first" : "Render on open"}</Text></Pressable>;
             })}
           </View>
           <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700", marginTop: 4 }}>After UI updates</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {(["manual", "auto-on-request"] as const).map((value) => {
               const selected = renderBehavior === value;
-              return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => { setRenderBehaviorState(value); void setDogfoodRenderBehavior(value, YAVER_DOGFOOD_MODE_SCOPE); }} style={{ flex: 1, borderRadius: 9, borderWidth: 1, borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accentSoft : c.bg, padding: 9 }}><Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{value === "manual" ? "Tap Render" : "Auto-render"}</Text></Pressable>;
+              return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: selected }} aria-checked={selected} onPress={() => { setRenderBehaviorState(value); void setDogfoodRenderBehavior(value, YAVER_DOGFOOD_MODE_SCOPE); }} style={{ flex: 1, borderRadius: 9, borderWidth: 1, borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accentSoft : c.bg, padding: 9 }}><Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{value === "manual" ? "Tap Render" : "Auto-render"}</Text></Pressable>;
             })}
           </View>
           <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700", marginTop: 4 }}>Sessions</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {(["resume-last", "new-session"] as const).map((value) => {
               const selected = sessionBehavior === value;
-              return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => { setSessionBehaviorState(value); void setDogfoodSessionBehavior(value, YAVER_DOGFOOD_MODE_SCOPE); }} style={{ flex: 1, borderRadius: 9, borderWidth: 1, borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accentSoft : c.bg, padding: 9 }}><Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{value === "resume-last" ? "Resume newest" : "Start new"}</Text></Pressable>;
+              return <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: selected }} aria-checked={selected} onPress={() => { setSessionBehaviorState(value); void setDogfoodSessionBehavior(value, YAVER_DOGFOOD_MODE_SCOPE); }} style={{ flex: 1, borderRadius: 9, borderWidth: 1, borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accentSoft : c.bg, padding: 9 }}><Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{value === "resume-last" ? "Resume newest" : "Start new"}</Text></Pressable>;
             })}
           </View>
         </View>
@@ -1083,6 +1084,8 @@ export default function AttachModeSection({
           operational. Incomplete setup therefore has no dead primary button. */}
       {gate.canAttach && laneHydrated ? (
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Enter Dogfood mode"
           onPress={() => void attach()}
           style={({ pressed }) => ({
             marginTop: 16,

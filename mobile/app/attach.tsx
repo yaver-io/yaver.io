@@ -16,7 +16,7 @@
 // wall: an advisory that squeezes the action lane to zero height is a worse bug
 // than missing information (build 482).
 
-import { router } from "expo-router";
+import { router, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -28,7 +28,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { WebView } from "react-native-webview";
+import { WebView } from "../src/components/WebViewCompat";
 import { useTheme } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import {
@@ -66,6 +66,7 @@ function elapsedLabel(sinceMs: number): string {
 }
 
 export default function AttachScreen() {
+  const pathname = usePathname();
   const { colors: c, theme } = useTheme();
   const { activeDevice } = useDevice();
   const { end: endDogfoodOverlay, goHome, reportIssue } = useDogfoodOverlay();
@@ -81,7 +82,7 @@ export default function AttachScreen() {
     sessionBehavior?: string;
   }>();
 
-  const webViewRef = useRef<WebView>(null);
+  const webViewRef = useRef<{ reload(): void; injectJavaScript(js: string): void } | null>(null);
   const [webViewKey, setWebViewKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [startedAt] = useState(() => Date.now());
@@ -387,7 +388,7 @@ export default function AttachScreen() {
       </View>
 
       {/* Native sibling: Vibing, Fast Reload, two-level routing, and escape. */}
-      <BrowserVibeBubble
+      {pathname === "/attach" ? <BrowserVibeBubble
         projectPath={params.workDir}
         projectName="Yaver"
         usageMode={params.usageMode === "chat-only" || params.usageMode === "reload-and-chat" ? params.usageMode : "reload-only"}
@@ -397,7 +398,7 @@ export default function AttachScreen() {
         onGoHome={goHome}
         onExitPreview={confirmDetach}
         onReload={(kind) => reloadDogfoodSurface("manual", kind)}
-      />
+      /> : null}
 
       {lastEvent ? (
         <View pointerEvents="none" style={[styles.quietStatus, { backgroundColor: c.bgCard, borderColor: c.border }]}>

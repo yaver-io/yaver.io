@@ -1,12 +1,15 @@
 import { devices, expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { profileFor, viewportMatchesSurface } from "../../web/lib/surfaceViewports";
 
 const mobileURL = (process.env.MOBILE_WEB_URL || "").replace(/\/$/, "");
 const deviceName = (process.env.YAVER_TEST_DEVICE_NAME || "").trim();
+const recordAll = process.env.E2E_RECORD_ALL === "1";
+const runColorLoop = process.env.YAVER_DOGFOOD_COLOR_LOOP === "1";
 const token = process.env.YAVER_TEST_TOKEN || tokenFromLocalConfig();
+const agentURL = (process.env.YAVER_AGENT_URL || "http://127.0.0.1:18080").replace(/\/$/, "");
 const convexSite = process.env.E2E_CONVEX_URL ||
   process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
   "https://perceptive-minnow-557.eu-west-1.convex.site";
@@ -20,17 +23,52 @@ function tokenFromLocalConfig(): string {
   }
 }
 
-test("RN-web shows the compact Dogfood setup and opens inventories only on demand", async ({ browser }) => {
+type AgentTask = { id: string; status?: string; title?: string; description?: string; output?: string };
+
+async function agentTasks(): Promise<AgentTask[]> {
+  const response = await fetch(`${agentURL}/tasks`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error(`agent task inventory returned HTTP ${response.status}`);
+  const payload = await response.json() as { tasks?: AgentTask[] };
+  return payload.tasks || [];
+}
+
+async function waitForNewTask(before: Set<string>, marker: string): Promise<AgentTask> {
+  const deadline = Date.now() + 12 * 60_000;
+  let candidate: AgentTask | undefined;
+  while (Date.now() < deadline) {
+    const tasks = await agentTasks();
+    candidate = tasks.find((task) => !before.has(task.id) &&
+      `${task.title || ""}\n${task.description || ""}\n${task.output || ""}`.includes(marker))
+      || tasks.find((task) => !before.has(task.id));
+    if (candidate && ["ready", "completed", "review", "failed", "cancelled", "stopped"].includes(candidate.status || "")) {
+      if (["failed", "cancelled", "stopped"].includes(candidate.status || "")) {
+        throw new Error(`Dogfood task ${candidate.id} ended ${candidate.status}: ${(candidate.output || "").slice(-1200)}`);
+      }
+      return candidate;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+  }
+  throw new Error(`Dogfood task did not finish within 12 minutes${candidate ? ` (last status ${candidate.status})` : ""}`);
+}
+
+test("RN-web shows the compact Dogfood setup and opens inventories only on demand", async ({ browser }, testInfo) => {
   test.skip(!mobileURL || !token, "needs MOBILE_WEB_URL + YAVER_TEST_TOKEN");
 
   // A viewport resize is not a mobile device. Own a genuine touch/mobile/UA
   // context so RN-web renders the same component tree a phone receives.
   const profile = profileFor("mobile");
+  const videoDir = testInfo.outputPath("video");
+  if (recordAll) mkdirSync(videoDir, { recursive: true });
   const context = await browser.newContext({
     ...devices[profile.playwrightDevice!],
     storageState: undefined,
+    ...(recordAll ? { recordVideo: { dir: videoDir, size: devices[profile.playwrightDevice!].viewport } } : {}),
   });
   const page = await context.newPage();
+  page.setDefaultTimeout(60_000);
+  const video = page.video();
+  let mutatedLoginPath = "";
+  let baselineLogin = "";
   page.on("console", (message) => {
     if (
       message.type() === "error" ||
@@ -53,7 +91,9 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
     // Let the app finish its fresh-install check first. Seeding during that
     // check races clearKeychainIfFreshInstall(), which correctly deletes stale
     // credentials and leaves the harness on Login despite a valid token.
-    await expect(page.getByText(/Continue with Email/i).first()).toBeVisible({ timeout: 120_000 });
+    const continueWithEmail = page.getByText(/Continue with Email/i).first();
+    await expect(continueWithEmail).toBeVisible({ timeout: 120_000 });
+    await continueWithEmail.click();
     const auth = await page.request.get(`${convexSite}/auth/validate?_=${Date.now()}`, {
       headers: { Authorization: `Bearer ${token}`, "Cache-Control": "no-store" },
     });
@@ -116,6 +156,9 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
     await expect(runnerControl).toBeInViewport();
     await runnerControl.click();
     await expect(page.getByLabel("Runner choices")).toBeVisible();
+    if (runColorLoop) {
+      await page.getByLabel("Runner choices").getByText(/^codex$/).first().click();
+    }
     await page.getByRole("button", { name: "Close Dogfood setting choices" }).last().click();
     await expect(page.getByLabel("Runner choices")).toHaveCount(0);
 
@@ -130,7 +173,147 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
     await expect(page.getByRole("radio", { name: /Browser lane/ })).toBeVisible();
     await expect(page.getByRole("radio", { name: /Hermes/ })).toBeVisible();
     await expect(page.getByRole("radio", { name: /WebRTC native/ })).toBeVisible();
+
+    // The two requested browser-Dogfood modes must be independently visible,
+    // selectable, and durable. This is pixel evidence for the policy that
+    // Reload Only removes chat while Reload + Chat retains it; lower-level
+    // contract tests cover the request-body booleans.
+    const reloadOnly = page.getByRole("radio", { name: "Reload Only", exact: true });
+    const reloadAndChat = page.getByRole("radio", { name: "Reload + Chat", exact: true });
+    await reloadOnly.scrollIntoViewIfNeeded();
+    await reloadOnly.click();
+    await expect(reloadOnly).toBeChecked();
+    await page.screenshot({ path: testInfo.outputPath("reload-only.png"), fullPage: true });
+    await reloadAndChat.click();
+    await expect(reloadAndChat).toBeChecked();
+    await page.screenshot({ path: testInfo.outputPath("reload-and-chat.png"), fullPage: true });
+
+    // Cross the boundary into the real attached checkout. Merely proving the
+    // settings toggles paints a configuration screen; it does not prove that
+    // Yaver can actually dogfood Yaver through the browser lane.
+    const enterDogfood = page.getByRole("button", { name: /Enter Dogfood mode/ });
+    try {
+      // A fresh mobile context still has to complete the genuine device
+      // transport race and then ask that box to inspect Git. "checking…" is
+      // truthful progress, not a terminal checkout verdict.
+      await expect(enterDogfood).toBeVisible({ timeout: 120_000 });
+    } catch (error) {
+      throw new Error(
+        `Dogfood entry did not become available. Visible settings:\n${(await page.locator("body").innerText()).slice(0, 4000)}`,
+        { cause: error },
+      );
+    }
+    await enterDogfood.scrollIntoViewIfNeeded();
+    await enterDogfood.click();
+    // The floating Y entry intentionally shares this accessible label. The
+    // launch CTA is the one that also paints the words inside the button.
+    const openDogfood = page.getByRole("button", { name: "Open Dogfood", exact: true })
+      .filter({ hasText: "Open Dogfood" });
+    try {
+      await expect(openDogfood).toBeVisible({ timeout: 300_000 });
+    } catch (error) {
+      throw new Error(
+        `Dogfood launch did not reach ready. Visible launch state:\n${(await page.locator("body").innerText()).slice(0, 5000)}`,
+        { cause: error },
+      );
+    }
+    await openDogfood.click();
+    await expect(page.locator("iframe").first()).toBeVisible({ timeout: 180_000 });
+    // A mounted iframe is only inventory. The attached surface is usable when
+    // its document has loaded and the host's blocking loader is gone.
+    await expect(page.getByText(/Loading Yaver from/)).toBeHidden({ timeout: 180_000 });
+    const attached = page.frameLocator("iframe").first();
+    try {
+      await expect(attached.getByText("Starting Yaver…", { exact: true })).toBeHidden({ timeout: 120_000 });
+    } catch (error) {
+      throw new Error(
+        `Attached Yaver never left its startup placeholder. Frame text:\n${(await attached.locator("body").innerText()).slice(0, 3000)}`,
+        { cause: error },
+      );
+    }
+    await page.screenshot({ path: testInfo.outputPath("attached-yaver.png"), fullPage: true });
+
+    if (runColorLoop) {
+      test.setTimeout(20 * 60_000);
+      const loginPath = join(process.cwd(), "mobile", "app", "login.tsx");
+      baselineLogin = readFileSync(loginPath, "utf8");
+      mutatedLoginPath = loginPath;
+      const marker = "DOGFOOD_COLOR_LOOP_20260913";
+      const red = "rgb(255, 0, 170)";
+
+      const openDogfoodMenu = async () => {
+        await page.getByTestId("yaver-dogfood-entry").click();
+        await expect(page.getByLabel("Dogfood is active")).toBeVisible({ timeout: 60_000 });
+      };
+
+      const openTasksFromCurrentSurface = async () => {
+        await openDogfoodMenu();
+        await page.getByRole("button", { name: "Open Dogfood tasks" }).click();
+        await expect(page.getByText("Tasks", { exact: true }).first()).toBeVisible({ timeout: 60_000 });
+      };
+
+      const reloadFromCurrentSurface = async () => {
+        await openDogfoodMenu();
+        await page.getByTestId("dogfood-native-reload").click();
+        await expect(page.locator("iframe").first()).toBeVisible({ timeout: 180_000 });
+        await expect(page.getByText(/Loading Yaver from/)).toBeHidden({ timeout: 180_000 });
+        await expect(page.frameLocator("iframe").first().getByText("Starting Yaver…", { exact: true }))
+          .toBeHidden({ timeout: 120_000 });
+      };
+
+      const submitTask = async (prompt: string) => {
+        const before = new Set((await agentTasks()).map((task) => task.id));
+        const newTask = page.getByRole("button", { name: "New task", exact: true }).last();
+        if (await newTask.isVisible().catch(() => false)) await newTask.click();
+        const composer = page.getByPlaceholder(/What should the agent do\?|Send another command…/).last();
+        await expect(composer).toBeVisible({ timeout: 60_000 });
+        await composer.fill(prompt);
+        await page.getByText(/^Send$/).last().click();
+        return waitForNewTask(before, marker);
+      };
+
+      await openTasksFromCurrentSurface();
+      await submitTask(
+        `${marker}: In mobile/app/login.tsx only, change the SafeAreaView login-screen background from c.bg to the literal color #ff00aa. ` +
+        "Do not edit any other file and do not commit. When the edit is saved, say UI updates are ready.",
+      );
+      expect(readFileSync(loginPath, "utf8"), "the Dogfood chat task must make the requested source edit")
+        .toContain("#ff00aa");
+
+      // Sending opens task detail as a modal route. Dismiss that route before
+      // using the global Y; the modal correctly owns pointer events while open.
+      await page.goBack();
+      await reloadFromCurrentSurface();
+      const changedFrame = page.frameLocator("iframe").first();
+      await expect.poll(async () => changedFrame.locator("body").evaluate((body) =>
+        Array.from(body.querySelectorAll("*")).some((node) => getComputedStyle(node).backgroundColor === "rgb(255, 0, 170)"),
+      ), { timeout: 180_000, message: "attached Yaver never painted the requested #ff00aa background" }).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("dogfood-color-changed.png"), fullPage: true });
+
+      await openTasksFromCurrentSurface();
+      await submitTask(
+        `${marker}: Revert only the temporary #ff00aa SafeAreaView background change in mobile/app/login.tsx back to c.bg. ` +
+        "Do not alter any other code and do not commit. When reverted, say UI updates are ready.",
+      );
+      expect(readFileSync(loginPath, "utf8"), "the Dogfood revert must restore login.tsx byte-for-byte")
+        .toBe(baselineLogin);
+
+      await page.goBack();
+      await reloadFromCurrentSurface();
+      const revertedFrame = page.frameLocator("iframe").first();
+      await expect.poll(async () => revertedFrame.locator("body").evaluate((body) =>
+        Array.from(body.querySelectorAll("*")).every((node) => getComputedStyle(node).backgroundColor !== red),
+      ), { timeout: 180_000, message: "attached Yaver retained the temporary color after revert" }).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("dogfood-color-reverted.png"), fullPage: true });
+    }
   } finally {
+    // The normal path proves the revert through Dogfood chat. This fallback is
+    // deliberately byte-exact so an interrupted destructive arc never leaves
+    // the checkout colored or contaminates the next run.
+    if (mutatedLoginPath && baselineLogin && readFileSync(mutatedLoginPath, "utf8") !== baselineLogin) {
+      writeFileSync(mutatedLoginPath, baselineLogin);
+    }
     await context.close();
+    if (video) console.log(`recording: ${await video.path()}`);
   }
 });

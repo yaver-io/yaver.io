@@ -251,7 +251,7 @@ export function SilentInputControlPanel({
 }
 
 function Choice({ label, selected, onPress, colors: c }: { label: string; selected: boolean; onPress(): void; colors: ThemeColors }) {
-  return <Pressable accessibilityRole="radio" accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, { borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accent + "1f" : c.bgInput }]}><Text style={{ color: selected ? c.accent : c.textSecondary, fontWeight: "700", fontSize: 12 }}>{label}</Text></Pressable>;
+  return <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected }} aria-checked={selected} onPress={onPress} style={[styles.choice, { borderColor: selected ? c.accent : c.border, backgroundColor: selected ? c.accent + "1f" : c.bgInput }]}><Text style={{ color: selected ? c.accent : c.textSecondary, fontWeight: "700", fontSize: 12 }}>{label}</Text></Pressable>;
 }
 
 const styles = StyleSheet.create({

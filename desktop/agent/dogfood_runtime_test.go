@@ -297,6 +297,16 @@ func TestDogfoodSourceStatusAcceptsContributorForkWithCanonicalUpstream(t *testi
 	}
 }
 
+func TestDogfoodSourceStatusAcceptsCanonicalRemoteWithNonstandardName(t *testing.T) {
+	_, local, _ := setupDogfoodRepos(t)
+	syncGitCmd(t, local, "remote", "rename", "origin", "github")
+
+	status := dogfoodSourceStatus(local)
+	if !status.Ready || status.BaseRemote != "github" || status.BaseRef != "github/main" {
+		t.Fatalf("canonical remote alias was not accepted: %+v", status)
+	}
+}
+
 func TestDogfoodSourceStatusRejectsAndRedactsEmbeddedOriginCredential(t *testing.T) {
 	_, local, _ := setupDogfoodRepos(t)
 	syncGitCmd(t, local, "remote", "set-url", "origin", "https://secret-token@github.com/yaver-io/yaver.io.git")

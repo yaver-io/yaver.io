@@ -67,6 +67,9 @@ test("Yaver browser Dogfood reaches the live dev server for fast and full reload
     expect(response?.status(), "authenticated Yaver browser document status").toBe(200);
     await expect(page).toHaveTitle(/Yaver/i);
     await expect(page.locator("#root")).not.toBeEmpty({ timeout: 120_000 });
+    // A mounted splash root is not a working RN app. The previous assertion
+    // accepted the pixel-visible "Starting Yaver…" placeholder indefinitely.
+    await expect(page.getByText("Starting Yaver…", { exact: true })).toBeHidden({ timeout: 120_000 });
 
     for (const mode of ["fast", "full"] as const) {
       const reload = await request.post(`${agent}/dogfood/reload`, {

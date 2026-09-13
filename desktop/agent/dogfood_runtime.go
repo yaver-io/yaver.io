@@ -292,27 +292,29 @@ func dogfoodSourceStatusWithSeed(workDir, agentWorkDir string) dogfoodSourceResp
 			Remedy:  "Select or clone a real yaver.io Git checkout so Dogfood can safely sync canonical main.",
 		}
 	}
-	// Read the persisted value rather than `remote get-url`: Git applies
+	// Read persisted remote values rather than `remote get-url`: Git applies
 	// url.*.insteadOf rewrites to the latter, which can make a valid canonical
-	// origin look like a credential helper or local mirror target.
+	// remote look like a credential helper or local mirror target. `origin` is
+	// conventional, not semantic: worktrees created by release tooling and
+	// long-lived maintainer clones may call the canonical remote `github`.
 	origin, originErr := runGit(workDir, "config", "--get", "remote.origin.url")
 	origin = strings.TrimSpace(origin)
-	if originErr != nil || origin == "" {
+	if originErr == nil && origin != "" && stripURLCredentials(origin) != origin {
 		return dogfoodSourceResponse{
-			Code: "DOGFOOD_GIT_ORIGIN_MISSING", Path: workDir, SuggestedPath: suggested, GitVersion: strings.TrimSpace(version), Candidates: candidates,
-			Message: "The Yaver checkout has no origin remote for contribution branches.",
-			Remedy:  "Add your fork as origin, or clone the public yaver-io/yaver.io repository, then retry.",
-		}
-	}
-	if clean := stripURLCredentials(origin); clean != origin {
-		return dogfoodSourceResponse{
-			Code: "DOGFOOD_GIT_CREDENTIALS_EMBEDDED", Path: workDir, SuggestedPath: suggested, Remote: clean, GitVersion: strings.TrimSpace(version), Candidates: candidates,
+			Code: "DOGFOOD_GIT_CREDENTIALS_EMBEDDED", Path: workDir, SuggestedPath: suggested, Remote: stripURLCredentials(origin), GitVersion: strings.TrimSpace(version), Candidates: candidates,
 			Message: "The Yaver origin stores a credential inside its URL.",
 			Remedy:  "Remove the embedded credential, then use Yaver's Git configuration wizard so secrets stay in the box credential store.",
 		}
 	}
 	baseRemote, canonicalURL := dogfoodCanonicalBase(workDir)
 	if baseRemote == "" {
+		if originErr != nil || origin == "" {
+			return dogfoodSourceResponse{
+				Code: "DOGFOOD_GIT_ORIGIN_MISSING", Path: workDir, SuggestedPath: suggested, GitVersion: strings.TrimSpace(version), Candidates: candidates,
+				Message: "The Yaver checkout has no canonical Git remote.",
+				Remedy:  "Add the public yaver-io/yaver.io repository as a Git remote, then retry.",
+			}
+		}
 		return dogfoodSourceResponse{
 			Code: "DOGFOOD_GIT_UPSTREAM_MISSING", Path: workDir, SuggestedPath: suggested, Remote: stripURLCredentials(origin), GitVersion: strings.TrimSpace(version), Candidates: candidates,
 			Message: "The checkout has no remote pointing to yaver-io/yaver.io.",
@@ -339,9 +341,9 @@ func dogfoodSourceStatusWithSeed(workDir, agentWorkDir string) dogfoodSourceResp
 	}
 	return dogfoodSourceResponse{
 		OK: true, Ready: true, Code: "DOGFOOD_SOURCE_READY", Path: workDir,
-		SuggestedPath: suggested, Branch: strings.TrimSpace(branch), Remote: stripURLCredentials(origin),
+		SuggestedPath: suggested, Branch: strings.TrimSpace(branch), Remote: stripURLCredentials(canonicalURL),
 		BaseRemote: baseRemote, BaseRef: baseRemote + "/main",
-		GitVersion: strings.TrimSpace(version), Candidates: candidates, Message: "Yaver source and its Git origin are ready on this box.",
+		GitVersion: strings.TrimSpace(version), Candidates: candidates, Message: "Yaver source and its canonical Git remote are ready on this box.",
 	}
 }
 
@@ -808,7 +810,14 @@ func sameDogfoodCheckout(requested, active string) bool {
 	if requestedErr != nil || activeErr != nil {
 		return filepath.Clean(requested) == filepath.Clean(active)
 	}
-	return filepath.Clean(requestedAbs) == filepath.Clean(activeAbs)
+	requestedClean := filepath.Clean(requestedAbs)
+	activeClean := filepath.Clean(activeAbs)
+	if requestedClean == activeClean {
+		return true
+	}
+	// Yaver selects the repository root but Expo serves its direct mobile
+	// workspace. Do not broaden this to arbitrary descendants or siblings.
+	return activeClean == filepath.Join(requestedClean, "mobile")
 }
 
 // POST /dogfood/reload is full-Yaver-OAuth only (registered with s.auth).

@@ -32,6 +32,12 @@ func TestSameDogfoodCheckoutRequiresExactPath(t *testing.T) {
 	if sameDogfoodCheckout("/tmp/app-a", "/tmp/app-b") {
 		t.Fatal("different checkouts must never match")
 	}
+	if !sameDogfoodCheckout("/tmp/yaver", "/tmp/yaver/mobile") {
+		t.Fatal("a checkout root must match its direct mobile workspace")
+	}
+	if sameDogfoodCheckout("/tmp/yaver", "/tmp/yaver/mobile/nested") || sameDogfoodCheckout("/tmp/yaver", "/tmp/mobile") {
+		t.Fatal("nested and sibling workspaces must not match the selected checkout")
+	}
 	if sameDogfoodCheckout("", "/tmp/app") {
 		t.Fatal("an empty requested checkout must not match an active project")
 	}

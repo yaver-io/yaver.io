@@ -68,6 +68,7 @@ ok(/reload\s*\(/.test(webSrc), "web sibling implements reload()");
 const previewSurfaces = [
   "../../app/(tabs)/apps.tsx",
   "../../app/(tabs)/project.tsx",
+  "../../app/attach.tsx",
   "./DevPreview.tsx",
 ];
 for (const rel of previewSurfaces) {

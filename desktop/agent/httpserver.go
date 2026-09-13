@@ -2635,7 +2635,11 @@ func (s *HTTPServer) trackNewIP(token string, r *http.Request) {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Yaver-Caller, X-Yaver-Surface, X-Relay-Password, X-Client-Platform")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Cache-Control, X-Yaver-Caller, X-Yaver-Surface, X-Relay-Password, X-Client-Platform")
+		// Browser Dogfood must distinguish a cold preview from a terminal 503.
+		// These response headers are not CORS-safelisted, so fetch() cannot read
+		// them unless the authenticated agent explicitly exposes them.
+		w.Header().Set("Access-Control-Expose-Headers", "Retry-After, X-Yaver-DevServer")
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
