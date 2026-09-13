@@ -76,7 +76,10 @@ function previewRoute(request: DogfoodOverlayRequest, result: DogfoodResult) {
     return;
   }
   if (result.lane !== "browser") return;
-  router.navigate({
+  // Reload returns here from Tasks, where Expo Router retains the earlier
+  // Attach screen below the tab route. `navigate` reselects that hidden DOM
+  // node on RN-web; replace creates the visible surface for the new render.
+  router.replace({
     pathname: "/attach" as any,
     params: {
       sessionId: result.sessionId,

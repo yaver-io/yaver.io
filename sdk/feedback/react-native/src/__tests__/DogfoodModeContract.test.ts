@@ -30,6 +30,14 @@ describe('Dogfood Settings and Usage contract', () => {
     expect(usage).not.toContain("{'🧪'}");
   });
 
+  it('auto-launches the shared native menu and removes chat in Reload Only mode', () => {
+    const menu = readFileSync(join(__dirname, '../DogfoodNativeMenu.tsx'), 'utf8');
+    expect(menu).toContain('onLaunch();');
+    expect(menu).toContain('Launching Dogfood…');
+    expect(menu).toContain("usageMode !== 'reload-only'");
+    expect(menu).not.toContain('testID="dogfood-native-launch"');
+  });
+
   it('renders only the draggable Y while standalone Dogfood is active', () => {
     const modal = readFileSync(join(__dirname, '../FeedbackModal.tsx'), 'utf8');
     expect(modal).toContain('if (dogfood.active) return null');

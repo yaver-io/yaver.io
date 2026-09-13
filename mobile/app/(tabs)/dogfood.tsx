@@ -355,6 +355,7 @@ export default function DogfoodScreen() {
           active={runtime.active}
           busy={runtime.busy}
           status={runtime.status}
+          usageMode={runtime.request?.usageMode}
           issue={runtime.issue?.message}
           onFixIssue={runtime.issue?.fix ? () => { void runtime.issue?.fix?.(); } : undefined}
           colors={{ card: c.bgCard, border: c.border, text: c.textPrimary, muted: c.textMuted, accent: c.accent, danger: c.error }}

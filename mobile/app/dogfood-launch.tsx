@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, PixelRatio, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, PixelRatio, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
@@ -8,7 +8,7 @@ import { useDogfoodOverlay } from "../src/context/DogfoodOverlayContext";
 import { useColors } from "../src/context/ThemeContext";
 import { useRouteParamsCompat } from "../src/lib/useRouteParamsCompat";
 import { mobileSessionSettings } from "../src/lib/appVersion";
-import { DogfoodLiveConsole } from "../../sdk/feedback/react-native/src/DogfoodSessionUi";
+import { DogfoodLaunchingWidget, DogfoodLiveConsole } from "../../sdk/feedback/react-native/src/DogfoodSessionUi";
 import type { DogfoodLane, DogfoodPhase } from "../../sdk/feedback/react-native/src/DogfoodRuntime";
 
 /**
@@ -26,7 +26,9 @@ export default function DogfoodLaunchScreen() {
   const runtime = useDogfoodOverlay();
   const window = useWindowDimensions();
   const startedRef = useRef(false);
+  const openedRef = useRef(false);
   const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState("");
   const [stopping, setStopping] = useState(false);
   const params = useRouteParamsCompat<{
     workDir?: string;
@@ -99,16 +101,25 @@ export default function DogfoodLaunchScreen() {
   };
 
   const openDogfood = async () => {
-    if (opening) return;
+    if (opening || openedRef.current) return;
+    openedRef.current = true;
     setOpening(true);
+    setOpenError("");
     try {
       await runtime.open();
     } catch (error) {
-      Alert.alert("Dogfood did not open", error instanceof Error ? error.message : String(error));
+      openedRef.current = false;
+      setOpenError(error instanceof Error ? error.message : String(error));
     } finally {
       setOpening(false);
     }
   };
+
+  useEffect(() => {
+    // render-on-open is already owned by the root controller; vibe-first now
+    // auto-hands off here after its visible console reaches ready.
+    if (ready && !openError && params.startBehavior !== "render-on-open") void openDogfood();
+  }, [ready, openError, params.startBehavior]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -146,16 +157,19 @@ export default function DogfoodLaunchScreen() {
           }}
         />
 
-        {ready ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open Dogfood"
-            disabled={opening}
-            onPress={() => void openDogfood()}
-            style={({ pressed }) => [styles.primary, { backgroundColor: c.accent }, (pressed || opening) && styles.pressed]}
-          >
-            {opening ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Open Dogfood</Text>}
-          </Pressable>
+        {ready && !openError ? (
+          <DogfoodLaunchingWidget
+            message="Launching Dogfood…"
+            detail="The verified Yaver surface opens automatically."
+            colors={{ background: c.bgCard, border: c.border, text: c.textPrimary, muted: c.textMuted, accent: c.accent, accentSoft: c.accentSoft }}
+          />
+        ) : openError ? (
+          <>
+            <Text accessibilityRole="alert" style={[styles.openError, { color: c.error }]}>{openError}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Retry opening Dogfood" onPress={() => void openDogfood()} style={[styles.primary, { backgroundColor: c.accent }]}>
+              <Text style={styles.primaryText}>Retry opening Dogfood</Text>
+            </Pressable>
+          </>
         ) : failed ? (
           <Pressable
             accessibilityRole="button"
@@ -200,5 +214,6 @@ const styles = StyleSheet.create({
   secondaryText: { fontSize: 14, fontWeight: "700" },
   working: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
   workingText: { fontSize: 12, fontWeight: "600" },
+  openError: { fontSize: 12, lineHeight: 18 },
   pressed: { opacity: 0.7 },
 });

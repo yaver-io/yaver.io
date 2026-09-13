@@ -8,6 +8,9 @@ const mobileURL = (process.env.MOBILE_WEB_URL || "").replace(/\/$/, "");
 const deviceName = (process.env.YAVER_TEST_DEVICE_NAME || "").trim();
 const recordAll = process.env.E2E_RECORD_ALL === "1";
 const runColorLoop = process.env.YAVER_DOGFOOD_COLOR_LOOP === "1";
+const requestedUsageMode = process.env.YAVER_DOGFOOD_USAGE_MODE === "reload-only"
+  ? "reload-only"
+  : "reload-and-chat";
 const token = process.env.YAVER_TEST_TOKEN || tokenFromLocalConfig();
 const agentURL = (process.env.YAVER_AGENT_URL || "http://127.0.0.1:18080").replace(/\/$/, "");
 const convexSite = process.env.E2E_CONVEX_URL ||
@@ -187,6 +190,10 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
     await reloadAndChat.click();
     await expect(reloadAndChat).toBeChecked();
     await page.screenshot({ path: testInfo.outputPath("reload-and-chat.png"), fullPage: true });
+    if (requestedUsageMode === "reload-only") {
+      await reloadOnly.click();
+      await expect(reloadOnly).toBeChecked();
+    }
 
     // Cross the boundary into the real attached checkout. Merely proving the
     // settings toggles paints a configuration screen; it does not prove that
@@ -205,20 +212,17 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
     }
     await enterDogfood.scrollIntoViewIfNeeded();
     await enterDogfood.click();
-    // The floating Y entry intentionally shares this accessible label. The
-    // launch CTA is the one that also paints the words inside the button.
-    const openDogfood = page.getByRole("button", { name: "Open Dogfood", exact: true })
-      .filter({ hasText: "Open Dogfood" });
+    // A proved runtime opens itself. There must be no second launch CTA for a
+    // user (or an automation harness) to discover and click.
     try {
-      await expect(openDogfood).toBeVisible({ timeout: 300_000 });
+      await expect(page.getByRole("button", { name: "Open Dogfood", exact: true })).toHaveCount(0);
+      await expect(page.locator("iframe").first()).toBeVisible({ timeout: 300_000 });
     } catch (error) {
       throw new Error(
-        `Dogfood launch did not reach ready. Visible launch state:\n${(await page.locator("body").innerText()).slice(0, 5000)}`,
+        `Dogfood did not auto-open after preparation. Visible launch state:\n${(await page.locator("body").innerText()).slice(0, 5000)}`,
         { cause: error },
       );
     }
-    await openDogfood.click();
-    await expect(page.locator("iframe").first()).toBeVisible({ timeout: 180_000 });
     // A mounted iframe is only inventory. The attached surface is usable when
     // its document has loaded and the host's blocking loader is gone.
     await expect(page.getByText(/Loading Yaver from/)).toBeHidden({ timeout: 180_000 });
@@ -233,7 +237,17 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
     }
     await page.screenshot({ path: testInfo.outputPath("attached-yaver.png"), fullPage: true });
 
-    if (runColorLoop) {
+    if (requestedUsageMode === "reload-only") {
+      await page.locator('[data-testid="yaver-dogfood-entry"]:visible').first().click();
+      await expect(page.getByLabel("Dogfood is active")).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByRole("button", { name: "Open Dogfood tasks" })).toHaveCount(0);
+      await page.locator('[data-testid="dogfood-native-reload"]:visible').first().click();
+      await expect(page.locator("iframe:visible").first()).toBeVisible({ timeout: 180_000 });
+      await expect(page.getByText(/Loading Yaver from/)).toBeHidden({ timeout: 180_000 });
+      await page.screenshot({ path: testInfo.outputPath("reload-only-live.png"), fullPage: true });
+    }
+
+    if (runColorLoop && requestedUsageMode === "reload-and-chat") {
       test.setTimeout(20 * 60_000);
       const loginPath = join(process.cwd(), "mobile", "app", "login.tsx");
       baselineLogin = readFileSync(loginPath, "utf8");
@@ -242,7 +256,9 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
       const red = "rgb(255, 0, 170)";
 
       const openDogfoodMenu = async () => {
-        await page.getByTestId("yaver-dogfood-entry").click();
+        // Replaced Expo routes remain mounted but hidden on RN-web. Address
+        // the one control a user can see rather than failing on retained DOM.
+        await page.locator('[data-testid="yaver-dogfood-entry"]:visible').first().click();
         await expect(page.getByLabel("Dogfood is active")).toBeVisible({ timeout: 60_000 });
       };
 
@@ -254,10 +270,13 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
 
       const reloadFromCurrentSurface = async () => {
         await openDogfoodMenu();
-        await page.getByTestId("dogfood-native-reload").click();
-        await expect(page.locator("iframe").first()).toBeVisible({ timeout: 180_000 });
+        await page.locator('[data-testid="dogfood-native-reload"]:visible').first().click();
+        // Expo Router deliberately retains the previous Attach DOM below the
+        // replacement route. Assert the newly visible guest, not the stale
+        // hidden iframe that remains first in document order.
+        await expect(page.locator("iframe:visible").first()).toBeVisible({ timeout: 180_000 });
         await expect(page.getByText(/Loading Yaver from/)).toBeHidden({ timeout: 180_000 });
-        await expect(page.frameLocator("iframe").first().getByText("Starting Yaver…", { exact: true }))
+        await expect(page.frameLocator("iframe:visible").first().getByText("Starting Yaver…", { exact: true }))
           .toBeHidden({ timeout: 120_000 });
       };
 
@@ -284,7 +303,7 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
       // using the global Y; the modal correctly owns pointer events while open.
       await page.goBack();
       await reloadFromCurrentSurface();
-      const changedFrame = page.frameLocator("iframe").first();
+      const changedFrame = page.frameLocator("iframe:visible").first();
       await expect.poll(async () => changedFrame.locator("body").evaluate((body) =>
         Array.from(body.querySelectorAll("*")).some((node) => getComputedStyle(node).backgroundColor === "rgb(255, 0, 170)"),
       ), { timeout: 180_000, message: "attached Yaver never painted the requested #ff00aa background" }).toBe(true);
@@ -300,9 +319,11 @@ test("RN-web shows the compact Dogfood setup and opens inventories only on deman
 
       await page.goBack();
       await reloadFromCurrentSurface();
-      const revertedFrame = page.frameLocator("iframe").first();
-      await expect.poll(async () => revertedFrame.locator("body").evaluate((body) =>
-        Array.from(body.querySelectorAll("*")).every((node) => getComputedStyle(node).backgroundColor !== red),
+      const revertedFrame = page.frameLocator("iframe:visible").first();
+      await expect.poll(async () => revertedFrame.locator("body").evaluate(
+        (body, expectedRed) => Array.from(body.querySelectorAll("*"))
+          .every((node) => getComputedStyle(node).backgroundColor !== expectedRed),
+        red,
       ), { timeout: 180_000, message: "attached Yaver retained the temporary color after revert" }).toBe(true);
       await page.screenshot({ path: testInfo.outputPath("dogfood-color-reverted.png"), fullPage: true });
     }

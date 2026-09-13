@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type {
   DogfoodFailure,
   DogfoodLane,
@@ -157,6 +157,29 @@ function runtimeTone(phase: DogfoodPhase, colors: DogfoodUiColors): string {
   return colors.attention;
 }
 
+/** Shared no-click handoff shown while a prepared runtime opens itself. */
+export const DogfoodLaunchingWidget: React.FC<{
+  message?: string;
+  detail?: string;
+  colors?: Partial<DogfoodUiColors>;
+}> = ({ message = 'Launching Dogfood…', detail = 'The prepared app will open automatically.', colors: colorOverrides }) => {
+  const colors = resolvedColors(colorOverrides);
+  return (
+    <View
+      style={[styles.launching, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={message}
+      accessibilityLiveRegion="polite"
+    >
+      <ActivityIndicator color={colors.accent} />
+      <View style={styles.launchingCopy}>
+        <Text style={[styles.launchingTitle, { color: colors.text }]}>{message}</Text>
+        <Text style={[styles.launchingDetail, { color: colors.muted }]}>{detail}</Text>
+      </View>
+    </View>
+  );
+};
+
 /** Shared second-stage live console. Browser lane deliberately names Browser
  * Logs; Hermes/WebRTC use the same lifecycle and failure/remedy treatment. */
 export const DogfoodLiveConsole: React.FC<{
@@ -214,6 +237,10 @@ const styles = StyleSheet.create({
   choiceDescription: { fontSize: 10, lineHeight: 15, marginTop: 2 },
   choiceMark: { fontSize: 16, fontWeight: '800', marginLeft: 10 },
   reason: { fontSize: 10, lineHeight: 14, marginTop: 5 },
+  launching: { width: '100%', minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 11, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11 },
+  launchingCopy: { flex: 1 },
+  launchingTitle: { fontSize: 13, fontWeight: '800' },
+  launchingDetail: { fontSize: 10, lineHeight: 15, marginTop: 2 },
   console: { width: '100%', maxHeight: 320, overflow: 'hidden', marginTop: 10, borderWidth: 1, borderRadius: 10, padding: 11, gap: 7 },
   consoleHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   consoleTitle: { fontSize: 12, fontWeight: '800' },

@@ -57,7 +57,11 @@ describe('FeedbackModal authenticated chat contract', () => {
     expect(source).toContain("setDogfoodSetupStage('runtime')");
     expect(source).toMatch(/dogfoodSetupStage === 'runtime'[\s\S]*?<DogfoodLiveConsole/);
     expect(source).toContain('startDogfoodRuntime');
-    expect(source).toContain('Continue in app');
+    expect(source).toContain('Opening dogfooded app…');
+    expect(source).toContain('if (dogfoodRuntime.result?.url) await Linking.openURL(dogfoodRuntime.result.url)');
+    expect(source).not.toContain('Open dogfooded app');
+    expect(source).toContain("dogfoodRuntime?.phase !== 'ready'");
+    expect(source).not.toContain('Continue in app');
     expect(source).toContain("['preparing', 'starting', 'compiling'].includes(dogfoodRuntime.phase) ? 'Stop' : 'Change'");
     expect(source).toContain('void dogfoodControllerRef.current?.stop()');
   });
@@ -70,11 +74,12 @@ describe('FeedbackModal authenticated chat contract', () => {
     expect(setupSteps).not.toContain("key: 'installation'");
     expect(setupSteps).not.toContain("key: 'model'");
     expect(setupSteps).not.toContain("key: 'lane'");
-    expect(source).toContain("label={dogfoodSetupReady ? 'Launch Dogfood' : 'Complete the choices above'}");
-    expect(source).toContain("onPress={() => void startDogfoodRuntime()}");
+    expect(source).toContain('Your saved choices are ready. No second tap is needed.');
+    expect(source).toContain("dogfoodSetupStage !== 'setup'");
+    expect(source).not.toContain("label={dogfoodSetupReady ? 'Launch Dogfood' : 'Complete the choices above'}");
     expect(source).not.toContain("type DogfoodSetupStage = 'setup' | 'lane' | 'runtime'");
     expect(source).toContain('<DogfoodLanePicker');
-    expect(source).toContain('Launch opens Browser Logs first');
+    expect(source).toContain('Browser Logs open first');
     expect(source).toContain('{!dogfoodOnboarding ? <>');
     expect(source).toContain("? `Set up ${dogfoodOnboarding.projectName || dogfoodOnboarding.label || 'this app'} Dogfood`");
   });

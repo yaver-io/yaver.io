@@ -221,8 +221,12 @@ test("Dogfood launch shows the real runtime console before opening the app", () 
   assert.match(launch, /Keep this open to follow live build logs/);
   assert.doesNotMatch(launch, /router\.replace\("\/\(tabs\)\/tasks" as any\)/,
     "launch must not erase its own logs by immediately redirecting to Tasks");
-  assert.match(launch, /Open Dogfood/,
-    "a ready runtime needs an explicit, named route into the rendered app");
+  assert.match(launch, /Launching Dogfood…/,
+    "a ready runtime must show the shared animated handoff while opening itself");
+  assert.match(launch, /if \(ready && !openError && params\.startBehavior !== "render-on-open"\) void openDogfood\(\)/,
+    "a ready runtime must open without a second user click");
+  assert.doesNotMatch(launch, /accessibilityLabel="Open Dogfood"/,
+    "the launch screen must not wait behind a redundant Open Dogfood button");
   assert.doesNotMatch(launch, /Continue in Tasks/,
     "the launch screen already has Back; a second escape action crowds the preparation surface");
   assert.match(rootLayout, /<DogfoodOverlayProvider>/,
@@ -407,6 +411,8 @@ test("Dogfood exposes framework-aware Browser, Hermes, and WebRTC lanes after ch
   assert.doesNotMatch(overlay, /DOGFOOD_SELF_HERMES_UNSAFE/);
   assert.match(overlay, /prepareDogfoodMode/,
     "browser Dogfood must retain the proved attach/browser implementation");
+  assert.match(overlay, /router\.replace\(\{[\s\S]{0,100}pathname: "\/attach"/,
+    "browser Dogfood reload must replace the retained hidden Attach route");
   assert.match(overlay, /pathname: "\/remote-runtime"/,
     "WebRTC Dogfood must reuse the Projects native runtime surface");
   assert.match(attached, /<BrowserVibeBubble/,
@@ -421,6 +427,10 @@ test("Dogfood exposes framework-aware Browser, Hermes, and WebRTC lanes after ch
     "the Y must return WebRTC Dogfood to its native menu");
   assert.match(nativeMenu, /testID="dogfood-native-reload"/,
     "Fast Reload belongs on the stateful native menu");
+  assert.match(nativeMenu, /usageMode !== 'reload-only'/,
+    "Reload Only must not expose the chat\/Tasks route");
+  assert.match(dogfood, /usageMode=\{runtime\.request\?\.usageMode\}/,
+    "Yaver must pass the selected usage contract into its shared native menu");
   assert.match(nativeMenu, /testID="dogfood-native-exit"/,
     "Exit Dogfood belongs on the stateful native menu");
   assert.match(nativeMenu, /Fix in Tasks/,

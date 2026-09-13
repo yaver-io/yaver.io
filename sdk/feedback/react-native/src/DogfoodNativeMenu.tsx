@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import type { DogfoodUsageMode } from './dogfoodPolicy';
+import { DogfoodLaunchingWidget } from './DogfoodSessionUi';
 
 export interface DogfoodNativeMenuProps {
   active: boolean;
@@ -12,6 +14,7 @@ export interface DogfoodNativeMenuProps {
   onExit: () => void;
   onOpenTasks: () => void;
   onOpenSettings: () => void;
+  usageMode?: DogfoodUsageMode;
   issue?: string;
   onFixIssue?: () => void;
   colors?: {
@@ -35,11 +38,24 @@ export const DogfoodNativeMenu: React.FC<DogfoodNativeMenuProps> = ({
   onExit,
   onOpenTasks,
   onOpenSettings,
+  usageMode = 'reload-and-chat',
   issue,
   onFixIssue,
   colors,
-}) => (
-  <View style={styles.root}>
+}) => {
+  const autoLaunchRef = useRef(false);
+
+  useEffect(() => {
+    if (active) {
+      autoLaunchRef.current = false;
+      return;
+    }
+    if (busy || !onLaunch || autoLaunchRef.current || launchContent) return;
+    autoLaunchRef.current = true;
+    onLaunch();
+  }, [active, busy, launchContent, onLaunch]);
+
+  return <View style={styles.root}>
     {active ? (
       <View style={[styles.runtimeCard, { backgroundColor: colors?.card, borderColor: colors?.border }]} accessibilityLabel="Dogfood is active">
         <View style={styles.runtimeCopy}>
@@ -68,13 +84,11 @@ export const DogfoodNativeMenu: React.FC<DogfoodNativeMenuProps> = ({
           <Text style={[styles.title, { color: colors?.text }]}>Dogfood this app</Text>
           <Text style={[styles.detail, { color: colors?.muted }]}>Launch the configured checkout without replacing the app you installed.</Text>
         </View>
-        <Pressable
-          testID="dogfood-native-launch"
-          accessibilityRole="button"
-          disabled={busy || !onLaunch}
-          onPress={onLaunch}
-          style={({ pressed }) => [styles.primary, { backgroundColor: colors?.accent }, (pressed || busy || !onLaunch) && styles.pressed]}
-        ><Text style={styles.primaryText}>{busy ? 'Preparing…' : 'Launch Dogfood'}</Text></Pressable>
+        <DogfoodLaunchingWidget
+          message={busy ? 'Preparing Dogfood…' : 'Launching Dogfood…'}
+          detail="The configured checkout opens automatically."
+          colors={{ background: colors?.card, border: colors?.border, text: colors?.text, muted: colors?.muted, accent: colors?.accent }}
+        />
       </View>
     )}
 
@@ -88,16 +102,16 @@ export const DogfoodNativeMenu: React.FC<DogfoodNativeMenuProps> = ({
       </Pressable> : null}
     </View> : null}
 
-    <Pressable accessibilityRole="button" accessibilityLabel="Open Dogfood tasks" onPress={onOpenTasks} style={({ pressed }) => [styles.row, { backgroundColor: colors?.card, borderColor: colors?.border }, pressed && styles.pressed]}>
+    {usageMode !== 'reload-only' ? <Pressable accessibilityRole="button" accessibilityLabel="Open Dogfood tasks" onPress={onOpenTasks} style={({ pressed }) => [styles.row, { backgroundColor: colors?.card, borderColor: colors?.border }, pressed && styles.pressed]}>
       <View style={styles.rowCopy}><Text style={[styles.rowTitle, { color: colors?.text }]}>Tasks</Text><Text style={[styles.rowDetail, { color: colors?.muted }]}>Vibe, follow live work, and continue sessions</Text></View>
       <Text style={[styles.chevron, { color: colors?.muted }]}>›</Text>
-    </Pressable>
+    </Pressable> : null}
     <Pressable accessibilityRole="button" accessibilityLabel="Open Dogfood settings" onPress={onOpenSettings} style={({ pressed }) => [styles.row, { backgroundColor: colors?.card, borderColor: colors?.border }, pressed && styles.pressed]}>
       <View style={styles.rowCopy}><Text style={[styles.rowTitle, { color: colors?.text }]}>Settings</Text><Text style={[styles.rowDetail, { color: colors?.muted }]}>Box, runner, checkout, lane, and Y icon</Text></View>
       <Text style={[styles.chevron, { color: colors?.muted }]}>›</Text>
     </Pressable>
-  </View>
-);
+  </View>;
+};
 
 const styles = StyleSheet.create({
   root: { gap: 12 },

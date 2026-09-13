@@ -48,7 +48,7 @@ import {
   type DogfoodSnapshot,
 } from './DogfoodRuntime';
 import { createP2PDogfoodDriver } from './P2PDogfoodDriver';
-import { DogfoodLanePicker, DogfoodLiveConsole, DogfoodStatusRail } from './DogfoodSessionUi';
+import { DogfoodLanePicker, DogfoodLaunchingWidget, DogfoodLiveConsole, DogfoodStatusRail } from './DogfoodSessionUi';
 import type { DogfoodRemoteRuntimeTarget } from './P2PClient';
 import type { DogfoodRenderBehavior, DogfoodUsageMode } from './dogfoodPolicy';
 import {
@@ -302,6 +302,8 @@ export const FeedbackModal: React.FC = () => {
   const [dogfoodRuntime, setDogfoodRuntime] = useState<DogfoodSnapshot | null>(null);
   const [dogfoodSetupLoading, setDogfoodSetupLoading] = useState(false);
   const dogfoodControllerRef = useRef<DogfoodController | null>(null);
+  const dogfoodAutoStartRef = useRef(false);
+  const dogfoodAutoCompleteRef = useRef(false);
   const mountedRef = useRef(true);
 
   const loadDogfoodOnboarding = useCallback(async (silent = false) => {
@@ -439,7 +441,7 @@ export const FeedbackModal: React.FC = () => {
         runtimeSessionId: result.sessionId,
       }).catch(() => {});
     }
-  }, [dogfoodLane, dogfoodNativeTargetId, dogfoodProject]);
+  }, [dogfoodBrowserAvailable, dogfoodLane, dogfoodNativeAvailable, dogfoodNativeTargetId, dogfoodProject]);
 
   /**
    * Ask the machine what its dev server is doing, so the reload actions can
@@ -661,8 +663,10 @@ export const FeedbackModal: React.FC = () => {
           // A Dogfood shortcut is an explicit setup/runtime intent. Opening on
           // Chat hid the machine/runner/checkout gate for signed-in SFMG users;
           // keep the SDK-owned Dogfood surface visible, then show its live logs
-          // immediately when Start is tapped.
+          // immediately when the saved setup becomes ready.
           setActiveTab('settings');
+          dogfoodAutoStartRef.current = false;
+          dogfoodAutoCompleteRef.current = false;
           setDogfoodSetupStage('setup');
           setDogfoodExpandedStep(null);
           setDogfoodRuntime(null);
@@ -843,6 +847,8 @@ export const FeedbackModal: React.FC = () => {
     setDogfoodSetupStage('setup');
     setDogfoodExpandedStep(null);
     setDogfoodRuntime(null);
+    dogfoodAutoStartRef.current = false;
+    dogfoodAutoCompleteRef.current = false;
     void dogfoodControllerRef.current?.stop().catch(() => {});
     dogfoodControllerRef.current = null;
     YaverFeedback.clearDogfoodOnboarding();
@@ -1254,16 +1260,39 @@ export const FeedbackModal: React.FC = () => {
       ? `Hermes build · ${machineCard.title}`
       : `${dogfoodFramework === 'flutter' ? 'Flutter web compiler' : 'Metro / browser build'} · ${machineCard.title}`;
   const dogfoodLaunchHint = dogfoodLane === 'browser'
-    ? 'Launch opens Browser Logs first, then opens the React Native web app.'
+    ? 'Browser Logs open first, then the React Native web app opens automatically.'
     : dogfoodLane === 'hermes'
-      ? 'Launch opens Hermes Logs first, then reloads the installed app with a validated bundle.'
-      : 'Launch opens WebRTC Logs first, then opens the selected native runtime.';
+      ? 'Hermes Logs open first, then the installed app reloads with a validated bundle.'
+      : 'WebRTC Logs open first, then the selected native runtime opens automatically.';
   const completeDogfoodRuntime = useCallback(async () => {
     if (dogfoodRuntime?.phase !== 'ready') return;
-    await YaverFeedback.setDogfoodControlPresentation('minimized-y').catch(() => {});
-    YaverFeedback.clearDogfoodOnboarding();
-    setVisible(false);
-  }, [dogfoodRuntime?.phase]);
+    try {
+      // Browser Dogfood is an external surface for an SDK host. Opening the
+      // proven URL is part of the handoff; merely closing this sheet would
+      // report success while leaving the user in the unchanged host app.
+      if (dogfoodRuntime.result?.url) await Linking.openURL(dogfoodRuntime.result.url);
+      await YaverFeedback.setDogfoodControlPresentation('minimized-y').catch(() => {});
+      YaverFeedback.clearDogfoodOnboarding();
+      setVisible(false);
+    } catch (cause) {
+      dogfoodAutoCompleteRef.current = false;
+      setError(`Dogfood did not open: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }, [dogfoodRuntime?.phase, dogfoodRuntime?.result?.url]);
+
+  useEffect(() => {
+    if (!visible || !dogfoodOnboarding || dogfoodSetupStage !== 'setup' || dogfoodStartBlocked || dogfoodAutoStartRef.current) return;
+    dogfoodAutoStartRef.current = true;
+    void startDogfoodRuntime().finally(() => {
+      if (mountedRef.current && !dogfoodControllerRef.current) dogfoodAutoStartRef.current = false;
+    });
+  }, [dogfoodOnboarding, dogfoodSetupStage, dogfoodStartBlocked, startDogfoodRuntime, visible]);
+
+  useEffect(() => {
+    if (!visible || dogfoodRuntime?.phase !== 'ready' || dogfoodAutoCompleteRef.current) return;
+    dogfoodAutoCompleteRef.current = true;
+    void completeDogfoodRuntime();
+  }, [completeDogfoodRuntime, dogfoodRuntime?.phase, visible]);
 
   // Once the user fires off a vibe task, swap the entire modal body
   // for the live chat screen. The chat manages its own SSE
@@ -1586,12 +1615,13 @@ export const FeedbackModal: React.FC = () => {
                             </View>
                           ) : null}
                           <Text style={styles.dogfoodWizardHint}>{dogfoodLaunchHint}</Text>
-                          <ActionRow
-                            label={dogfoodSetupReady ? 'Launch Dogfood' : 'Complete the choices above'}
-                            tint="#5645d8"
-                            onPress={() => void startDogfoodRuntime()}
-                            disabled={dogfoodStartBlocked}
-                          />
+                          {dogfoodSetupReady && dogfoodLaneReady ? (
+                            <DogfoodLaunchingWidget
+                              message="Launching Dogfood…"
+                              detail="Your saved choices are ready. No second tap is needed."
+                              colors={FEEDBACK_DOGFOOD_LIGHT_COLORS}
+                            />
+                          ) : null}
                         </>
                       ) : null}
 
@@ -1606,6 +1636,8 @@ export const FeedbackModal: React.FC = () => {
                               onPress={() => {
                                 void dogfoodControllerRef.current?.stop().catch(() => {});
                                 dogfoodControllerRef.current = null;
+                                dogfoodAutoStartRef.current = false;
+                                dogfoodAutoCompleteRef.current = false;
                                 setDogfoodRuntime(null);
                                 setDogfoodSetupStage('setup');
                               }}
@@ -1624,14 +1656,11 @@ export const FeedbackModal: React.FC = () => {
                             colors={FEEDBACK_DOGFOOD_CONSOLE_COLORS}
                           />
                           {dogfoodRuntime.phase === 'ready' ? (
-                            <Pressable onPress={() => void completeDogfoodRuntime()} style={styles.dogfoodOpenPreview}>
-                              <Text style={styles.dogfoodOpenPreviewText}>Continue in app</Text>
-                            </Pressable>
-                          ) : null}
-                          {dogfoodRuntime.result?.url ? (
-                            <Pressable onPress={() => void Linking.openURL(dogfoodRuntime.result!.url!)} style={styles.dogfoodOpenPreview}>
-                              <Text style={styles.dogfoodOpenPreviewText}>Open dogfooded app</Text>
-                            </Pressable>
+                            <DogfoodLaunchingWidget
+                              message="Opening dogfooded app…"
+                              detail="The verified runtime is returning to the app automatically."
+                              colors={FEEDBACK_DOGFOOD_LIGHT_COLORS}
+                            />
                           ) : null}
                         </>
                       ) : null}

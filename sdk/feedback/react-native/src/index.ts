@@ -144,7 +144,7 @@ export type {
   DogfoodRunContext,
   DogfoodSnapshot,
 } from './DogfoodRuntime';
-export { DogfoodLanePicker, DogfoodLiveConsole, DogfoodStatusRail } from './DogfoodSessionUi';
+export { DogfoodLanePicker, DogfoodLaunchingWidget, DogfoodLiveConsole, DogfoodStatusRail } from './DogfoodSessionUi';
 export type {
   DogfoodStatusStep,
   DogfoodStatusTone,
