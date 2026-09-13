@@ -109,7 +109,12 @@ test("SDK host auto-launches browser Dogfood and keeps real pixels through reloa
     if (host === "talos") {
       await page.getByText("Settings", { exact: true }).first().click();
     }
-    const entry = page.getByRole("button", { name: host === "sfmg" ? "Dogfood SFMG" : "Dogfood Talos" });
+    const entry = page.getByRole("button", {
+      // RN-web folds the row's visible hint into its accessibility name even
+      // when native uses the shorter accessibilityLabel. Exclude the adjacent
+      // Settings row without coupling the arc to translated helper copy.
+      name: host === "sfmg" ? /^Dogfood(?! Settings)/ : "Dogfood Talos",
+    });
     await expect(entry).toBeVisible({ timeout: 120_000 });
     await entry.click();
 
