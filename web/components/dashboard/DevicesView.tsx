@@ -7,6 +7,7 @@ import { type Device, type DeviceStorage, hideDevice, setDeviceAlias, setDeviceS
 import { NetCaptureModal } from "./NetCaptureModal";
 import { DeviceStorageFold } from "./DeviceStorageFold";
 import { DeviceDeployCapabilities } from "./DeviceDeployCapabilities";
+import { SilentInputPanel } from "./SilentInputPanel";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { DevicePowerModal } from "@/components/dashboard/DevicePowerModal";
@@ -6093,6 +6094,10 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           probedAt={device.deployCapabilitiesAt}
         />
       </div>
+      {/* Silent Input / VSR capture surface: the macOS front-camera lane the
+          Electron app and the web dashboard share. Targets whichever device is
+          being viewed, so capture can be local and recognition remote. */}
+      <SilentInputPanel device={device} token={token} />
       {allRunners.length ? (
         <div className="mt-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">

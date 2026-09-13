@@ -16,6 +16,7 @@ out/
 # for local smoke tests) — these carry their own node_modules + native
 # build dirs and have no source worth versioning.
 demo/AcmeStore/
+demo/mobile/bento/
 
 # Go binaries
 desktop/agent/yaver
