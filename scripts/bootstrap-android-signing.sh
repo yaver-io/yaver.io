@@ -25,6 +25,30 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# A clean release checkout may intentionally reuse owner-only signing files
+# from another trusted local checkout. Accept explicit paths before touching
+# the vault, and link rather than duplicate private material. All destinations
+# remain gitignored and the deploy script still validates the real keystore.
+if [ -n "${YAVER_ANDROID_KEYSTORE_PATH:-}" ] ||
+   [ -n "${YAVER_ANDROID_KEYSTORE_PROPERTIES_PATH:-}" ] ||
+   [ -n "${YAVER_PLAY_STORE_KEY_FILE:-}" ]; then
+  : "${YAVER_ANDROID_KEYSTORE_PATH:?Set all three explicit Android signing paths}"
+  : "${YAVER_ANDROID_KEYSTORE_PROPERTIES_PATH:?Set all three explicit Android signing paths}"
+  : "${YAVER_PLAY_STORE_KEY_FILE:?Set all three explicit Android signing paths}"
+  for source_file in "$YAVER_ANDROID_KEYSTORE_PATH" "$YAVER_ANDROID_KEYSTORE_PROPERTIES_PATH" "$YAVER_PLAY_STORE_KEY_FILE"; do
+    if [ ! -r "$source_file" ]; then
+      echo "ERROR: explicit Android signing source is not readable: $source_file" >&2
+      exit 2
+    fi
+  done
+  mkdir -p keys mobile/android
+  ln -s "$YAVER_ANDROID_KEYSTORE_PATH" keys/yaver-upload.keystore
+  ln -s "$YAVER_ANDROID_KEYSTORE_PROPERTIES_PATH" mobile/android/keystore.properties
+  ln -s "$YAVER_PLAY_STORE_KEY_FILE" keys/google-play-service-account.json
+  echo "Linked explicit owner-only Android signing sources into this clean checkout."
+  exit 0
+fi
+
 if ! command -v yaver >/dev/null 2>&1; then
   echo "ERROR: yaver CLI not on PATH. Install with: npm install -g yaver-cli" >&2
   exit 1
