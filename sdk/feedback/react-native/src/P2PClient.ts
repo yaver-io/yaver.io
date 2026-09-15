@@ -141,6 +141,7 @@ export interface DogfoodDevServerStatus {
   bundleUrl?: string;
   previewUrl?: string;
   error?: string;
+  recentLogs?: string[];
   capabilityGap?: unknown;
 }
 
@@ -1065,7 +1066,18 @@ export class P2PClient {
 
   /** Resolve an agent-reported /dev/ or /dev-web/ route without putting auth in the URL. */
   resolveDogfoodUrl(path: string): string {
-    return new URL(path, `${this.baseUrl.replace(/\/+$/, '')}/`).toString();
+    const base = new URL(this.baseUrl);
+    const reported = new URL(path, base.origin);
+    const basePath = base.pathname.replace(/\/+$/, '');
+    const reportedPath = reported.pathname || '/';
+    const alreadyScoped = basePath !== ''
+      && (reportedPath === basePath || reportedPath.startsWith(`${basePath}/`));
+    base.pathname = alreadyScoped
+      ? reportedPath
+      : `${basePath}/${reportedPath.replace(/^\/+/, '')}`;
+    base.search = reported.search;
+    base.hash = reported.hash;
+    return base.toString();
   }
 
   /**
@@ -1080,7 +1092,33 @@ export class P2PClient {
     let disposed = false;
     let xhr: XMLHttpRequest | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastPolledLogs: string[] = [];
     let attempt = 0;
+
+    const poll = async () => {
+      if (disposed) return;
+      const status = await this.getDogfoodDevServerStatus();
+      const next = Array.isArray(status?.recentLogs)
+        ? status.recentLogs.filter((line) => typeof line === 'string')
+        : [];
+      let overlap = Math.min(lastPolledLogs.length, next.length);
+      while (overlap > 0
+        && lastPolledLogs.slice(-overlap).join('\n') !== next.slice(0, overlap).join('\n')) overlap -= 1;
+      const fresh = next.slice(overlap);
+      if (fresh.length > 0) {
+        onHealth?.(null);
+        onEvent({ type: 'snapshot', snapshot: { recentLogs: fresh } });
+      }
+      lastPolledLogs = next;
+      pollTimer = setTimeout(poll, 1_000);
+      unrefTimer(pollTimer);
+    };
+    const startPolling = (reason: string) => {
+      if (pollTimer || disposed) return;
+      onHealth?.({ kind: 'reattaching', message: `Live stream unavailable; polling Browser Logs (${reason}).` });
+      void poll();
+    };
 
     const open = () => {
       if (disposed) return;
@@ -1126,7 +1164,15 @@ export class P2PClient {
         try { request.setRequestHeader(key, value); } catch { /* restricted RN header */ }
       }
       request.onprogress = consume;
-      request.onload = () => { consume(); reconnect(`HTTP ${request.status || 0}`); };
+      request.onload = () => {
+        consume();
+        const body = request.responseText || '';
+        if (request.status === 502 && body.includes('streaming endpoints require QUIC relay')) {
+          startPolling('relay fallback');
+          return;
+        }
+        reconnect(`HTTP ${request.status || 0}`);
+      };
       request.onerror = () => reconnect('connection failed');
       request.onabort = () => reconnect('connection aborted');
       request.ontimeout = () => reconnect('connection timed out');
@@ -1140,6 +1186,7 @@ export class P2PClient {
     return () => {
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
+      if (pollTimer) clearTimeout(pollTimer);
       try { xhr?.abort(); } catch { /* idempotent */ }
     };
   }
@@ -1825,11 +1872,40 @@ export class P2PClient {
     const ctrl = new AbortController();
     let xhr: XMLHttpRequest | null = null;
     let closed = false;
+    let settled = false;
+    let statusWatchdog: ReturnType<typeof setTimeout> | null = null;
+    let statusPollStarted = false;
     const close = () => {
       if (closed) return;
       closed = true;
+      if (statusWatchdog) clearTimeout(statusWatchdog);
       try { ctrl.abort(); } catch { /* ignore */ }
       try { xhr?.abort(); } catch { /* ignore */ }
+    };
+    const complete = (status: string) => {
+      if (closed || settled) return;
+      settled = true;
+      onComplete(status);
+      close();
+    };
+    const startStatusPoll = (delayMs: number) => {
+      if (closed || statusPollStarted || statusWatchdog) return;
+      const begin = () => {
+        statusWatchdog = null;
+        if (closed || statusPollStarted) return;
+        statusPollStarted = true;
+        // Some HTTP relays deliver the completed XHR body but suppress every
+        // progressive callback. Keep SSE as the low-latency lane, then ask the
+        // authoritative task route as a quiet watchdog so a settled runner can
+        // never leave the composer locked indefinitely.
+        void pollTaskUntilDone(this, taskId, () => {}, complete, () => closed, options?.onEvent);
+      };
+      if (delayMs <= 0) {
+        begin();
+        return;
+      }
+      statusWatchdog = setTimeout(begin, delayMs);
+      unrefTimer(statusWatchdog);
     };
 
     const consumePayload = (payload: string) => {
@@ -1839,6 +1915,14 @@ export class P2PClient {
       if (event) {
         options?.onEvent?.(event);
         if (event.type === 'output' && typeof event.text === 'string') onLine(event.text);
+        if (event.type === 'done' && typeof event.status === 'string'
+          && ['ready', 'review', 'completed', 'failed', 'stopped'].includes(event.status)) {
+          // The source-gated SSE route ends every settled generation with a
+          // typed done frame. XHR intermediaries may delay `onload` or keep the
+          // HTTP connection reusable after that frame, so waiting for transport
+          // EOF leaves the composer locked even though the runner is ready.
+          complete(event.status);
+        }
       } else {
         onLine(payload);
       }
@@ -1847,7 +1931,7 @@ export class P2PClient {
 
     // XHR onprogress is the established Hermes streaming lane (also used for
     // /dev/events). Waiting for fetch to resolve would wait until the task ends.
-    if (typeof XMLHttpRequest !== 'undefined') {
+    if (Platform.OS !== 'web' && typeof XMLHttpRequest !== 'undefined') {
       const request = new XMLHttpRequest();
       xhr = request;
       let parsed = 0;
@@ -1876,7 +1960,7 @@ export class P2PClient {
           message: 'Live updates paused. Reconnecting while the task continues on the coding machine.',
           error: reason,
         });
-        void pollTaskUntilDone(this, taskId, onLine, onComplete, () => closed, options?.onEvent);
+        startStatusPoll(0);
       };
       request.open('GET', streamUrl, true);
       for (const [key, value] of Object.entries(this.authHeaders({ Accept: 'text/event-stream' }))) {
@@ -1889,6 +1973,7 @@ export class P2PClient {
       request.onabort = () => { if (!closed) handOffToPoll('connection aborted'); };
       try {
         request.send();
+        startStatusPoll(0);
       } catch (error) {
         handOffToPoll(error instanceof Error ? error.message : String(error));
       }
@@ -1951,19 +2036,19 @@ export class P2PClient {
           const payload = (await final.json().catch(() => ({}))) as { status?: string; task?: { status?: string } };
           const j = payload.task ?? payload;
           if (j.status && ['ready', 'review', 'completed', 'failed', 'stopped'].includes(j.status)) {
-            onComplete(j.status);
+            complete(j.status);
             return;
           }
           options?.onEvent?.({ type: 'task_stream_interrupted', message: 'Live updates paused. Reconnecting while the task continues on the coding machine.' });
-          await pollTaskUntilDone(this, taskId, onLine, onComplete, () => closed, options?.onEvent);
+          await pollTaskUntilDone(this, taskId, onLine, complete, () => closed, options?.onEvent);
         } catch (error) {
           options?.onEvent?.({ type: 'task_stream_interrupted', message: 'Live updates paused. Reconnecting while the task continues on the coding machine.', error: error instanceof Error ? error.message : String(error) });
-          await pollTaskUntilDone(this, taskId, onLine, onComplete, () => closed, options?.onEvent);
+          await pollTaskUntilDone(this, taskId, onLine, complete, () => closed, options?.onEvent);
         }
       } catch (e) {
         if (!closed) {
           options?.onEvent?.({ type: 'task_stream_interrupted', message: 'Live updates paused. Reconnecting while the task continues on the coding machine.', error: e instanceof Error ? e.message : String(e) });
-          await pollTaskUntilDone(this, taskId, onLine, onComplete, () => closed, options?.onEvent);
+          await pollTaskUntilDone(this, taskId, onLine, complete, () => closed, options?.onEvent);
         }
       }
     })();

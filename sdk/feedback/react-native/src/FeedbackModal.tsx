@@ -38,6 +38,7 @@ import {
   setPreferredModel,
   setPreferredRunner,
   setPreferredDogfoodLane,
+  type DogfoodRuntimeSelection,
 } from './preferences';
 import {
   DogfoodController,
@@ -51,6 +52,7 @@ import { createP2PDogfoodDriver } from './P2PDogfoodDriver';
 import { DogfoodLanePicker, DogfoodLaunchingWidget, DogfoodLiveConsole, DogfoodStatusRail } from './DogfoodSessionUi';
 import type { DogfoodRemoteRuntimeTarget } from './P2PClient';
 import type { DogfoodRenderBehavior, DogfoodUsageMode } from './dogfoodPolicy';
+import { navigateReservedDogfoodBrowserWindow } from './dogfoodBrowserHandoff';
 import {
   FEEDBACK_DOGFOOD_CONSOLE_COLORS,
   FEEDBACK_DOGFOOD_LIGHT_COLORS,
@@ -282,6 +284,10 @@ export const FeedbackModal: React.FC = () => {
   const [runnerStatusError, setRunnerStatusError] = useState<string | null>(null);
   const [preferredRunner, setPreferredRunnerState] = useState<string | null>(null);
   const [preferredModel, setPreferredModelState] = useState('');
+  const preferredRunnerRef = useRef<string | null>(null);
+  const preferredModelRef = useRef('');
+  preferredRunnerRef.current = preferredRunner;
+  preferredModelRef.current = preferredModel;
   const [activeTab, setActiveTab] = useState<'chat' | 'settings'>('chat');
   const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -293,6 +299,10 @@ export const FeedbackModal: React.FC = () => {
   const [dogfoodProjects, setDogfoodProjects] = useState<DogfoodProjectChoice[]>([]);
   const [dogfoodProject, setDogfoodProject] = useState<DogfoodProjectChoice | null>(null);
   const [dogfoodLane, setDogfoodLane] = useState<DogfoodLane>('browser');
+  const dogfoodProjectRef = useRef<DogfoodProjectChoice | null>(null);
+  const dogfoodLaneRef = useRef<DogfoodLane>('browser');
+  dogfoodProjectRef.current = dogfoodProject;
+  dogfoodLaneRef.current = dogfoodLane;
   const [dogfoodNativeAvailable, setDogfoodNativeAvailable] = useState(false);
   const [dogfoodBrowserAvailable, setDogfoodBrowserAvailable] = useState(false);
   const [dogfoodNativeTargets, setDogfoodNativeTargets] = useState<DogfoodRemoteRuntimeTarget[]>([]);
@@ -752,8 +762,33 @@ export const FeedbackModal: React.FC = () => {
         });
       },
     );
-    const dogfoodNewChatSub = DeviceEventEmitter.addListener('yaverFeedback:dogfoodNewChatRequested', () => {
+    const dogfoodNewChatSub = DeviceEventEmitter.addListener('yaverFeedback:dogfoodNewChatRequested', (payload?: {
+      selection?: DogfoodRuntimeSelection;
+      renderBehavior?: DogfoodRenderBehavior;
+    }) => {
       if (!mountedRef.current) return;
+      const liveProject = dogfoodProjectRef.current;
+      const resolvedSelection = payload?.selection || (liveProject ? {
+        projectName: liveProject.name,
+        projectPath: liveProject.path,
+        lane: dogfoodLaneRef.current,
+      } : undefined);
+      console.log(`[YaverFeedback] Dogfood Chat handoff ${resolvedSelection?.projectPath ? 'received' : 'is recovering the checkout'}.`);
+      // openDogfoodChat already resolved these values from the live, approved
+      // Dogfood session. Render the composer immediately instead of putting a
+      // second network-backed preference lookup in front of visible Chat.
+      if (resolvedSelection) {
+        setActiveVibe({
+          initialPrompt: '',
+          project: resolvedSelection.projectName,
+          projectPath: resolvedSelection.projectPath,
+          runner: preferredRunnerRef.current || undefined,
+          model: preferredModelRef.current || undefined,
+          renderBehavior: payload?.renderBehavior || 'manual',
+        });
+        setVisible(true);
+        return;
+      }
       void (async () => {
         const [selection, runner, model, renderBehavior] = await Promise.all([
           YaverFeedback.getDogfoodRuntimeSelection(),
@@ -1271,7 +1306,10 @@ export const FeedbackModal: React.FC = () => {
       // Browser Dogfood is an external surface for an SDK host. Opening the
       // proven URL is part of the handoff; merely closing this sheet would
       // report success while leaving the user in the unchanged host app.
-      if (dogfoodRuntime.result?.url) await Linking.openURL(dogfoodRuntime.result.url);
+      if (dogfoodRuntime.result?.url
+        && !navigateReservedDogfoodBrowserWindow(dogfoodRuntime.result.url)) {
+        await Linking.openURL(dogfoodRuntime.result.url);
+      }
       await YaverFeedback.setDogfoodControlPresentation('minimized-y').catch(() => {});
       YaverFeedback.clearDogfoodOnboarding();
       setVisible(false);
@@ -1292,7 +1330,12 @@ export const FeedbackModal: React.FC = () => {
   useEffect(() => {
     if (!visible || dogfoodRuntime?.phase !== 'ready' || dogfoodAutoCompleteRef.current) return;
     dogfoodAutoCompleteRef.current = true;
-    void completeDogfoodRuntime();
+    // Keep the successful Browser Logs + launching animation visible long
+    // enough to be perceived even when a warm remote runtime becomes ready in
+    // one tick. The handoff remains automatic; this is presentation, not a
+    // second confirmation step.
+    const timer = setTimeout(() => { void completeDogfoodRuntime(); }, 6_000);
+    return () => clearTimeout(timer);
   }, [completeDogfoodRuntime, dogfoodRuntime?.phase, visible]);
 
   // Once the user fires off a vibe task, swap the entire modal body
@@ -1300,7 +1343,7 @@ export const FeedbackModal: React.FC = () => {
   // subscription, multi-turn follow-ups, and Reload button. Closing
   // the chat returns to idle and clears the active vibe.
   if (activeVibe) {
-    const client = YaverFeedback.getP2PClient();
+    const client = YaverFeedback.getDogfoodCodingP2PClient();
     const config = YaverFeedback.getConfig();
     const sessionSettings = resolveDogfoodClientSessionSettings({
       lane: activeDogfoodLane,

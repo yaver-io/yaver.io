@@ -19,6 +19,8 @@ describe('Dogfood Settings and Usage contract', () => {
     expect(usage).toContain('yaver-dogfood-exit');
     expect(usage).toContain('YaverFeedback.exitDogfoodMode()');
     expect(usage).toContain('yaverFeedback:dogfoodUsageRequested');
+    expect(usage).toContain("DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested'");
+    expect(usage).toContain('if (state.authorized)');
     expect(usage).not.toContain('DogfoodSettings');
     expect(usage).not.toContain('Update Yaver agent');
     expect(usage).not.toContain('Back to native app');
@@ -67,6 +69,8 @@ describe('Dogfood Settings and Usage contract', () => {
     expect(chat).toContain("const codingLocked = status === 'running'");
     expect(chat).toContain("event.type !== 'runtime_render_requested'");
     expect(chat).toContain("renderBehavior === 'auto-on-request'");
+    expect(chat).toContain('transport silence can never look like');
+    expect(chat).toContain('client.getVibeThread(taskId)');
   });
 
   it('targets the current app command channel and requires an exact checkout', () => {
@@ -91,8 +95,9 @@ describe('Dogfood Settings and Usage contract', () => {
 
   it('opens chat without starting a renderer and restores or creates a session', () => {
     const feedback = readFileSync(join(__dirname, '../YaverFeedback.ts'), 'utf8');
-    expect(feedback).toContain("getDogfoodSessionBehavior() === 'resume-last'");
-    expect(feedback).toContain('openDogfoodSession(sessions[0].id)');
-    expect(feedback).toContain("DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested')");
+    expect(feedback).toContain("getDogfoodSessionBehavior() !== 'resume-last'");
+    expect(feedback).toContain('Promise.race([');
+    expect(feedback).toContain('openDogfoodSession(resume.id)');
+    expect(feedback).toContain("DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested', {");
   });
 });

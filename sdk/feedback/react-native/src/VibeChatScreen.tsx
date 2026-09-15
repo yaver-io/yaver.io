@@ -395,6 +395,47 @@ export function VibeChatScreen({
   // lock this composer or prevent the user from starting another session.
   const codingLocked = status === 'running' || status === 'queued';
 
+  // SSE is the fast path, but browser relays are allowed to buffer an XHR
+  // response even after the agent has settled the turn. Reconcile the actual
+  // task while the composer is locked so transport silence can never look like
+  // continued coding. This is deliberately scoped to the active topic and
+  // stops on the first settled status.
+  useEffect(() => {
+    if (!taskId || !codingLocked) return;
+    let active = true;
+    let failureReported = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reconcile = async () => {
+      try {
+        const task = await client.getVibeThread(taskId);
+        if (!active) return;
+        const next = statusFromRunner(task.status);
+        if (next !== 'running' && next !== 'queued') {
+          console.log(`[YaverFeedback] Coding turn settled as ${next}; chat is ready.`);
+          setStatus(next);
+          setPresentation(task.presentation || []);
+          setThreads((previous) => previous.map((thread) => (
+            thread.id === taskId ? { ...thread, status: task.status } : thread
+          )));
+          return;
+        }
+      } catch (error) {
+        // The live stream still owns errors and reconnect messaging. A failed
+        // advisory probe must not turn a healthy coding task into a failure.
+        if (!failureReported) {
+          failureReported = true;
+          console.warn(`[YaverFeedback] Task status reconciliation is retrying: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (active) timer = setTimeout(reconcile, 1_500);
+    };
+    void reconcile();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [client, codingLocked, taskId]);
+
   // Auto-scroll the transcript when new content lands.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1036,6 +1077,8 @@ export function VibeChatScreen({
             ]}
             onPress={handleSendFollowUp}
             disabled={isResuming || codingLocked || !followUp.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Send chat message"
           >
             <Text style={styles.actionText}>
               {isResuming ? '…' : '↑ send'}

@@ -97,6 +97,11 @@ type DevServerStatus struct {
 	DevMode       string `json:"devMode,omitempty"` // "dev-client", "web", "expo-go", "" (for non-Expo)
 	StartedAt     string `json:"startedAt,omitempty"`
 	Error         string `json:"error,omitempty"`
+	// RecentLogs gives polling transports the same bounded tail carried by
+	// /dev/events snapshots. The public relay's WebSocket fallback cannot
+	// proxy streaming responses, so SDK Dogfood would otherwise show a dead
+	// Browser Logs panel whenever QUIC is unavailable.
+	RecentLogs []string `json:"recentLogs,omitempty"`
 	// CapabilityGap mirrors the SSE error frame's Gap for clients that poll
 	// status instead of holding the stream open. DevPreview gates its
 	// /dev/events subscription on running||building, so on a hard start
@@ -1072,6 +1077,7 @@ func (m *DevServerManager) Status() *DevServerStatus {
 	m.recentLogMu.Lock()
 	recentLogs := append([]string(nil), m.recentLogTail...)
 	m.recentLogMu.Unlock()
+	s.RecentLogs = recentLogs
 	s.PreviewHealth = previewHealthFromAgentSignals(s, recentLogs)
 	// One shape for "what does this session hold", shared with /vibe/sessions.
 	s.Resources = resourcesForOwner(m.resourceOwnerTag())

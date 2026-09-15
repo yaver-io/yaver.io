@@ -741,6 +741,9 @@ func TestCORSPreflight(t *testing.T) {
 	if h := resp.Header.Get("Access-Control-Allow-Origin"); h == "" {
 		t.Fatal("expected Access-Control-Allow-Origin header")
 	}
+	if methods := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(methods, "PATCH") {
+		t.Fatalf("CORS methods missing PATCH for browser session settings: %q", methods)
+	}
 }
 
 func TestCORSOnResponse(t *testing.T) {

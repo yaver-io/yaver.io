@@ -16,6 +16,7 @@ import { YaverFeedback, type DogfoodControlTriggerState } from './YaverFeedback'
 import {
   getDogfoodControlPosition,
   getDogfoodEntryIconHidden,
+  getDogfoodRuntimeSelection,
   setDogfoodControlPosition,
   type DogfoodControlEdge,
 } from './preferences';
@@ -226,13 +227,43 @@ export const DogfoodQuickControls: React.FC<{ suppressed?: boolean }> = ({ suppr
     setBusy('chat');
     setMessage(null);
     setOpen(false);
+    const dogfoodConfig = YaverFeedback.getConfig()?.dogfood as {
+      projectName?: string;
+      projectPath?: string;
+      lane?: 'browser' | 'hermes' | 'webrtc';
+      targetDeviceId?: string;
+      runtimeSessionId?: string;
+      renderBehavior?: 'manual' | 'auto-on-request';
+    } | undefined;
+    const configured = YaverFeedback.getActiveDogfoodRuntimeSelection()
+      || (dogfoodConfig?.projectPath ? dogfoodConfig : null)
+      || (state.appId ? await getDogfoodRuntimeSelection(state.appId) : null);
+    if (state.authorized) {
+      // This card is already the post-approval, live-runtime surface. Opening
+      // its composer must be a synchronous UI handoff; repeating account and
+      // checkout discovery here left the pressed control on “Opening…” while
+      // the exact runtime was visibly alive underneath it.
+      console.log(`[YaverFeedback] Opening Dogfood Chat${configured?.projectPath ? ` for ${configured.projectPath}` : ' with runtime recovery'}.`);
+      DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested', {
+        selection: configured?.projectPath ? {
+          projectName: configured.projectName,
+          projectPath: configured.projectPath,
+          lane: configured.lane || 'browser',
+          targetDeviceId: configured.targetDeviceId,
+          runtimeSessionId: configured.runtimeSessionId,
+        } : undefined,
+        renderBehavior: dogfoodConfig?.renderBehavior || 'manual',
+      });
+      setBusy(null);
+      return;
+    }
     const result = await YaverFeedback.openDogfoodChat();
     if (result.phase === 'denied' || result.phase === 'error') {
       setMessage(result.error || 'Dogfood access is not available on this installation.');
       setOpen(true);
     }
     setBusy(null);
-  }, [busy]);
+  }, [busy, state.authorized]);
 
   const openSettings = useCallback(async () => {
     if (busy) return;

@@ -22,7 +22,74 @@ beforeEach(() => {
 });
 
 describe('P2PClient', () => {
+	it('polls the bounded Browser Logs tail when relay fallback rejects SSE', async () => {
+		const originalXHR = (global as any).XMLHttpRequest;
+		class MockXHR {
+			responseText = '{"code":"Bad Gateway","message":"streaming endpoints require QUIC relay"}';
+			status = 502;
+			onprogress: (() => void) | null = null;
+			onload: (() => void) | null = null;
+			onerror: (() => void) | null = null;
+			onabort: (() => void) | null = null;
+			ontimeout: (() => void) | null = null;
+			open() {}
+			setRequestHeader() {}
+			send() { this.onload?.(); }
+			abort() {}
+		}
+		(global as any).XMLHttpRequest = MockXHR;
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			json: () => Promise.resolve({ running: true, recentLogs: ['Metro ready', 'Bundled 100%'] }),
+		});
+		try {
+			const events: Array<Record<string, any>> = [];
+			const close = new P2PClient('https://public.yaver.io/d/device', 'tok', 'relay').subscribeDogfoodDevEvents(
+				(event) => events.push(event),
+			);
+			await new Promise((resolve) => setImmediate(resolve));
+			close();
+			expect(mockFetch.mock.calls[0][0]).toBe('https://public.yaver.io/d/device/dev/status');
+			expect(events).toEqual([{ type: 'snapshot', snapshot: { recentLogs: ['Metro ready', 'Bundled 100%'] } }]);
+		} finally {
+			if (originalXHR === undefined) delete (global as any).XMLHttpRequest;
+			else (global as any).XMLHttpRequest = originalXHR;
+		}
+	});
+
 	describe('task presentation stream', () => {
+		it('keeps RN-web on fetch streaming even when the browser exposes XHR', async () => {
+			const reactNative = require('react-native');
+			const originalOS = reactNative.Platform.OS;
+			const originalXHR = (global as any).XMLHttpRequest;
+			const xhrSend = jest.fn();
+			(global as any).XMLHttpRequest = class {
+				open() {}
+				setRequestHeader() {}
+				send() { xhrSend(); }
+				abort() {}
+			};
+			reactNative.Platform.OS = 'web';
+			const chunks = [new TextEncoder().encode('data: {"type":"done","status":"ready"}\n\n')];
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				body: { getReader: () => ({ read: async () => chunks.length ? { value: chunks.shift(), done: false } : { done: true } }) },
+			});
+			try {
+				const complete = jest.fn();
+				new P2PClient('https://public.yaver.io/d/device', 'oauth-token').streamTaskOutput(
+					'task-1', () => {}, complete,
+				);
+				await new Promise((resolve) => setImmediate(resolve));
+				expect(xhrSend).not.toHaveBeenCalled();
+				expect(complete).toHaveBeenCalledWith('ready');
+			} finally {
+				reactNative.Platform.OS = originalOS;
+				if (originalXHR === undefined) delete (global as any).XMLHttpRequest;
+				else (global as any).XMLHttpRequest = originalXHR;
+			}
+		});
+
 		it('routes semantic snapshots as typed events instead of chat JSON', async () => {
 			mockFetch
 				.mockResolvedValueOnce({ ok: true, body: undefined })
@@ -64,7 +131,7 @@ describe('P2PClient', () => {
 				open(_method: string, url: string) { openedUrl = url; }
 				setRequestHeader() {}
 				send() {
-					this.responseText = 'data: {"type":"output","text":"live bytes"}\n\n';
+					this.responseText = 'data: {"type":"output","text":"live bytes"}\n\ndata: {"type":"done","status":"ready"}\n\n';
 					this.onprogress?.();
 					this.onload?.();
 				}
@@ -83,8 +150,44 @@ describe('P2PClient', () => {
 				});
 				expect(openedUrl).toBe('http://localhost:18080/vibing/task/task-1/output');
 				expect(lines).toEqual(['live bytes']);
-				expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:18080/vibing/task/task-1');
+				expect(mockFetch).not.toHaveBeenCalled();
 			} finally {
+				if (originalXHR === undefined) delete (global as any).XMLHttpRequest;
+				else (global as any).XMLHttpRequest = originalXHR;
+			}
+		});
+
+		it('unlocks a settled browser task when the relay suppresses XHR progress', async () => {
+			jest.useFakeTimers();
+			const originalXHR = (global as any).XMLHttpRequest;
+			class StalledXHR {
+				responseText = '';
+				status = 200;
+				onprogress: (() => void) | null = null;
+				onload: (() => void) | null = null;
+				onerror: (() => void) | null = null;
+				onabort: (() => void) | null = null;
+				ontimeout: (() => void) | null = null;
+				open() {}
+				setRequestHeader() {}
+				send() {}
+				abort() {}
+			}
+			(global as any).XMLHttpRequest = StalledXHR;
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve({ task: { status: 'ready', output: '', presentation: [] } }),
+			});
+			try {
+				const complete = jest.fn();
+				new P2PClient('https://public.yaver.io/d/device', 'oauth-token').streamTaskOutput(
+					'task-1', () => {}, complete,
+				);
+				await jest.advanceTimersByTimeAsync(0);
+				expect(mockFetch.mock.calls[0][0]).toBe('https://public.yaver.io/d/device/vibing/task/task-1');
+				expect(complete).toHaveBeenCalledWith('ready');
+			} finally {
+				jest.useRealTimers();
 				if (originalXHR === undefined) delete (global as any).XMLHttpRequest;
 				else (global as any).XMLHttpRequest = originalXHR;
 			}
@@ -171,6 +274,14 @@ describe('P2PClient', () => {
 	});
 
 	describe('reloadDogfood()', () => {
+		it('keeps browser previews inside a relay-scoped device base', () => {
+			const client = new P2PClient('https://relay.example/d/device-123', 'oauth-token');
+			expect(client.resolveDogfoodUrl('/dev/'))
+				.toBe('https://relay.example/d/device-123/dev/');
+			expect(client.resolveDogfoodUrl('/d/device-123/dev-web/?platform=web'))
+				.toBe('https://relay.example/d/device-123/dev-web/?platform=web');
+		});
+
 		it('uses the full bearer and sends the exact checkout and lane', async () => {
 			mockFetch.mockResolvedValue({
 				ok: true,

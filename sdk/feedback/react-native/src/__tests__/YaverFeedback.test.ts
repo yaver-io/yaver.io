@@ -1,6 +1,7 @@
 import { DeviceEventEmitter, NativeModules } from 'react-native';
 import { YaverFeedback } from '../YaverFeedback';
 import { getDogfoodAccountAccess, setDogfoodControlPreference } from '../auth';
+import { YaverDeviceDogfood } from '../deviceDogfood';
 
 // Mock react-native: DeviceEventEmitter for event dispatch + Platform so
 // ShakeDetector.start() can branch on iOS without hitting a real RN runtime.
@@ -95,6 +96,41 @@ function initActiveDogfood(options: { authToken?: string; controlGesture?: true 
 }
 
 describe('YaverFeedback', () => {
+  it('coalesces concurrent Dogfood activation so one-time session challenges cannot overwrite each other', async () => {
+    YaverFeedback.init({ enabled: true, authToken: 'owner-token', bundleId: 'io.example.concurrent' });
+    jest.spyOn(YaverDeviceDogfood.prototype, 'status').mockResolvedValue('active');
+    jest.spyOn(YaverDeviceDogfood.prototype, 'enrollmentInfo').mockResolvedValue({
+      appId: 'io.example.concurrent',
+      installationId: 'installation-concurrent',
+      registrationSlot: 'slot-concurrent-value',
+      publicKey: 'public-key',
+    });
+    let release!: (value: any) => void;
+    const session = jest.spyOn(YaverDeviceDogfood.prototype, 'session').mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    jest.spyOn(YaverFeedback, 'syncDogfoodAppShortcut').mockResolvedValue(false);
+    jest.spyOn(YaverFeedback, 'syncDogfoodControlGesture').mockResolvedValue({} as any);
+    const secureStore = {
+      getItemAsync: jest.fn(async () => null),
+      setItemAsync: jest.fn(async () => undefined),
+      deleteItemAsync: jest.fn(async () => undefined),
+    };
+
+    const first = YaverFeedback.enableDeviceDogfood({ appId: 'io.example.concurrent', secureStore });
+    const second = YaverFeedback.enableDeviceDogfood({ appId: 'io.example.concurrent', secureStore });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(session).toHaveBeenCalledTimes(1);
+    release({
+      active: true,
+      appId: 'io.example.concurrent',
+      installationId: 'installation-concurrent',
+      token: 'scoped-token',
+      expiresAt: Date.now() + 1000,
+      scopes: [],
+    });
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(session).toHaveBeenCalledTimes(1);
+  });
+
   describe('Dogfood onboarding', () => {
     it('routes compact Usage through onboarding when the cached browser runtime is no longer serving', async () => {
       YaverFeedback.init({

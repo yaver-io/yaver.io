@@ -67,6 +67,10 @@ import {
   type BrowserShortcutRequest,
   type BrowserShortcutSnapshot,
 } from './BrowserShortcut';
+import {
+  closeReservedDogfoodBrowserWindow,
+  reserveDogfoodBrowserWindow,
+} from './dogfoodBrowserHandoff';
 
 export interface DogfoodOnboardingOptions extends DeviceDogfoodOptions {
   /** Hint used to preselect the matching project returned by the owner machine. */
@@ -246,7 +250,16 @@ let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
 let reportLaunchInFlight = false;
 let crashReportInFlight = false;
 let dogfoodOnboarding: DogfoodOnboardingOptions | null = null;
+// Exact checkout selected by the currently mounted runtime. This is a UI
+// handoff cache only; the agent still authorizes every task/reload request.
+let activeDogfoodRuntimeSelection: DogfoodRuntimeSelection | null = null;
 let dogfoodRestoreInFlight: Promise<void> | null = null;
+type EnableDogfoodResult = {
+  status: DeviceDogfoodState;
+  installationId: string;
+  session: DeviceDogfoodSession | null;
+};
+const dogfoodEnableInFlight = new Map<string, Promise<EnableDogfoodResult>>();
 let dogfoodFlowState: DogfoodFlowState = { phase: 'idle' };
 const dogfoodFlowListeners = new Set<(state: DogfoodFlowState) => void>();
 let dogfoodShortcutAppStateSubscription: { remove: () => void } | null = null;
@@ -480,6 +493,7 @@ export class YaverFeedback {
   }
 
   static init(cfg: FeedbackConfig): void {
+    activeDogfoodRuntimeSelection = null;
     config = {
       trigger: 'shake',
       maxRecordingDuration: 120,
@@ -855,6 +869,12 @@ export class YaverFeedback {
       }
       if (config.authToken && !config.agentUrl) {
         await YaverFeedback.discoverAgent();
+      } else if (config.authToken && config.agentUrl) {
+        // A host may provide a cached/direct agent URL while the bearer is
+        // restored asynchronously from secure storage. init() necessarily
+        // creates that provisional client without a token; rebuild it once
+        // hydration supplies the token or every capability probe false-reds.
+        await YaverFeedback.rebuildP2PClient(config.agentUrl);
       }
       await YaverFeedback.restoreApprovedDogfoodMode();
     } catch {
@@ -1004,12 +1024,14 @@ export class YaverFeedback {
    * shown only when a required choice is missing.
    */
   static async openDogfood(overrides?: Partial<DogfoodOnboardingOptions>): Promise<DogfoodFlowState> {
+    reserveDogfoodBrowserWindow();
     if (!config && overrides?.appId) {
       return YaverFeedback.beginDogfoodOnboarding(overrides as DogfoodOnboardingOptions);
     }
     const configured = config?.dogfood;
     const appId = overrides?.appId || configured?.appId || config?.bundleId;
     if (!appId) {
+      closeReservedDogfoodBrowserWindow();
       const state: DogfoodFlowState = { phase: 'error', error: 'Dogfood requires an appId or FeedbackConfig.bundleId.' };
       publishDogfoodFlow(state);
       return state;
@@ -1030,11 +1052,13 @@ export class YaverFeedback {
       const access = await YaverFeedback.getDogfoodAccess();
       try {
         if (!(await configured.canShow(access))) {
+          closeReservedDogfoodBrowserWindow();
           const state: DogfoodFlowState = { phase: 'denied', appId };
           publishDogfoodFlow(state);
           return state;
         }
       } catch (cause) {
+        closeReservedDogfoodBrowserWindow();
         const state: DogfoodFlowState = {
           phase: 'error',
           appId,
@@ -1429,8 +1453,8 @@ export class YaverFeedback {
   }
 
   private static async dogfoodCodingClient(): Promise<P2PClient> {
-    let client = YaverFeedback.getP2PClient();
-    if (!client && await YaverFeedback.reconnect()) client = YaverFeedback.getP2PClient();
+    let client = YaverFeedback.getDogfoodCodingP2PClient();
+    if (!client && await YaverFeedback.reconnect()) client = YaverFeedback.getDogfoodCodingP2PClient();
     if (!client) throw new Error('The selected coding machine is not connected yet. Reconnect it and retry.');
     return client;
   }
@@ -1460,20 +1484,84 @@ export class YaverFeedback {
   /** Chat never starts rendering. It either restores the newest durable
    * runner/tmux-backed topic or opens a clean composer. */
   static async openDogfoodChat(): Promise<DogfoodFlowState> {
-    await YaverFeedback.hydrateSession();
-    const access = await YaverFeedback.getDogfoodAccess();
-    if (!access.yaverAuthenticated || !access.authorized) return YaverFeedback.openDogfood();
-    const selection = await YaverFeedback.getDogfoodRuntimeSelection();
-    if (!config?.preferredDeviceId || !selection?.projectPath) return YaverFeedback.openDogfood();
-    if (await YaverFeedback.getDogfoodSessionBehavior() === 'resume-last') {
-      const sessions = await YaverFeedback.getDogfoodSessions();
-      if (sessions[0]) {
-        await YaverFeedback.openDogfoodSession(sessions[0].id);
-        return { phase: 'opening', appId: access.appId };
-      }
+    const cachedDogfood = config?.dogfood as (NonNullable<FeedbackConfig['dogfood']> & Partial<DogfoodRuntimeSelection>) | undefined;
+    const cachedAppId = cachedDogfood?.appId || config?.bundleId || '';
+    // The compact Chat control is rendered only after a signed installation
+    // session has been proved. Its first job is to open the composer, so use
+    // that live in-memory proof and the runtime selection copied into config
+    // by setDogfoodRuntimeSelection. Re-running Convex hydration here made a
+    // user gesture wait forever on a redundant network round trip.
+    if (config?.authToken
+      && config.preferredDeviceId
+      && cachedAppId
+      && cachedDogfood?.installationId
+      && cachedDogfood.installationStatus === 'active'
+      && cachedDogfood.projectPath) {
+      const cachedSelection: DogfoodRuntimeSelection = {
+        lane: cachedDogfood.lane || 'browser',
+        projectName: cachedDogfood.projectName || config.projectName,
+        projectPath: cachedDogfood.projectPath,
+        targetDeviceId: cachedDogfood.targetDeviceId,
+        runtimeSessionId: cachedDogfood.runtimeSessionId,
+      };
+      DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested', {
+        selection: cachedSelection,
+        renderBehavior: resolveDogfoodRenderBehavior(cachedDogfood.renderBehavior),
+      });
+      return { phase: 'opening', appId: cachedAppId };
     }
-    DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested');
-    return { phase: 'opening', appId: access.appId };
+    const active = YaverFeedback.getDogfoodStatus().active;
+    let appId = cachedAppId;
+    let selection: DogfoodRuntimeSelection | null = active && cachedDogfood?.projectPath
+      ? {
+          lane: cachedDogfood.lane || 'browser',
+          projectName: cachedDogfood.projectName || config?.projectName,
+          projectPath: cachedDogfood.projectPath,
+          targetDeviceId: cachedDogfood.targetDeviceId,
+          runtimeSessionId: cachedDogfood.runtimeSessionId,
+        }
+      : null;
+    if (active && !selection && appId) {
+      // A page/bridge recreation keeps the approved Dogfood session but
+      // rebuilds the host's config object. Recover the exact checkout from
+      // the app-scoped local cache before deciding setup is missing.
+      selection = await getCachedDogfoodRuntimeSelection(appId);
+    }
+    if (!active) {
+      await YaverFeedback.hydrateSession();
+      const access = await YaverFeedback.getDogfoodAccess();
+      if (!access.yaverAuthenticated || !access.authorized) return YaverFeedback.openDogfood();
+      appId = access.appId;
+      selection = await YaverFeedback.getDogfoodRuntimeSelection();
+    }
+    if (!config?.preferredDeviceId || !selection?.projectPath) return YaverFeedback.openDogfood();
+    // Session history is a convenience, not a gate in front of Chat. A stale
+    // coding transport used to leave the compact control on “Opening…”
+    // forever even while the selected renderer and the agent's real
+    // /vibing/tasks operation were healthy. Bound the optional resume probe;
+    // on failure the user still gets a clean composer and can keep working.
+    let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+    const resume = await Promise.race([
+      (async () => {
+        if (await YaverFeedback.getDogfoodSessionBehavior() !== 'resume-last') return null;
+        const sessions = await YaverFeedback.getDogfoodSessions();
+        return sessions[0] || null;
+      })().catch(() => null),
+      new Promise<null>((resolve) => {
+        resumeTimer = setTimeout(() => resolve(null), 5_000);
+      }),
+    ]).finally(() => {
+      if (resumeTimer) clearTimeout(resumeTimer);
+    });
+    if (resume) {
+      await YaverFeedback.openDogfoodSession(resume.id);
+      return { phase: 'opening', appId };
+    }
+    DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested', {
+      selection,
+      renderBehavior: resolveDogfoodRenderBehavior(config.dogfood?.renderBehavior),
+    });
+    return { phase: 'opening', appId };
   }
 
   /** One-tap fast reload for the compact Dogfood card. It preserves the same
@@ -1566,6 +1654,7 @@ export class YaverFeedback {
    * setup. Missing OAuth/approval is routed to the normal onboarding flow so
    * the user always has an in-place fix instead of a dead button. */
   static async openDogfoodUsage(): Promise<DogfoodFlowState> {
+    reserveDogfoodBrowserWindow();
     await YaverFeedback.hydrateSession();
     const access = await YaverFeedback.getDogfoodAccess();
     if (!access.yaverAuthenticated || !access.authorized || !YaverFeedback.getDogfoodStatus().active) {
@@ -1590,6 +1679,7 @@ export class YaverFeedback {
     // The compact controls are useful only while their real runtime is alive;
     // otherwise the host entry must reopen setup and auto-launch it.
     if (!runtimeActive) return YaverFeedback.openDogfood();
+    closeReservedDogfoodBrowserWindow();
     try {
       const { DeviceEventEmitter } = require('react-native');
       DeviceEventEmitter.emit('yaverFeedback:dogfoodUsageRequested');
@@ -1603,6 +1693,12 @@ export class YaverFeedback {
 
   /** Persist the Settings selection used by the compact Dogfood Usage card. */
   static async setDogfoodRuntimeSelection(selection: DogfoodRuntimeSelection): Promise<void> {
+    // The runtime controller already owns this explicit user selection. Keep
+    // its in-process handoff available to Chat before awaiting the separate
+    // account-backed persistence check; a transient verification failure must
+    // not make the just-launched checkout disappear from the same screen.
+    activeDogfoodRuntimeSelection = { ...selection };
+    if (config?.dogfood) Object.assign(config.dogfood, selection);
     const access = await YaverFeedback.getDogfoodAccess();
     if (!access.yaverAuthenticated || !access.authorized) {
       throw new Error('Yaver OAuth and an approved Dogfood installation are required.');
@@ -1610,7 +1706,6 @@ export class YaverFeedback {
     const appId = access.appId || config?.dogfood?.appId || config?.bundleId || '';
     if (!appId) throw new Error('Dogfood app identity is missing.');
     await cacheDogfoodRuntimeSelection(appId, selection);
-    if (config?.dogfood) Object.assign(config.dogfood, selection);
   }
 
   static async getDogfoodRuntimeSelection(): Promise<DogfoodRuntimeSelection | null> {
@@ -1618,6 +1713,11 @@ export class YaverFeedback {
     if (!access.yaverAuthenticated || !access.authorized) return null;
     const appId = access.appId || config?.dogfood?.appId || config?.bundleId || '';
     return appId ? getCachedDogfoodRuntimeSelection(appId) : null;
+  }
+
+  /** Synchronous runtime handoff for the already-authorized compact controls. */
+  static getActiveDogfoodRuntimeSelection(): DogfoodRuntimeSelection | null {
+    return activeDogfoodRuntimeSelection ? { ...activeDogfoodRuntimeSelection } : null;
   }
 
   /** Backwards-compatible entry point for existing integrations. */
@@ -1716,6 +1816,7 @@ export class YaverFeedback {
   }
 
   static clearDogfoodOnboarding(): void {
+    closeReservedDogfoodBrowserWindow();
     dogfoodOnboarding = null;
     publishDogfoodFlow({ phase: 'idle' });
   }
@@ -2080,11 +2181,20 @@ export class YaverFeedback {
    * app needs no auth backend of its own: SDK OAuth supplies the full Yaver
    * account, then this creates/proves the installation key. Owner approval
    * binds that account + appId + phone key before a scoped session is minted. */
-  static async enableDeviceDogfood(options: DeviceDogfoodOptions): Promise<{
-    status: DeviceDogfoodState;
-    installationId: string;
-    session: DeviceDogfoodSession | null;
-  }> {
+  static async enableDeviceDogfood(options: DeviceDogfoodOptions): Promise<EnableDogfoodResult> {
+    const key = options.appId.trim();
+    const active = dogfoodEnableInFlight.get(key);
+    if (active) return active;
+    const activation = YaverFeedback.enableDeviceDogfoodOnce(options);
+    dogfoodEnableInFlight.set(key, activation);
+    try {
+      return await activation;
+    } finally {
+      if (dogfoodEnableInFlight.get(key) === activation) dogfoodEnableInFlight.delete(key);
+    }
+  }
+
+  private static async enableDeviceDogfoodOnce(options: DeviceDogfoodOptions): Promise<EnableDogfoodResult> {
     const client = new YaverDeviceDogfood({ ...options, authToken: options.authToken || config?.authToken });
     let status = await client.status();
     if (status === 'unregistered' || status === 'cancelled' || status === 'revoked' || status === 'superseded') {
@@ -2356,6 +2466,18 @@ export class YaverFeedback {
    */
   static getP2PClient(): P2PClient | null {
     return p2pClient;
+  }
+
+  /** Coding transport for Dogfood. A unified coding/render route may have
+   * only the renderer client hydrated; that is the same authenticated agent,
+   * so do not render an empty Chat card merely because the duplicate pointer
+   * is null. Distinct-device routes remain strictly distinct. */
+  static getDogfoodCodingP2PClient(): P2PClient | null {
+    const routing = YaverFeedback.getMachineRouting();
+    const unified = !routing.codingDeviceId
+      || !routing.renderDeviceId
+      || routing.codingDeviceId === routing.renderDeviceId;
+    return p2pClient || (unified ? renderP2PClient : null);
   }
 
   /**
@@ -2796,6 +2918,7 @@ export class YaverFeedback {
     config = null;
     p2pClient = null;
     renderP2PClient = null;
+    activeDogfoodRuntimeSelection = null;
     errorBuffer = [];
   }
 }

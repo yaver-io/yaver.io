@@ -52,13 +52,21 @@ describe('FeedbackModal authenticated chat contract', () => {
     expect(source).not.toContain('<DeployPanel');
   });
 
+  it('hands the live runner and model selection into quick-control Chat', () => {
+    expect(source).toContain('preferredRunnerRef.current = preferredRunner');
+    expect(source).toContain('preferredModelRef.current = preferredModel');
+    expect(source).toContain('runner: preferredRunnerRef.current || undefined');
+    expect(source).toContain('model: preferredModelRef.current || undefined');
+  });
+
   it('opens explicit Dogfood onboarding on setup and makes the runtime console the first live surface', () => {
     expect(source).toContain("setActiveTab('settings')");
     expect(source).toContain("setDogfoodSetupStage('runtime')");
     expect(source).toMatch(/dogfoodSetupStage === 'runtime'[\s\S]*?<DogfoodLiveConsole/);
     expect(source).toContain('startDogfoodRuntime');
     expect(source).toContain('Opening dogfooded app…');
-    expect(source).toContain('if (dogfoodRuntime.result?.url) await Linking.openURL(dogfoodRuntime.result.url)');
+    expect(source).toContain('!navigateReservedDogfoodBrowserWindow(dogfoodRuntime.result.url)');
+    expect(source).toContain('await Linking.openURL(dogfoodRuntime.result.url)');
     expect(source).not.toContain('Open dogfooded app');
     expect(source).toContain("dogfoodRuntime?.phase !== 'ready'");
     expect(source).not.toContain('Continue in app');
