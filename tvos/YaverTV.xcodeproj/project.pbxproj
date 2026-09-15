@@ -58,6 +58,7 @@
 		CAF1C4F283907ED5436FC317 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBF063F0AE76E23D574B56F7 /* FeedbackView.swift */; };
 		CC251EEE9B8247F7E633165D /* BoxlessDeepSeekClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0040D8EF80EF80251239D541 /* BoxlessDeepSeekClient.swift */; };
 		CE7533A3ED843557F0FE12E1 /* SecureHandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C07AC346E76881B8FBB7FA9 /* SecureHandoffView.swift */; };
+		CED44BB61046463D2A93E43E /* YouTubeAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5B9FC8AC4D8A2309D225BB /* YouTubeAnimation.swift */; };
 		D299F8FE54C7BF349DB540D5 /* Speech.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EE3AEA54A8B2ABC407F2AD0 /* Speech.swift */; };
 		D35115170BD592449BB9E6A2 /* LiveKitWebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 44E779189DD0B98EC6AC2052 /* LiveKitWebRTC */; };
 		D7BD4B86D4F7E9BB55EFDC13 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2168C1CC5D76DE846256CFAD /* TokenStore.swift */; };
@@ -69,7 +70,6 @@
 		F6D6FD0612F8F2E9DD6D3A5C /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407EAB8C318A209F3AE94A17 /* SignInView.swift */; };
 		F7BEBB07F0E592CAFCFD739E /* VibeTurnPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED0118C15F635CF31061B51 /* VibeTurnPanel.swift */; };
 		F94318B025A3D905717E944B /* VibingPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13160FC9012BA60947E3FE74 /* VibingPlan.swift */; };
-		FA11D29B6E09A476F9120021 /* YouTubeAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA11D29B6E09A476F9120022 /* YouTubeAnimation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -99,7 +99,6 @@
 		1E6E9B680E701DC27F124C4F /* yaver-login-wordmark-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "yaver-login-wordmark-light.png"; sourceTree = "<group>"; };
 		2168C1CC5D76DE846256CFAD /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		276D29BCA1F4A3A8DD33A6D3 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		FA11D29B6E09A476F9120022 /* YouTubeAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeAnimation.swift; sourceTree = "<group>"; };
 		2A900B18B742454D4D6C7359 /* YaverDictationField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YaverDictationField.swift; sourceTree = "<group>"; };
 		2F558EBFDD66510DEF9FEFB4 /* YaverTVUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = YaverTVUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		30B780D2E7490982C5B7E328 /* AgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentClient.swift; sourceTree = "<group>"; };
@@ -152,6 +151,7 @@
 		E202BFD986DE7C7B55C7F3F4 /* RuntimeDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDashboardView.swift; sourceTree = "<group>"; };
 		E5B1B48A87472E6256348AC5 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		E883FFE32672CAF75087F1E5 /* FrameworkStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameworkStyle.swift; sourceTree = "<group>"; };
+		EF5B9FC8AC4D8A2309D225BB /* YouTubeAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeAnimation.swift; sourceTree = "<group>"; };
 		F305D583F562FDFA98285065 /* YaverTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YaverTV.entitlements; sourceTree = "<group>"; };
 		F656E1723EA3FA1FA0C7CE46 /* RemoteRuntimeWebRTCView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRuntimeWebRTCView.swift; sourceTree = "<group>"; };
 		F9153BD847AA22692E65287D /* CredentialHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialHandoff.swift; sourceTree = "<group>"; };
@@ -201,7 +201,7 @@
 				CCC27F01B0DAD177B10DAC04 /* YaverStore.swift */,
 				F305D583F562FDFA98285065 /* YaverTV.entitlements */,
 				053F14BB4784ACE0F6940C93 /* YaverTVApp.swift */,
-				FA11D29B6E09A476F9120022 /* YouTubeAnimation.swift */,
+				EF5B9FC8AC4D8A2309D225BB /* YouTubeAnimation.swift */,
 				71282555B3437D21B4A181FA /* Views */,
 			);
 			path = YaverTV;
@@ -414,8 +414,8 @@
 			projectRoot = "";
 			targets = (
 				7835308793289F13FBFA79E5 /* YaverTV */,
-				EE0A387E3B19636573B84C33 /* YaverTVUITests */,
 				131EC50E8717FA0CB24F5C65 /* YaverTVTests */,
+				EE0A387E3B19636573B84C33 /* YaverTVUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -500,7 +500,7 @@
 				7BFF477EEDD5FEA7E3696C93 /* YaverNativeCatalog.swift in Sources */,
 				AD43610B33A8368A49E512B9 /* YaverStore.swift in Sources */,
 				18F7F25A9DC46548215628BB /* YaverTVApp.swift in Sources */,
-				FA11D29B6E09A476F9120021 /* YouTubeAnimation.swift in Sources */,
+				CED44BB61046463D2A93E43E /* YouTubeAnimation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
