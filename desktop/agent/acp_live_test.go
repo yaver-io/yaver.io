@@ -37,11 +37,11 @@ func acpLiveEnabled() bool {
 
 func requireACPServer(t *testing.T, runnerID string) {
 	t.Helper()
+	if !acpLiveEnabled() {
+		t.Skipf("%s ACP live test disabled — set YA_ACP_LIVE=1 to spend a real provider turn", runnerID)
+	}
 	if !acpRunnerInstalled(runnerID) {
-		if acpLiveEnabled() {
-			t.Fatalf("YA_ACP_LIVE=1 but %s ACP server binary not found on PATH", runnerID)
-		}
-		t.Skipf("%s ACP server binary not installed — skipping live ACP test (YA_ACP_LIVE=1 to force)", runnerID)
+		t.Fatalf("YA_ACP_LIVE=1 but %s ACP server binary not found on PATH", runnerID)
 	}
 }
 
