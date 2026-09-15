@@ -669,9 +669,10 @@ yaver auth --headless
 - **Source of truth**: `github.com/yaver-io/yaver.io` (open source). Owned by
   the `yaver-io` org since 2026-07-17 — it was `kivanccakmak/yaver.io` before,
   and GitHub still redirects the old URL, so a stale remote keeps working and
-  will quietly hide its own staleness. Only one remote here — `origin`, over
-  **SSH** (`git@github.com:yaver-io/yaver.io.git`). `branch.main.remote=origin`,
-  so plain `git push` works. No GitLab mirror.
+  will quietly hide its own staleness. The sole SSH remote must point to
+  `git@github.com:yaver-io/yaver.io.git`; its local name may be `origin` or
+  `github`, so inspect `git remote -v` and push the configured
+  `branch.main.remote` instead of assuming a name. No GitLab mirror.
 - **Tags trigger releases**: `cli/v*` → release-cli.yml, `mobile/v*` →
   release-mobile.yml, `web/v*` → release-web.yml. Tag protection is a repo
   ruleset (`release tag protection`); it survived the org transfer, as did all
