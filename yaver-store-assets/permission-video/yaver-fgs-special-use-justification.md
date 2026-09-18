@@ -1,5 +1,7 @@
 # Permission justification — android.permission.FOREGROUND_SERVICE_SPECIAL_USE
 
+Review video: [yaver-fgs-special-use-review.mp4](yaver-fgs-special-use-review.mp4)
+
 ## "What tasks require this permission?" → Other
 
 On-device tool: the user starts an on-device coding agent running a user-started mobile development task; it runs to completion with an ongoing notification and a completion notification, and the user can stop it at any time.
