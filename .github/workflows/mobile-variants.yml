@@ -39,7 +39,11 @@ on:
     paths:
       - "mobile/plugins/**"
       - "mobile/app.json"
+      - "mobile/app/phone-projects.tsx"
+      - "mobile/app/(tabs)/designmode.tsx"
+      - "mobile/app/(tabs)/tasks.tsx"
       - "mobile/android/app/src/main/AndroidManifest.xml"
+      - "mobile/src/lib/androidPhotoPickerContract.test.mjs"
       - "mobile/assets/tv_banner.png"
       - ".github/workflows/mobile-variants.yml"
   push:
@@ -47,7 +51,11 @@ on:
     paths:
       - "mobile/plugins/**"
       - "mobile/app.json"
+      - "mobile/app/phone-projects.tsx"
+      - "mobile/app/(tabs)/designmode.tsx"
+      - "mobile/app/(tabs)/tasks.tsx"
       - "mobile/android/app/src/main/AndroidManifest.xml"
+      - "mobile/src/lib/androidPhotoPickerContract.test.mjs"
 
 concurrency:
   group: mobile-variants-${{ github.ref }}
@@ -65,7 +73,7 @@ jobs:
       - name: Install dependencies
         run: cd mobile && npm ci --legacy-peer-deps
       - name: Plugin unit tests
-        run: cd mobile && node --test plugins/withAndroidTV.test.mjs
+        run: cd mobile && node --test plugins/withAndroidTV.test.mjs src/lib/androidPhotoPickerContract.test.mjs
 
       - name: Resolved Expo config contains TV (+ Android Auto when wired)
         run: |

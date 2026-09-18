@@ -356,9 +356,18 @@ rm -f "$PAYMENT_DEP_REPORT"
 AAB_PATH="app/build/outputs/bundle/release/app-release.aab"
 
 MERGED_MANIFEST="app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml"
-if [ -f "$MERGED_MANIFEST" ] && grep -q 'android:testOnly="true"' "$MERGED_MANIFEST"; then
+if [ ! -f "$MERGED_MANIFEST" ]; then
+  echo "ERROR: merged release manifest not found at $MERGED_MANIFEST." >&2
+  exit 1
+fi
+if grep -q 'android:testOnly="true"' "$MERGED_MANIFEST"; then
   echo "ERROR: release bundle is marked android:testOnly=true; Google Play will reject it." >&2
   echo "Use reactNativeArchitectures for ABI restriction, never android.injected.build.abi." >&2
+  exit 1
+fi
+if grep -Eq 'android\.permission\.READ_MEDIA_(IMAGES|VIDEO)' "$MERGED_MANIFEST"; then
+  echo "ERROR: release bundle requests broad photo/video access; Google Play requires the system picker." >&2
+  echo "Keep READ_MEDIA_IMAGES and READ_MEDIA_VIDEO blocked in app.json and AndroidManifest.xml." >&2
   exit 1
 fi
 

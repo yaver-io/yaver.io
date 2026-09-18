@@ -1968,11 +1968,6 @@ export default function PhoneProjectsScreen() {
                         // initial bundle if the user never opens
                         // the wizard.
                         const ImagePicker = await import("expo-image-picker");
-                        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                        if (!perm.granted) {
-                          Alert.alert("Photo permission needed", "Allow access from your phone settings to pick a logo.");
-                          return;
-                        }
                         const result = await ImagePicker.launchImageLibraryAsync({
                           mediaTypes: ImagePicker.MediaTypeOptions.Images,
                           allowsEditing: true,

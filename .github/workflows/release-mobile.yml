@@ -296,6 +296,13 @@ jobs:
             --max-workers=2 \
             -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease
 
+          MERGED_MANIFEST="app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml"
+          test -f "$MERGED_MANIFEST" || { echo "ERROR: merged release manifest missing: $MERGED_MANIFEST"; exit 1; }
+          if grep -Eq 'android\.permission\.READ_MEDIA_(IMAGES|VIDEO)' "$MERGED_MANIFEST"; then
+            echo "ERROR: release bundle requests broad photo/video access; use the system picker instead."
+            exit 1
+          fi
+
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:

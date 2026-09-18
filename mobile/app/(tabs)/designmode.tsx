@@ -93,10 +93,6 @@ export default function DesignModeScreen() {
   const importScreenshot = useCallback(async () => {
     setLoadingImport(true);
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        throw new Error("Photo library permission is required");
-      }
       const picked = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         quality: 1,

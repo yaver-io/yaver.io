@@ -96,6 +96,10 @@
         "POST_NOTIFICATIONS",
         "WAKE_LOCK"
       ],
+      "blockedPermissions": [
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO"
+      ],
       "package": "io.yaver.mobile",
       "intentFilters": [
         {
