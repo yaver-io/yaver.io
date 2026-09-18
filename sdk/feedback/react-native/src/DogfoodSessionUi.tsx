@@ -1,5 +1,14 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import type {
   DogfoodFailure,
   DogfoodLane,
@@ -157,6 +166,8 @@ function runtimeTone(phase: DogfoodPhase, colors: DogfoodUiColors): string {
   return colors.attention;
 }
 
+const LOG_TAIL_THRESHOLD_PX = 28;
+
 /** Shared no-click handoff shown while a prepared runtime opens itself. */
 export const DogfoodLaunchingWidget: React.FC<{
   message?: string;
@@ -197,6 +208,30 @@ export const DogfoodLiveConsole: React.FC<{
   const text = logs.slice(-maxLines).map((line) => line.text).join('\n');
   const title = lane === 'browser' ? 'Browser Logs' : lane === 'hermes' ? 'Hermes Logs' : 'WebRTC Logs';
   const accessibleTitle = sourceLabel ? `${title} · ${sourceLabel}` : title;
+  const logScrollRef = React.useRef<ScrollView>(null);
+  const followLogTailRef = React.useRef(true);
+
+  const followLogTail = React.useCallback(() => {
+    if (!followLogTailRef.current) return;
+    requestAnimationFrame(() => {
+      logScrollRef.current?.scrollToEnd({ animated: false });
+    });
+  }, []);
+
+  const pauseLogTail = React.useCallback(() => {
+    followLogTailRef.current = false;
+  }, []);
+
+  const updateLogTailPreference = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const distanceFromTail = contentSize.height - layoutMeasurement.height - contentOffset.y;
+    followLogTailRef.current = distanceFromTail <= LOG_TAIL_THRESHOLD_PX;
+  }, []);
+
+  React.useEffect(() => {
+    followLogTail();
+  }, [followLogTail, text]);
+
   return (
     <View style={[styles.console, { backgroundColor: colors.console, borderColor: colors.border }]} accessibilityLabel={accessibleTitle}>
       <View style={styles.consoleHeader}>
@@ -206,7 +241,20 @@ export const DogfoodLiveConsole: React.FC<{
       {sourceLabel ? <Text style={[styles.consoleSource, { color: colors.muted }]}>Source · {sourceLabel}</Text> : null}
       <Text style={[styles.consoleStatus, { color: colors.muted }]}>{message}</Text>
       {text ? (
-        renderText ? renderText(text) : <Text selectable style={[styles.consoleText, { color: colors.text }]}>{text}</Text>
+        <ScrollView
+          ref={logScrollRef}
+          style={styles.consoleScroll}
+          contentContainerStyle={styles.consoleScrollContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+          scrollEventThrottle={16}
+          onContentSizeChange={followLogTail}
+          onScrollBeginDrag={pauseLogTail}
+          onScroll={updateLogTailPreference}
+          accessibilityLabel={`${accessibleTitle} output`}
+        >
+          {renderText ? renderText(text) : <Text selectable style={[styles.consoleText, { color: colors.text }]}>{text}</Text>}
+        </ScrollView>
       ) : (
         <Text style={[styles.consoleEmpty, { color: colors.muted }]}>Waiting for the first line from the remote PC…</Text>
       )}
@@ -241,11 +289,13 @@ const styles = StyleSheet.create({
   launchingCopy: { flex: 1 },
   launchingTitle: { fontSize: 13, fontWeight: '800' },
   launchingDetail: { fontSize: 10, lineHeight: 15, marginTop: 2 },
-  console: { width: '100%', maxHeight: 320, overflow: 'hidden', marginTop: 10, borderWidth: 1, borderRadius: 10, padding: 11, gap: 7 },
+  console: { width: '100%', overflow: 'hidden', marginTop: 10, borderWidth: 1, borderRadius: 10, padding: 11, gap: 7 },
   consoleHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   consoleTitle: { fontSize: 12, fontWeight: '800' },
   consoleSource: { fontSize: 10, lineHeight: 14 },
   consoleStatus: { fontSize: 11, lineHeight: 16 },
+  consoleScroll: { maxHeight: 220 },
+  consoleScrollContent: { flexGrow: 1 },
   consoleText: { fontFamily: 'monospace', fontSize: 10, lineHeight: 15 },
   consoleEmpty: { fontSize: 10, fontStyle: 'italic' },
   failure: { borderWidth: 1, borderRadius: 8, padding: 9, gap: 4 },

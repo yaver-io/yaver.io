@@ -166,6 +166,7 @@ import {
 import { visibleProjectPickerRows } from "../../src/lib/projectPickerRows";
 import { listMcpServers, type McpServer } from "../../src/lib/mcpServers";
 import { mergeFetchedTasks } from "../../src/lib/taskListMerge";
+import { mobileReviewInboxPolicy, reviewInboxTaskKey } from "../../src/lib/taskReviewInbox";
 import { withAlpha } from "../../src/lib/themeUtils";
 import { layoutTokens, lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
@@ -2318,6 +2319,10 @@ export default function TasksScreen() {
     () => composerProjects.find((project) => project.path === selectedProjectPath) || null,
     [composerProjects, selectedProjectPath],
   );
+  const selectedPhoneProject = useMemo(
+    () => phoneProjects.find((project) => project.slug === selectedPhoneCheckout) || null,
+    [phoneProjects, selectedPhoneCheckout],
+  );
   const visibleComposerProjects = useMemo(
     () => visibleProjectPickerRows(composerProjects, selectedProjectPath, projectPickerQuery),
     [composerProjects, selectedProjectPath, projectPickerQuery],
@@ -4059,13 +4064,24 @@ export default function TasksScreen() {
     Alert.alert("Needs attention", task.pendingCloudBlockedReason || "This task is waiting for the selected remote machine.");
   }, [fetchTasks, openRunnerAuthModal]);
 
-  const hasRunningTask = tasks.some(t => t.status === "running" || t.status === "queued");
-  const effectiveFilter = statusFilter;
-  const displayTasks = effectiveFilter === "all" ? tasks
-    : effectiveFilter === "running" ? tasks.filter(t => t.status === "running" || t.status === "queued")
-    : effectiveFilter === "review" ? tasks.filter(t => t.status === "review" || t.status === "ready")
-    : effectiveFilter === "completed" ? tasks.filter(t => t.status === "completed")
-    : tasks.filter(t => t.status === "failed" || t.status === "stopped");
+  const reviewInboxPolicy = mobileReviewInboxPolicy(tasks);
+  const presentedTasks = tasks
+    .filter((task) => reviewInboxPolicy.visibleTaskKeys.has(reviewInboxTaskKey(task)))
+    .map((task) => reviewInboxPolicy.promotedCompletedTaskKey === reviewInboxTaskKey(task)
+      ? { ...task, status: "review" as TaskStatus }
+      : task);
+  const hasRunningTask = presentedTasks.some(t => t.status === "running" || t.status === "queued");
+  const hasReviewTask = presentedTasks.some(t => t.status === "review" || t.status === "ready");
+  // Active is the launch default, but an empty Active view is not useful when
+  // the only fresh result has just landed. Present the bounded Review inbox.
+  const effectiveFilter = statusFilter === "running" && !hasRunningTask && hasReviewTask
+    ? "review"
+    : statusFilter;
+  const displayTasks = effectiveFilter === "all" ? presentedTasks
+    : effectiveFilter === "running" ? presentedTasks.filter(t => t.status === "running" || t.status === "queued")
+    : effectiveFilter === "review" ? presentedTasks.filter(t => t.status === "review" || t.status === "ready")
+    : effectiveFilter === "completed" ? presentedTasks.filter(t => t.status === "completed")
+    : presentedTasks.filter(t => t.status === "failed" || t.status === "stopped");
   // Paint the last-known task list instantly from cache on cold start, so the
   // screen is never empty while the first network fetch is in flight. Only fills
   // when we have nothing yet — never stomps a live list.
@@ -7487,7 +7503,7 @@ export default function TasksScreen() {
                   </Pressable>
                 </>
               ) : <>
-              {tasks.length > 0 ? (
+              {presentedTasks.length > 0 ? (
                 <Pressable
                   style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]}
                   onPress={() => beginTaskSelection()}
@@ -7498,11 +7514,11 @@ export default function TasksScreen() {
                 </Pressable>
               ) : null}
               {([
-                { key: "running" as const, label: "Active", color: c.accent, count: tasks.filter(t => t.status === "running" || t.status === "queued").length },
-                { key: "review" as const, label: "Review", color: c.success, count: tasks.filter(t => t.status === "review" || t.status === "ready").length },
-                { key: "completed" as const, label: "Completed", color: "#22c55e", count: tasks.filter(t => t.status === "completed").length },
-                { key: "failed" as const, label: "Failed", color: "#ef4444", count: tasks.filter(t => t.status === "failed" || t.status === "stopped").length },
-                { key: "all" as const, label: "All", color: c.textSecondary, count: tasks.length },
+                { key: "running" as const, label: "Active", color: c.accent, count: presentedTasks.filter(t => t.status === "running" || t.status === "queued").length },
+                { key: "review" as const, label: "Review", color: c.success, count: presentedTasks.filter(t => t.status === "review" || t.status === "ready").length },
+                { key: "completed" as const, label: "Completed", color: "#22c55e", count: presentedTasks.filter(t => t.status === "completed").length },
+                { key: "failed" as const, label: "Failed", color: "#ef4444", count: presentedTasks.filter(t => t.status === "failed" || t.status === "stopped").length },
+                { key: "all" as const, label: "All", color: c.textSecondary, count: presentedTasks.length },
               ] as const).map(chip => (
                 <Pressable
                   key={chip.key}
@@ -7538,7 +7554,7 @@ export default function TasksScreen() {
                   <Text style={[s.actionButtonText, { color: "#ef4444" }]}>Stop All</Text>
                 </Pressable>
               )}
-              {tasks.some(t => t.status !== "running" && t.status !== "queued") && (
+              {presentedTasks.some(t => t.status !== "running" && t.status !== "queued") && (
                 <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleDeleteAll}>
                   <Text style={[s.actionButtonText, { color: c.textMuted }]}>Clear</Text>
                 </Pressable>
@@ -7585,9 +7601,9 @@ export default function TasksScreen() {
             canComposeTask ? (
               <EmptyState
                 icon="file-tray-outline"
-                title={tasks.length > 0 ? "No tasks in this view" : "All Clear"}
-                body={tasks.length > 0 ? "Your other tasks are still available. Show all tasks to find them." : "No tasks yet. Start one here or in a coding terminal on your machine."}
-                action={tasks.length > 0 ? { label: "Show all tasks", onPress: () => setStatusFilter("all") } : { label: "New task", onPress: openCreateTask }}
+                title={presentedTasks.length > 0 ? "No tasks in this view" : "All Clear"}
+                body={presentedTasks.length > 0 ? "Your other tasks are still available. Show all tasks to find them." : "No tasks yet. Start one here or in a coding terminal on your machine."}
+                action={presentedTasks.length > 0 ? { label: "Show all tasks", onPress: () => setStatusFilter("all") } : { label: "New task", onPress: openCreateTask }}
               />
             ) : codingMode === "local-only" ? (
               <EmptyState
@@ -8336,10 +8352,10 @@ export default function TasksScreen() {
                   accessibilityLabel="Configure project and MCPs for this task"
                   testID="composer-project-chip"
                 >
-                  <Ionicons name="options-outline" size={16} color={selectedComposerProject ? c.accent : c.textMuted} />
+                  <Ionicons name="options-outline" size={16} color={selectedComposerProject || selectedPhoneProject ? c.accent : c.textMuted} />
                   <Text style={[s.scopeChipText, { color: c.textSecondary }]} numberOfLines={1}>
                     {[
-                      selectedComposerProject?.name || projectNameFromPath(projectDir) || "No project",
+                      selectedPhoneProject?.name || selectedComposerProject?.name || projectNameFromPath(projectDir) || "No project",
                       selectedMcpServers.length + (includeYaverMcp ? 1 : 0)
                         ? `${selectedMcpServers.length + (includeYaverMcp ? 1 : 0)} MCP`
                         : "No MCP",
@@ -8575,7 +8591,7 @@ export default function TasksScreen() {
                         isTranscribing ||
                         (!pendingTarget && runnerBannerState?.action === "install") ||
                         runnerInstallState?.kind === "installing" ||
-                        !isEffectivelyConnected;
+                        !isEffectivelyConnected && !(selectedPhoneCheckout && taskExecutionPlacement.lane !== "remote");
                       return (
                         <Pressable
                           style={({ pressed }) => [
@@ -9895,10 +9911,10 @@ export default function TasksScreen() {
                         accessibilityLabel="Configure project and MCPs for this follow-up"
                         testID="followup-project-chip"
                       >
-                        <Ionicons name="options-outline" size={16} color={selectedComposerProject ? c.accent : c.textMuted} />
+                        <Ionicons name="options-outline" size={16} color={selectedComposerProject || selectedPhoneProject ? c.accent : c.textMuted} />
                         <Text style={[s.scopeChipText, { color: c.textSecondary }]} numberOfLines={1}>
                           {[
-                            selectedComposerProject?.name || projectNameFromPath(projectDir) || "No project",
+                            selectedPhoneProject?.name || selectedComposerProject?.name || projectNameFromPath(projectDir) || "No project",
                             selectedMcpServers.length + (includeYaverMcp ? 1 : 0)
                               ? `${selectedMcpServers.length + (includeYaverMcp ? 1 : 0)} MCP`
                               : "No MCP",

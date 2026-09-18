@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "62761415966",
+    "project_id": "yaver-io",
+    "storage_bucket": "yaver-io.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:62761415966:android:4ade07b1d37b32ad1c850f",
+        "android_client_info": {
+          "package_name": "io.yaver.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBTv2IjKJyKWjKc0irMrrrVVvqbuJBTDHw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

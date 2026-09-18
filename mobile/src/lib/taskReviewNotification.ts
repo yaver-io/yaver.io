@@ -17,6 +17,19 @@ export type TaskReviewNotificationTarget = {
 
 let notificationHandlerInstalled = false;
 
+function ensureNotificationHandler(Notifications: any): void {
+  if (notificationHandlerInstalled || typeof Notifications?.setNotificationHandler !== "function") return;
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+  notificationHandlerInstalled = true;
+}
+
 /**
  * A task reply is an exact conversation destination, never a generic alert.
  * Keep the target in the native payload: the app can be launched cold and has
@@ -32,18 +45,7 @@ export async function notifyTaskReply(
     const Notifications: any = require("expo-notifications");
     if (!Notifications) return false;
 
-    if (!notificationHandlerInstalled && typeof Notifications.setNotificationHandler === "function") {
-      Notifications.setNotificationHandler({
-        handleNotification: async () => ({
-          shouldShowAlert: true,
-          shouldShowBanner: true,
-          shouldShowList: true,
-          shouldPlaySound: true,
-          shouldSetBadge: false,
-        }),
-      });
-      notificationHandlerInstalled = true;
-    }
+    ensureNotificationHandler(Notifications);
 
     let permission = await Notifications.getPermissionsAsync();
     if (permission?.status !== "granted") {
@@ -102,6 +104,7 @@ export function installTaskReviewNotificationListener(): () => void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Notifications: any = require("expo-notifications");
     if (!Notifications) return () => {};
+    ensureNotificationHandler(Notifications);
     const open = (response: any) => {
       const data = response?.notification?.request?.content?.data as TaskReviewNotificationData | undefined;
       const destination = taskReviewNotificationRoute(data || {});

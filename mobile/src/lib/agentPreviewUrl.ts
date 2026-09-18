@@ -3,8 +3,18 @@
 // drops that prefix and sends the WebView to the relay root, which answers 404.
 // The agent owns the route path, but never the origin.
 export function resolveAgentPreviewUrl(baseUrl: string, reportedPath: string): string {
-  const base = new URL(baseUrl);
-  const reported = new URL(reportedPath, base.origin);
+  // A phone-only execution choice intentionally has no agent origin. Stale
+  // preview status can survive the mode switch for one render, so URL
+  // construction must degrade to "no preview" instead of crashing the whole
+  // Projects tab (for example `http://:null`).
+  let base: URL;
+  let reported: URL;
+  try {
+    base = new URL(baseUrl);
+    reported = new URL(reportedPath, base.origin);
+  } catch {
+    return "";
+  }
   const basePath = base.pathname.replace(/\/+$/, "");
   const reportedPathname = reported.pathname || "/";
   const alreadyScoped = basePath !== "" &&
@@ -16,6 +26,33 @@ export function resolveAgentPreviewUrl(baseUrl: string, reportedPath: string): s
   base.search = reported.search;
   base.hash = reported.hash;
   return base.toString();
+}
+
+/**
+ * React Native WebView reports HTTP failures for the document and for its
+ * subresources through the same callback. Only the document failure makes the
+ * attached surface unavailable; a missing favicon, source map, or bundle-side
+ * request must not replace an already-running app with a fatal error panel.
+ *
+ * Missing or malformed event URLs fail closed because older WebView builds do
+ * not always identify the failed request and we cannot safely prove it was a
+ * subresource.
+ */
+export function isAgentPreviewDocumentRequest(
+  requestUrl: string | undefined,
+  attachedUrl: string,
+): boolean {
+  if (!requestUrl) return true;
+  try {
+    const request = new URL(requestUrl);
+    const attached = new URL(attachedUrl);
+    const normalizedPath = (path: string) => path.length > 1 ? path.replace(/\/+$/, "") : path;
+    return request.origin === attached.origin &&
+      normalizedPath(request.pathname) === normalizedPath(attached.pathname) &&
+      request.search === attached.search;
+  } catch {
+    return true;
+  }
 }
 
 export type AgentPreviewRouteProbe = {

@@ -220,9 +220,11 @@ whoever lands second reconciles it. Visible failure over silent retry.
   **nil**)` having taken no snapshot. Caller stores the fabricated ref in the
   **vault**; `RestoreSnapshot` (`:150`) then always errors. A real snapshot
   engine exists in `studio/base.go`.
-- **`gateway_redroid.go:124` `Tap(target)`** silently discards `target` and
-  presses ENTER (keycode 66). `droidUIElements` (`droid_interactive.go:243`)
-  already parses `bounds` — the data to do it right is in the same package.
+- **Resolved 2026-09-17:** `gateway_redroid.go` `Tap(target)` now resolves
+  visible text, content descriptions, and resource ids against the live
+  `droidUIElements` bounds and refuses ambiguous matches instead of silently
+  pressing ENTER. The same named-target path is available to `/droid/input`
+  and MCP `droid_input`.
 - **`remote_runtime.go:191` `FeedbackSDKCompatible`** is a tautology of
   `executionMode`, and **inverted**: `true` for swift/kotlin (no SDK exists),
   `false` for react-native (SDK exists). Dashboard renders it as a green

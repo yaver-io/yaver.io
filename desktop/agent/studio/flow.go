@@ -38,6 +38,7 @@ func RunFlowRecording(ctx context.Context, surface CaptureSurface, steps []Step,
 	}
 	start := time.Now()
 	var cues []Cue
+	var firstStepErr error
 	for _, st := range steps {
 		cueStart := time.Since(start).Seconds()
 		var runErr error
@@ -54,13 +55,21 @@ func RunFlowRecording(ctx context.Context, surface CaptureSurface, steps []Step,
 			cues = append(cues, Cue{Text: st.Caption, StartSec: cueStart, EndSec: time.Since(start).Seconds()})
 		}
 		if runErr != nil {
-			// best-effort: keep recording the partial flow, but surface the error
+			// Keep recording so a partial diagnostic artifact is available, but do
+			// not report a successful capture when a required action never ran.
+			// A caption alone is not a machine-readable failure signal to callers.
+			if firstStepErr == nil {
+				firstStepErr = fmt.Errorf("step %q: %w", st.Caption, runErr)
+			}
 			cues = append(cues, Cue{Text: "[step error: " + runErr.Error() + "]", StartSec: cueStart, EndSec: time.Since(start).Seconds()})
 		}
 	}
 	mp4, err := d.RecordStop(ctx)
 	if err != nil {
 		return nil, cues, fmt.Errorf("record stop: %w", err)
+	}
+	if firstStepErr != nil {
+		return mp4, cues, firstStepErr
 	}
 	return mp4, cues, nil
 }

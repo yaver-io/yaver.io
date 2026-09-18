@@ -122,10 +122,8 @@ func (d *redroidDeviceDriver) LaunchURL(url string) error {
 func (d *redroidDeviceDriver) Frame() ([]byte, error) { return droidFrame(d.serial) }
 
 func (d *redroidDeviceDriver) Tap(target string) error {
-	// Generic tap by on-screen label is the curator's job (selector store). For
-	// now, a key-event ENTER advances most login forms after typing — the
-	// handler uses Tap only to confirm, so ENTER is a safe generic action.
-	return droidKey(d.serial, 66) // KEYCODE_ENTER
+	_, err := droidTapTarget(d.serial, target)
+	return err
 }
 
 func (d *redroidDeviceDriver) UiTexts() ([]uiNode, error) {

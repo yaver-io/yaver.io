@@ -2019,6 +2019,7 @@ export default function MoreScreen() {
   const handleEvStations = useCallback(() => router.navigate("/ev-stations" as any), [router]);
   const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
   const handleVibe = useCallback(() => router.navigate("/vibe" as any), [router]);
+  const handleMobileVibe = useCallback(() => router.navigate("/droid-control" as any), [router]);
   const handleVibeStudio = useCallback(() => router.navigate("/vibe-studio" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleTwinMode = useCallback(() => router.navigate("/twin" as any), [router]);
@@ -2470,6 +2471,20 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Vibe</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Talk to build — say “load me the app with Hermes” and keep vibing"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+            </Pressable>
+
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleMobileVibe}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"📱"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Mobile Vibe</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"See and drive your Android phone through the selected Yaver machine"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>

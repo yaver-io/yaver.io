@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -265,9 +266,17 @@ func droidUIElements(serial string, limit int) ([]droidUINode, error) {
 			password := strings.EqualFold(n.Password, "true")
 			x, y, ww, hh := droidParseBounds(n.Bounds)
 			if label != "" || clickable || focusable {
+				text := strings.TrimSpace(n.Text)
+				description := strings.TrimSpace(n.Description)
+				// Password fields may expose masked or vendor-specific values.
+				// The structure is useful; the value is not, so never return it.
+				if password {
+					text = ""
+					description = ""
+				}
 				nodes = append(nodes, droidUINode{
-					Text:        strings.TrimSpace(n.Text),
-					Description: strings.TrimSpace(n.Description),
+					Text:        text,
+					Description: description,
 					ResourceID:  strings.TrimSpace(n.ResourceID),
 					Class:       strings.TrimSpace(n.Class),
 					Package:     strings.TrimSpace(n.Package),
@@ -287,6 +296,100 @@ func droidUIElements(serial string, limit int) ([]droidUINode, error) {
 	}
 	walk(h.Children)
 	return nodes, nil
+}
+
+// droidResolveTapTarget turns a stable accessibility hint (visible text,
+// content description, or resource id) into one unambiguous screen coordinate.
+// It deliberately refuses equally-good matches: tapping the first "Send" in a
+// list is not a safe fallback when the caller named no particular one.
+func droidResolveTapTarget(nodes []droidUINode, target string) (droidUINode, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return droidUINode{}, fmt.Errorf("droid target: target is required")
+	}
+	targetLower := strings.ToLower(target)
+	type scoredNode struct {
+		node  droidUINode
+		score int
+	}
+	var matches []scoredNode
+	for _, node := range nodes {
+		if !node.Enabled || node.W <= 0 || node.H <= 0 {
+			continue
+		}
+		text := strings.TrimSpace(node.Text)
+		desc := strings.TrimSpace(node.Description)
+		resourceID := strings.TrimSpace(node.ResourceID)
+		textLower := strings.ToLower(text)
+		descLower := strings.ToLower(desc)
+		resourceLower := strings.ToLower(resourceID)
+		score := 0
+		switch {
+		case resourceLower == targetLower:
+			score = 600
+		case textLower == targetLower:
+			score = 550
+		case descLower == targetLower:
+			score = 525
+		case strings.HasSuffix(resourceLower, "/"+targetLower):
+			score = 500
+		case strings.Contains(textLower, targetLower):
+			score = 350
+		case strings.Contains(descLower, targetLower):
+			score = 325
+		case strings.Contains(resourceLower, targetLower):
+			score = 300
+		}
+		if score == 0 {
+			continue
+		}
+		if node.Clickable {
+			score += 25
+		}
+		matches = append(matches, scoredNode{node: node, score: score})
+	}
+	if len(matches) == 0 {
+		return droidUINode{}, fmt.Errorf("droid target %q not found in the current accessibility tree", target)
+	}
+	sort.SliceStable(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
+	best := matches[0]
+	for _, candidate := range matches[1:] {
+		if candidate.score != best.score {
+			break
+		}
+		// UIAutomator can emit a labelled child and clickable parent with the
+		// same center. That is one physical target, not an ambiguity.
+		if candidate.node.X == best.node.X && candidate.node.Y == best.node.Y {
+			continue
+		}
+		return droidUINode{}, fmt.Errorf(
+			"droid target %q is ambiguous (%s at %d,%d and %s at %d,%d)",
+			target, droidNodeLabel(best.node), best.node.X, best.node.Y,
+			droidNodeLabel(candidate.node), candidate.node.X, candidate.node.Y,
+		)
+	}
+	return best.node, nil
+}
+
+func droidNodeLabel(node droidUINode) string {
+	return firstNonEmpty(node.Text, node.Description, node.ResourceID, node.Class)
+}
+
+// droidTapTarget resolves against the live hierarchy immediately before the
+// tap, so stale coordinates from an earlier screenshot are never reused.
+func droidTapTarget(serial, target string) (droidUINode, error) {
+	nodes, err := droidUIElements(serial, 250)
+	if err != nil {
+		return droidUINode{}, err
+	}
+	node, err := droidResolveTapTarget(nodes, target)
+	if err != nil {
+		return droidUINode{}, err
+	}
+	if err := droidTap(serial, node.X, node.Y); err != nil {
+		return droidUINode{}, err
+	}
+	return node, nil
 }
 
 func droidParseBounds(bounds string) (x, y, w, h int) {

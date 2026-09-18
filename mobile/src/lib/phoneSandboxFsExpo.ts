@@ -3,7 +3,7 @@
 // import phoneSandboxSource.ts (and createSourceStore) without
 // dragging expo-file-system into Bun's resolver.
 
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import type { SandboxFsAdapter, SandboxFsInfo } from "./phoneSandboxFs";
 
 const FS = FileSystem as any;

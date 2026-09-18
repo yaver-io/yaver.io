@@ -140,7 +140,7 @@ func TestAnalyzeRealYaverManifest(t *testing.T) {
 	if f.Service == nil || !strings.Contains(f.Service.Name, "SandboxService") {
 		t.Errorf("expected SandboxService, got %+v", f.Service)
 	}
-	if f.SpecialUseSubtype != "on_device_coding_agent" {
+	if f.SpecialUseSubtype != "user_started_on_device_coding_agent_for_local_development_tasks_while_app_is_backgrounded" {
 		t.Errorf("subtype = %q", f.SpecialUseSubtype)
 	}
 	// Trigger discovery should find a caller in the repo (best-effort).

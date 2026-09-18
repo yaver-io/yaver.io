@@ -19,11 +19,13 @@
 import { router, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { WebView as NativeWebView } from "react-native-webview";
 import {
   ActivityIndicator,
   Alert,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -57,12 +59,31 @@ import { openTaskBus } from "../src/lib/runningTasksBus";
 import { BrowserVibeBubble } from "../src/components/BrowserVibeBubble";
 import { useRouteParamsCompat } from "../src/lib/useRouteParamsCompat";
 import { useDogfoodOverlay } from "../src/context/DogfoodOverlayContext";
+import { isAgentPreviewDocumentRequest } from "../src/lib/agentPreviewUrl";
+import { PREVIEW_READY_SCRIPT } from "../src/lib/previewReadyScript";
 
 function elapsedLabel(sinceMs: number): string {
   const secs = Math.max(0, Math.floor((Date.now() - sinceMs) / 1000));
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+}
+
+const ATTACHED_RENDER_TIMEOUT_MS = 45_000;
+
+function loadingPhaseForProbe(state: { reason?: string; mountChildren?: number } | undefined): string {
+  switch (state?.reason) {
+    case "document_not_ready":
+    case "empty_body":
+      return "Receiving the Yaver page";
+    case "empty_mount":
+    case "mount_without_visible_content":
+      return "Starting the Yaver interface";
+    case "agent_starting_response":
+      return "Waiting for the Yaver web build";
+    default:
+      return "Opening Yaver";
+  }
 }
 
 export default function AttachScreen() {
@@ -82,10 +103,12 @@ export default function AttachScreen() {
     sessionBehavior?: string;
   }>();
 
-  const webViewRef = useRef<{ reload(): void; injectJavaScript(js: string): void } | null>(null);
+  const webViewRef = useRef<NativeWebView | null>(null);
   const [webViewKey, setWebViewKey] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [startedAt] = useState(() => Date.now());
+  const [loadingSince, setLoadingSince] = useState(() => Date.now());
+  const [loadingPhase, setLoadingPhase] = useState("Opening Yaver");
+  const [loadingLogs, setLoadingLogs] = useState<string[]>(["Preparing the phone WebView…"]);
   const [, forceTick] = useState(0);
   const [lastEvent, setLastEvent] = useState<{ label: string; at: number } | null>(null);
   const [fatal, setFatal] = useState<{ code: string; message: string; remedy?: string } | null>(null);
@@ -97,6 +120,11 @@ export default function AttachScreen() {
   const deviceName = params.deviceName || activeDevice?.name || "the box";
   const sessionId = params.sessionId || "";
   const attachedUrl = params.url || "";
+  const pushLoadingLog = useCallback((line: string) => {
+    setLoadingLogs((current) => current[current.length - 1] === line
+      ? current
+      : [...current, line].slice(-5));
+  }, []);
 
   const reloadDogfoodSurface = useCallback(async (source: string, mode: "fast" | "full" = "fast") => {
     if (reloadInFlight.current) {
@@ -119,6 +147,9 @@ export default function AttachScreen() {
       setGuestException(null);
       setFixTaskId(null);
       setLoading(true);
+      setLoadingSince(Date.now());
+      setLoadingPhase("Opening the refreshed Yaver");
+      setLoadingLogs(["Reload accepted by the selected machine…"]);
       setLastEvent({
         label: source === "manual" ? (mode === "full" ? "Restarting Yaver" : "Re-rendering Yaver") : "Refreshing after task completion",
         at: Date.now(),
@@ -284,6 +315,21 @@ export default function AttachScreen() {
     );
   }, [detach]);
 
+  useEffect(() => {
+    if (!loading || !attachedUrl) return;
+    const remaining = Math.max(0, ATTACHED_RENDER_TIMEOUT_MS - (Date.now() - loadingSince));
+    const timeout = setTimeout(() => {
+      setLoading(false);
+      reloadInFlight.current = false;
+      setFatal({
+        code: "DOGFOOD_WEBVIEW_RENDER_TIMEOUT",
+        message: "The phone reached Yaver, but its WebView did not paint the interface within 45 seconds.",
+        remedy: "Retry the attached surface. If it repeats, keep this named failure visible and use Fix with AI.",
+      });
+    }, remaining);
+    return () => clearTimeout(timeout);
+  }, [attachedUrl, loading, loadingSince]);
+
   // The sentinel tells the INNER Yaver what it is, so it refuses to offer
   // Attach Mode again (an infinite mirror). It carries no authority — the real
   // capability is an HttpOnly cookie this JS cannot read, which is the point.
@@ -311,6 +357,7 @@ export default function AttachScreen() {
             ref={webViewRef}
             source={{ uri: attachedUrl }}
             injectedJavaScriptBeforeContentLoaded={injectedBeforeLoad}
+            injectedJavaScript={PREVIEW_READY_SCRIPT}
             sharedCookiesEnabled
             thirdPartyCookiesEnabled
             // The attach capability is a cookie; without this the WebView would
@@ -322,13 +369,47 @@ export default function AttachScreen() {
             overScrollMode="never"
             scalesPageToFit={false}
             textZoom={100}
-            onLoadStart={() => setLoading(true)}
+            onLoadStart={() => {
+              setLoading(true);
+              setLoadingSince(Date.now());
+              setLoadingPhase("Receiving the Yaver page");
+              setLoadingLogs(["Requesting the verified Dogfood route…"]);
+            }}
             onLoadEnd={() => {
-              setLoading(false);
-              reloadInFlight.current = false;
-              setLastEvent((event) => event ? { label: "Yaver re-rendered", at: Date.now() } : null);
+              // Expo can finish the document load before React paints, or keep
+              // HMR requests alive after it paints. First-paint messages below
+              // own the verdict; onLoadEnd is not operational proof.
+              setLoadingPhase("Starting the Yaver interface");
+              pushLoadingLog("Document received; waiting for Yaver to paint…");
             }}
             onMessage={(event) => {
+              try {
+                const readiness = JSON.parse(event.nativeEvent.data);
+                if (readiness?.t === "yaver-preview-probe") {
+                  const phase = loadingPhaseForProbe(readiness.state);
+                  setLoadingPhase(phase);
+                  pushLoadingLog(`${phase} · ${String(readiness.state?.reason || "checking")}`);
+                  return;
+                }
+                if (readiness?.t === "yaver-rendered") {
+                  setLoading(false);
+                  reloadInFlight.current = false;
+                  setLastEvent((current) => current ? { label: "Yaver rendered", at: Date.now() } : null);
+                  return;
+                }
+                if (readiness?.t === "yaver-preview-timeout") {
+                  setLoading(false);
+                  reloadInFlight.current = false;
+                  setFatal({
+                    code: "DOGFOOD_WEBVIEW_RENDER_TIMEOUT",
+                    message: "Yaver loaded on the phone, but the interface never painted.",
+                    remedy: "Retry the attached surface. If it repeats, use Fix with AI with this named failure visible.",
+                  });
+                  return;
+                }
+              } catch {
+                // Non-JSON messages belong to the existing Dogfood bridges.
+              }
               const exception = parseDogfoodGuestException(event.nativeEvent.data);
               if (exception) {
                 setLoading(false);
@@ -356,9 +437,18 @@ export default function AttachScreen() {
               });
             }}
             onHttpError={(e) => {
+              const status = e.nativeEvent.statusCode;
+              const requestUrl = (e.nativeEvent as { url?: string }).url;
+              if (!isAgentPreviewDocumentRequest(requestUrl, attachedUrl)) {
+                // A WebView uses this callback for every resource. The exact
+                // Dogfood document was already probed before handoff, and the
+                // running app must survive an optional asset/backend 404.
+                appLog("warn", `dogfood: ignored subresource HTTP ${status}`);
+                pushLoadingLog(`Optional page resource returned HTTP ${status}; continuing…`);
+                return;
+              }
               setLoading(false);
               reloadInFlight.current = false;
-              const status = e.nativeEvent.statusCode;
               setFatal({
                 code: "DOGFOOD_WEBVIEW_HTTP_FAILED",
                 message: `The attached surface returned HTTP ${status}.`,
@@ -379,10 +469,24 @@ export default function AttachScreen() {
 
         {loading ? (
           <View style={[styles.loading, { backgroundColor: c.bg + "CC" }]} pointerEvents="none">
-            <ActivityIndicator color={c.accent} />
-            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 8 }}>
-              {`Loading Yaver from ${deviceName} · ${elapsedLabel(startedAt)}`}
-            </Text>
+            <View style={[styles.loadingCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <ActivityIndicator color={c.accent} />
+              <Text style={[styles.loadingTitle, { color: c.textPrimary }]}>{loadingPhase}</Text>
+              <Text style={[styles.loadingDetail, { color: c.textMuted }]}>
+                {`${deviceName} · ${elapsedLabel(loadingSince)}`}
+              </Text>
+              <Text style={[styles.loadingHint, { color: c.textMuted }]}>Yaver will show a named failure if first paint does not arrive.</Text>
+              <ScrollView
+                style={[styles.loadingLog, { borderColor: c.border }]}
+                contentContainerStyle={styles.loadingLogContent}
+                accessibilityLabel="Dogfood loading logs"
+                showsVerticalScrollIndicator={false}
+              >
+                {loadingLogs.map((line, index) => (
+                  <Text key={`${index}-${line}`} style={[styles.loadingLogLine, { color: c.textMuted }]}>{line}</Text>
+                ))}
+              </ScrollView>
+            </View>
           </View>
         ) : null}
       </View>
@@ -493,7 +597,28 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 24,
   },
+  loadingCard: {
+    width: "100%",
+    maxWidth: 360,
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
+  },
+  loadingTitle: { marginTop: 12, fontSize: 17, fontWeight: "800", textAlign: "center" },
+  loadingDetail: { marginTop: 6, fontSize: 12, fontWeight: "600", textAlign: "center" },
+  loadingHint: { marginTop: 12, fontSize: 11, lineHeight: 16, textAlign: "center" },
+  loadingLog: {
+    alignSelf: "stretch",
+    maxHeight: 104,
+    marginTop: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  loadingLogContent: { paddingTop: 10, gap: 4 },
+  loadingLogLine: { fontSize: 10, lineHeight: 14, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
   fatalScrim: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",

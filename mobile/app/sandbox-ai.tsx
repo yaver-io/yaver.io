@@ -12,6 +12,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -34,7 +35,13 @@ import {
   loadCodingBackendPref,
   saveCodingBackendPref,
 } from "../src/lib/codingBackendStore";
-import { LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret } from "../src/lib/auth";
+import {
+  LOCAL_KEYS,
+  deleteLocalSecret,
+  getManagedCodingEnabled,
+  saveLocalSecret,
+  setManagedCodingEnabled,
+} from "../src/lib/auth";
 import { engineAvailable } from "../src/lib/localAgent/engine";
 
 type ByoKeyBackend = "anthropic" | "openai" | "glm" | "deepseek";
@@ -56,11 +63,17 @@ export default function SandboxAiScreen() {
   const [loading, setLoading] = useState(true);
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [managedCoding, setManagedCoding] = useState(false);
 
   const reload = useCallback(async () => {
-    const [p, a] = await Promise.all([loadCodingBackendPref(), loadCodingAvailability()]);
+    const [p, a, managed] = await Promise.all([
+      loadCodingBackendPref(),
+      loadCodingAvailability(),
+      getManagedCodingEnabled(),
+    ]);
     setPref(p);
     setAv(a);
+    setManagedCoding(managed);
     setLoading(false);
   }, []);
 
@@ -163,6 +176,24 @@ export default function SandboxAiScreen() {
           {CODING_BACKENDS.map((b) =>
             renderRow(b.id, b.label, b.note, backendUsable(b.id, av), pref === b.id),
           )}
+
+          <Text style={[styles.section, { color: c.textSecondary, marginTop: 18 }]}>YAVER MANAGED CODING</Text>
+          <View style={[styles.card, { borderColor: c.border, backgroundColor: c.bgCard, flexDirection: "row", alignItems: "center" }]}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={{ color: c.textPrimary, fontWeight: "600" }}>Use account-managed coding</Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 3 }}>
+                Route phone-local coding through your authenticated Yaver account. Usage is metered to your plan; no API key is stored on this phone.
+              </Text>
+            </View>
+            <Switch
+              value={managedCoding}
+              onValueChange={(next) => {
+                setManagedCoding(next);
+                void setManagedCodingEnabled(next).catch(() => setManagedCoding(!next));
+              }}
+              trackColor={{ false: c.border, true: c.accent }}
+            />
+          </View>
 
           {/* On-device status */}
           <Text style={[styles.section, { color: c.textSecondary, marginTop: 18 }]}>

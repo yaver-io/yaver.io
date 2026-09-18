@@ -5,6 +5,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { makeGitFs, bytesToBase64, base64ToBytes, type ExpoFsBackend } from "./gitFsExpo.ts";
 import {
@@ -116,6 +117,18 @@ test("base64 round-trips arbitrary bytes (git objects are binary)", () => {
   // every byte value
   const all = new Uint8Array(256).map((_, i) => i);
   assert.deepEqual(base64ToBytes(bytesToBase64(all)), all);
+});
+
+test("the production adapter imports Expo's legacy async filesystem surface", async () => {
+  const source = await readFile(new URL("./gitFsExpo.ts", import.meta.url), "utf8");
+  assert.match(source, /require\("expo-file-system\/legacy"\)/);
+  assert.doesNotMatch(source, /require\("expo-file-system"\) as ExpoFsBackend/);
+
+  for (const relative of ["../phoneSandboxFsExpo.ts", "../codingBackendStore.ts", "../localModelDownload.ts"]) {
+    const wiring = await readFile(new URL(relative, import.meta.url), "utf8");
+    assert.match(wiring, /from "expo-file-system\/legacy"/);
+    assert.doesNotMatch(wiring, /from "expo-file-system"/);
+  }
 });
 
 test("init → commit → log → revert round-trips through REAL isomorphic-git", async () => {

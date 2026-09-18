@@ -11,7 +11,7 @@
 // markReady step adds it. Until the GGUFs are published the download fails
 // gracefully (404 → markFailed, retryable).
 
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 import { looksLikeGGUF } from "./localAgent/engine";
 import { localModelPath, localModelsDir } from "./codingBackendStore";

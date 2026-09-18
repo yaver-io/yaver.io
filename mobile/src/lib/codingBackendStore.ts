@@ -11,7 +11,7 @@
 // All three coding backends produce the same EditPlan (llmClient.ts) which the
 // editor previews + applies against the phone-local src/ tree.
 
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 import {
   LOCAL_KEYS,

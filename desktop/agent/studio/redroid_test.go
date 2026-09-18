@@ -2,6 +2,7 @@ package studio
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -217,5 +218,31 @@ func TestRunFlowRecordingCues(t *testing.T) {
 	}
 	if len(cues) != 2 || cues[0].Text != "one" || cues[1].Text != "two" {
 		t.Errorf("cues = %+v", cues)
+	}
+}
+
+func TestRunFlowRecordingReturnsStepFailureAfterStoppingCapture(t *testing.T) {
+	f := &fakeRunner{getData: []byte("PARTIAL MP4")}
+	surface := newSurface(f)
+	wantErr := "foreground service was not started"
+	steps := []Step{{
+		Caption: "start foreground service",
+		Run: func(ctx context.Context, d Driver) error {
+			return fmt.Errorf("%s", wantErr)
+		},
+	}}
+
+	mp4, cues, err := RunFlowRecording(context.Background(), surface, steps, 20)
+	if err == nil || !strings.Contains(err.Error(), wantErr) {
+		t.Fatalf("expected step failure, got %v", err)
+	}
+	if string(mp4) != "PARTIAL MP4" {
+		t.Fatalf("partial capture was not returned: %q", mp4)
+	}
+	if !f.saw("pkill -INT screenrecord") {
+		t.Fatal("recording was not stopped after the step failure")
+	}
+	if len(cues) != 2 || !strings.Contains(cues[1].Text, wantErr) {
+		t.Fatalf("failure cue missing: %+v", cues)
 	}
 }

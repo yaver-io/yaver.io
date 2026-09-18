@@ -27,6 +27,29 @@ After reading the docs, **grep the code for the symbols the docs name** before r
 
 ## Local Deploy Memory
 
+### Project release-secret continuity
+
+Release signing material must not depend on one workstation. Keep the active
+local copy owner-only (`0600` files inside a `0700` directory), and keep a
+client-side-encrypted recovery copy in the project's dedicated Hetzner Storage
+Box namespace. For Yaver Android releases, that namespace is
+`project-secrets/other-projects/yaver/android-play/`; keep signing keys under
+`keystore/` and store credentials under `credentials/`.
+
+- Encrypt locally before upload (AES-256 with PBKDF2, at least 600,000
+  iterations). Never upload plaintext keys, passwords, property files, or
+  service-account JSON.
+- Store the recovery phrase in the operator's password manager and local
+  Keychain, never in this repository, shell history, logs, manifests, or the
+  Storage Box.
+- Upload atomically through a `.part` name, rename only after completion, then
+  download the ciphertext and verify its SHA-256 against the local ciphertext.
+- Keep every project in a separate namespace. New projects start from
+  `project-secrets/other-projects/_template/`; never share an upload key or
+  credential bundle across products.
+- A backup is not authorization to publish. Yaver's existing human release
+  gate and canonical `./deploy/deploy.sh <target>` entry point still apply.
+
 ### Android local validation (no submission)
 
 For Android readiness checks, compile and sign locally but do not submit to

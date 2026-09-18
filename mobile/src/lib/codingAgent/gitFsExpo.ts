@@ -264,7 +264,10 @@ export function base64ToBytes(b64: string): Uint8Array {
  *  it out of headless tests (use makeGitFs there). */
 export function createExpoGitFs() {
   // Lazy require so tests that import the pure helpers don't drag in expo.
-  const FileSystem = require("expo-file-system") as ExpoFsBackend & { documentDirectory?: string };
+  // This adapter intentionally uses the async legacy API. Expo SDK 54 moved
+  // documentDirectory and those async helpers behind /legacy; the package root
+  // now exposes Paths/File/Directory and leaves documentDirectory undefined.
+  const FileSystem = require("expo-file-system/legacy") as ExpoFsBackend & { documentDirectory?: string };
   const root = FileSystem.documentDirectory;
   if (!root) throw new Error("createExpoGitFs: documentDirectory unavailable on this platform");
   return makeGitFs(FileSystem, root);

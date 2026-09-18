@@ -84,3 +84,15 @@ test("an explicit This phone choice is not replaced by the device recommendation
   assert.match(source, /if \(selectedDeviceId === null\) return;/);
   assert.match(source, /accessibilityState=\{\{ selected: selectedDeviceId === null \}\}/);
 });
+
+test("This phone initialization stays in the local sandbox instead of opening an empty transport URL", async () => {
+  const source = await readFile(new URL("../../app/(tabs)/newproject.tsx", import.meta.url), "utf8");
+  const initializer = source.indexOf("const initializeProject");
+  const localBranch = source.indexOf("if (!selectedDevice)", initializer);
+  const remoteWizard = source.indexOf("quicClient.wizardStart()", localBranch);
+  assert.ok(initializer >= 0, "expected the project initializer");
+  assert.ok(localBranch >= 0, "expected an explicit local initialization branch");
+  assert.ok(remoteWizard > localBranch, "local placement must be resolved before the remote wizard starts");
+  assert.match(source.slice(localBranch, remoteWizard), /createLocalPhoneProject/);
+  assert.match(source.slice(localBranch, remoteWizard), /router\.replace\(`\/phone-project\/\$\{project\.slug\}`/);
+});

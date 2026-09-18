@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { probeAgentPreviewRoute, resolveAgentPreviewUrl, waitForAgentPreviewRoute } from "./agentPreviewUrl.ts";
+import {
+  isAgentPreviewDocumentRequest,
+  probeAgentPreviewRoute,
+  resolveAgentPreviewUrl,
+  waitForAgentPreviewRoute,
+} from "./agentPreviewUrl.ts";
 
 test("relay preview paths retain the device proxy prefix", () => {
   assert.equal(
@@ -21,6 +26,11 @@ test("direct and tunnel preview paths retain their configured base path", () => 
   );
 });
 
+test("phone-only mode cannot crash while stale remote preview state clears", () => {
+  assert.equal(resolveAgentPreviewUrl("http://:null", "/dev-web/"), "");
+  assert.equal(resolveAgentPreviewUrl("", "/dev-web/"), "");
+});
+
 test("an agent report cannot move a preview to another origin or duplicate an existing prefix", () => {
   assert.equal(
     resolveAgentPreviewUrl("https://relay.example/d/device-123", "https://attacker.invalid/dev-web/?x=1#app"),
@@ -30,6 +40,27 @@ test("an agent report cannot move a preview to another origin or duplicate an ex
     resolveAgentPreviewUrl("https://relay.example/d/device-123", "/d/device-123/dev-web/"),
     "https://relay.example/d/device-123/dev-web/",
   );
+});
+
+test("WebView HTTP failures only kill Dogfood when the attached document failed", () => {
+  const attached = "https://relay.example/d/device-123/dev/?platform=web#home";
+  assert.equal(isAgentPreviewDocumentRequest(
+    "https://relay.example/d/device-123/dev/?platform=web",
+    attached,
+  ), true);
+  assert.equal(isAgentPreviewDocumentRequest(
+    "https://relay.example/d/device-123/dev/node_modules/expo-router/entry.bundle?platform=web",
+    attached,
+  ), false);
+  assert.equal(isAgentPreviewDocumentRequest(
+    "https://relay.example/favicon.ico",
+    attached,
+  ), false);
+});
+
+test("an unidentified WebView HTTP failure fails closed as a document failure", () => {
+  assert.equal(isAgentPreviewDocumentRequest(undefined, "https://relay.example/d/device-123/dev/"), true);
+  assert.equal(isAgentPreviewDocumentRequest("not a URL", "https://relay.example/d/device-123/dev/"), true);
 });
 
 test("the phone probes the exact relay-scoped handoff route", async () => {

@@ -19,7 +19,7 @@ EV is one connector ("is the Eşarj free?"); the architecture is general (Misli,
 | | Web (Playwright) | Mobile (redroid) |
 |---|---|---|
 | Structure | DOM + CSS selectors | **accessibility tree** (uiautomator nodes) + **pixels** |
-| Read a screen | `extract_text`/`get_dom` | `droid_ui_texts` (a11y) + `droid_frame` (vision) |
+| Read a screen | `extract_text`/`get_dom` | `droid_ui_elements` (structured a11y; `droid_ui_texts` compatibility) + `droid_frame` (vision) |
 | Locate element | CSS/role | resource-id / content-desc / text / bounds / **vision** |
 | Act | click/type | tap / type / swipe / back at node or coordinate |
 | Persistence | `storageState` cookie | **golden snapshot** of the logged-in device |
@@ -35,7 +35,7 @@ Unify the accessibility tree and vision into one model so the agent reasons abou
 robustly:
 ```
 Screen {
-  nodes:      [{ role, text, contentDesc, resourceId, bounds, clickable }]   // from droid_ui_texts/uiautomator
+  nodes:      [{ role, text, contentDesc, resourceId, bounds, clickable }]   // from droid_ui_elements/uiautomator
   pixels:     frameRef                                                       // from droid_frame
   signature:  ScreenSignature   // robust fingerprint: salient resource-ids + text shape + layout hash + vision embedding
   appPkg, appVersion
@@ -113,7 +113,7 @@ So this architecture is largely a *re-aiming* of existing organs:
 
 | Need here | Existing organ |
 |---|---|
-| Drive UI | `droid_frame` / `droid_input` / `droid_ui_texts` (`droid_interactive.go`) |
+| Drive UI | `droid_frame` / `droid_input` / `droid_ui_elements` (`droid_interactive.go`) |
 | Logged-in persistence | `yaver-base` golden snapshot |
 | Self-heal selectors | `testkit_self_heal_selector` |
 | Record → flow | vibe recorder / codegen |
@@ -133,7 +133,7 @@ So this architecture is largely a *re-aiming* of existing organs:
   flows, credentials, and learned preferences are private.
 
 ## 11. Build path
-1. **Screen model + signature** over `droid_ui_texts`+`droid_frame` (the perception layer).
+1. **Screen model + signature** over `droid_ui_elements`+`droid_frame` (the perception layer).
 2. **Flow store + replay** with multi-strategy locate + post-verify.
 3. **Trace→Flow recorder** (one READ capability on one app, e.g. an EV "is-it-free").
 4. **Self-heal on signature miss** (vision re-locate) — the durability proof.

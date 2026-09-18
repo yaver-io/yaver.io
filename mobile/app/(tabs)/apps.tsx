@@ -22,7 +22,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // Native resolves to the real WebView, unchanged. See WebViewCompat.web.tsx.
 import { WebView, WEBVIEW_PROBE_UNSUPPORTED } from "../../src/components/WebViewCompat";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Platform } from "react-native";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
@@ -78,6 +78,8 @@ import type { PhoneProject } from "../../src/lib/phoneProjects";
 import { listLocalPhoneProjectsMeta } from "../../src/lib/phoneSandboxLocal";
 import { discoverConnectedProviderProjects, type ProviderProject } from "../../src/lib/gitProviderProjects";
 import { cloneGitRepoToPhone } from "../../src/lib/cloneToPhone";
+import { gitForSlug } from "../../src/lib/codingAgent/sandboxBinding";
+import { ensureRepo } from "../../src/lib/codingAgent/sandboxGit";
 import {
   canOpenPreviewBeforeRefresh,
   reconcilePreviewDevStatus,
@@ -634,9 +636,14 @@ export default function AppsScreen() {
     }
   }, [codingMode]);
 
-  useEffect(() => {
-    void loadRemotelessProjects();
-  }, [loadRemotelessProjects]);
+  // This tab remains mounted while New Project and Tasks are pushed over it.
+  // Re-read phone metadata whenever the user returns so a freshly generated or
+  // cloned checkout is visible immediately instead of requiring an app restart.
+  useFocusEffect(
+    useCallback(() => {
+      void loadRemotelessProjects();
+    }, [loadRemotelessProjects]),
+  );
 
   const cloneRemotelessProject = useCallback(async (project: ProviderProject) => {
     setRemotelessCloningID(project.id);
@@ -2455,7 +2462,14 @@ export default function AppsScreen() {
               key={`phone:${project.slug}`}
               accessibilityRole="button"
               accessibilityLabel={`Open phone checkout ${project.name}`}
-              onPress={() => router.push({ pathname: "/(tabs)/tasks", params: { openNew: "1", phoneCheckout: project.slug, sessionStartedFrom: "mobile-workspace" } } as any)}
+              onPress={() => {
+                // Locally generated CRUD projects start as metadata + SQLite.
+                // Vibe coding needs a repository, so initialise its private
+                // sandbox before handing the checkout to the task composer.
+                void ensureRepo(gitForSlug(project.slug))
+                  .then(() => router.push({ pathname: "/(tabs)/tasks", params: { openNew: "1", phoneCheckout: project.slug, sessionStartedFrom: "mobile-workspace" } } as any))
+                  .catch((error) => Alert.alert("Could not open phone workspace", error instanceof Error ? error.message : String(error)));
+              }}
               style={{ flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 12 }}
             >
               <Text style={{ fontSize: 24 }}>📱</Text>

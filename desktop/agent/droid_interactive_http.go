@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // droidResolveDevice returns the requested device serial, falling back to the
@@ -77,9 +79,10 @@ func (s *HTTPServer) handleDroidInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Type    string `json:"type"` // "tap" | "text" | "key" | "swipe"
+		Type    string `json:"type"` // "tap" | "target" | "text" | "key" | "swipe"
 		X       int    `json:"x"`
 		Y       int    `json:"y"`
+		Target  string `json:"target"`
 		Text    string `json:"text"`
 		Keycode int    `json:"keycode"`
 		X1      int    `json:"x1"`
@@ -102,6 +105,8 @@ func (s *HTTPServer) handleDroidInput(w http.ResponseWriter, r *http.Request) {
 	switch req.Type {
 	case "tap":
 		err = droidTap(serial, req.X, req.Y)
+	case "target":
+		_, err = droidTapTarget(serial, req.Target)
 	case "text":
 		err = droidText(serial, req.Text)
 	case "key":
@@ -109,7 +114,7 @@ func (s *HTTPServer) handleDroidInput(w http.ResponseWriter, r *http.Request) {
 	case "swipe":
 		err = droidSwipe(serial, req.X1, req.Y1, req.X2, req.Y2, req.Dur)
 	default:
-		http.Error(w, `{"error":"type must be one of tap|text|key|swipe"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"type must be one of tap|target|text|key|swipe"}`, http.StatusBadRequest)
 		return
 	}
 	if err != nil {
@@ -120,24 +125,39 @@ func (s *HTTPServer) handleDroidInput(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handleDroidUI (GET /droid/ui[?device=]) returns the on-screen text values via
-// a uiautomator dump — useful for reading login fields / labels.
+// handleDroidUI (GET /droid/ui[?device=]) returns the structured accessibility
+// tree plus the legacy flat text list. One dump feeds both representations so a
+// remote UI can render named actions without racing two snapshots.
 func (s *HTTPServer) handleDroidUI(w http.ResponseWriter, r *http.Request) {
 	serial := droidResolveDevice(r.URL.Query().Get("device"))
 	if serial == "" {
 		http.Error(w, `{"error":"no android device attached"}`, http.StatusServiceUnavailable)
 		return
 	}
-	texts, err := droidUITexts(serial)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	nodes, err := droidUIElements(serial, limit)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
 		return
 	}
-	if texts == nil {
-		texts = []string{}
+	if nodes == nil {
+		nodes = []droidUINode{}
+	}
+	texts := make([]string, 0, len(nodes))
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		if node.Password {
+			continue
+		}
+		label := strings.TrimSpace(firstNonEmpty(node.Text, node.Description))
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		texts = append(texts, label)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"texts": texts})
+	json.NewEncoder(w).Encode(map[string]interface{}{"device": serial, "texts": texts, "nodes": nodes})
 }
 
 // handleDroidLaunch (POST /droid/launch) launches an installed app whose package

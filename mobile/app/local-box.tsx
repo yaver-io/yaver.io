@@ -145,7 +145,7 @@ export default function LocalBoxScreen() {
   // ── Unsupported (iOS / web / build without the jniLibs payload) ──────────
   if (!supported) {
     return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
         <Stack.Screen options={{ title: "This phone as a box" }} />
         <Pressable
           onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
@@ -187,7 +187,7 @@ export default function LocalBoxScreen() {
   const resetReady = resetChecks.backedUp && resetChecks.signedOut && resetChecks.understandsErase;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
       <Stack.Screen options={{ title: "This phone as a box" }} />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
         <Pressable

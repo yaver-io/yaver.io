@@ -18,6 +18,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { quicClient, type MobileWorkspaceGate, type WizardQuestion, type WizardSession } from "../../src/lib/quic";
+import { createLocalPhoneProject } from "../../src/lib/phoneProjects";
 import { setPendingVibingProject } from "../../src/lib/vibingStore";
 import { spacing, typography } from "../../src/theme/tokens";
 import {
@@ -175,6 +176,32 @@ export default function NewProjectScreen() {
     setInitializationStage(0);
     setError(null);
     try {
+      // "This phone" is a real local placement, not a connection to an agent.
+      // Sending it through quicClient leaves the transport with an empty host
+      // (http://:null) and used to crash the production wizard before it could
+      // create anything. Keep the local lane entirely inside the phone sandbox.
+      if (!selectedDevice) {
+        setInitializationStage(1);
+        const project = await createLocalPhoneProject({
+          name: projectName.trim(),
+          slug: projectSlug(projectName),
+          template: "crud",
+          app: {
+            summary: `${projectName.trim()} mobile app`,
+            brand: {
+              displayName: projectName.trim(),
+              palette: selectedPalette.id,
+              primaryColor: selectedPalette.colors[0],
+              secondaryColor: selectedPalette.colors[1],
+            },
+          },
+          prompt: buildMobileAppBuilderPrompt(selectedPalette),
+        });
+        setInitializationStage(4);
+        router.replace(`/phone-project/${project.slug}` as any);
+        return;
+      }
+
       const started = await quicClient.wizardStart();
       if (!started) throw new Error("The selected box could not start project initialization.");
       let session: WizardSession = started.session;

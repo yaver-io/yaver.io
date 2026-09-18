@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import { resolveUser } from "./agentSync";
@@ -70,6 +71,9 @@ async function upsertSnapshot(
   if (existing && existing.userId !== userId) {
     throw new Error("Device ownership mismatch");
   }
+  const previousStatuses = new Map<string, LifecycleTask["status"]>(
+    (existing?.tasks ?? []).map((task: LifecycleTask) => [task.taskId, task.status]),
+  );
   const deletedTasks = (existing?.deletedTasks ?? []).slice(-1000);
   const deletedIds = new Set(deletedTasks.map((row: { taskId: string }) => row.taskId));
   const tasks = args.tasks.filter((task) => !deletedIds.has(task.taskId)).slice(0, 200);
@@ -84,6 +88,22 @@ async function upsertSnapshot(
   };
   if (existing) await ctx.db.patch(existing._id, value);
   else await ctx.db.insert("agentTaskSnapshots", value);
+
+  // A backgrounded Android process cannot depend on React Native polling to
+  // observe this edge. The prompt-free snapshot is already the durable source
+  // of lifecycle truth, so schedule a privacy-safe account push here. Baseline
+  // and unchanged observations stay silent, preventing historical replay.
+  const notifyStatuses = new Set<LifecycleTask["status"]>(["review", "completed", "failed"]);
+  for (const task of tasks.slice(0, 20)) {
+    const previous = previousStatuses.get(task.taskId);
+    if (!previous || previous === task.status || !notifyStatuses.has(task.status)) continue;
+    await ctx.scheduler.runAfter(0, internal.pushNotifications.sendTaskLifecyclePush, {
+      userId,
+      deviceId: args.deviceId,
+      taskId: task.taskId,
+      status: task.status,
+    });
+  }
 
   // One-time migration cleanup. Task snapshots supersede the old tmux
   // inventory, whose session names could include project hints and whose

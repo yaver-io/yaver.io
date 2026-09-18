@@ -114,5 +114,10 @@ path, so self-heal + answer-schema matching work identically.
 - Agent driver + broker wiring + tests: **built and green**
   (`gateway_local_driver.go`, `gateway_local_driver_test.go`, broker `"self"`
   selection in `gateway_broker.go`).
+- ADB-attached physical phones and emulators have an implemented remote surface:
+  Mobile → More → **Mobile Vibe**, authenticated `/droid/*` routes, and MCP
+  `droid_status` / `droid_frame` / `droid_ui_elements` / `droid_input` /
+  `droid_launch`. Every MCP tool accepts a host `device_id`; named taps resolve
+  against the live accessibility bounds and refuse ambiguous matches.
 - Native `YaverA11yService` + manifest + config XML: **specified here, needs a
   device to implement + verify** (this Mac cannot build/run mobile).

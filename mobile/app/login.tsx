@@ -755,7 +755,7 @@ export default function LoginScreen() {
                   </Pressable>
                 )}
 
-                <View style={[styles.providerGroup, { gap: providerGap }]}>
+                {!showEmailForm && <View style={[styles.providerGroup, { gap: providerGap }]}>
                   <Pressable
                     style={({ pressed }) => [
                       styles.button,
@@ -825,7 +825,7 @@ export default function LoginScreen() {
                       <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Microsoft</Text>
                     </View>
                   </Pressable>
-                </View>
+                </View>}
 
                 {/* Sign in with a code. One row when idle, a panel while a code
                     is live — the flow every other surface already had and this
@@ -901,6 +901,19 @@ export default function LoginScreen() {
                     </>
                   ) : (
                     <>
+                      <Pressable
+                        testID="login-back-to-options"
+                        accessibilityRole="button"
+                        accessibilityLabel="Back to sign-in options"
+                        onPress={() => {
+                          setShowEmailForm(false);
+                          setEmailError("");
+                        }}
+                        style={styles.emailBackButton}
+                      >
+                        <Ionicons name="chevron-back" size={17} color={c.textMuted} />
+                        <Text style={[styles.emailBackText, { color: c.textMuted }]}>Sign-in options</Text>
+                      </Pressable>
                       <View style={styles.divider}>
                         <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
                         <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
@@ -1329,6 +1342,18 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     letterSpacing: 0.4,
     textTransform: "uppercase",
+  },
+  emailBackButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    minHeight: 44,
+    paddingRight: 12,
+  },
+  emailBackText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   emailForm: {
     gap: 12,

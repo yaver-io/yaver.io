@@ -1,4 +1,4 @@
-// Droid Control — a paired Android device the user can see and drive from their
+// Mobile Vibe — a paired Android device the user can see and drive from their
 // phone, mirroring the Interactive Browser screen but riding the agent's new
 // /droid/* endpoints instead of /browser/interactive/*. Same transport: rides
 // whatever connect() negotiated (direct LAN / Tailscale / tunnel / relay).
@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -36,6 +37,25 @@ type DroidStatus = {
   focus?: string;
 };
 
+type DroidNode = {
+  text?: string;
+  description?: string;
+  resourceId?: string;
+  clickable?: boolean;
+  enabled?: boolean;
+  focusable?: boolean;
+  password?: boolean;
+};
+
+type DroidUI = { nodes?: DroidNode[] };
+
+function nodeLabel(node: DroidNode): string {
+  const raw = node.text || node.description || node.resourceId || "";
+  if (!raw) return "";
+  const slash = raw.lastIndexOf("/");
+  return slash >= 0 ? raw.slice(slash + 1) : raw;
+}
+
 // Android keycodes used by the nav buttons (sent as {type:"key",keycode}).
 const KEY_BACK = 4;
 const KEY_HOME = 3;
@@ -45,7 +65,7 @@ const KEY_ENTER = 66;
 // The in-WebView page: polls PNG frames and captures taps, posting a single
 // normalized point back to RN per tap. RN converts [0,1] → device pixels using
 // the w/h the agent reported, so this page needn't know them.
-function buildHtml(frameUrl: string, intervalMs: number): string {
+function buildHtml(frameUrl: string, frameHeaders: Record<string, string>, intervalMs: number): string {
   return `<!doctype html><html><head>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
@@ -63,15 +83,31 @@ function buildHtml(frameUrl: string, intervalMs: number): string {
       var RNWV = window.ReactNativeWebView;
       function post(o){ try{ RNWV && RNWV.postMessage(JSON.stringify(o)); }catch(e){} }
       var base = ${JSON.stringify(frameUrl)};
+      var headers = ${JSON.stringify(frameHeaders)};
       var img = document.getElementById('scr');
       var msg = document.getElementById('msg');
       var cap = document.getElementById('cap');
       var fails = 0;
-      function tick(){
-        var n = new Image();
-        n.onload = function(){ img.src = n.src; msg.style.display='none'; fails=0; };
-        n.onerror = function(){ fails++; if(fails>3){ msg.style.display='flex'; msg.innerText='no frame yet'; post({k:'err'}); } };
-        n.src = base + (base.indexOf('?')>=0?'&':'?') + 't=' + Date.now();
+      var loading = false;
+      var activeObjectUrl = '';
+      async function tick(){
+        if (loading) return;
+        loading = true;
+        try {
+          var response = await fetch(base, { headers: headers, cache: 'no-store' });
+          if (!response.ok) throw new Error('frame HTTP ' + response.status);
+          var blob = await response.blob();
+          var nextUrl = URL.createObjectURL(blob);
+          var previous = activeObjectUrl;
+          activeObjectUrl = nextUrl;
+          img.onload = function(){ if(previous) URL.revokeObjectURL(previous); msg.style.display='none'; fails=0; };
+          img.src = nextUrl;
+        } catch (e) {
+          fails++;
+          if(fails>3){ msg.style.display='flex'; msg.innerText='no frame yet'; post({k:'err'}); }
+        } finally {
+          loading = false;
+        }
       }
       var timer = setInterval(tick, ${intervalMs});
       tick();
@@ -131,23 +167,23 @@ export default function DroidControlScreen() {
   const connected = Boolean(activeDevice && connectionStatus === "connected");
 
   const [status, setStatus] = useState<DroidStatus | null>(null);
-  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const [frameHtml, setFrameHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [nodes, setNodes] = useState<DroidNode[]>([]);
+  const [lastAction, setLastAction] = useState<string | null>(null);
+  const [showPairHelp, setShowPairHelp] = useState(false);
   const webRef = useRef<WebView | null>(null);
 
-  // Build the authed frame URL, mirroring browser-interactive.tsx /
-  // quicClient.remoteDesktopFrameUrl(): token as ?token=, relay password as
-  // &__rp= (a WebView <img> can't send bearer headers).
-  const buildFrameUrl = useCallback((): string => {
-    const headers = quicClient.getAuthHeaders();
-    const bearer = headers.Authorization || "";
-    const token = bearer.replace(/^Bearer\s+/i, "");
-    let url = `${quicClient.baseUrl}/droid/frame?token=${encodeURIComponent(token)}`;
+  // The embedded viewer fetches the frame with headers from a same-origin base.
+  // Never put the owner bearer or relay password in a URL: URLs land in access
+  // logs, WebView history, and Referer headers.
+  const buildFrameHtml = useCallback((): string => {
+    const headers = { ...quicClient.getAuthHeaders() };
     const rp = quicClient.activeRelayPasswordValue;
-    if (rp) url += `&__rp=${encodeURIComponent(rp)}`;
-    return url;
+    if (rp) headers["X-Relay-Password"] = rp;
+    return buildHtml(`${quicClient.baseUrl}/droid/frame`, headers, 1500);
   }, []);
 
   // POST an input event to /droid/input, then nudge the WebView to grab a fresh
@@ -156,25 +192,34 @@ export default function DroidControlScreen() {
     async (body: Record<string, unknown>) => {
       if (!activeDevice) return;
       try {
-        await quicClient.agentRequest(activeDevice.id, "/droid/input", {
+        setError(null);
+        const res = await quicClient.agentRequest(activeDevice.id, "/droid/input", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          throw new Error(detail || `Phone action failed (${res.status})`);
+        }
+        const action = typeof body.target === "string" ? `Tapped ${body.target}` : String(body.type || "Action");
+        setLastAction(action);
         setTimeout(() => {
           webRef.current?.postMessage("refresh");
         }, 600);
-      } catch {
-        // Fire-and-forget; a dropped event just means the user taps again.
+        return true;
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "The phone action did not reach the selected machine.");
+        return false;
       }
     },
     [activeDevice],
   );
 
-  // Derive the authed frame URL once we're connected.
+  // Build the in-memory authenticated viewer once we're connected.
   useEffect(() => {
-    if (connected) setFrameUrl(buildFrameUrl());
-  }, [connected, buildFrameUrl]);
+    if (connected) setFrameHtml(buildFrameHtml());
+  }, [connected, buildFrameHtml]);
 
   // Poll GET /droid/status for the status line and device dimensions.
   useEffect(() => {
@@ -183,13 +228,22 @@ export default function DroidControlScreen() {
     const poll = async () => {
       try {
         const res = await quicClient.agentRequest(activeDevice.id, "/droid/status");
-        if (res.ok && !cancelled) {
-          const data = (await res.json()) as DroidStatus;
-          setStatus(data);
-          if (data.device) setError(null);
+        if (!res.ok) throw new Error(`Phone status failed (${res.status})`);
+        if (cancelled) return;
+        const data = (await res.json()) as DroidStatus;
+        setStatus(data);
+        if (!data.device) {
+          setNodes([]);
+          return;
         }
-      } catch {
-        // Status is best-effort.
+        const uiRes = await quicClient.agentRequest(activeDevice.id, "/droid/ui");
+        if (!uiRes.ok) throw new Error(`Could not inspect the phone screen (${uiRes.status})`);
+        if (!cancelled) {
+          const ui = (await uiRes.json()) as DroidUI;
+          setNodes(ui.nodes ?? []);
+        }
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not read the remote phone.");
       }
     };
     void poll();
@@ -266,8 +320,7 @@ export default function DroidControlScreen() {
     if (!text.trim() || !status?.device) return;
     setSending(true);
     try {
-      await sendInput({ type: "text", text });
-      setText("");
+      if (await sendInput({ type: "text", text })) setText("");
     } finally {
       setSending(false);
     }
@@ -278,6 +331,10 @@ export default function DroidControlScreen() {
   }, [router]);
 
   const hasDevice = Boolean(status?.device);
+  const actionNodes = nodes
+    .filter((node) => !node.password && node.enabled !== false && (node.clickable || node.focusable) && nodeLabel(node))
+    .filter((node, index, all) => all.findIndex((candidate) => nodeLabel(candidate) === nodeLabel(node)) === index)
+    .slice(0, 14);
   const statusLine = status
     ? status.device
       ? status.focus
@@ -292,7 +349,7 @@ export default function DroidControlScreen() {
         <AppBackButton onPress={done} />
         <View style={{ flex: 1, marginLeft: 8 }}>
           <Text style={[styles.headerTitle, { color: c.textPrimary }]} numberOfLines={1}>
-            Droid Control
+            Mobile Vibe
           </Text>
           {statusLine ? (
             <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={1}>
@@ -309,11 +366,11 @@ export default function DroidControlScreen() {
       </View>
 
       <View style={{ flex: 1, backgroundColor: "#000" }}>
-        {connected && frameUrl ? (
+        {connected && frameHtml ? (
           <WebView
             ref={webRef}
-            key={frameUrl}
-            source={{ html: buildHtml(frameUrl, 1500) }}
+            key={`${activeDevice?.id || "device"}-mobile-vibe`}
+            source={{ html: frameHtml, baseUrl: quicClient.baseUrl }}
             style={{ flex: 1, backgroundColor: "#000" }}
             originWhitelist={["*"]}
             scrollEnabled={false}
@@ -345,12 +402,50 @@ export default function DroidControlScreen() {
       {connected && status && !hasDevice ? (
         <View style={{ backgroundColor: "rgba(245,158,11,0.12)", paddingHorizontal: 14, paddingVertical: 8 }}>
           <Text style={{ color: "#fcd34d", fontSize: 11 }}>
-            No Android device paired. Pair one to view and control it here.
+            No Android phone is available on this machine. Connect it with USB or Android wireless debugging.
           </Text>
+          <Pressable onPress={() => setShowPairHelp((open) => !open)} style={{ paddingTop: 7, paddingBottom: 2 }}>
+            <Text style={{ color: "#fde68a", fontSize: 12, fontWeight: "700" }}>
+              {showPairHelp ? "Hide setup" : "How to connect it →"}
+            </Text>
+          </Pressable>
+          {showPairHelp ? (
+            <View style={{ gap: 4, paddingTop: 7 }}>
+              <Text style={{ color: "#fef3c7", fontSize: 11, lineHeight: 16 }}>
+                1. On Android: Developer options → Wireless debugging → Pair device with pairing code.
+              </Text>
+              <Text style={{ color: "#fef3c7", fontSize: 11, lineHeight: 16 }}>
+                2. Ask your Yaver coding agent to call wireless_setup_android with the six-digit code, or run yaver wireless setup-android on the selected machine.
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : error ? (
         <View style={{ backgroundColor: "rgba(245,158,11,0.12)", paddingHorizontal: 14, paddingVertical: 8 }}>
           <Text style={{ color: "#fcd34d", fontSize: 11 }}>{error}</Text>
+        </View>
+      ) : null}
+
+      {hasDevice && actionNodes.length ? (
+        <View style={[styles.targets, { borderTopColor: c.border, backgroundColor: c.bgCard }]}>
+          <View style={styles.targetHeading}>
+            <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: "700" }}>On-screen actions</Text>
+            {lastAction ? <Text style={{ color: c.textMuted, fontSize: 10 }} numberOfLines={1}>{lastAction}</Text> : null}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>
+            {actionNodes.map((node) => {
+              const label = nodeLabel(node);
+              return (
+                <Pressable
+                  key={`${label}-${node.resourceId || ""}`}
+                  onPress={() => void sendInput({ type: "target", target: label })}
+                  style={[styles.targetChip, { borderColor: c.border, backgroundColor: c.bgCardElevated }]}
+                >
+                  <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: "600" }} numberOfLines={1}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       ) : null}
 
@@ -450,6 +545,14 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     gap: 8,
   },
+  targets: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    gap: 7,
+  },
+  targetHeading: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  targetChip: { maxWidth: 180, borderWidth: 1, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
   navRow: { flexDirection: "row", gap: 8 },
   navBtn: {
     flex: 1,

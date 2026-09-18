@@ -185,6 +185,10 @@ test("Dogfood can switch same-account devices and its Y stays outside the WebVie
   assert.match(attached, /DOGFOOD_WEBVIEW_LOAD_FAILED/,
     "an in-mode browser failure must carry a stable code, not only prose");
   assert.match(attached, /onHttpError=/);
+  assert.match(attached, /isAgentPreviewDocumentRequest\(requestUrl, attachedUrl\)/,
+    "a subresource HTTP failure must not replace an already-running Dogfood surface");
+  assert.match(attached, /ignored subresource HTTP/,
+    "ignored subresource failures must remain diagnosable without exposing the relay URL");
   assert.match(attached, /DOGFOOD_WEBVIEW_HTTP_FAILED/,
     "HTTP failures must not paint a raw server error as if Dogfood succeeded");
   assert.match(attached, /parseDogfoodRenderMessage/);
@@ -203,6 +207,18 @@ test("Dogfood can switch same-account devices and its Y stays outside the WebVie
   assert.match(attached, /openTaskBus\.publish\(taskId\)/,
     "starting an exception fix must take the user to its live task chat");
   assert.match(attached, /onMessage=/);
+  assert.match(attached, /injectedJavaScript=\{PREVIEW_READY_SCRIPT\}/,
+    "attached Dogfood must use the shared first-paint probe instead of waiting for Expo HMR to finish loading");
+  assert.match(attached, /readiness\?\.t === "yaver-rendered"/,
+    "the host loading state must end when the inner Yaver actually paints");
+  assert.match(attached, /DOGFOOD_WEBVIEW_RENDER_TIMEOUT/,
+    "a WebView that never paints must become a named failure instead of an eternal loading overlay");
+  assert.match(attached, /ATTACHED_RENDER_TIMEOUT_MS = 45_000/,
+    "the phone-side first-paint wait must be bounded after the route and browser doctor passed");
+  assert.match(attached, /yaver-preview-probe/,
+    "loading UI must narrate measured document and mount progress");
+  assert.match(attached, /accessibilityLabel="Dogfood loading logs"/,
+    "first-open and reload waits must expose a compact live loading tail");
   assert.doesNotMatch(attached, /<SafeAreaView/,
     "the browser app owns safe areas; a native SafeAreaView produces top and bottom bands");
   assert.match(attached, /contentInsetAdjustmentBehavior="never"/);

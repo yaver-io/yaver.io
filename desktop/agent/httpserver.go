@@ -10335,9 +10335,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	// --- Droid interactive (generic human-in-the-loop Android control) ---
 	case "droid_status":
 		var args struct {
-			Device string `json:"device"`
+			DeviceID string `json:"device_id"`
+			Device   string `json:"device"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+		path := "/droid/status"
+		if strings.TrimSpace(args.Device) != "" {
+			path += "?device=" + url.QueryEscape(args.Device)
+		}
+		if remote, err := proxyToDeviceJSON(context.Background(), "droid_status", args.DeviceID, http.MethodGet, path, nil); err == nil {
+			return mcpToolJSON(remote)
+		} else if !errors.Is(err, errProxyLocal) {
+			return mcpToolError("droid_status: " + err.Error())
+		}
 		serial := droidResolveDevice(args.Device)
 		if serial == "" {
 			return mcpToolJSON(map[string]interface{}{
@@ -10358,9 +10368,25 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "droid_frame":
 		var args struct {
-			Device string `json:"device"`
+			DeviceID string `json:"device_id"`
+			Device   string `json:"device"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+		path := "/droid/frame"
+		if strings.TrimSpace(args.Device) != "" {
+			path += "?device=" + url.QueryEscape(args.Device)
+		}
+		if status, buf, err := proxyToDevice(context.Background(), "droid_frame", args.DeviceID, http.MethodGet, path, nil); err == nil {
+			if status >= 400 {
+				return mcpToolError(fmt.Sprintf("droid_frame: remote HTTP %d: %s", status, strings.TrimSpace(string(buf))))
+			}
+			return map[string]interface{}{"content": []map[string]interface{}{
+				{"type": "text", "text": fmt.Sprintf("Remote Android screen (%d bytes PNG)", len(buf))},
+				{"type": "image", "data": base64.StdEncoding.EncodeToString(buf), "mimeType": "image/png"},
+			}}
+		} else if !errors.Is(err, errProxyLocal) {
+			return mcpToolError("droid_frame: " + err.Error())
+		}
 		serial := droidResolveDevice(args.Device)
 		if serial == "" {
 			return mcpToolError("droid_frame: no android device attached")
@@ -10378,25 +10404,41 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "droid_input":
 		var args struct {
-			Type    string `json:"type"`
-			X       int    `json:"x"`
-			Y       int    `json:"y"`
-			Text    string `json:"text"`
-			Keycode int    `json:"keycode"`
-			X1      int    `json:"x1"`
-			Y1      int    `json:"y1"`
-			X2      int    `json:"x2"`
-			Y2      int    `json:"y2"`
-			Dur     int    `json:"dur"`
-			Device  string `json:"device"`
+			DeviceID string `json:"device_id"`
+			Type     string `json:"type"`
+			Target   string `json:"target"`
+			X        int    `json:"x"`
+			Y        int    `json:"y"`
+			Text     string `json:"text"`
+			Keycode  int    `json:"keycode"`
+			X1       int    `json:"x1"`
+			Y1       int    `json:"y1"`
+			X2       int    `json:"x2"`
+			Y2       int    `json:"y2"`
+			Dur      int    `json:"dur"`
+			Device   string `json:"device"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+		if remote, err := proxyToDeviceJSON(context.Background(), "droid_input", args.DeviceID, http.MethodPost, "/droid/input", json.RawMessage(call.Arguments)); err == nil {
+			return mcpToolJSON(remote)
+		} else if !errors.Is(err, errProxyLocal) {
+			return mcpToolError("droid_input: " + err.Error())
+		}
 		serial := droidResolveDevice(args.Device)
 		if serial == "" {
 			return mcpToolError("droid_input: no android device attached")
 		}
 		var derr error
 		switch args.Type {
+		case "target":
+			var node droidUINode
+			node, derr = droidTapTarget(serial, args.Target)
+			if derr == nil {
+				return mcpToolJSON(map[string]interface{}{
+					"ok": true, "device": serial, "type": args.Type,
+					"target": droidNodeLabel(node), "x": node.X, "y": node.Y,
+				})
+			}
 		case "tap":
 			derr = droidTap(serial, args.X, args.Y)
 		case "text":
@@ -10406,7 +10448,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		case "swipe":
 			derr = droidSwipe(serial, args.X1, args.Y1, args.X2, args.Y2, args.Dur)
 		default:
-			return mcpToolError("droid_input: type must be one of tap|text|key|swipe")
+			return mcpToolError("droid_input: type must be one of target|tap|text|key|swipe")
 		}
 		if derr != nil {
 			return mcpToolError(fmt.Sprintf("droid_input: %v", derr))
@@ -10415,9 +10457,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "droid_ui_texts":
 		var args struct {
-			Device string `json:"device"`
+			DeviceID string `json:"device_id"`
+			Device   string `json:"device"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+		path := "/droid/ui"
+		if strings.TrimSpace(args.Device) != "" {
+			path += "?device=" + url.QueryEscape(args.Device)
+		}
+		if remote, err := proxyToDeviceJSON(context.Background(), "droid_ui_texts", args.DeviceID, http.MethodGet, path, nil); err == nil {
+			return mcpToolJSON(remote)
+		} else if !errors.Is(err, errProxyLocal) {
+			return mcpToolError("droid_ui_texts: " + err.Error())
+		}
 		serial := droidResolveDevice(args.Device)
 		if serial == "" {
 			return mcpToolError("droid_ui_texts: no android device attached")
@@ -10431,14 +10483,59 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(map[string]interface{}{"device": serial, "texts": texts})
 
+	case "droid_ui_elements":
+		var args struct {
+			DeviceID string `json:"device_id"`
+			Device   string `json:"device"`
+			Limit    int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		path := "/droid/ui"
+		query := url.Values{}
+		if strings.TrimSpace(args.Device) != "" {
+			query.Set("device", args.Device)
+		}
+		if args.Limit > 0 {
+			query.Set("limit", strconv.Itoa(args.Limit))
+		}
+		if encoded := query.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+		if remote, err := proxyToDeviceJSON(context.Background(), "droid_ui_elements", args.DeviceID, http.MethodGet, path, nil); err == nil {
+			return mcpToolJSON(remote)
+		} else if !errors.Is(err, errProxyLocal) {
+			return mcpToolError("droid_ui_elements: " + err.Error())
+		}
+		serial := droidResolveDevice(args.Device)
+		if serial == "" {
+			return mcpToolError("droid_ui_elements: no android device attached")
+		}
+		nodes, err := droidUIElements(serial, args.Limit)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("droid_ui_elements: %v", err))
+		}
+		if nodes == nil {
+			nodes = []droidUINode{}
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"device": serial, "focus": droidFocus(serial), "nodes": nodes, "count": len(nodes),
+			"policy": "read-only inspection; input is separate and must stop on challenges or blocks",
+		})
+
 	case "droid_launch":
 		var args struct {
-			Package string `json:"package"`
-			Device  string `json:"device"`
+			DeviceID string `json:"device_id"`
+			Package  string `json:"package"`
+			Device   string `json:"device"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Package == "" {
 			return mcpToolError("droid_launch: package is required")
+		}
+		if remote, err := proxyToDeviceJSON(context.Background(), "droid_launch", args.DeviceID, http.MethodPost, "/droid/launch", json.RawMessage(call.Arguments)); err == nil {
+			return mcpToolJSON(remote)
+		} else if !errors.Is(err, errProxyLocal) {
+			return mcpToolError("droid_launch: " + err.Error())
 		}
 		serial := droidResolveDevice(args.Device)
 		if serial == "" {
