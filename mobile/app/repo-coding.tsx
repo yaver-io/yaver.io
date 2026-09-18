@@ -45,6 +45,7 @@ import { isRepo } from "../src/lib/codingAgent/sandboxGit";
 import { restoreTurnSnapshot, type TurnSnapshot } from "../src/lib/codingAgent/turnTransaction";
 import type { CodingAgentProgress } from "../src/lib/codingAgent/runner";
 import { redactProgressText, redactSecrets, redactValue } from "../src/lib/codingAgent/secretRedaction";
+import { withRemotelessTask } from "../src/lib/remotelessTaskLifecycle";
 
 const SFMG_DEFAULT = "kivanccakmak/sfmg";
 
@@ -154,7 +155,13 @@ export default function RepoCodingScreen() {
     if (!input) return;
     setCloning(true);
     try {
-      const res = await cloneGitRepoToPhone(input);
+      const res = await withRemotelessTask({
+        id: `git-clone-${Date.now()}`,
+        title: `Git clone · ${input}`,
+        projectSlug: "pending-clone",
+        kind: "git-clone",
+        phase: "Downloading repository",
+      }, () => cloneGitRepoToPhone(input));
       await reload();
       setSelected(res.slug);
       Alert.alert(

@@ -48,6 +48,18 @@ async function openDb(slug: string) {
   return SQLite.openDatabaseAsync(dbName(slug));
 }
 
+const EMPTY_STATS = { tableCount: 0, rowCount: 0, perTable: {}, dbBytes: 0 } as const;
+
+async function statsForProject(project: PhoneProject) {
+  // Git-cloned projects intentionally use the blank template: their files and
+  // .git directory are the backing store, not an app-generated SQLite schema.
+  // Avoid opening an unused native database here. Besides needless work, that
+  // made a SQLite bridge failure block the unrelated network clone before the
+  // first byte could download.
+  if (!project.schema?.tables?.length) return { ...EMPTY_STATS, perTable: {} };
+  return getLocalPhoneProjectStats(project.slug);
+}
+
 async function ensureSchema(db: SQLite.SQLiteDatabase, schema: PhoneSchema | null | undefined) {
   if (!schema?.tables?.length) return;
   for (const table of schema.tables) {
@@ -117,6 +129,7 @@ export async function ensureLocalPhoneProject(project: PhoneProject): Promise<vo
     stats: undefined,
   };
   await AsyncStorage.setItem(metaKey(project.slug), JSON.stringify(snapshot));
+  if (!project.schema?.tables?.length) return;
   const db = await openDb(project.slug);
   await ensureSchema(db, project.schema);
   await ensureUsersFromAuth(db, project.auth);
@@ -132,7 +145,7 @@ export async function getLocalPhoneProjectMeta(slug: string): Promise<PhoneProje
   const raw = await AsyncStorage.getItem(metaKey(slug));
   if (!raw) return null;
   const project = JSON.parse(raw) as PhoneProject;
-  const stats = await getLocalPhoneProjectStats(slug);
+  const stats = await statsForProject(project);
   return { ...project, stats };
 }
 
@@ -143,7 +156,7 @@ export async function listLocalPhoneProjectsMeta(): Promise<PhoneProject[]> {
     items.map(async ([, raw]) => {
       if (!raw) return null;
       const project = JSON.parse(raw) as PhoneProject;
-      const stats = await getLocalPhoneProjectStats(project.slug);
+      const stats = await statsForProject(project);
       return { ...project, stats };
     }),
   );
@@ -151,7 +164,10 @@ export async function listLocalPhoneProjectsMeta(): Promise<PhoneProject[]> {
 }
 
 export async function deleteLocalPhoneProject(slug: string): Promise<void> {
+  const raw = await AsyncStorage.getItem(metaKey(slug));
   await AsyncStorage.removeItem(metaKey(slug));
+  const project = raw ? JSON.parse(raw) as PhoneProject : null;
+  if (project && !project.schema?.tables?.length) return;
   const db = await openDb(slug);
   const tables = await db.getAllAsync<{ name: string }>(
     `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,

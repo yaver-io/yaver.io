@@ -46,6 +46,7 @@ class SandboxService : Service() {
     private const val PREFS = "yaver_sandbox"
     private const val PREF_HOME_HOST = "home_host"
     private const val NOTIF_ID = 8347 // arbitrary stable id (the yaver phone port)
+    private const val STOP_REQUEST_CODE = 8347
     const val ACTION_START = "io.yaver.mobile.sandbox.START"
     const val ACTION_START_HOME_HOST = "io.yaver.mobile.sandbox.START_HOME_HOST"
     const val ACTION_STOP = "io.yaver.mobile.sandbox.STOP"
@@ -106,14 +107,30 @@ class SandboxService : Service() {
     fun updateStatus(ctx: Context, text: String) {
       if (!running) return
       createChannels(ctx)
-      val n = NotificationCompat.Builder(ctx, CHANNEL_ID)
+      ctx.getSystemService(NotificationManager::class.java).notify(
+        NOTIF_ID,
+        buildOngoingNotification(ctx, if (text.isNotEmpty()) text else "Yaver sandbox running"),
+      )
+    }
+
+    /** The foreground notification is both truthful and actionable: tapping its
+     * body returns to Yaver, while Stop ends the user-started hosting session. */
+    private fun buildOngoingNotification(ctx: Context, text: String): Notification {
+      val stop = PendingIntent.getService(
+        ctx,
+        STOP_REQUEST_CODE,
+        Intent(ctx, SandboxService::class.java).apply { action = ACTION_STOP },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      )
+      return NotificationCompat.Builder(ctx, CHANNEL_ID)
         .setContentTitle("Yaver")
-        .setContentText(if (text.isNotEmpty()) text else "Yaver sandbox running")
+        .setContentText(text)
         .setSmallIcon(ctx.applicationInfo.icon)
         .setOngoing(true)
+        .setContentIntent(openTaskIntent(ctx, null))
+        .addAction(NotificationCompat.Action(0, "Stop", stop))
         .setPriority(NotificationCompat.PRIORITY_LOW)
         .build()
-      ctx.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, n)
     }
 
     /** The payoff: a dismissible "task finished" notification proving the
@@ -188,6 +205,7 @@ class SandboxService : Service() {
   private var proc: Process? = null
   private var wakeLock: PowerManager.WakeLock? = null
   private var supervisor: Thread? = null
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -270,16 +288,39 @@ class SandboxService : Service() {
   }
 
   private fun superviseProcess() {
+    val watched = proc ?: return
     supervisor = Thread {
+      var exitCode: Int? = null
       try {
-        val code = proc?.waitFor()
-        Log.w(TAG, "agent exited code=$code")
+        exitCode = watched.waitFor()
+        Log.w(TAG, "agent exited code=$exitCode")
       } catch (_: InterruptedException) {
         // stopAgent() interrupted us — normal shutdown.
       } finally {
-        running = false
+        mainHandler.post { onAgentExited(watched, exitCode) }
       }
     }.also { it.isDaemon = true; it.start() }
+  }
+
+  /** A dead child process is not a running coding box. Remove the foreground
+   * claim and wake lock immediately instead of leaving a false notification
+   * and battery drain behind. Manual stop clears proc first, so its supervisor
+   * callback is ignored here. */
+  private fun onAgentExited(watched: Process, exitCode: Int?) {
+    if (proc !== watched) return
+    Log.w(TAG, "stopping foreground service after agent exit code=$exitCode")
+    running = false
+    homeHostMode = false
+    saveHomeHostMode(false)
+    proc = null
+    supervisor = null
+    releaseWakeLock()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+    } else {
+      @Suppress("DEPRECATION") stopForeground(true)
+    }
+    stopSelf()
   }
 
   private fun stopAgent() {
@@ -327,13 +368,7 @@ class SandboxService : Service() {
   private fun createChannel() = createChannels(this)
 
   private fun buildNotification(text: String): Notification {
-    return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setContentTitle("Yaver")
-      .setContentText(text)
-      .setSmallIcon(applicationInfo.icon)
-      .setOngoing(true)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
-      .build()
+    return buildOngoingNotification(this, text)
   }
 }
 

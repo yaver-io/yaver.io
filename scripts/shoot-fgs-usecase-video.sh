@@ -295,8 +295,8 @@ say "PHASE 5 — boot redroid, install APK, drive the use-case capture, record"
   ( cd desktop/agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/yaver-agent . ) || echo "agent-build-FAILED"
   # The studio recorder reads its narrative job spec from a file; write it.
   # SHOOT_MODE=fgs (default): start the foreground service DIRECTLY (no sign-in)
-  #   → real Yaver foreground notification + clean use-case captions, no failing
-  #     in-app task steps. This is the ship-now FGS justification video.
+  #   → mechanical lifecycle evidence only. It is useful for diagnosing capture,
+  #     but is NOT a Play declaration video because no user triggers the feature.
   # SHOOT_MODE=glm: drive the Tasks UI to run a real GLM coding task (needs the
   #   on-redroid sign-in gate solved first — the follow-up iteration).
   if [ "${SHOOT_MODE:-fgs}" = "glm" ]; then

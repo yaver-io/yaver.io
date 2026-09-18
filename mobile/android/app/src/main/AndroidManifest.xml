@@ -85,7 +85,7 @@
         android:exported="false"
         android:foregroundServiceType="specialUse">
       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-          android:value="on_device_coding_agent"/>
+          android:value="user_started_on_device_coding_agent_for_local_development_tasks_while_app_is_backgrounded"/>
     </service>
     <!-- Finite DeepSeek/Hermes edits and explicit Git commit/push. Unlike the
          proot sandbox daemon above, this is a user-started data-sync lease and

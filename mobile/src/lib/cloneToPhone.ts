@@ -10,6 +10,7 @@
 // in githubAuth.test.
 
 import http from "isomorphic-git/http/web";
+import { Buffer } from "buffer";
 
 import { cloneRepo } from "./codingAgent/sandboxGitOps";
 import { gitContextForSlug } from "./codingAgent/codingAgentRun";
@@ -39,6 +40,10 @@ export async function cloneGitRepoToPhone(
   input: string,
   opts: { depth?: number; ref?: string } = {},
 ): Promise<CloneToPhoneResult> {
+  // isomorphic-git's smart-HTTP packet parser expects Node's Buffer global.
+  // Hermes does not provide it, even though the npm implementation is bundled.
+  // Install the scoped polyfill at the network boundary before the first clone.
+  if (!(globalThis as any).Buffer) (globalThis as any).Buffer = Buffer;
   const url = normalizeGitUrl(input);
   const provider = detectGitProvider(url);
   if (provider !== "github" && provider !== "gitlab") {

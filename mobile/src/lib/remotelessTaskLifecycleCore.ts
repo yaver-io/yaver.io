@@ -2,7 +2,7 @@
 // in remotelessTaskLifecycle.ts; keeping transitions here makes the important
 // "an interrupted task is failed, never falsely completed" rule testable.
 
-export type RemotelessTaskKind = "coding" | "git-commit" | "git-push";
+export type RemotelessTaskKind = "coding" | "git-clone" | "git-commit" | "git-push";
 export type RemotelessTaskState = "running" | "ready" | "completed" | "failed" | "stopped" | "review";
 
 export interface RemotelessTaskRecord {
