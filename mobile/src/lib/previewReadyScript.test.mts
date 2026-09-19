@@ -83,6 +83,12 @@ const { yaverPreviewProbeState, yaverPreviewReady } = makeFns();
 }
 
 {
+  const d = doc({ bodyText: "404 page not found", bodyChildren: [] });
+  assert.equal(yaverPreviewReady(d), false, "the agent's bare 404 must not be application paint");
+  assert.equal(yaverPreviewProbeState(d).reason, "http_error_document");
+}
+
+{
   const d = doc({ flutterMarker: el({ tagName: "FLUTTER-VIEW" }), bodyChildren: [el()] });
   assert.equal(yaverPreviewReady(d), true, "Flutter engine marker is rendered");
   assert.equal(yaverPreviewProbeState(d).reason, "flutter_engine_attached");

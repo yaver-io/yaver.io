@@ -157,6 +157,9 @@ func TestScreenProbeJS_PostsClientPaintWithoutAcceptingEmptyExpoRoot(t *testing.
 	if strings.Contains(js, `mount ? true`) {
 		t.Fatal("an empty Expo #root must not count as rendered")
 	}
+	if !strings.Contains(js, `^404 page not found$`) {
+		t.Fatal("the independent screen probe must reject the agent's bare 404 document")
+	}
 }
 
 func TestScreenProbeTag_IsWellFormed(t *testing.T) {

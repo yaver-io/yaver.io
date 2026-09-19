@@ -14,7 +14,7 @@ import { appLog } from "./logger";
 import { describeDevReloadResult, devReloadReachedTarget, type AttachSessionResult, type DogfoodReloadResult, type RunnerInfo } from "./quic";
 import { doctorBrowserLane, type BrowserLaneProbeResult, type BrowserLaneViewport } from "./browserLaneDoctor";
 import { startBrowserProjectLane, subscribeProjectPreviewOutput } from "./projectPreviewRuntime";
-import { resolveAgentPreviewUrl, waitForAgentPreviewRoute } from "./agentPreviewUrl";
+import { resolveAgentLogicalPreviewUrl, resolveAgentPreviewUrl, waitForAgentPreviewRoute } from "./agentPreviewUrl";
 export { browserShortcutDriverFor } from "./browserShortcutClient";
 
 export type { AttachSessionResult };
@@ -340,6 +340,34 @@ export async function prepareDogfoodMode(
       );
     }
     onLog?.(`[route] phone handoff HTTP ${routeProbe.status} (${routeProbe.contentType})`);
+
+    // Expo Router makes the scoped entry path logical "/" with replaceState.
+    // HMR and a full reload then request this URL, so it is part of the actual
+    // phone operation, not an optional diagnostic. The 2026-09-19 ubuntu-4gb
+    // dogfood incident passed /dev-web/ + bundle checks, launched, and rendered
+    // the agent's bare "404 page not found" because the running agent did not
+    // serve this second route.
+    const logicalUrl = resolveAgentLogicalPreviewUrl(client.baseUrl);
+    const logicalProbe = await waitForAgentPreviewRoute(
+      logicalUrl,
+      client.getAuthHeaders(),
+      undefined,
+      { signal, timeoutMs: 15_000, attemptTimeoutMs: 10_000, intervalMs: 500 },
+    );
+    if (!logicalProbe.ok) {
+      const suffix = logicalProbe.status > 0 ? `HTTP_${logicalProbe.status}` : "TRANSPORT";
+      const response = logicalProbe.status > 0
+        ? `HTTP ${logicalProbe.status} (${logicalProbe.contentType})`
+        : logicalProbe.error || "transport failed";
+      return fail(
+        `DOGFOOD_LOGICAL_ROUTE_${suffix}`,
+        `Yaver's entry page is ready, but its first phone refresh route returned ${response}.`,
+        logicalProbe.status === 404
+          ? "Update the Yaver agent on this machine, then retry. Dogfood stays off because the running agent cannot serve Expo's logical root route."
+          : "Fix the named logical-route response, then retry. Dogfood stays off until both entry and refresh routes serve HTML.",
+      );
+    }
+    onLog?.(`[route] logical refresh HTTP ${logicalProbe.status} (${logicalProbe.contentType})`);
 
     onProgress?.("Proving Yaver renders in the browser…");
     // Cold Expo web bundles on the 8 GB build Mac regularly exceed one minute.

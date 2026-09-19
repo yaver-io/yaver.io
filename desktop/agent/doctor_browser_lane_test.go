@@ -76,6 +76,10 @@ func TestBrowserLaneReadyPredicateRejectsUnmountedExpoShell(t *testing.T) {
 	if !strings.Contains(browserLaneReadyPredicateJS, "s.startingText") {
 		t.Fatal("predicate must consult startingText so the 503 body never reads as rendered")
 	}
+	if !strings.Contains(browserLaneProbeStateJS, "404 page not found") ||
+		!strings.Contains(browserLaneReadyPredicateJS, "s.httpErrorDocument") {
+		t.Fatal("the agent's bare 404 document must never read as rendered")
+	}
 }
 
 func TestBrowserLaneDoctorRequiresReloadURLCapability(t *testing.T) {

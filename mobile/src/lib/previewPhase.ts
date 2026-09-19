@@ -15,7 +15,7 @@
 // (src/lib/previewReadyScript.ts): document_not_ready,
 // agent_starting_response, flutter_engine_attached, flutter_booting,
 // empty_mount, mount_without_visible_content, mount_has_visible_content,
-// plain_body_content, empty_body, probe_exception.
+// plain_body_content, empty_body, http_error_document, probe_exception.
 
 export type PreviewPhaseStatus = {
   framework?: string;
@@ -51,6 +51,8 @@ export function previewPhaseTitle(status: PreviewPhaseStatus, probe: PreviewPhas
     case "agent_starting_response":
       // The agent's 503 "still starting" placeholder page.
       return `Server compiling — waiting for ${fw} to serve the page…`;
+    case "http_error_document":
+      return "Wrong preview route — agent returned 404";
     default:
       // No probe yet / document_not_ready / probe_exception.
       return `${fw} server ready — loading page…`;
@@ -71,6 +73,8 @@ export function previewTimeoutExplanation(reason: string | undefined | null, fra
       return "The server answered but the page body stayed empty — it may be serving a placeholder or the wrong path instead of the app bundle.";
     case "agent_starting_response":
       return "The agent kept serving its 'still starting' placeholder — the underlying dev server never finished compiling. Check the output above for the compile error.";
+    case "http_error_document":
+      return "The phone reached the machine, but the running Yaver agent does not serve the preview's logical refresh route. Update the agent, then retry.";
     default:
       return "The preview never confirmed a rendered frame. Check the output above for errors, then retry.";
   }

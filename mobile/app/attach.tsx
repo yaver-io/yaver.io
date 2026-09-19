@@ -386,6 +386,16 @@ export default function AttachScreen() {
               try {
                 const readiness = JSON.parse(event.nativeEvent.data);
                 if (readiness?.t === "yaver-preview-probe") {
+                  if (readiness.state?.reason === "http_error_document") {
+                    setLoading(false);
+                    reloadInFlight.current = false;
+                    setFatal({
+                      code: "DOGFOOD_WEBVIEW_HTTP_DOCUMENT",
+                      message: "The phone received the agent's 404 page instead of Yaver.",
+                      remedy: "Update the Yaver agent on this machine, return to Production, and retry Dogfood.",
+                    });
+                    return;
+                  }
                   const phase = loadingPhaseForProbe(readiness.state);
                   setLoadingPhase(phase);
                   pushLoadingLog(`${phase} · ${String(readiness.state?.reason || "checking")}`);

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isAgentPreviewDocumentRequest,
   probeAgentPreviewRoute,
+  resolveAgentLogicalPreviewUrl,
   resolveAgentPreviewUrl,
   waitForAgentPreviewRoute,
 } from "./agentPreviewUrl.ts";
@@ -23,6 +24,17 @@ test("direct and tunnel preview paths retain their configured base path", () => 
   assert.equal(
     resolveAgentPreviewUrl("https://tunnel.example/yaver", "/dev/"),
     "https://tunnel.example/yaver/dev/",
+  );
+});
+
+test("logical router refreshes retain the selected device transport prefix", () => {
+  assert.equal(
+    resolveAgentLogicalPreviewUrl("https://relay.example/d/device-123"),
+    "https://relay.example/d/device-123/",
+  );
+  assert.equal(
+    resolveAgentLogicalPreviewUrl("http://127.0.0.1:18080"),
+    "http://127.0.0.1:18080/",
   );
 });
 
@@ -86,6 +98,18 @@ test("a handoff 404 is a named failure, never a rendered verdict", async () => {
     async () => new Response(null, { status: 404 }),
   );
   assert.deepEqual(result, { ok: false, status: 404, contentType: "unknown" });
+});
+
+test("a 200 JSON placeholder is not a renderable preview document", async () => {
+  const result = await probeAgentPreviewRoute(
+    "https://relay.example/d/device-123/",
+    {},
+    async () => new Response('{"ok":true}', { status: 200, headers: { "content-type": "application/json" } }),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 200);
+  assert.equal(result.contentType, "application/json");
+  assert.match(result.error || "", /expected HTML/);
 });
 
 test("a cold Expo 503 is waited through instead of becoming a terminal Dogfood failure", async () => {

@@ -28,6 +28,18 @@ export function resolveAgentPreviewUrl(baseUrl: string, reportedPath: string): s
   return base.toString();
 }
 
+/** Resolve the logical guest-router root on the same device transport.
+ *
+ * Expo Router replaces the scoped /dev-web/ document path with "/" before it
+ * renders. A later HMR/full refresh therefore asks the agent for the transport
+ * root (or /d/<device>/ through the relay), not /dev-web/. Probing only the
+ * entry document lets an older agent report ready and then hand the phone a
+ * bare Go 404 on its first refresh.
+ */
+export function resolveAgentLogicalPreviewUrl(baseUrl: string): string {
+  return resolveAgentPreviewUrl(baseUrl, "/");
+}
+
 /**
  * React Native WebView reports HTTP failures for the document and for its
  * subresources through the same callback. Only the document failure makes the
@@ -107,10 +119,15 @@ export async function probeAgentPreviewRoute(
     const retryAfter = String(response.headers.get("retry-after") || "").trim();
     const transient = response.status === 502 || response.status === 504 ||
       (response.status === 503 && (state === "starting" || retryAfter !== ""));
+    const contentType = String(response.headers.get("content-type") || "unknown").split(";")[0].trim().toLowerCase();
+    const html = contentType === "text/html" || contentType === "application/xhtml+xml";
     return {
-      ok: response.ok,
+      // This is a document probe, not generic liveness. A JSON success body is
+      // not something the WebView can render and must never become "ready".
+      ok: response.ok && html,
       status: response.status,
-      contentType: String(response.headers.get("content-type") || "unknown").split(";")[0],
+      contentType,
+      ...response.ok && !html ? { error: `preview route returned ${contentType}, expected HTML` } : {},
       ...(transient ? { transient: true } : {}),
       ...(state ? { state } : {}),
     };

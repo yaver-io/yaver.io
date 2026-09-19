@@ -223,6 +223,10 @@
       if (!body) return;
       var text = (body.innerText || "").trim();
       if (text.indexOf('"status":"starting"') >= 0 || text.indexOf("did not become ready") >= 0) return;
+      // Go's default ServeMux 404 is body text, not application paint. The
+      // independent mobile probe rejects it too; both producers must agree or
+      // this injected probe can still emit a false "Yaver rendered" verdict.
+      if (/^404 page not found$/i.test(text)) return;
       var mount = document.getElementById("root") || document.getElementById("app");
       var flutter = document.querySelector("flutter-view,flt-glass-pane,flt-scene-host");
       var ready = flutter || (mount ? mount.children.length > 0 : (body.children.length > 1 || text.length > 0));

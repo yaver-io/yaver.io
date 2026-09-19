@@ -162,5 +162,5 @@
     "web": "node --preserve-symlinks scripts/start-web.mjs",
     "postinstall": "patch-package"
   },
-  "version": "1.18.187"
+  "version": "1.18.188"
 }

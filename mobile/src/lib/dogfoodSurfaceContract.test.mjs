@@ -405,6 +405,10 @@ test("an explicitly selected browser Dogfood lane is fail-closed until rendering
     "the agent's relative browser path must retain the selected device's relay prefix");
   assert.match(attachClient, /waitForAgentPreviewRoute\(/,
     "Dogfood must probe the exact phone handoff URL instead of trusting only the box-local doctor");
+  assert.match(attachClient, /resolveAgentLogicalPreviewUrl\(client\.baseUrl\)/,
+    "Dogfood must also prove Expo's logical refresh route before switching modes");
+  assert.match(attachClient, /DOGFOOD_LOGICAL_ROUTE_/,
+    "a stale agent's logical-route 404 must be a named launch failure");
   assert.match(attachClient, /DOGFOOD_RENDER_ROUTE_/,
     "a failed handoff route must stop entry with a stable code");
   assert.doesNotMatch(attachClient, /getDevServerBundleUrl\(bundlePath\)/,

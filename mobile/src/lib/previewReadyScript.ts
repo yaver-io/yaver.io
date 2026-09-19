@@ -62,6 +62,9 @@ export const PREVIEW_READY_PREDICATE = `function yaverPreviewReady(doc){
     // carrying this JSON body (devserver.go). It is text in the DOM, so
     // without this guard the error page itself reads as "rendered".
     if (s.startingText) return false;
+    // Go's default ServeMux 404 is also plain body text. It must never lift the
+    // loading surface or announce that the app rendered.
+    if (s.httpErrorDocument) return false;
     // 1. Flutter — the engine has attached. Unchanged from the original probe.
     if (s.flutterMarker) return true;
     // 1b. Flutter is BOOTING: its bootstrap page is up but no engine marker yet.
@@ -103,6 +106,7 @@ export const PREVIEW_PROBE_STATE_FUNCTION = `function yaverPreviewProbeState(doc
     flutterMarker:false,
     flutterBooting:false,
     startingText:false,
+    httpErrorDocument:false,
     reason:"document_not_ready"
   };
   try {
@@ -115,6 +119,9 @@ export const PREVIEW_PROBE_STATE_FUNCTION = `function yaverPreviewProbeState(doc
     var bt = (b.innerText || "").trim();
     out.bodyTextLen = bt.length;
     out.startingText = bt.indexOf('"status":"starting"') >= 0 || bt.indexOf("did not become ready") >= 0;
+    // The response status is not exposed to injected JS. Recognize the exact
+    // default Go 404 body that reached Dogfood on 2026-09-19.
+    out.httpErrorDocument = /^404 page not found$/i.test(bt);
     out.flutterMarker = !!doc.querySelector("flutter-view,flt-glass-pane,flt-scene-host");
     out.flutterBooting = !!(doc.getElementById("splash") || doc.querySelector('script[src*="flutter"]'));
     var mount = doc.getElementById ? (doc.getElementById("root") || doc.getElementById("app")) : null;
@@ -135,7 +142,8 @@ export const PREVIEW_PROBE_STATE_FUNCTION = `function yaverPreviewProbeState(doc
         out.visibleBoxCount++;
       }
     }
-    if (out.startingText) out.reason = "agent_starting_response";
+    if (out.httpErrorDocument) out.reason = "http_error_document";
+    else if (out.startingText) out.reason = "agent_starting_response";
     else if (out.flutterMarker) out.reason = "flutter_engine_attached";
     else if (out.flutterBooting) out.reason = "flutter_booting";
     else if (out.mountId && out.mountChildren <= 0) out.reason = "empty_mount";

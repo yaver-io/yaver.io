@@ -59,6 +59,14 @@ test("content-confirmed reasons say rendering", () => {
   }
 });
 
+test("a bare agent 404 is named as the wrong route", () => {
+  assert.match(
+    previewPhaseTitle({ framework: "expo", running: true }, { reason: "http_error_document" }),
+    /404/,
+  );
+  assert.match(previewTimeoutExplanation("http_error_document", "expo"), /update the agent/i);
+});
+
 test("timeout explanation names asset/bootstrap failure for flutter_booting", () => {
   const text = previewTimeoutExplanation("flutter_booting", "flutter");
   assert.match(text, /engine never attached/i);
