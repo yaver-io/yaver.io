@@ -52,10 +52,34 @@ func withOnlyPath(t *testing.T, dir string) {
 	// test. (Same discipline as memory/project_go_test_wipes_real_yaver_auth,
 	// applied before it can bite.)
 	t.Setenv("HOME", t.TempDir())
+	originalPlatformCandidates := chromePlatformCandidatePaths
+	chromePlatformCandidatePaths = func() []chromeCandidate { return nil }
+	t.Cleanup(func() { chromePlatformCandidatePaths = originalPlatformCandidates })
 	// The resolver caches; each test must start from a clean probe or it would
 	// be asserting the previous test's box.
 	invalidateChromeResolution()
 	t.Cleanup(invalidateChromeResolution)
+}
+
+func TestResolveChrome_StandardMacAppBeatsBrokenPathShim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fakes are POSIX-only")
+	}
+	dir := t.TempDir()
+	broken := fakeChromeBinary(t, dir, "chromium", 1, "Chromium.app: No such file or directory")
+	working := fakeChromeBinary(t, dir, "Google Chrome", 0, "Google Chrome 150.0.7871.186")
+	withOnlyPath(t, dir)
+	chromePlatformCandidatePaths = func() []chromeCandidate {
+		return []chromeCandidate{{name: "google-chrome-app", path: working}}
+	}
+
+	got, attempts := resolveLaunchableChrome(context.Background())
+	if got != working {
+		t.Fatalf("resolved %q, want installed app %q; attempts: %s", got, working, chromeAttemptsSummary(attempts))
+	}
+	if len(attempts) != 2 || attempts[0].Path != broken || attempts[0].OK || attempts[1].Path != working || !attempts[1].OK {
+		t.Fatalf("resolver did not reject the stale shim before selecting the app: %+v", attempts)
+	}
 }
 
 const snapFailure = "cannot create temporary directory for the root file system: No such file or directory"

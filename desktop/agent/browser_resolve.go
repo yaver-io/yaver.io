@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +83,40 @@ var chromeCandidateNames = []string{
 	"google-chrome", "google-chrome-stable",
 	"chromium", "chromium-browser",
 	"chrome",
+}
+
+type chromeCandidate struct {
+	name string
+	path string
+}
+
+// chromePlatformCandidatePaths covers browsers installed outside PATH. That
+// is the normal installation shape on macOS: Chrome lives in /Applications,
+// while a stale Homebrew shim can still occupy PATH after Chromium.app was
+// removed. The launch probe must consider the real app before falling back to
+// that broken shim.
+//
+// Kept as a variable so resolver tests can describe an isolated machine
+// without inheriting applications installed on the developer host.
+var chromePlatformCandidatePaths = defaultChromePlatformCandidatePaths
+
+func defaultChromePlatformCandidatePaths() []chromeCandidate {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	paths := []chromeCandidate{
+		{name: "google-chrome-app", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"},
+		{name: "chromium-app", path: "/Applications/Chromium.app/Contents/MacOS/Chromium"},
+		{name: "brave-app", path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"},
+	}
+	if home != "" {
+		paths = append(paths,
+			chromeCandidate{name: "google-chrome-user-app", path: filepath.Join(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome")},
+			chromeCandidate{name: "chromium-user-app", path: filepath.Join(home, "Applications/Chromium.app/Contents/MacOS/Chromium")},
+		)
+	}
+	return paths
 }
 
 // chromeProbeTimeout bounds one `--version`.
@@ -173,6 +210,15 @@ func probeChromeCandidates(ctx context.Context) (string, []chromeAttempt) {
 		}
 		if try(name, path) {
 			return path, attempts
+		}
+	}
+
+	for _, candidate := range chromePlatformCandidatePaths() {
+		if info, err := os.Stat(candidate.path); err != nil || info.IsDir() {
+			continue
+		}
+		if try(candidate.name, candidate.path) {
+			return candidate.path, attempts
 		}
 	}
 
