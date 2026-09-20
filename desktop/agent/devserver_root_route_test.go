@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func expoBrowserRouteTestManager(t *testing.T, upstream *httptest.Server) *DevServerManager {
@@ -77,5 +78,93 @@ func TestBrowserPreviewLogicalRootRejectsMutations(t *testing.T) {
 	)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("POST logical root = %d, want 404", rec.Code)
+	}
+}
+
+// Runtime-created CSS is its own resource loader. Patching fetch, XHR, script,
+// and img URLs does not affect @font-face, background-image, cursor, masks, or
+// any other url(...) inside a <style> element. Expo vector icons expose this
+// generally: the app and text render, while every icon is blank because
+// expo-font injects a root-relative font URL after the preview bootstrap has
+// hidden /d/<device>/dev-web/ from the guest router.
+//
+// Use a relay-shaped outer mount and a real browser. A request that escapes to
+// /assets never reaches the agent; a correctly rebased CSS URL traverses
+// /d/device-1/dev-web/assets and arrives at the preview process as /assets.
+func TestBrowserPreviewRuntimeCSSAssetsStayInsideRelayLane(t *testing.T) {
+	skipWithoutChrome(t)
+	assetRequested := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/assets/icons.woff2" {
+			select {
+			case assetRequested <- r.URL.Path:
+			default:
+			}
+			w.Header().Set("Content-Type", "font/woff2")
+			_, _ = w.Write([]byte("not-a-real-font-request-path-is-the-contract"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head></head><body>
+<span id="icon">x</span><script>
+var style=document.createElement("style");
+style.appendChild(document.createTextNode('@font-face{font-family:DogfoodProbe;src:url("/assets/icons.woff2")}#icon{font-family:DogfoodProbe}'));
+document.head.appendChild(style);
+document.fonts.load("16px DogfoodProbe").catch(function(){});
+</script></body></html>`))
+	}))
+	defer upstream.Close()
+
+	s := &HTTPServer{devServerMgr: expoBrowserRouteTestManager(t, upstream)}
+	agentMux := http.NewServeMux()
+	agentMux.HandleFunc("/dev-web/", s.handleDevWebProxy)
+	agentMux.HandleFunc("/", s.handleBrowserPreviewRoot)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const mount = "/d/device-1"
+		if !strings.HasPrefix(r.URL.Path, mount+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		clone := r.Clone(r.Context())
+		clone.URL.Path = strings.TrimPrefix(r.URL.Path, mount)
+		agentMux.ServeHTTP(w, clone)
+	}))
+	defer relay.Close()
+
+	bm := NewBrowserManager()
+	defer bm.Stop()
+	const sessionID = "dogfood-runtime-css-assets"
+	if err := bm.OpenSession(sessionID, false); err != nil {
+		t.Skipf("could not open browser here: %v", err)
+	}
+	defer func() { _ = bm.CloseSession(sessionID) }()
+	if _, err := bm.Navigate(sessionID, relay.URL+"/d/device-1/dev-web/"); err != nil {
+		t.Fatalf("navigate relay-shaped preview: %v", err)
+	}
+	cssContract, err := bm.Evaluate(sessionID, `(function(){
+var c=window.__yaverPreviewCSS;
+if(typeof c!=="function")return false;
+var root=c('a{background:url("/assets/background.png")}');
+var imported=c('@import "/styles/theme.css";');
+var data='a{background:url(data:image/png;base64,AAAA)}';
+var external='a{background:url("https://cdn.example.invalid/image.png")}';
+return root.indexOf('/d/device-1/dev-web/assets/background.png')!==-1 &&
+ imported.indexOf('/d/device-1/dev-web/styles/theme.css')!==-1 &&
+ c(data)===data && c(external)===external;
+})()`)
+	if err != nil {
+		t.Fatalf("evaluate runtime CSS contract: %v", err)
+	}
+	if cssContract != true {
+		t.Fatalf("runtime CSS URL contract = %v, want true", cssContract)
+	}
+
+	select {
+	case got := <-assetRequested:
+		if got != "/assets/icons.woff2" {
+			t.Fatalf("upstream asset path = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime CSS asset escaped the relay-scoped preview lane; upstream never received /assets/icons.woff2")
 	}
 }

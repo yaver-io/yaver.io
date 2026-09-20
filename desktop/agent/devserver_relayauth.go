@@ -194,7 +194,23 @@ function A(u){try{
  if(q){keep.forEach(function(v,k){if(!url.searchParams.has(k))url.searchParams.set(k,v);});}
  return url.toString();
 }catch(e){return u;}}
+// CSS is a resource loader too. Expo icons make the gap obvious because
+// expo-font creates @font-face at runtime, but the same escape affects every
+// framework's background images, masks, cursors, @imports, and constructable
+// stylesheets. Rebase url(...) and @import through the same captured lane as
+// fetch/img/script; data/blob/external URLs remain unchanged because A owns
+// that policy in one place.
+function C(v){try{
+ if(typeof v!=="string")return v;
+ return v.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi,function(_,q,u){
+  var clean=u.trim(),next=String(A(clean));
+  return next===clean?_:"url("+JSON.stringify(next)+")";
+ }).replace(/(@import\s+)(["'])([^"']+)\2/gi,function(_,p,q,u){
+  var clean=u.trim(),next=String(A(clean));return next===clean?_:p+q+next+q;
+ });
+}catch(e){return v;}}
 window.__yaverPreviewURL=A;
+window.__yaverPreviewCSS=C;
 // Expo's web HMR client registers document.currentScript.src with Metro. Under
 // the preview proxy that URL contains the transport mount (/dev/ or
 // /d/<device>/dev/), which is not part of the project entry path. Metro then
@@ -224,11 +240,27 @@ if(of)window.fetch=function(i,init){try{
 }catch(e){}return of(i,init);};
 var xo=XMLHttpRequest.prototype.open;
 XMLHttpRequest.prototype.open=function(m,u){try{arguments[1]=A(u);}catch(e){}return xo.apply(this,arguments);};
+var ff=window.FontFace;
+if(ff){try{window.FontFace=new Proxy(ff,{construct:function(t,a,n){var x=Array.prototype.slice.call(a);if(x.length>1)x[1]=C(x[1]);return Reflect.construct(t,x,n);}});}catch(e){}}
+var cp=window.CSSStyleSheet&&window.CSSStyleSheet.prototype;
+if(cp){
+ if(cp.insertRule){var ir=cp.insertRule;cp.insertRule=function(r,i){return ir.call(this,C(r),i);};}
+ if(cp.replace){var cr=cp.replace;cp.replace=function(r){return cr.call(this,C(r));};}
+ if(cp.replaceSync){var cs=cp.replaceSync;cp.replaceSync=function(r){return cs.call(this,C(r));};}
+}
 var ce=document.createElement.bind(document);
 document.createElement=function(t){var el=ce(t);try{
  var n=String(t).toLowerCase(),a=(n==="link"||n==="a")?"href":(n==="script"||n==="img")?"src":null;
  if(a){Object.defineProperty(el,a,{configurable:true,
   set:function(v){el.setAttribute(a,A(v));},get:function(){return el.getAttribute(a);}});}
+ if(n==="style"){
+  var oa=el.appendChild.bind(el);el.appendChild=function(ch){try{if(ch&&ch.nodeType===3)ch.data=C(ch.data);}catch(e){}return oa(ch);};
+  var oi=el.insertBefore.bind(el);el.insertBefore=function(ch,ref){try{if(ch&&ch.nodeType===3)ch.data=C(ch.data);}catch(e){}return oi(ch,ref);};
+  var td=Object.getOwnPropertyDescriptor(Node.prototype,"textContent");
+  if(td&&td.set)Object.defineProperty(el,"textContent",{configurable:true,get:td.get?function(){return td.get.call(el);}:undefined,set:function(v){td.set.call(el,C(v));}});
+  var hd=Object.getOwnPropertyDescriptor(Element.prototype,"innerHTML");
+  if(hd&&hd.set)Object.defineProperty(el,"innerHTML",{configurable:true,get:hd.get?function(){return hd.get.call(el);}:undefined,set:function(v){hd.set.call(el,C(v));}});
+ }
 }catch(e){}return el;};
 }catch(e){}})();</script>`
 
