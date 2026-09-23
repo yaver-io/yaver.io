@@ -9,7 +9,7 @@ import (
 )
 
 func TestShouldEnableHeadlessKeepAwake_DefaultsOnSupportedPlatforms(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		t.Skip("platform-specific default")
 	}
 	if isWSL() {
@@ -31,7 +31,7 @@ func TestShouldEnableHeadlessKeepAwake_ExplicitFalseWins(t *testing.T) {
 func TestApplyDefaultHeadlessKeepAwake(t *testing.T) {
 	cfg := &Config{}
 	changed := applyDefaultHeadlessKeepAwake(cfg)
-	if runtime.GOOS == "darwin" || (runtime.GOOS == "linux" && !isWSL()) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" || (runtime.GOOS == "linux" && !isWSL()) {
 		if !changed {
 			t.Fatal("expected supported platform default to be applied")
 		}

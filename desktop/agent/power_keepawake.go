@@ -14,7 +14,7 @@ func shouldEnableHeadlessKeepAwake(cfg *Config) bool {
 	if isWSL() {
 		return false
 	}
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		return false
 	}
 	if cfg != nil && cfg.HeadlessKeepAwake != nil {
@@ -27,7 +27,7 @@ func applyDefaultHeadlessKeepAwake(cfg *Config) bool {
 	if cfg == nil || cfg.HeadlessKeepAwake != nil {
 		return false
 	}
-	if isWSL() || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+	if isWSL() || (runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows") {
 		return false
 	}
 	enabled := true
@@ -41,6 +41,15 @@ func startHeadlessKeepAwake(cfg *Config) func() {
 			log.Printf("[power] WSL detected: runtime sleep inhibition is not supported; rely on the WSL startup helper and Windows power settings instead")
 		}
 		return nil
+	}
+	if runtime.GOOS == "windows" {
+		stop, err := startWindowsHeadlessKeepAwake()
+		if err != nil {
+			log.Printf("[power] Windows sleep inhibitor failed: %v", err)
+			return nil
+		}
+		log.Printf("[power] headless keep-awake active via SetThreadExecutionState")
+		return stop
 	}
 	if buildHeadlessKeepAwakeCommand(os.Getpid()) == nil {
 		return nil // no inhibitor available on this platform
@@ -115,7 +124,8 @@ func buildHeadlessKeepAwakeCommand(pid int) *osexec.Cmd {
 			log.Printf("[power] macOS caffeinate not found; continuing without sleep inhibition")
 			return nil
 		}
-		return osexec.Command("caffeinate", "-dimsu", "-w", strconv.Itoa(pid))
+		// Keep the system available while allowing normal display-off and lock.
+		return osexec.Command("caffeinate", "-i", "-s", "-w", strconv.Itoa(pid))
 	case "linux":
 		if isWSL() {
 			return nil
