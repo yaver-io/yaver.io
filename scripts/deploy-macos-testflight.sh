@@ -92,9 +92,17 @@ fi
 # and applies it to the signed app. The post-build codesign check below proves
 # the capability at the layer Apple actually validates.
 PROFILE_PLIST="$(mktemp -t yaver-mas-profile.XXXXXX)"
+PROFILE_BUILD_COPY=""
+VALIDATION_LOG=""
 XCODE_PACKAGE_DIR=""
 cleanup() {
   rm -f "$PROFILE_PLIST"
+  if [ -n "$PROFILE_BUILD_COPY" ]; then
+    rm -f "$PROFILE_BUILD_COPY"
+  fi
+  if [ -n "$VALIDATION_LOG" ]; then
+    rm -f "$VALIDATION_LOG"
+  fi
   if [ -n "$XCODE_PACKAGE_DIR" ] && [ -d "$XCODE_PACKAGE_DIR" ]; then
     case "$(basename "$XCODE_PACKAGE_DIR")" in
       yaver-mas-xcode.*)
@@ -147,7 +155,15 @@ fi
 # a local package build number. An operator can pin an ASC-derived value.
 YAVER_MAC_BUILD_NUMBER="${YAVER_MAC_BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
 export YAVER_MAC_BUILD_NUMBER
-export "$PROFILE_VAR=$PROFILE_PATH"
+# Keep the durable provisioning profile owner-only. electron-builder preserves
+# the source mode when embedding it in the app, and a 0600 embedded profile
+# makes App Store Connect reject the otherwise valid package because ordinary
+# users cannot verify its signature. Stage only this ephemeral build copy with
+# the mode required inside an application bundle.
+PROFILE_BUILD_COPY="$(mktemp -t yaver-mas-build-profile.XXXXXX)"
+cp "$PROFILE_PATH" "$PROFILE_BUILD_COPY"
+chmod 0644 "$PROFILE_BUILD_COPY"
+export "$PROFILE_VAR=$PROFILE_BUILD_COPY"
 
 BUILD_LABEL="App Store"
 if [ "$DEV_BUILD" = "1" ]; then
@@ -315,8 +331,19 @@ cleanup_upload() { rm -f "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_
 trap 'cleanup_upload; cleanup' EXIT
 
 echo "Validating package with App Store Connect…"
-(cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$PKG_PATH" --type macos \
-  --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")
+VALIDATION_LOG="$(mktemp -t yaver-mas-validation.XXXXXX)"
+if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$PKG_PATH" --type macos \
+  --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") 2>&1 | tee "$VALIDATION_LOG"; then
+  echo "ERROR: App Store Connect package validation command failed; upload was not attempted." >&2
+  exit 1
+fi
+# altool can return zero even when Apple's response says VERIFY FAILED. Treat
+# the server verdict as authoritative so a known-invalid package is never sent
+# to the upload endpoint.
+if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+  echo "ERROR: App Store Connect rejected package validation; upload was not attempted." >&2
+  exit 1
+fi
 echo "Uploading package to macOS TestFlight…"
 (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$PKG_PATH" --type macos \
   --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")

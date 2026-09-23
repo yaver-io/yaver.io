@@ -51,4 +51,7 @@ test("MAS deploy preserves the existing Yaver app identity and verifies the pack
   assert.match(deploy, /codesign --verify --deep --strict/);
   assert.match(deploy, /find "\$DIST_MAS_DIR" -depth -delete/);
   assert.match(deploy, /retrying the same verified archive once/);
+  assert.match(deploy, /chmod 0644 "\$PROFILE_BUILD_COPY"/);
+  assert.match(deploy, /VERIFY FAILED\|Validation failed\|Failed to validate package/);
+  assert.match(deploy, /upload was not attempted/);
 });
