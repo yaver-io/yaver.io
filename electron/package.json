@@ -1,7 +1,7 @@
 {
   "name": "yaver-gui",
   "productName": "Yaver",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Desktop GUI for the Yaver web dashboard — chat, vibing, devices, and previews in a native shell.",
   "main": "src/main.js",
   "author": "Kivanç Çakmak <kivanc.cakmak@simkab.com>",
@@ -26,6 +26,10 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
+  },
+  "overrides": {
+    "fast-uri": "3.1.6",
+    "js-yaml": "4.3.2"
   },
   "build": {
     "appId": "io.yaver.gui",

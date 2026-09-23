@@ -1112,6 +1112,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/web", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/projects/all", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/remote-runtime/capabilities", s.auth(s.handleRemoteRuntimeCapabilities))
+	mux.HandleFunc("/remote-runtime/turn-credentials", s.auth(s.handleRemoteRuntimeTURNCredentials))
 	mux.HandleFunc("/remote-runtime/sessions", s.auth(s.handleRemoteRuntimeSessions))
 	mux.HandleFunc("/remote-runtime/sessions/", s.auth(s.handleRemoteRuntimeSessionRoute))
 	// Monorepo detection — desktop/agent/monorepo_detect.go

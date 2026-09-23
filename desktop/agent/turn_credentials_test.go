@@ -5,12 +5,28 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pion/webrtc/v4"
 )
+
+// The credential producer shipped without a mux registration once, leaving
+// every browser viewer on public STUN even though the handler and its unit
+// tests were green. Pin the actual HTTPServer wiring as part of this contract:
+// a signal/route with no consumer is not a shipped feature.
+func TestRemoteRuntimeTURNCredentialsRouteIsWired(t *testing.T) {
+	src, err := os.ReadFile("httpserver.go")
+	if err != nil {
+		t.Fatalf("read httpserver.go: %v", err)
+	}
+	const registration = `mux.HandleFunc("/remote-runtime/turn-credentials", s.auth(s.handleRemoteRuntimeTURNCredentials))`
+	if strings.Count(string(src), registration) != 1 {
+		t.Fatalf("TURN credential route registration count = %d, want exactly 1", strings.Count(string(src), registration))
+	}
+}
 
 func TestFetchRelayTURNCredentials_UsesScopedPasswordAndAcceptsAllTURNTransports(t *testing.T) {
 	const password = "scoped-account-password"
