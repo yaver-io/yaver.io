@@ -34,6 +34,8 @@ const appearanceThemePatchValidator = v.object({
     v.literal("web"),
     v.literal("tvos"),
     v.literal("androidtv"),
+    v.literal("xbox"),
+    v.literal("playstation"),
     v.literal("watchos"),
     v.literal("wearos"),
     v.literal("visionos"),
@@ -53,7 +55,7 @@ function mergeAppearanceTheme(
     surface: patch.surface,
     theme: patch.theme,
     updatedAt: Date.now(),
-  }].slice(-8);
+  }].slice(-10);
 }
 
 const openCodeConfigSnapshotPatchValidator = v.object({

@@ -12,11 +12,11 @@ test("appearance settings are validated, surface-scoped, bounded, and forwarded"
   const http = read("backend/convex/http.ts");
 
   assert.match(schema, /appearanceThemeBySurface:[\s\S]*surface: v\.string\(\)[\s\S]*literal\("light"\)[\s\S]*literal\("dark"\)/);
-  for (const surface of ["mobile", "web", "tvos", "androidtv", "watchos", "wearos", "visionos", "carplay"]) {
+  for (const surface of ["mobile", "web", "tvos", "androidtv", "xbox", "playstation", "watchos", "wearos", "visionos", "carplay"]) {
     assert.match(settings, new RegExp(`v\\.literal\\("${surface}"\\)`));
   }
   assert.match(settings, /filter\(\(row\) => row\.surface !== patch\.surface\)/);
-  assert.match(settings, /slice\(-8\)/);
+  assert.match(settings, /slice\(-10\)/);
   assert.equal((settings.match(/patch\.appearanceThemeBySurface = mergeAppearanceTheme/g) ?? []).length, 2);
   assert.match(http, /appearanceThemeForSurface: body\.appearanceThemeForSurface/);
 });
