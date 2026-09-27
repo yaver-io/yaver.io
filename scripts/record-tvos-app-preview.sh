@@ -47,6 +47,14 @@ for tool in xcrun ffmpeg ffprobe; do
   }
 done
 
+# AudioToolbox's AAC encoder preserves the declared 256 kbps rate for silence;
+# FFmpeg's native VBR AAC encoder collapses a silent track to a few kbps, which
+# falls outside App Store Connect's preview specification.
+if ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'aac_at'; then
+  echo "ERROR: this ffmpeg must provide the macOS AudioToolbox AAC encoder (aac_at)." >&2
+  exit 1
+fi
+
 if ! xcrun simctl list devices booted | grep -q "Apple TV"; then
   echo "ERROR: boot an Apple TV Simulator before recording." >&2
   exit 1
@@ -91,7 +99,7 @@ ffmpeg -hide_banner -loglevel error -y \
   -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p" \
   -c:v libx264 -profile:v high -level:v 4.0 \
   -b:v 11M -maxrate 12M -bufsize 24M \
-  -c:a aac -b:a 256k -ar 48000 -ac 2 \
+  -c:a aac_at -b:a 256k -ar 48000 -ac 2 \
   -movflags +faststart -shortest "$OUTPUT"
 
 PROBE="$(ffprobe -v error -select_streams v:0 \
@@ -99,6 +107,9 @@ PROBE="$(ffprobe -v error -select_streams v:0 \
   -of csv=p=0 "$OUTPUT")"
 ACTUAL_DURATION="$(ffprobe -v error -show_entries format=duration \
   -of default=noprint_wrappers=1:nokey=1 "$OUTPUT")"
+AUDIO_PROBE="$(ffprobe -v error -select_streams a:0 \
+  -show_entries stream=codec_name,sample_rate,channels,bit_rate \
+  -of csv=p=0 "$OUTPUT")"
 
 if [ "$PROBE" != "h264,1920,1080,30/1" ]; then
   echo "ERROR: preview validation failed: expected h264,1920,1080,30/1; got $PROBE" >&2
@@ -108,6 +119,13 @@ if ! awk -v seconds="$ACTUAL_DURATION" 'BEGIN { exit !(seconds >= 15 && seconds 
   echo "ERROR: preview duration is outside 15-30 seconds: ${ACTUAL_DURATION}s" >&2
   exit 1
 fi
+if ! printf '%s\n' "$AUDIO_PROBE" | awk -F, '
+  $1 == "aac" && $2 == "48000" && $3 == "2" && $4 >= 240000 && $4 <= 270000 { ok = 1 }
+  END { exit !ok }
+'; then
+  echo "ERROR: expected stereo 48kHz AAC near 256kbps; got $AUDIO_PROBE" >&2
+  exit 1
+fi
 
 echo "App Store preview ready: $OUTPUT"
-echo "Video: $PROBE · duration ${ACTUAL_DURATION}s"
+echo "Video: $PROBE · audio: $AUDIO_PROBE · duration ${ACTUAL_DURATION}s"
