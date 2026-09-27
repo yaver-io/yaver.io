@@ -74,9 +74,11 @@ test("GitHub builds and lane-tests the Store package without Convex or a private
 
 test("final package assertion requires the x64 native agent and rejects WSL payloads", () => {
   const assertion = read("electron/store/assert-microsoft-store-package.ps1");
+  const builder = read("electron/scripts/build-microsoft-store.ps1");
   assert.match(assertion, /resources\\bin\\yaver\.exe/);
   assert.match(assertion, /Native x64 agent \/health passed without WSL or a scheduled task/);
   assert.match(assertion, /\.vhdx/);
   assert.match(assertion, /privateNetworkClientServer/);
   assert.match(assertion, /ExpectedArchitecture = "x64"/);
+  assert.doesNotMatch(builder, /assert-microsoft-store-package[\s\S]*LASTEXITCODE/);
 });

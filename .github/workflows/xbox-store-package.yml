@@ -19,6 +19,10 @@ on:
         description: "Exact PublisherDisplayName from Partner Center"
         required: true
         type: string
+      display_name:
+        description: "Exact reserved product display name from Partner Center"
+        required: true
+        type: string
       package_version:
         description: "Four-part Store version ending in .0"
         required: true
@@ -55,6 +59,7 @@ jobs:
       XBOX_IDENTITY_NAME: ${{ inputs.identity_name }}
       XBOX_PUBLISHER: ${{ inputs.publisher }}
       XBOX_PUBLISHER_DISPLAY_NAME: ${{ inputs.publisher_display_name }}
+      XBOX_DISPLAY_NAME: ${{ inputs.display_name }}
       XBOX_PACKAGE_VERSION: ${{ inputs.package_version }}
       XBOX_CONFIRMATION: ${{ inputs.confirmation }}
     steps:
@@ -68,6 +73,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:XBOX_IDENTITY_NAME) -or $env:XBOX_IDENTITY_NAME -match 'PENDING|Development') { throw 'Enter the exact Partner Center identity name.' }
           if ([string]::IsNullOrWhiteSpace($env:XBOX_PUBLISHER) -or $env:XBOX_PUBLISHER -eq 'CN=Development') { throw 'Enter the exact Partner Center publisher.' }
           if ([string]::IsNullOrWhiteSpace($env:XBOX_PUBLISHER_DISPLAY_NAME)) { throw 'Enter the exact Partner Center publisher display name.' }
+          if ([string]::IsNullOrWhiteSpace($env:XBOX_DISPLAY_NAME)) { throw 'Enter the exact reserved Partner Center product display name.' }
           if ($env:XBOX_PACKAGE_VERSION -notmatch '^\d+\.\d+\.\d+\.0$') { throw 'Package version must contain four numeric parts and end in .0.' }
           if ($env:XBOX_CONFIRMATION -cne "BUILD YAVER XBOX $env:XBOX_IDENTITY_NAME") { throw 'Confirmation does not bind this run to the requested Store identity.' }
 
@@ -80,6 +86,8 @@ jobs:
           $manifest.Package.Identity.Publisher = $env:XBOX_PUBLISHER
           $manifest.Package.Identity.Version = $env:XBOX_PACKAGE_VERSION
           $manifest.Package.Properties.PublisherDisplayName = $env:XBOX_PUBLISHER_DISPLAY_NAME
+          $manifest.Package.Properties.DisplayName = $env:XBOX_DISPLAY_NAME
+          $manifest.Package.Applications.Application.VisualElements.DisplayName = $env:XBOX_DISPLAY_NAME
           $settings = [Xml.XmlWriterSettings]::new()
           $settings.Encoding = [Text.UTF8Encoding]::new($false)
           $settings.Indent = $true
@@ -133,6 +141,8 @@ jobs:
           if ($built.Package.Identity.Name -cne $env:XBOX_IDENTITY_NAME) { throw 'Built identity name differs from Partner Center.' }
           if ($built.Package.Identity.Publisher -cne $env:XBOX_PUBLISHER) { throw 'Built publisher differs from Partner Center.' }
           if ($built.Package.Identity.Version -ne $env:XBOX_PACKAGE_VERSION) { throw 'Built package version differs from the requested version.' }
+          if ($built.Package.Properties.DisplayName -cne $env:XBOX_DISPLAY_NAME) { throw 'Built package display name is not the reserved Partner Center name.' }
+          if ($built.Package.Applications.Application.VisualElements.DisplayName -cne $env:XBOX_DISPLAY_NAME) { throw 'Built application display name is not the reserved Partner Center name.' }
           if ($built.Package.Identity.ProcessorArchitecture -ne 'x64') { throw 'Built Xbox package is not x64.' }
           $family = @($built.Package.Dependencies.TargetDeviceFamily)
           if ($family.Count -ne 1 -or $family[0].Name -ne 'Windows.Xbox') { throw 'Built package is not Xbox-only.' }

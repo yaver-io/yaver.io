@@ -45,5 +45,4 @@ $arguments = @{
 }
 if ($RunPreflight -and $PreflightReport) { $arguments.ReportPath = $PreflightReport }
 & (Join-Path $repo "electron\store\assert-microsoft-store-package.ps1") @arguments
-if ($LASTEXITCODE -ne 0) { throw "Microsoft Store package contract failed." }
 Write-Host "Built: $artifact"

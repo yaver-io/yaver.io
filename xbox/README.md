@@ -12,10 +12,12 @@ Xbox suspend/resume testing.
 
 ## Build and sideload
 
-1. Use the existing company account in Microsoft Partner Center and reserve
-   `Yaver for Xbox` as a separate MSIX or PWA product. Do not reuse the `Yaver`
-   EXE/MSI desktop product.
-2. Associate the project with that Store identity; never submit the development
+1. Use an MSIX/PWA Partner Center product. The current `Yaver.io` product may
+   carry both its `Windows.Desktop` package and this separate `Windows.Xbox`
+   package; Microsoft routes each family to its applicable package. Do not use
+   the legacy `Yaver` EXE/MSI product.
+2. Bind the project to that product's exact identity and reserved display name;
+   never submit the development
    identity in `Package.appxmanifest`.
 3. On Windows 11 with Visual Studio 2022, install **Universal Windows Platform
    development** and the Windows 10 SDK 19041 or newer.
