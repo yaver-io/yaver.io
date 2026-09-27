@@ -257,8 +257,9 @@ Phone-paired is not just a transport; it's a **division of labor**:
   The no-code-readback / summary-only design keeps it clean — same posture as
   the CarPlay entitlement doc.
 - **Two stores, two reviews, two signings.** watchOS rides the iOS app's
-  TestFlight/App Store record (companion); Wear OS is a separate Play listing.
-  Budget the submission overhead, not just the build.
+  TestFlight/App Store record (companion); Wear OS uses a distinct AAB and the
+  dedicated Wear track under the existing Play listing. Budget the submission
+  overhead, not just the build.
 - **Standalone token custody.** Mode B/C means a session token on the watch
   Keychain. Bounded, but it's the one place the watch stops being "holds
   nothing sensitive." Gate it behind an explicit "use without phone" opt-in.

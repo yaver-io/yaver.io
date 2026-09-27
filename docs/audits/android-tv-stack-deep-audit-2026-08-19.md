@@ -3,9 +3,9 @@
 ## Verified source of truth
 
 The Android TV implementation is a standalone `androidtv/` Compose build with
-package `io.yaver.tv`. The older `docs/yaver-android-tv-release-runbook.md`
-describes the Expo phone AAB and `mobile/plugins/withAndroidTV.js`; that path is
-separate and does not describe this standalone app.
+Kotlin namespace `io.yaver.tv`. Release builds use application ID
+`io.yaver.mobile` so the distinct TV AAB can ship from the existing Play listing
+on `tv:internal`; the required Leanback feature keeps it TV-only.
 
 ## Findings
 
@@ -27,8 +27,9 @@ separate and does not describe this standalone app.
   Android-device stream remain placeholders.
 - A physical/emulator D-pad pass is still required; source compilation cannot
   prove focus order or 10-foot readability.
-- The standalone release/deploy script still points at the phone AAB and must
-  be split or replaced before an Android TV APK/AAB is uploaded.
+- The standalone release/deploy script now builds and verifies the TV AAB.
+  Play Console must enable the Android TV form factor and `tv:internal` track
+  once before the Publisher API can upload it.
 - Unit tests pass with the JVM `org.json` test dependency; offline Gradle mode
   still cannot resolve uncached artifacts, so CI or a connected build is the
   reliable test path.

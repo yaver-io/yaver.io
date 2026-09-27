@@ -1,26 +1,22 @@
 # Android TV — release runbook
 
-> Status: live (2026-06-17). Android TV ships in the **same AAB** as the phone app
-> (leanback is a manifest addition via `mobile/plugins/withAndroidTV.js` + the tracked
-> `mobile/android/app/src/main/AndroidManifest.xml` overlay). This is the last-mile
-> checklist for getting that AAB onto a **TV release**. CI wiring:
-> `.github/workflows/release-mobile.yml` (signed → Play internal) and
-> `.github/workflows/mobile-variants.yml` (wiring guard + debug-APK verify).
+> Status: live (updated 2026-09-27). Android TV is a standalone Compose app in
+> `androidtv/`. It produces a distinct TV-only AAB with application ID
+> `io.yaver.mobile` and ships from the existing Play listing on `tv:internal`.
+> The Kotlin namespace remains `io.yaver.tv`. CI fallback wiring lives in
+> `.github/workflows/release-android-tv.yml`.
 
-## 1. Build (GitHub CI — no local disk/keychain needed)
+## 1. Build and upload through the canonical wrapper
 
 ```bash
-# signed AAB → Play internal testing track (auto versionCode bump)
-gh workflow run "Release Mobile" --ref main -f upload_testflight=false -f upload_playstore=true
-gh run watch <run-id> --exit-status    # or: gh run view <run-id> --json status,conclusion
+export PLAY_STORE_KEY_FILE=/path/to/google-play-service-account.json
+./deploy/deploy.sh android-tv
 ```
 
-The android job: `npm ci → expo prebuild --clean → restore splash drawable →
-decode keystore → bump versionCode → bundleRelease → upload to internal track`.
-Because `expo prebuild --clean` regenerates the manifest from `app.json` plugins,
-the leanback entries come from the **registered** `withAndroidTV` plugin (this is
-why app.json registration matters on CI — the tracked overlay only governs the
-*local* `scripts/deploy-playstore.sh` path).
+The wrapper selects an unused versionCode from the live `io.yaver.mobile`
+listing, builds `androidtv/`, checks the Leanback manifest and 320×180 banner,
+verifies the upload certificate, probes `tv:internal`, then uploads. The GitHub
+workflow is a fallback and invokes the same wrapper.
 
 ## 2. Confirm the AAB is actually TV-eligible (don't trust "should be")
 
@@ -33,10 +29,10 @@ bundletool dump manifest --bundle app-release.aab | grep -E "LEANBACK_LAUNCHER|l
 ```
 
 Expect: `android.intent.category.LEANBACK_LAUNCHER`, a `<uses-feature
-android:name="android.software.leanback" android:required="false">`, and
+android:name="android.software.leanback" android:required="true">`, and
 `android:banner="@drawable/tv_banner"`. The `mobile-variants.yml`
 `build-android-variant` job does this assertion automatically on a debug APK via
-`aapt2 dump xmltree`.
+`aapt2 dump xmltree`. The canonical deploy also checks the manifest and banner.
 
 ## 3. Device-verify BEFORE submitting (Google rejects un-navigable TV apps)
 
@@ -75,11 +71,11 @@ opt-in / store-listing review):
 
 - **Banner is mandatory and must be exactly 320×180** (`@drawable/tv_banner`).
   Missing/!=size → instant TV rejection. Guarded in `mobile-variants.yml`.
-- **`leanback` + `touchscreen` must be `required="false"`** or Play won't let the
-  same APK serve both phone and TV.
+- **Leanback must be required and touchscreen optional** because this standalone
+  AAB is TV-only. The phone AAB remains a separate artifact in the same listing.
 - **No leanback ⇒ silently phone-only.** The app still builds and works on phones
   with leanback missing — the TV eligibility just vanishes. That's exactly the
   regression `mobile-variants.yml::verify-wiring` exists to catch.
-- TestFlight-style upload rate limits don't apply to Play, but internal-track
-  versionCodes must strictly increase (CI handles this: `100 + run_number`).
+- VersionCodes are shared across every AAB in the `io.yaver.mobile` listing and
+  must strictly increase. The wrapper queries Play before it builds.
 ```

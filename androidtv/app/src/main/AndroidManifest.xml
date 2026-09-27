@@ -5,9 +5,10 @@
   This is a STANDALONE Android TV app (Jetpack Compose), the Android counterpart
   of the native tvOS app (tvos/YaverTV): same lean-back runtime-control surface,
   same LAN-first / relay-second transport, same phone-mediated device-code
-  sign-in. It is a SEPARATE package (io.yaver.tv) from the phone app — Android
-  has no Apple-style "one app record per platform" concept, so the TV listing
-  is its own APK/listing, unlike tvOS which reuses io.yaver.mobile on purpose.
+  sign-in. It is a distinct TV-targeted AAB under the existing io.yaver.mobile
+  Play listing. Its required Leanback feature and dedicated tv:internal track
+  keep distribution separate from the phone AAB; the Kotlin namespace remains
+  io.yaver.tv and does not determine the Play application ID.
 
   The TV app connects to LAN boxes (plain HTTP) and to the HTTPS relay. Android
   9+ blocks cleartext by default, so usesCleartextTraffic is on: LAN boxes are

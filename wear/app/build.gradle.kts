@@ -19,13 +19,15 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "io.yaver.wear"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = (findProperty("yaverWearApplicationId") as String?) ?: "io.yaver.wear"
         // Wear OS 3 (which is what almost every current watch runs) is API 30+.
         minSdk = 30
-        targetSdk = 34
+        // Google Play requires Wear OS updates to target API 35+ from
+        // 2026-08-31. Keep this independent from the TV/XR API 34 exception.
+        targetSdk = 35
         versionCode = ((findProperty("yaverWearVersionCode") as String?) ?: "1").toInt()
         versionName = (findProperty("yaverWearVersionName") as String?) ?: "1.0.0"
     }

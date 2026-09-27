@@ -26,7 +26,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = (findProperty("yaverTvApplicationId") as String?) ?: "io.yaver.tv"
+        applicationId = (findProperty("yaverTvApplicationId") as String?) ?: "io.yaver.mobile"
         // Android TV devices: Leanback is API 21+; minSdk 23 is the floor the
         // modern Google TV / Android TV boxes ship on.
         minSdk = 23

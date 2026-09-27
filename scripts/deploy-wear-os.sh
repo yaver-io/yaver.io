@@ -10,6 +10,8 @@ MOBILE_VERSION_CODE="$(grep 'versionCode ' "$MOBILE_GRADLE" | head -1 | sed 's/[
 MOBILE_VERSION_NAME="$(grep 'versionName ' "$MOBILE_GRADLE" | head -1 | sed 's/.*versionName[[:space:]]*"\([^"]*\)".*/\1/')"
 VERSION_CODE="${WEAR_VERSION_CODE:-$((MOBILE_VERSION_CODE + 1))}"
 VERSION_NAME="${WEAR_VERSION_NAME:-${MOBILE_VERSION_NAME}-wear}"
+WEAR_GRADLE="$ROOT/wear/app/build.gradle.kts"
+MIN_PLAY_TARGET_SDK=35
 
 usage() {
   cat <<'EOF'
@@ -42,6 +44,15 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+# Google Play's Wear OS submission floor became API 35 on 2026-08-31. Check
+# the source configuration before spending time on a release build or creating
+# a Play edit; the upload API otherwise reports this only at commit time.
+WEAR_TARGET_SDK="$(sed -nE 's/^[[:space:]]*targetSdk[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$WEAR_GRADLE" | head -n 1)"
+if ! [[ "$WEAR_TARGET_SDK" =~ ^[0-9]+$ ]] || [ "$WEAR_TARGET_SDK" -lt "$MIN_PLAY_TARGET_SDK" ]; then
+  echo "ERROR: Wear OS targetSdk must be at least $MIN_PLAY_TARGET_SDK for Google Play; found ${WEAR_TARGET_SDK:-unreadable}." >&2
+  exit 2
+fi
 
 # An uploaded bundle reserves its versionCode even when no current release
 # references it. Ask Play before the build so a long Wear compilation cannot

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPLOAD=0
 SKIP_BUILD=0
+PACKAGE="${TV_PACKAGE:-io.yaver.mobile}"
 MOBILE_GRADLE="$ROOT/mobile/android/app/build.gradle"
 MOBILE_VERSION_CODE="$(grep 'versionCode ' "$MOBILE_GRADLE" | head -1 | sed 's/[^0-9]//g')"
 MOBILE_VERSION_NAME="$(grep 'versionName ' "$MOBILE_GRADLE" | head -1 | sed 's/.*versionName[[:space:]]*"\([^"]*\)".*/\1/')"
@@ -14,8 +15,9 @@ usage() {
   cat <<'EOF'
 Usage: scripts/deploy-android-tv.sh [--upload] [--skip-build]
 
-Build and verify the standalone Android TV release surface. The TV package is
-io.yaver.tv and is built from androidtv/; it is not the Expo phone AAB.
+Build and verify the standalone Android TV release surface. It is a distinct
+TV-targeted AAB built from androidtv/ and distributed from the existing
+io.yaver.mobile Play listing on its dedicated TV form-factor track.
 
 Options:
   --upload      Upload the built AAB to Google Play internal testing.
@@ -25,6 +27,7 @@ Environment:
   TV_VERSION_CODE  Explicit version code. Uploads otherwise choose the first
                    unused code at or above mobile versionCode + 2.
   TV_VERSION_NAME  Version name. Defaults to mobile versionName + "-tv".
+  TV_PACKAGE       Play application ID. Defaults to io.yaver.mobile.
 EOF
 }
 
@@ -49,7 +52,7 @@ if [ "$UPLOAD" = "1" ] && [ -z "${TV_VERSION_CODE:-}" ]; then
   }
   VERSION_CODE="$(PLAY_STORE_KEY_FILE="$PLAY_STORE_KEY_FILE" \
     "$ROOT/scripts/run-playstore-upload.sh" --next-version-code \
-    io.yaver.tv "$((MOBILE_VERSION_CODE + 2))" | tail -n 1)"
+    "$PACKAGE" "$((MOBILE_VERSION_CODE + 2))" | tail -n 1)"
   [[ "$VERSION_CODE" =~ ^[0-9]+$ ]] || {
     echo "ERROR: Play returned an invalid Android TV versionCode: $VERSION_CODE" >&2
     exit 2
@@ -85,6 +88,7 @@ if [ "$SKIP_BUILD" != "1" ]; then
     exit 2
   fi
   "$ROOT/mobile/android/gradlew" -p "$ROOT/androidtv" bundleRelease \
+    -PyaverTvApplicationId="$PACKAGE" \
     -PyaverTvVersionCode="$VERSION_CODE" \
     -PyaverTvVersionName="$VERSION_NAME" \
     "${YAVER_ANDROID_GRADLE_ARGS[@]}"
@@ -146,9 +150,10 @@ echo "  versionCode: $VERSION_CODE"
 echo "  versionName: $VERSION_NAME"
 
 if [ "$UPLOAD" = "1" ]; then
-  PLAY_PACKAGE_NAME="io.yaver.tv" \
+  PLAY_PACKAGE_NAME="$PACKAGE" \
     AAB_PATH="$AAB" \
     PLAY_VERSION_CODE="$VERSION_CODE" \
+    PLAY_TRACK="${PLAY_TRACK:-tv:internal}" \
     PLAY_STORE_KEY_FILE="${PLAY_STORE_KEY_FILE:-$ROOT/keys/google-play-service-account.json}" \
     "$ROOT/scripts/run-playstore-upload.sh"
 fi
