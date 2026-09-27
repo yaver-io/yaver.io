@@ -16,7 +16,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/yaver-io/agent/testkit"
@@ -70,6 +72,10 @@ var developForRuntimeCall = remoteRuntimeHTTPMCP
 // booted sim).
 var developForFrameCall = remoteRuntimeFrameJPEG
 
+// developForProxyCall moves the whole loop to Y. Proxying only individual
+// runtime calls would still resolve SDKs/simulators against the gateway host.
+var developForProxyCall = proxyToDevice
+
 // runnerAuthGateProbe returns nil when the target machine has at least one
 // installed + authenticated runner. Empty deviceID = local mini. This
 // is the hard gate the plan mandates before we boot anything.
@@ -115,6 +121,28 @@ func RunDevelopFor(ctx context.Context, req DevelopForRequest) (DevelopForResult
 	}
 	if strings.TrimSpace(req.Surface) == "" {
 		return DevelopForResult{}, fmt.Errorf("surface required (phone/tablet/watch/tv/vision/car/web)")
+	}
+	if machine := strings.TrimSpace(req.Machine); machine != "" {
+		remoteReq := req
+		remoteReq.Machine = "" // the target executes locally; prevent proxy recursion
+		payload, err := json.Marshal(remoteReq)
+		if err != nil {
+			return DevelopForResult{}, fmt.Errorf("encode remote develop request: %w", err)
+		}
+		status, body, err := developForProxyCall(ctx, "develop_for", machine, http.MethodPost, "/develop-for", payload)
+		if err != nil && !errors.Is(err, errProxyLocal) {
+			return DevelopForResult{}, fmt.Errorf("remote develop on %s: %w", machine, err)
+		}
+		if err == nil {
+			if status >= 400 {
+				return DevelopForResult{}, fmt.Errorf("remote develop on %s: HTTP %d — %s", machine, status, strings.TrimSpace(string(body)))
+			}
+			var result DevelopForResult
+			if err := json.Unmarshal(body, &result); err != nil {
+				return DevelopForResult{}, fmt.Errorf("decode remote develop result: %w", err)
+			}
+			return result, nil
+		}
 	}
 	if err := developForRunnerAuthGate(strings.TrimSpace(req.Machine)); err != nil {
 		return DevelopForResult{}, err
@@ -183,6 +211,28 @@ func RunDevelopFor(ctx context.Context, req DevelopForRequest) (DevelopForResult
 		result.FirstFrameJPEG = base64Encode(frame)
 	}
 	return result, nil
+}
+
+func (s *HTTPServer) handleDevelopFor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var req DevelopForRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	// HTTP callers cannot use this endpoint as an open second-hop proxy. MCP
+	// resolves Y once, and the receiving agent always executes locally.
+	req.Machine = ""
+	result, err := RunDevelopFor(r.Context(), req)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func currentHostCaps(ctx context.Context) HostCaps {

@@ -272,8 +272,37 @@ export interface ClientSessionSettings {
   usageMode: "chat-only" | "reload-only" | "reload-and-chat";
   chatEnabled: boolean;
   renderEnabled: boolean;
+  renderModes: string[];
+  codecs: string[];
+  inputModes: string[];
   revision?: number;
   updatedAt?: string;
+}
+
+export interface DevelopmentPlanRequest {
+  projectDir?: string;
+  app?: string;
+  target: string;
+  remoteBoxId?: string;
+  sessionSettings?: ClientSessionSettings;
+}
+
+export interface DevelopmentPlan {
+  projectDir: string;
+  app?: string;
+  client: Pick<ClientSessionSettings, "renderModes" | "codecs" | "inputModes" | "chatEnabled" | "renderEnabled"> & { surface: string };
+  remoteBox?: { deviceId: string; name: string; os: string; isOnline: boolean };
+  targetName: string;
+  target: { platform: string };
+  codeReady: boolean;
+  buildReady: boolean;
+  runReady: boolean;
+  renderReady: boolean;
+  fullLoopReady: boolean;
+  statusOnly: boolean;
+  renderMode?: string;
+  codec?: string;
+  blockers?: Array<{ code: string; layer: string; message: string; remedy?: string; route?: string; blocking: boolean }>;
 }
 
 export function browserSessionSettings(
@@ -302,6 +331,9 @@ export function browserSessionSettings(
     usageMode,
     chatEnabled: usageMode !== "reload-only",
     renderEnabled: usageMode !== "chat-only",
+    renderModes: ["iframe", "webrtc", "frames"],
+    codecs: ["h264", "jpeg"],
+    inputModes: ["pointer", "keyboard", "touch", "text"],
   };
 }
 
@@ -8643,6 +8675,17 @@ export class AgentClient {
     this.assertConnected();
     const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
     const res = await fetch(`${this.baseUrl}/project/runtime${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async developmentPlan(req: Omit<DevelopmentPlanRequest, "sessionSettings"> & { sessionSettings?: ClientSessionSettings }): Promise<DevelopmentPlan> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/project/development-plan`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...req, sessionSettings: req.sessionSettings ?? browserSessionSettings("reload-and-chat") }),
+    });
+    if (!res.ok) throw new Error(`Failed to plan development path: ${await res.text()}`);
     return res.json();
   }
 

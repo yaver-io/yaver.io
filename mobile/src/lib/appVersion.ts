@@ -68,7 +68,26 @@ export type ClientSessionSettings = {
   usageMode: ClientSessionUsageMode;
   chatEnabled: boolean;
   renderEnabled: boolean;
+  renderModes: string[];
+  codecs: string[];
+  inputModes: string[];
 };
+
+function surfaceCapabilities(deviceClass: ClientDeviceClass) {
+  switch (deviceClass) {
+    case "tv":
+      return { renderModes: ["webrtc", "frames"], codecs: ["h264", "jpeg"], inputModes: ["controller", "text", "voice"] };
+    case "xr":
+      return { renderModes: ["webrtc", "frames"], codecs: ["h264", "jpeg"], inputModes: ["gaze", "pointer", "voice", "text"] };
+    case "watch":
+    case "car":
+      return { renderModes: [], codecs: [], inputModes: ["voice", "text"] };
+    case "browser":
+      return { renderModes: ["iframe", "webrtc", "frames"], codecs: ["h264", "jpeg"], inputModes: ["pointer", "keyboard", "touch", "text"] };
+    default:
+      return { renderModes: ["hermes", "webrtc", "iframe", "frames"], codecs: ["h264", "jpeg"], inputModes: ["touch", "keyboard", "text", "voice"] };
+  }
+}
 
 /** Installed/native versus an attached Dogfood copy. The attached Yaver app
  * runs as RN-web and receives this sentinel from the native host. */
@@ -129,6 +148,7 @@ export function mobileSessionSettings(options: {
   const clientSurface = options.surface ?? detected.surface;
   const platform = options.platform ?? detected.platform;
   const deviceClass = options.deviceClass ?? detected.deviceClass;
+  const capabilities = surfaceCapabilities(deviceClass);
   return {
     ...identity,
     surface: clientSurface,
@@ -141,6 +161,7 @@ export function mobileSessionSettings(options: {
     usageMode,
     chatEnabled: usageMode !== "reload-only",
     renderEnabled: usageMode !== "chat-only",
+    ...capabilities,
   };
 }
 

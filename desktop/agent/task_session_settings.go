@@ -16,6 +16,19 @@ func cleanSessionSetting(value string) string {
 	return value
 }
 
+func cleanSessionCapabilities(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = cleanSessionSetting(strings.ToLower(value))
+		if value != "" && !seen[value] {
+			seen[value] = true
+			cleaned = append(cleaned, value)
+		}
+	}
+	return cleaned
+}
+
 func normalizeClientSessionSettings(in *ClientSessionSettings, revision int64, now time.Time) *ClientSessionSettings {
 	if in == nil {
 		return nil
@@ -28,6 +41,9 @@ func normalizeClientSessionSettings(in *ClientSessionSettings, revision int64, n
 	out.ClientSurface = cleanSessionSetting(out.ClientSurface)
 	out.Platform = cleanSessionSetting(strings.ToLower(out.Platform))
 	out.DeviceClass = cleanSessionSetting(strings.ToLower(out.DeviceClass))
+	out.RenderModes = cleanSessionCapabilities(out.RenderModes)
+	out.Codecs = cleanSessionCapabilities(out.Codecs)
+	out.InputModes = cleanSessionCapabilities(out.InputModes)
 	out.ClientSurface = firstNonEmpty(out.ClientSurface, out.Surface, "unknown")
 	out.Surface = out.ClientSurface
 	if out.Platform == "" {
@@ -72,6 +88,9 @@ func cloneClientSessionSettings(in *ClientSessionSettings) *ClientSessionSetting
 		return nil
 	}
 	out := *in
+	out.RenderModes = append([]string(nil), in.RenderModes...)
+	out.Codecs = append([]string(nil), in.Codecs...)
+	out.InputModes = append([]string(nil), in.InputModes...)
 	return &out
 }
 
@@ -84,22 +103,29 @@ func inferredClientSessionSettings(surface, source string) *ClientSessionSetting
 	switch surface {
 	case "web", "yaver-web-dashboard", "browser":
 		settings.Platform, settings.DeviceClass, settings.Lane = "web", "browser", "browser"
+		settings.RenderModes, settings.Codecs, settings.InputModes = []string{"iframe", "webrtc", "frames"}, []string{"h264", "jpeg"}, []string{"pointer", "keyboard", "touch", "text"}
 	case "tv", "tvos", "apple-tv":
 		settings.Platform, settings.DeviceClass = "tvos", "tv"
+		settings.RenderModes, settings.Codecs, settings.InputModes = []string{"webrtc", "frames"}, []string{"h264", "jpeg"}, []string{"controller", "text", "voice"}
 	case "androidtv", "android-tv":
 		settings.Platform, settings.DeviceClass = "android", "tv"
 	case "visionos", "vision-pro", "spatial", "xr":
 		settings.Platform, settings.DeviceClass = "visionos", "xr"
+		settings.RenderModes, settings.Codecs, settings.InputModes = []string{"webrtc", "frames"}, []string{"h264", "jpeg"}, []string{"gaze", "pointer", "voice", "text"}
 	case "android-xr", "quest":
 		settings.Platform, settings.DeviceClass = "android-xr", "xr"
 	case "watchos", "apple-watch":
 		settings.Platform, settings.DeviceClass = "watchos", "watch"
+		settings.InputModes = []string{"voice", "text"}
 	case "wearos", "wear-os":
 		settings.Platform, settings.DeviceClass = "wearos", "watch"
+		settings.InputModes = []string{"voice", "text"}
 	case "carplay":
 		settings.Platform, settings.DeviceClass = "ios", "car"
+		settings.InputModes = []string{"voice", "text"}
 	case "android-auto", "androidauto":
 		settings.Platform, settings.DeviceClass = "android", "car"
+		settings.InputModes = []string{"voice", "text"}
 	case "desktop", "desktop-app", "yaver-native-desktop", "yaver-desktop-app", "yaver-desktop-installer":
 		settings.Platform, settings.DeviceClass = "desktop", "desktop"
 	default:
@@ -122,6 +148,15 @@ func mergeInferredClientSessionSettings(in *ClientSessionSettings, surface, sour
 	out.Lane = firstNonEmpty(out.Lane, defaults.Lane)
 	out.RuntimeMode = firstNonEmpty(out.RuntimeMode, defaults.RuntimeMode)
 	out.UsageMode = firstNonEmpty(out.UsageMode, defaults.UsageMode)
+	if len(out.RenderModes) == 0 {
+		out.RenderModes = defaults.RenderModes
+	}
+	if len(out.Codecs) == 0 {
+		out.Codecs = defaults.Codecs
+	}
+	if len(out.InputModes) == 0 {
+		out.InputModes = defaults.InputModes
+	}
 	return &out
 }
 
@@ -129,13 +164,17 @@ func clientSessionSettingsBriefing(settings *ClientSessionSettings) string {
 	if settings == nil {
 		return ""
 	}
-	return fmt.Sprintf(
-		"Client session: app=%s %s (build %s), surface=%s, platform=%s, device=%s, lane=%s, runtime=%s, dogfood=%t, usage=%s, chat=%t, render=%t.\n",
+	briefing := fmt.Sprintf(
+		"Client session: app=%s %s (build %s), surface=%s, platform=%s, device=%s, lane=%s, runtime=%s, dogfood=%t, usage=%s, chat=%t, render=%t",
 		firstNonEmpty(settings.AppName, "client"), firstNonEmpty(settings.AppVersion, "unknown"),
 		firstNonEmpty(settings.BuildNumber, "unknown"), settings.ClientSurface, settings.Platform, settings.DeviceClass,
 		settings.Lane, settings.RuntimeMode, settings.Dogfood, settings.UsageMode,
 		settings.ChatEnabled, settings.RenderEnabled,
 	)
+	if len(settings.RenderModes)+len(settings.Codecs)+len(settings.InputModes) > 0 {
+		briefing += fmt.Sprintf(", render-modes=%s, codecs=%s, inputs=%s", strings.Join(settings.RenderModes, ","), strings.Join(settings.Codecs, ","), strings.Join(settings.InputModes, ","))
+	}
+	return briefing + ".\n"
 }
 
 func (tm *TaskManager) UpdateTaskSessionSettings(id string, settings *ClientSessionSettings) (*ClientSessionSettings, error) {

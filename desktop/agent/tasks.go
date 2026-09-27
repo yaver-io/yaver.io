@@ -1201,6 +1201,9 @@ type ClientSessionSettings struct {
 	UsageMode     string    `json:"usageMode,omitempty"`
 	ChatEnabled   bool      `json:"chatEnabled"`
 	RenderEnabled bool      `json:"renderEnabled"`
+	RenderModes   []string  `json:"renderModes,omitempty"`
+	Codecs        []string  `json:"codecs,omitempty"`
+	InputModes    []string  `json:"inputModes,omitempty"`
 	Revision      int64     `json:"revision"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }

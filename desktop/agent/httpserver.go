@@ -1473,6 +1473,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Declarative project manifest (`.yaver/project.yaml`)
 	mux.HandleFunc("/project/runtime", s.auth(s.handleProjectRuntime))
 	mux.HandleFunc("/project/runtime/apply", s.auth(s.handleProjectRuntimeApply))
+	// X/Y/Z plan: client surface -> remote box -> declared product target.
+	mux.HandleFunc("/project/development-plan", s.auth(s.handleDevelopmentPlan))
+	mux.HandleFunc("/develop-for", s.auth(s.handleDevelopFor))
 	mux.HandleFunc("/manifest/get", s.auth(s.handleManifestGet))
 	mux.HandleFunc("/manifest/set", s.auth(s.handleManifestSet))
 	mux.HandleFunc("/manifest/apply", s.auth(s.handleManifestApply))
@@ -14867,6 +14870,31 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if status >= 400 {
 			return mcpToolError(fmt.Sprintf("runtime_stop: HTTP %d — %s", status, string(body)))
 		}
+		return mcpToolResult(string(body))
+
+	case "publisher_setup":
+		req, err := decodePublisherSetupRequest(call.Arguments)
+		if err != nil {
+			return mcpToolError("invalid publisher_setup arguments: " + err.Error())
+		}
+		result, err := runPublisherSetup(context.Background(), req)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		body, _ := json.MarshalIndent(result, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "development_plan":
+		var req DevelopmentPlanRequest
+		json.Unmarshal(call.Arguments, &req)
+		if strings.TrimSpace(req.ProjectDir) == "" {
+			req.ProjectDir = localCurrentWorkDir()
+		}
+		plan, err := BuildDevelopmentPlan(context.Background(), req, listAllMachines(context.Background()))
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		body, _ := json.MarshalIndent(plan, "", "  ")
 		return mcpToolResult(string(body))
 
 	case "develop_for":

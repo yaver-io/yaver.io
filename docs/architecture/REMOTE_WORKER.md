@@ -17,6 +17,43 @@ deploys, Hermes push, containerization, remote workers).
    projects, tunnels) — all thin wrappers over things that already exist
    on the HTTP side.
 
+## X/Y/Z development planning contract
+
+Measured against the code on 2026-09-27, Yaver keeps three independent axes:
+
+- **X — client surface:** the device holding the conversation or preview. Its
+  normal `ClientSessionSettings` names real `renderModes`, codecs and input
+  modes. Web, mobile, tvOS/visionOS, Android TV and Electron send this shape.
+- **Y — remote box:** the machine that owns source, containers, SDKs, builds,
+  capture and attached hardware. Selection requires an online box whose OS and
+  measured/explicit capabilities satisfy the target.
+- **Z — product target:** a named entry under
+  `development.targets` in `.yaver/project.yaml` or an app in
+  `yaver.workspace.yaml` (for example `windows-store`, `xbox`, `ps5`, `tvos`).
+
+`POST /project/development-plan` and the MCP tool `development_plan` join those
+axes and return independent `codeReady`, `buildReady`, `runReady`,
+`renderReady` and `fullLoopReady` values. Blockers have stable codes and a
+route/remedy. The same manifest targets are also exposed by
+`GET /project/runtime`, including workspace-app declarations.
+
+This planner deliberately does not equate containers with console access. A
+container can isolate source tooling, but a restricted console SDK, license,
+host integration and approved devkit remain capabilities of Y. Windows plus
+MSBuild/MakeAppx proves a Windows Store build, not Xbox GDK access. Xbox and
+PlayStation therefore require explicit exact SDK capability labels and the
+target's real hardware/devkit label before the full loop can be ready.
+
+Rendering is negotiated after build/run readiness. WebRTC is the preferred
+interactive lane when X and Z share a codec; frames and iframe/Hermes are
+declared fallbacks where the client truly implements them. WebRTC transports a
+captured runtime—it does not emulate an Xbox or PlayStation and does not bypass
+platform-holder rules. Small surfaces may honestly return `statusOnly: true`
+and still drive coding without claiming they can display the target.
+
+The commercial sequencing, platform-account journey and cloud-builder gates
+are tracked in `docs/strategy/XYZ_PLATFORM_MONETIZATION_ROADMAP.md`.
+
 ## Install UX contract
 
 Two commands, zero config editing:

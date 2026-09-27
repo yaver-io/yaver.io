@@ -47,16 +47,21 @@ test("standalone TV, XR, and desktop clients send identity on create and continu
   const apple = read("tvos", "YaverTV", "AgentClient.swift");
   assert.match(apple, /CFBundleShortVersionString/);
   assert.match(apple, /#if os\(visionOS\)/);
+  assert.match(apple, /"renderModes": \["webrtc", "frames"\]/);
+  assert.match(apple, /"inputModes": \["controller", "text", "voice"\]/);
   assert.match(apple, /"sessionSettings": clientSessionSettings\(\)/);
   assert.match(apple, /body\["sessionSettings"\] = clientSessionSettings\(\)/);
 
   const androidTV = read("androidtv", "app", "src", "main", "kotlin", "io", "yaver", "tv", "OpsClient.kt");
   assert.match(androidTV, /BuildConfig\.VERSION_NAME/);
+  assert.match(androidTV, /\.put\("renderModes", JSONArray\(\)\)/);
   assert.equal((androidTV.match(/\.put\("sessionSettings", clientSessionSettings\(\)\)/g) ?? []).length, 2);
 
   for (const path of ["desktop/app/src/main/preload.js", "desktop/installer/src/preload.js"]) {
     const source = read(...path.split("/"));
     assert.match(source, /desktopSessionSettings/);
+    assert.match(source, /renderModes/);
+    assert.match(source, /inputModes/);
     assert.match(source, /createTask/);
     assert.match(source, /continueTask/);
   }

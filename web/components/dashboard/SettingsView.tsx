@@ -11,6 +11,7 @@ import GitSettingsCard from "./GitSettingsCard";
 import SourceCodeStatusCard from "./SourceCodeStatusCard";
 import VisionSettingsCard from "./VisionSettingsCard";
 import OpenCodeSettingsView from "./OpenCodeSettingsView";
+import PublisherSetupCard from "./PublisherSetupCard";
 import { agentClient } from "@/lib/agent-client";
 import type { DogfoodSourceStatus, RemoteRuntimeSession } from "@/lib/agent-client";
 import RemoteRuntimeViewer from "./RemoteRuntimeViewer";
@@ -1246,6 +1247,7 @@ export default function SettingsView({ user, onLogout, onOpenTwoFactor }: Settin
       </div>
 
       <GitSettingsCard devices={ownedDevices} />
+      <PublisherSetupCard token={token} />
       <SourceCodeStatusCard devices={ownedDevices} />
       <RuntimeProjectDefaultsCard token={token} devices={ownedDevices} />
 

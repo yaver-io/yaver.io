@@ -99,6 +99,24 @@ import { classifyRunnerFetchOutcome, type CodingRunnersProbeState } from "./devi
 import { buildSendTaskRequestBody } from "./taskRequestBody";
 import { connectionDiagnosticsForCodingTask } from "./logger";
 import { mobileSessionSettings, type ClientSessionSettings } from "./appVersion";
+
+export interface DevelopmentPlan {
+  projectDir: string;
+  app?: string;
+  client: { surface: string; renderModes?: string[]; codecs?: string[]; inputModes?: string[]; chatEnabled: boolean; renderEnabled: boolean };
+  remoteBox?: { deviceId: string; name: string; os: string; isOnline: boolean };
+  targetName: string;
+  target: { platform: string };
+  codeReady: boolean;
+  buildReady: boolean;
+  runReady: boolean;
+  renderReady: boolean;
+  fullLoopReady: boolean;
+  statusOnly: boolean;
+  renderMode?: string;
+  codec?: string;
+  blockers?: Array<{ code: string; layer: string; message: string; remedy?: string; route?: string; blocking: boolean }>;
+}
 import { subscribeSse } from "./sseClient";
 export {
   CloudWorkspaceRequiredError,
@@ -4810,6 +4828,28 @@ export class QuicClient {
       headers: this.authHeaders,
     }, 25000);
     if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);
+    return res.json();
+  }
+
+  /** Resolve the X/Y/Z development path using this exact surface's normal
+   * session contract. The agent, not the UI, owns box/toolchain/devkit truth. */
+  async developmentPlan(req: {
+    projectDir?: string;
+    app?: string;
+    target: string;
+    remoteBoxId?: string;
+    sessionSettings?: ClientSessionSettings;
+  }): Promise<DevelopmentPlan> {
+    this.assertConnected();
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/project/development-plan`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...req,
+        sessionSettings: req.sessionSettings ?? mobileSessionSettings({ usageMode: "reload-and-chat" }),
+      }),
+    }, 25_000);
+    if (!res.ok) throw new Error(`Failed to plan development path: ${await res.text()}`);
     return res.json();
   }
 

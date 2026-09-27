@@ -16,24 +16,57 @@ import (
 // ProjectManifest is the full declarative state of a Yaver project. It sits
 // at .yaver/project.yaml and is the source-of-truth for `yaver apply`.
 type ProjectManifest struct {
-	Name      string                       `yaml:"name" json:"name"`
-	Backend   BackendKind                  `yaml:"backend,omitempty" json:"backend,omitempty"`
-	Stack     string                       `yaml:"stack,omitempty" json:"stack,omitempty"`
-	Auth      string                       `yaml:"auth,omitempty" json:"auth,omitempty"`
-	Runtime   *ManifestRuntimeConfig       `yaml:"runtime,omitempty" json:"runtime,omitempty"`
-	Placement *ManifestPlacementConfig     `yaml:"placement,omitempty" json:"placement,omitempty"`
-	Services  map[string]*DevServiceConfig `yaml:"services,omitempty" json:"services,omitempty"`
-	Domains   []ManifestDomain             `yaml:"domains,omitempty" json:"domains,omitempty"`
-	Deploy    *DeployConfig                `yaml:"deploy,omitempty" json:"deploy,omitempty"`
-	Cron      []ManifestCron               `yaml:"cron,omitempty" json:"cron,omitempty"`
-	Jobs      []ManifestJob                `yaml:"jobs,omitempty" json:"jobs,omitempty"`
-	Env       map[string]string            `yaml:"env,omitempty" json:"env,omitempty"`
+	Name      string                   `yaml:"name" json:"name"`
+	Backend   BackendKind              `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Stack     string                   `yaml:"stack,omitempty" json:"stack,omitempty"`
+	Auth      string                   `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Runtime   *ManifestRuntimeConfig   `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Placement *ManifestPlacementConfig `yaml:"placement,omitempty" json:"placement,omitempty"`
+	// Development declares the products this project can be developed for.
+	// It is the Z axis in the client(X) -> box(Y) -> target(Z) contract:
+	// client identity never implies a build target, and the machine running the
+	// agent never implies what the project intends to ship.
+	Development *ManifestDevelopmentConfig   `yaml:"development,omitempty" json:"development,omitempty"`
+	Services    map[string]*DevServiceConfig `yaml:"services,omitempty" json:"services,omitempty"`
+	Domains     []ManifestDomain             `yaml:"domains,omitempty" json:"domains,omitempty"`
+	Deploy      *DeployConfig                `yaml:"deploy,omitempty" json:"deploy,omitempty"`
+	Cron        []ManifestCron               `yaml:"cron,omitempty" json:"cron,omitempty"`
+	Jobs        []ManifestJob                `yaml:"jobs,omitempty" json:"jobs,omitempty"`
+	Env         map[string]string            `yaml:"env,omitempty" json:"env,omitempty"`
 	// Tools declares project-scoped integrations. Values are names only;
 	// endpoints and credentials stay in the agent's local config/vault.
 	// `adapters` is the canonical spelling; Tools.MCP is accepted as the
 	// human-friendly compatibility spelling used by connected projects.
 	Adapters *ProjectAdapterPolicy `yaml:"adapters,omitempty" json:"adapters,omitempty"`
 	Tools    *ProjectToolsConfig   `yaml:"tools,omitempty" json:"tools,omitempty"`
+}
+
+// ManifestDevelopmentConfig is intentionally platform-neutral. A project may
+// name built-in targets (web, windows, xbox, ios, tvos, playstation5, ...)
+// with only `platform`; the planner supplies conservative defaults. Projects
+// can add requirements without teaching every client a new platform branch.
+type ManifestDevelopmentConfig struct {
+	Targets map[string]ManifestDevelopmentTarget `yaml:"targets,omitempty" json:"targets,omitempty"`
+}
+
+type ManifestDevelopmentTarget struct {
+	Platform    string                 `yaml:"platform" json:"platform"`
+	Stack       string                 `yaml:"stack,omitempty" json:"stack,omitempty"`
+	MachineRole string                 `yaml:"machine_role,omitempty" json:"machineRole,omitempty"`
+	Builder     *ManifestTargetBuilder `yaml:"builder,omitempty" json:"builder,omitempty"`
+	Runtime     *ManifestTargetRuntime `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+}
+
+type ManifestTargetBuilder struct {
+	HostOS       []string `yaml:"host_os,omitempty" json:"hostOs,omitempty"`
+	Capabilities []string `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+}
+
+type ManifestTargetRuntime struct {
+	RenderModes      []string `yaml:"render_modes,omitempty" json:"renderModes,omitempty"`
+	Codecs           []string `yaml:"codecs,omitempty" json:"codecs,omitempty"`
+	Hardware         string   `yaml:"hardware,omitempty" json:"hardware,omitempty"`
+	RequiresHardware bool     `yaml:"requires_hardware,omitempty" json:"requiresHardware,omitempty"`
 }
 
 // ProjectToolsConfig is the project manifest's integration namespace.
@@ -625,15 +658,16 @@ type ProjectRuntimeExportPlan struct {
 }
 
 type ProjectRuntimeSummary struct {
-	ProjectDir           string                              `json:"projectDir"`
-	Manifest             *ProjectManifest                    `json:"manifest,omitempty"`
-	Workspace            *ProjectRuntimeWorkspaceSummary     `json:"workspace,omitempty"`
-	Machines             []MachineInfo                       `json:"machines,omitempty"`
-	ResolvedRoles        []ProjectRuntimeResolvedRole        `json:"resolvedRoles,omitempty"`
-	ResolvedAssignments  []ProjectRuntimeResolvedAssignment  `json:"resolvedAssignments,omitempty"`
-	ProviderRequirements []ProjectRuntimeProviderRequirement `json:"providerRequirements,omitempty"`
-	ExportPlans          []ProjectRuntimeExportPlan          `json:"exportPlans,omitempty"`
-	Warnings             []string                            `json:"warnings,omitempty"`
+	ProjectDir           string                               `json:"projectDir"`
+	Manifest             *ProjectManifest                     `json:"manifest,omitempty"`
+	Workspace            *ProjectRuntimeWorkspaceSummary      `json:"workspace,omitempty"`
+	Machines             []MachineInfo                        `json:"machines,omitempty"`
+	ResolvedRoles        []ProjectRuntimeResolvedRole         `json:"resolvedRoles,omitempty"`
+	ResolvedAssignments  []ProjectRuntimeResolvedAssignment   `json:"resolvedAssignments,omitempty"`
+	ProviderRequirements []ProjectRuntimeProviderRequirement  `json:"providerRequirements,omitempty"`
+	ExportPlans          []ProjectRuntimeExportPlan           `json:"exportPlans,omitempty"`
+	DevelopmentTargets   map[string]ManifestDevelopmentTarget `json:"developmentTargets,omitempty"`
+	Warnings             []string                             `json:"warnings,omitempty"`
 }
 
 func BuildProjectRuntimeSummary(ctx context.Context, s *HTTPServer, dir string) (*ProjectRuntimeSummary, error) {
@@ -730,6 +764,17 @@ func buildProjectRuntimeSummaryFromManifest(ctx context.Context, s *HTTPServer, 
 	if m.Runtime != nil {
 		appendImplicitRuntimeAssignments(summary, resolvedByRole, defaultRole)
 		summary.ExportPlans = buildProjectRuntimeExportPlans(summary, resolvedByRole, defaultRole)
+	}
+	development := m.Development
+	if development == nil && summary.Workspace != nil {
+		development, _ = workspaceDevelopmentForDir(summary.Workspace.Root, summary.Workspace.Manifest, dir, "")
+	}
+	if development != nil {
+		summary.DevelopmentTargets = map[string]ManifestDevelopmentTarget{}
+		for name, target := range development.Targets {
+			resolved, _, _ := mergeDevelopmentTarget(target)
+			summary.DevelopmentTargets[name] = resolved
+		}
 	}
 	summary.ProviderRequirements = buildProjectRuntimeProviderRequirements(summary)
 	for _, plan := range summary.ExportPlans {
@@ -1018,6 +1063,25 @@ func projectRuntimeMachineSupports(machine MachineInfo, reqs []string) bool {
 			}
 		case "docker":
 			if machine.Capabilities == nil || !machine.Capabilities.SupportsDocker {
+				return false
+			}
+		case "windows-build", "windows-sdk":
+			if machine.Capabilities == nil || !machine.Capabilities.SupportsWindowsBuild {
+				return false
+			}
+		case "xbox-build", "xbox-sdk":
+			if machine.Capabilities == nil || !machine.Capabilities.SupportsXboxBuild {
+				return false
+			}
+		case "playstation-build", "playstation-sdk":
+			if machine.Capabilities == nil || !machine.Capabilities.SupportsPlayStationBuild {
+				return false
+			}
+		default:
+			// Unknown capabilities are explicit profile tags. This lets the
+			// public agent route restricted/future toolchains without claiming
+			// it can inspect a private SDK.
+			if machine.Capabilities == nil || !profileHasExact(machine.Capabilities.Profile, req) {
 				return false
 			}
 		}

@@ -690,6 +690,30 @@ export async function getSurveyStatus(
 export type KeyStorage = "local" | "cloud";
 
 export interface UserSettings {
+  /** Optional reusable publisher identity stored in Convex. Never credentials,
+   * payment/tax/bank data, signing keys, or recovery codes. */
+  publisherProfile?: {
+    entityType?: "individual" | "organization";
+    legalName?: string;
+    publisherName?: string;
+    dunsNumber?: string;
+    countryCode?: string;
+    addressLine1?: string;
+    addressLine2?: string;
+    city?: string;
+    region?: string;
+    postalCode?: string;
+    website?: string;
+    businessEmail?: string;
+    supportEmail?: string;
+    phone?: string;
+    programs?: Array<{
+      platform: "apple" | "google-play" | "microsoft-store" | "xbox" | "playstation";
+      status: "not-started" | "in-progress" | "submitted" | "approved" | "action-required";
+      updatedAt?: number;
+    }>;
+    updatedAt?: number;
+  };
   /** Per-client appearance. Unset surface = dark (factory default). */
   appearanceThemeBySurface?: Array<{
     surface: "mobile" | "web" | "tvos" | "androidtv" | "xbox" | "playstation" | "watchos" | "wearos" | "visionos" | "carplay";

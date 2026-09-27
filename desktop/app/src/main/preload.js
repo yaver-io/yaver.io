@@ -7,6 +7,8 @@ const desktopSessionSettings = () => ({
   platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
   deviceClass: 'desktop', lane: 'yaver-native', runtimeMode: 'native', dogfood: false,
   usageMode: 'chat-only', chatEnabled: true, renderEnabled: false,
+  renderModes: ['iframe', 'webrtc', 'frames'], codecs: ['h264', 'jpeg'],
+  inputModes: ['pointer', 'keyboard', 'text'],
 });
 const withDesktopSession = (data) => ({ ...(data || {}), sessionSettings: desktopSessionSettings() });
 

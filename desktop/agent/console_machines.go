@@ -47,20 +47,26 @@ type MachineRunnerCapability struct {
 }
 
 type MachineCapabilities struct {
-	Hardware             HardwareProfile           `json:"hardware"`
-	Runners              []MachineRunnerCapability `json:"runners"`
-	SupportsIOS          bool                      `json:"supportsIos"`
-	SupportsAndroid      bool                      `json:"supportsAndroid"`
-	SupportsDocker       bool                      `json:"supportsDocker"`
-	SupportsLocalLLM     bool                      `json:"supportsLocalLlm"`
-	SupportsTestFlight   bool                      `json:"supportsTestFlight"`
-	SupportsPlayStore    bool                      `json:"supportsPlayStore"`
-	SupportsGhostUI      bool                      `json:"supportsGhostUi"`      // native desktop ghost (Windows now; macOS w/ cgo)
-	SupportsGhostWeb     bool                      `json:"supportsGhostWeb"`     // web ghost (chromedp) — cross-OS incl. RPi appliance
-	SupportsMachineSniff bool                      `json:"supportsMachineSniff"` // machine/PLC hijack: Modbus TCP everywhere; serial sniff on Linux
-	LowPower             bool                      `json:"lowPower"`
-	MaxTaskSlots         int                       `json:"maxTaskSlots"`
-	Profile              *MachineProfile           `json:"profile,omitempty"`
+	Hardware           HardwareProfile           `json:"hardware"`
+	Runners            []MachineRunnerCapability `json:"runners"`
+	SupportsIOS        bool                      `json:"supportsIos"`
+	SupportsAndroid    bool                      `json:"supportsAndroid"`
+	SupportsDocker     bool                      `json:"supportsDocker"`
+	SupportsLocalLLM   bool                      `json:"supportsLocalLlm"`
+	SupportsTestFlight bool                      `json:"supportsTestFlight"`
+	SupportsPlayStore  bool                      `json:"supportsPlayStore"`
+	// Build-host capabilities used by the X/Y/Z development planner. Windows
+	// and Xbox require real tools; PlayStation is explicit-profile-only because
+	// its restricted SDK must never be inferred from the host OS.
+	SupportsWindowsBuild     bool            `json:"supportsWindowsBuild"`
+	SupportsXboxBuild        bool            `json:"supportsXboxBuild"`
+	SupportsPlayStationBuild bool            `json:"supportsPlayStationBuild"`
+	SupportsGhostUI          bool            `json:"supportsGhostUi"`      // native desktop ghost (Windows now; macOS w/ cgo)
+	SupportsGhostWeb         bool            `json:"supportsGhostWeb"`     // web ghost (chromedp) — cross-OS incl. RPi appliance
+	SupportsMachineSniff     bool            `json:"supportsMachineSniff"` // machine/PLC hijack: Modbus TCP everywhere; serial sniff on Linux
+	LowPower                 bool            `json:"lowPower"`
+	MaxTaskSlots             int             `json:"maxTaskSlots"`
+	Profile                  *MachineProfile `json:"profile,omitempty"`
 }
 
 // listAllMachines returns every Yaver-managed machine this user owns — the
@@ -212,9 +218,16 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 	caps.SupportsDocker = caps.Hardware.DockerOK
 	caps.SupportsLocalLLM = machineHasReadyRunner(caps.Runners, "ollama") || machineHasReadyRunner(caps.Runners, "aider-ollama")
 	caps.SupportsTestFlight = runtime.GOOS == "darwin" && toolLooksInstalled("xcrun")
-	caps.SupportsIOS = caps.SupportsTestFlight || runtime.GOOS == "darwin"
+	// A Mac is inventory, not an iOS build capability. xcrun is the minimum
+	// operational proof that an Apple developer toolchain is selected.
+	caps.SupportsIOS = caps.SupportsTestFlight
 	caps.SupportsPlayStore = toolLooksInstalled("java") || toolLooksInstalled("javac") || toolLooksInstalled("gradle")
 	caps.SupportsAndroid = caps.SupportsPlayStore || toolLooksInstalled("adb")
+	caps.SupportsWindowsBuild = runtime.GOOS == "windows" &&
+		(toolLooksInstalled("msbuild") || toolLooksInstalled("dotnet"))
+	// MSBuild + MakeAppx proves Windows packaging, not restricted Xbox GDK
+	// access. Xbox is enabled only by an explicit exact machine profile below.
+	caps.SupportsXboxBuild = false
 	// GUI ghost capability: the OS must have a screen+input implementation
 	// (Phase 1: Windows). Actual invocation is still gated per-agent by the
 	// --ghost opt-in at verb-call time; this only advertises platform support.
@@ -239,6 +252,15 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 		}
 		if profileHasAny(caps.Profile, "ollama", "local-llm") {
 			caps.SupportsLocalLLM = true
+		}
+		if profileHasExact(caps.Profile, "windows-build", "msbuild", "windows-sdk") && runtime.GOOS == "windows" {
+			caps.SupportsWindowsBuild = true
+		}
+		if profileHasExact(caps.Profile, "xbox-build", "xbox-sdk", "gdk") && runtime.GOOS == "windows" {
+			caps.SupportsXboxBuild = true
+		}
+		if profileHasExact(caps.Profile, "playstation-build", "playstation-sdk", "prospero-sdk", "orbis-sdk") {
+			caps.SupportsPlayStationBuild = true
 		}
 	}
 	caps.MaxTaskSlots = machineTaskCapacity(caps)
@@ -270,13 +292,32 @@ func profileHasAny(profile *MachineProfile, values ...string) bool {
 	haystack := append([]string{}, profile.Tags...)
 	haystack = append(haystack, profile.Signatures...)
 	haystack = append(haystack, profile.PreferredFor...)
-	joined := strings.Join(haystack, " ")
+	joined := strings.ToLower(strings.Join(haystack, " "))
 	for _, value := range values {
 		value = strings.ToLower(strings.TrimSpace(value))
 		if value == "" {
 			continue
 		}
 		if strings.Contains(joined, value) {
+			return true
+		}
+	}
+	return false
+}
+
+// profileHasExact is the fail-closed variant for authorization- or
+// certification-adjacent capabilities. Substring matching is useful for human
+// descriptions, but `no-playstation-sdk` must never prove `playstation-sdk`.
+func profileHasExact(profile *MachineProfile, values ...string) bool {
+	if profile == nil {
+		return false
+	}
+	available := map[string]bool{}
+	for _, value := range append(append(append([]string{}, profile.Tags...), profile.Signatures...), profile.PreferredFor...) {
+		available[strings.ToLower(strings.TrimSpace(value))] = true
+	}
+	for _, value := range values {
+		if available[strings.ToLower(strings.TrimSpace(value))] {
 			return true
 		}
 	}

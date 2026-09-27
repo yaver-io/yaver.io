@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -151,5 +152,42 @@ func TestRunDevelopFor_AutoFrameworkFallsBackWhenUnknown(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "framework required") {
 		t.Fatalf("error should mention framework, got %v", err)
+	}
+}
+
+func TestRunDevelopForMovesWholeLoopToSelectedRemoteBox(t *testing.T) {
+	origProxy := developForProxyCall
+	origGate := developForRunnerAuthGate
+	t.Cleanup(func() {
+		developForProxyCall = origProxy
+		developForRunnerAuthGate = origGate
+	})
+	developForRunnerAuthGate = func(string) error {
+		t.Fatal("gateway must not run the target box's runner gate locally")
+		return nil
+	}
+	developForProxyCall = func(ctx context.Context, toolName, deviceID, method, path string, body []byte) (int, []byte, error) {
+		if toolName != "develop_for" || deviceID != "windows-box" || method != http.MethodPost || path != "/develop-for" {
+			t.Fatalf("wrong remote route: tool=%s device=%s method=%s path=%s", toolName, deviceID, method, path)
+		}
+		var forwarded DevelopForRequest
+		if err := json.Unmarshal(body, &forwarded); err != nil {
+			t.Fatal(err)
+		}
+		if forwarded.Machine != "" {
+			t.Fatalf("forwarded machine must be cleared to prevent recursion, got %q", forwarded.Machine)
+		}
+		result, _ := json.Marshal(DevelopForResult{SessionID: "rr_remote", TargetID: "android-emulator", Mechanism: "native-rebuild"})
+		return http.StatusOK, result, nil
+	}
+
+	result, err := RunDevelopFor(context.Background(), DevelopForRequest{
+		Project: "sfmg", Framework: "expo", Surface: "phone", Platform: "android", Machine: "windows-box",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "rr_remote" {
+		t.Fatalf("remote result was not returned: %+v", result)
 	}
 }

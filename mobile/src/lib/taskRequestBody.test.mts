@@ -109,6 +109,9 @@ test("task creation carries the exact mobile build and runtime mode", () => {
     usageMode: "reload-and-chat" as const,
     chatEnabled: true,
     renderEnabled: true,
+    renderModes: ["iframe", "webrtc", "frames"],
+    codecs: ["h264", "jpeg"],
+    inputModes: ["touch", "keyboard", "text"],
   };
   const body = buildSendTaskRequestBody({
     title: "Fix this crash",

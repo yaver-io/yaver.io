@@ -126,6 +126,10 @@ type WorkspaceApp struct {
 	Env []string `yaml:"env" json:"env,omitempty"`
 	// Runtime: coarse runtime hints for app-level placement.
 	Runtime WorkspaceAppRuntime `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	// Development is the same target contract accepted by
+	// .yaver/project.yaml. A monorepo can therefore declare SFMG's targets next
+	// to the app without copying them into each package directory.
+	Development *ManifestDevelopmentConfig `yaml:"development,omitempty" json:"development,omitempty"`
 }
 
 type WorkspaceAppRuntime struct {

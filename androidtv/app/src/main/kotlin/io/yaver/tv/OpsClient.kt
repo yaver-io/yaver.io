@@ -52,6 +52,9 @@ class OpsClient(
         .put("usageMode", "chat-only")
         .put("chatEnabled", true)
         .put("renderEnabled", false)
+        .put("renderModes", JSONArray())
+        .put("codecs", JSONArray())
+        .put("inputModes", JSONArray().put("controller").put("text").put("voice"))
 
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)

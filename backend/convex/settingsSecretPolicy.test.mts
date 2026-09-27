@@ -20,3 +20,14 @@ test("settings reads strip legacy secret columns defensively", () => {
     relayPassword: "account-scoped-relay-routing-credential",
   }), { forceRelay: true, relayPassword: "account-scoped-relay-routing-credential" });
 });
+
+test("publisher profile refuses credentials, tax IDs, payment data, and signing material", () => {
+  assert.deepEqual(rawSecretFieldsInSettings({
+    publisherProfile: {
+      legalName: "Example Studio Ltd",
+      dunsNumber: "123456789",
+      taxId: "must-stay-with-platform",
+      privateKey: "must-stay-in-vault",
+    },
+  }), ["publisherProfile.privateKey", "publisherProfile.taxId"]);
+});

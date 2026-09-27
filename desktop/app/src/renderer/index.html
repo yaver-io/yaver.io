@@ -368,6 +368,26 @@
             <button class="btn btn-ghost btn-sm no-drag" onclick="window.yaver.openExternal('https://yaver.io/dashboard?tab=security')" style="width:100%">Two-factor authentication (optional)</button>
             <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5">Manage Google Authenticator, Microsoft Authenticator, and other TOTP apps in your account settings.</div>
           </div>
+          <div class="section"><div class="section-title">Publisher setup <span style="font-weight:400;text-transform:none">(optional)</span></div>
+            <details class="no-drag">
+              <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">Reuse identity details for store enrollment</summary>
+              <div id="publisher-settings" style="display:grid;gap:6px;margin-top:8px">
+                <select class="input no-drag" id="publisher-entity" onchange="togglePublisherDuns()"><option value="individual">Individual</option><option value="organization">Organization</option></select>
+                <input class="input no-drag" id="publisher-legal" placeholder="Legal name">
+                <input class="input no-drag" id="publisher-name" placeholder="Public publisher name">
+                <input class="input no-drag" id="publisher-duns" placeholder="D-U-N-S number (9 digits)" inputmode="numeric" style="display:none">
+                <input class="input no-drag" id="publisher-email" placeholder="Business email" type="email">
+                <input class="input no-drag" id="publisher-website" placeholder="Website (https://…)" type="url">
+                <input class="input no-drag" id="publisher-country" placeholder="Country code (US)" maxlength="2">
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-ghost btn-sm no-drag" onclick="saveDesktopPublisherProfile()" style="flex:1">Save</button>
+                  <button class="btn btn-ghost btn-sm no-drag" onclick="clearDesktopPublisherProfile()">Clear</button>
+                  <button class="btn btn-ghost btn-sm no-drag" onclick="window.yaver.openExternal('https://yaver.io/dashboard?tab=settings')" style="flex:1">Full setup</button>
+                </div>
+                <div id="publisher-settings-message" style="font-size:11px;color:var(--text-muted);line-height:1.4">Passwords, tax/bank/payment data, signing keys, and final submission stay outside this profile.</div>
+              </div>
+            </details>
+          </div>
           <div class="section"><div class="section-title">AI Runner</div>
             <div id="settings-runners"></div>
           </div>
@@ -1431,11 +1451,76 @@ async function loadSettings() {
     document.getElementById('btn-edit-name').classList.remove('hidden');
     document.getElementById('btn-change-pw').classList.toggle('hidden', currentUser.provider !== 'email');
   }
+  loadDesktopPublisherProfile();
   loadRunners();
   // Sandbox
   try { const s = await window.yaver.sandboxStatus();
     document.getElementById('settings-sandbox').innerHTML = `<div class="item"><span class="item-name">Docker</span><span class="badge ${s.docker?'badge-green':'badge-red'}">${s.docker?'available':'not found'}</span></div>`;
   } catch { document.getElementById('settings-sandbox').innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Not connected</div>'; }
+}
+
+function togglePublisherDuns() {
+  const organization = document.getElementById('publisher-entity').value === 'organization';
+  document.getElementById('publisher-duns').style.display = organization ? '' : 'none';
+}
+
+async function loadDesktopPublisherProfile() {
+  try {
+    const response = await window.yaver.convexRequest('GET', '/settings');
+    const profile = response?.settings?.publisherProfile || {};
+    document.getElementById('publisher-entity').value = profile.entityType || 'individual';
+    document.getElementById('publisher-legal').value = profile.legalName || '';
+    document.getElementById('publisher-name').value = profile.publisherName || '';
+    document.getElementById('publisher-duns').value = profile.dunsNumber || '';
+    document.getElementById('publisher-email').value = profile.businessEmail || '';
+    document.getElementById('publisher-website').value = profile.website || '';
+    document.getElementById('publisher-country').value = profile.countryCode || '';
+    togglePublisherDuns();
+  } catch {
+    document.getElementById('publisher-settings-message').textContent = 'Sign in to load publisher setup.';
+  }
+}
+
+async function saveDesktopPublisherProfile() {
+  const message = document.getElementById('publisher-settings-message');
+  const entityType = document.getElementById('publisher-entity').value;
+  const dunsNumber = document.getElementById('publisher-duns').value.replace(/\D/g, '').slice(0, 9);
+  const profile = {
+    entityType,
+    legalName: document.getElementById('publisher-legal').value.trim(),
+    publisherName: document.getElementById('publisher-name').value.trim(),
+    businessEmail: document.getElementById('publisher-email').value.trim(),
+    website: document.getElementById('publisher-website').value.trim(),
+    countryCode: document.getElementById('publisher-country').value.trim().toUpperCase(),
+    dunsNumber: entityType === 'organization' ? dunsNumber : '',
+  };
+  if (entityType === 'organization' && dunsNumber && dunsNumber.length !== 9) {
+    message.textContent = 'D-U-N-S number must contain 9 digits.';
+    return;
+  }
+  message.textContent = 'Saving…';
+  try {
+    const response = await window.yaver.convexRequest('POST', '/settings', { publisherProfile: profile });
+    if (response?.ok === false) throw new Error(response.error || 'Could not save');
+    message.textContent = 'Saved. Yaver MCP can reuse these fields for guided enrollment.';
+  } catch (error) {
+    message.textContent = error?.message || 'Could not save publisher setup.';
+  }
+}
+
+async function clearDesktopPublisherProfile() {
+  const message = document.getElementById('publisher-settings-message');
+  message.textContent = 'Clearing…';
+  try {
+    const response = await window.yaver.convexRequest('POST', '/settings', { publisherProfile: null });
+    if (response?.ok === false) throw new Error(response.error || 'Could not clear');
+    for (const id of ['publisher-legal', 'publisher-name', 'publisher-duns', 'publisher-email', 'publisher-website', 'publisher-country']) document.getElementById(id).value = '';
+    document.getElementById('publisher-entity').value = 'individual';
+    togglePublisherDuns();
+    message.textContent = 'Publisher profile cleared.';
+  } catch (error) {
+    message.textContent = error?.message || 'Could not clear publisher setup.';
+  }
 }
 
 async function editProfileName() { const n = prompt('New name:', currentUser?.fullName||''); if (!n) return; await window.yaver.updateProfile({ fullName: n }); currentUser.fullName = n; loadSettings(); }

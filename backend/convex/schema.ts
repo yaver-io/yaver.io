@@ -1287,6 +1287,31 @@ export default defineSchema({
       inference: v.optional(v.boolean()),  // Yaver gateway (only if no own AI key)  → inference
       publish:   v.optional(v.boolean()),  // Mac-farm App Store / Play              → publish
     })),
+    // Reusable, non-credential publisher identity for guided store enrollment.
+    // Passwords, payment details, tax IDs, signing keys and API credentials are
+    // intentionally absent; those remain with the platform or in Yaver vault.
+    publisherProfile: v.optional(v.object({
+      entityType: v.optional(v.union(v.literal("individual"), v.literal("organization"))),
+      legalName: v.optional(v.string()),
+      publisherName: v.optional(v.string()),
+      dunsNumber: v.optional(v.string()),
+      countryCode: v.optional(v.string()),
+      addressLine1: v.optional(v.string()),
+      addressLine2: v.optional(v.string()),
+      city: v.optional(v.string()),
+      region: v.optional(v.string()),
+      postalCode: v.optional(v.string()),
+      website: v.optional(v.string()),
+      businessEmail: v.optional(v.string()),
+      supportEmail: v.optional(v.string()),
+      phone: v.optional(v.string()),
+      programs: v.optional(v.array(v.object({
+        platform: v.string(),
+        status: v.string(),
+        updatedAt: v.number(),
+      }))),
+      updatedAt: v.number(),
+    })),
   }).index("by_userId", ["userId"])
     .index("by_relayPassword", ["relayPassword"]),
 

@@ -3729,6 +3729,79 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// --- develop_for orchestration (P2) ---
 	developForTools := []map[string]interface{}{
 		{
+			"name":        "publisher_setup",
+			"description": "Optionally save reusable non-secret publisher identity in Convex, report enrollment readiness, or prepare a guarded browser handoff for Apple, Google Play, Microsoft Store, Xbox, or PlayStation. This never stores passwords, payment/tax/bank data, signing keys, or API credentials and never performs login, 2FA, agreements, payment, or final submission.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"op"},
+				"properties": map[string]interface{}{
+					"op":       map[string]interface{}{"type": "string", "enum": []string{"status", "save", "clear", "plan"}, "description": "status returns readiness for every platform; save merges profile metadata; clear deletes it; plan prepares one official browser handoff."},
+					"platform": map[string]interface{}{"type": "string", "description": "Required for plan. Apple/iOS, Google Play/Android, Microsoft Store/Windows, Xbox, and PlayStation/PS4/PS5 aliases are accepted."},
+					"profile": map[string]interface{}{
+						"type":        "object",
+						"description": "Reusable non-secret identity metadata for op=save. Omitted fields remain unchanged.",
+						"properties": map[string]interface{}{
+							"entityType":    map[string]interface{}{"type": "string", "enum": []string{"individual", "organization"}},
+							"legalName":     map[string]interface{}{"type": "string"},
+							"publisherName": map[string]interface{}{"type": "string"},
+							"dunsNumber":    map[string]interface{}{"type": "string", "description": "Nine digits when supplied."},
+							"countryCode":   map[string]interface{}{"type": "string", "description": "Two-letter ISO country code."},
+							"addressLine1":  map[string]interface{}{"type": "string"},
+							"addressLine2":  map[string]interface{}{"type": "string"},
+							"city":          map[string]interface{}{"type": "string"},
+							"region":        map[string]interface{}{"type": "string"},
+							"postalCode":    map[string]interface{}{"type": "string"},
+							"website":       map[string]interface{}{"type": "string"},
+							"businessEmail": map[string]interface{}{"type": "string"},
+							"supportEmail":  map[string]interface{}{"type": "string"},
+							"phone":         map[string]interface{}{"type": "string"},
+							"programs": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type":     "object",
+									"required": []string{"platform", "status"},
+									"properties": map[string]interface{}{
+										"platform": map[string]interface{}{"type": "string", "enum": []string{"apple", "google-play", "microsoft-store", "xbox", "playstation"}},
+										"status":   map[string]interface{}{"type": "string", "enum": []string{"not-started", "in-progress", "submitted", "approved", "action-required"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"name":        "development_plan",
+			"description": "Plan the explicit X/Y/Z development path before doing work: X is the calling client surface and its real render/input capabilities; Y is a selected or automatically resolved Yaver box; Z is a target declared in .yaver/project.yaml or yaver.workspace.yaml. Returns independent code/build/run/render readiness plus stable blockers and routes to fixes.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"target"},
+				"properties": map[string]interface{}{
+					"projectDir":  map[string]interface{}{"type": "string", "description": "Project directory containing .yaver/project.yaml, or an app directory under yaver.workspace.yaml."},
+					"app":         map[string]interface{}{"type": "string", "description": "Optional workspace app name, for example sfmg, talos, or yaver."},
+					"target":      map[string]interface{}{"type": "string", "description": "Manifest target key or platform, for example xbox, ps5, windows, tvos."},
+					"remoteBoxId": map[string]interface{}{"type": "string", "description": "Optional Y-axis device id. Omit to select an online capable box."},
+					"sessionSettings": map[string]interface{}{
+						"type":        "object",
+						"description": "The calling Yaver surface's normal ClientSessionSettings. The planner consumes its renderModes/codecs/inputModes directly, so clients do not maintain a second capability contract.",
+					},
+					"client": map[string]interface{}{
+						"type":     "object",
+						"required": []string{"surface", "chatEnabled", "renderEnabled"},
+						"properties": map[string]interface{}{
+							"surface":       map[string]interface{}{"type": "string"},
+							"renderModes":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+							"codecs":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+							"inputModes":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+							"chatEnabled":   map[string]interface{}{"type": "boolean"},
+							"renderEnabled": map[string]interface{}{"type": "boolean"},
+						},
+					},
+				},
+			},
+		},
+		{
 			"name":        "develop_for",
 			"description": "One-verb dev loop: resolve machine → gate on authed runner → pick mechanism per (framework, surface, platform) → create+boot a remote-runtime session on the resolved target → launch app → return sessionId + first frame. Composes runtime_* + runner_auth + mechanism resolver; no new transport.",
 			"inputSchema": map[string]interface{}{

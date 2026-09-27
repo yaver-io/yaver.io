@@ -92,6 +92,9 @@ actor AgentClient {
             "usageMode": "chat-only",
             "chatEnabled": true,
             "renderEnabled": false,
+            "renderModes": ["webrtc", "frames"],
+            "codecs": ["h264", "jpeg"],
+            "inputModes": ["controller", "text", "voice"],
         ]
     }
 

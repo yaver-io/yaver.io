@@ -31,6 +31,10 @@ apps:
     env:
       - CLOUDFLARE_API_TOKEN
       - CLOUDFLARE_ACCOUNT_ID
+    development:
+      targets:
+        web:
+          platform: web
 
   - name: mobile
     path: ./mobile
@@ -44,6 +48,12 @@ apps:
       - APP_STORE_KEY_PATH
       - APP_STORE_KEY_ID
       - APP_STORE_KEY_ISSUER
+    development:
+      targets:
+        ios:
+          platform: ios
+        android:
+          platform: android
 
   - name: mobile-headless
     path: ./mobile-headless
@@ -69,6 +79,10 @@ apps:
     provider:
       ios: appstoreconnect
     depends: [backend]
+    development:
+      targets:
+        tvos:
+          platform: tvos
 
   - name: watchos
     path: ./watch
@@ -78,6 +92,10 @@ apps:
     provider:
       ios: appstoreconnect
     depends: [backend]
+    development:
+      targets:
+        watchos:
+          platform: watchos
 
   - name: visionos
     path: ./visionos
@@ -87,6 +105,10 @@ apps:
     provider:
       ios: appstoreconnect
     depends: [backend]
+    development:
+      targets:
+        visionos:
+          platform: visionos
 
   - name: wear-os
     path: ./wear
@@ -96,6 +118,10 @@ apps:
     provider:
       android: playstore
     depends: [backend]
+    development:
+      targets:
+        wear-os:
+          platform: wear-os
 
   - name: androidtv
     path: ./androidtv
@@ -105,6 +131,37 @@ apps:
     provider:
       android: playstore
     depends: [backend]
+    development:
+      targets:
+        android-tv:
+          platform: android-tv
+
+  - name: xbox
+    path: ./xbox
+    stack: uwp
+    surfaces: [xbox]
+    test_surfaces: [webrtc, physical-hardware]
+    depends: [backend]
+    development:
+      targets:
+        xbox:
+          platform: xbox
+
+  # Public protocol/readiness boundary only. The restricted platform adapter
+  # and SDK stay in the approved partner environment; the manifest makes the
+  # required remote-box capabilities visible without claiming they exist.
+  - name: playstation
+    path: ./playstation
+    stack: native-adapter
+    surfaces: [playstation]
+    test_surfaces: [webrtc, physical-hardware]
+    depends: [backend]
+    development:
+      targets:
+        ps4:
+          platform: playstation4
+        ps5:
+          platform: playstation5
 
   - name: desktop-agent
     path: ./desktop/agent
@@ -117,6 +174,10 @@ apps:
   - name: desktop-app
     path: ./desktop/app
     stack: node
+    development:
+      targets:
+        windows-store:
+          platform: windows
 
   - name: relay
     path: ./relay

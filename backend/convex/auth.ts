@@ -292,6 +292,7 @@ async function mergeUserInto(
       ttsProvider: sourceSettings.ttsProvider,
       keyStorage: sourceSettings.keyStorage,
       moreOptionalTools: sourceSettings.moreOptionalTools ?? [],
+      publisherProfile: sourceSettings.publisherProfile,
     });
     await ctx.db.delete(sourceSettings._id);
   } else if (sourceSettings && targetSettings) {
@@ -307,6 +308,7 @@ async function mergeUserInto(
       ttsProvider: targetSettings.ttsProvider ?? sourceSettings.ttsProvider,
       keyStorage: targetSettings.keyStorage ?? sourceSettings.keyStorage,
       moreOptionalTools: targetSettings.moreOptionalTools ?? sourceSettings.moreOptionalTools ?? [],
+      publisherProfile: targetSettings.publisherProfile ?? sourceSettings.publisherProfile,
     });
     await ctx.db.delete(sourceSettings._id);
   }

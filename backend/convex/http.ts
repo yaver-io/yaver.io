@@ -5290,6 +5290,10 @@ http.route({
         // preserved. null on any key clears that subsystem.
         managed: body.managed,
         deployPreferences: body.deployPreferences,
+        // Legal/business metadata used to prefill official publisher portals.
+        // Credentials, payment details, tax IDs and signing material are not
+        // accepted by this profile and must use the platform/vault lanes.
+        publisherProfile: body.publisherProfile,
       });
     } catch (err) {
       // Name the cause with a status the browser is allowed to READ. An

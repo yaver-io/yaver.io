@@ -47,6 +47,9 @@ test("web session settings declare browser chat/render capabilities", () => {
     usageMode: "reload-and-chat",
     chatEnabled: true,
     renderEnabled: true,
+    renderModes: ["iframe", "webrtc", "frames"],
+    codecs: ["h264", "jpeg"],
+    inputModes: ["pointer", "keyboard", "touch", "text"],
   });
 });
 

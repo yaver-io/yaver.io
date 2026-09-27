@@ -45,6 +45,106 @@ const appearanceThemePatchValidator = v.object({
   theme: v.union(v.literal("light"), v.literal("dark")),
 });
 
+const publisherProgramPatchValidator = v.object({
+  platform: v.union(
+    v.literal("apple"),
+    v.literal("google-play"),
+    v.literal("microsoft-store"),
+    v.literal("xbox"),
+    v.literal("playstation"),
+  ),
+  status: v.union(
+    v.literal("not-started"),
+    v.literal("in-progress"),
+    v.literal("submitted"),
+    v.literal("approved"),
+    v.literal("action-required"),
+  ),
+});
+
+const publisherProfilePatchValidator = v.union(v.object({
+  entityType: v.optional(v.union(v.literal("individual"), v.literal("organization"))),
+  legalName: v.optional(v.string()),
+  publisherName: v.optional(v.string()),
+  dunsNumber: v.optional(v.string()),
+  countryCode: v.optional(v.string()),
+  addressLine1: v.optional(v.string()),
+  addressLine2: v.optional(v.string()),
+  city: v.optional(v.string()),
+  region: v.optional(v.string()),
+  postalCode: v.optional(v.string()),
+  website: v.optional(v.string()),
+  businessEmail: v.optional(v.string()),
+  supportEmail: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  programs: v.optional(v.array(publisherProgramPatchValidator)),
+}), v.null());
+
+type PublisherProfilePatch = {
+  entityType?: "individual" | "organization";
+  legalName?: string;
+  publisherName?: string;
+  dunsNumber?: string;
+  countryCode?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  website?: string;
+  businessEmail?: string;
+  supportEmail?: string;
+  phone?: string;
+  programs?: Array<{ platform: string; status: string }>;
+};
+
+function cleanPublisherValue(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = value.trim().replace(/\s+/g, " ").slice(0, max);
+  return clean || undefined;
+}
+
+function mergePublisherProfile(existing: Record<string, unknown> | undefined, payload: PublisherProfilePatch | null) {
+  if (payload === null) return undefined;
+  const next: Record<string, unknown> = { ...(existing ?? {}) };
+  const limits: Record<string, number> = {
+    legalName: 200, publisherName: 200, dunsNumber: 20, countryCode: 2,
+    addressLine1: 240, addressLine2: 240, city: 120, region: 120,
+    postalCode: 32, website: 500, businessEmail: 254, supportEmail: 254, phone: 64,
+  };
+  if (payload.entityType !== undefined) next.entityType = payload.entityType;
+  for (const [field, max] of Object.entries(limits)) {
+    if (!(field in payload)) continue;
+    const value = cleanPublisherValue((payload as unknown as Record<string, unknown>)[field], max);
+    if (value) next[field] = field === "countryCode" ? value.toUpperCase() : value;
+    else delete next[field];
+  }
+  const duns = String(next.dunsNumber ?? "");
+  if (duns && !/^\d{9}$/.test(duns)) throw new Error("D-U-N-S number must contain exactly 9 digits");
+  const country = String(next.countryCode ?? "");
+  if (country && !/^[A-Z]{2}$/.test(country)) throw new Error("Country must be a 2-letter ISO code");
+  const website = String(next.website ?? "");
+  if (website && !/^https?:\/\//i.test(website)) throw new Error("Website must start with https:// or http://");
+  for (const field of ["businessEmail", "supportEmail"]) {
+    const email = String(next[field] ?? "");
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`${field} must be a valid email address`);
+  }
+  if (payload.programs !== undefined) {
+    const seen = new Set<string>();
+    next.programs = payload.programs.filter((row) => {
+      if (seen.has(row.platform)) return false;
+      seen.add(row.platform);
+      return true;
+    }).map((row) => ({
+      platform: row.platform,
+      status: row.status,
+      updatedAt: Date.now(),
+    }));
+  }
+  next.updatedAt = Date.now();
+  return next;
+}
+
 type AppearanceThemeRow = { surface: string; theme: "light" | "dark"; updatedAt: number };
 
 function mergeAppearanceTheme(
@@ -951,6 +1051,7 @@ export const set = internalMutation({
     // ACCOUNT across devices; the phone keeps a local copy because boot cannot
     // wait on a round-trip without flashing the wrong tab.
     startupScreen: v.optional(v.union(v.literal("projects"), v.literal("tasks"), v.null())),
+    publisherProfile: v.optional(publisherProfilePatchValidator),
   },
   handler: async (ctx, args) => {
     const normalizedPrimaryDeviceId = await normalizeOwnedDeviceId(
@@ -1125,6 +1226,12 @@ export const set = internalMutation({
         args.deployPreferences as Record<string, string | null | undefined>,
       );
     }
+    if (args.publisherProfile !== undefined) {
+      patch.publisherProfile = mergePublisherProfile(
+        existing?.publisherProfile as Record<string, unknown> | undefined,
+        args.publisherProfile as PublisherProfilePatch | null,
+      );
+    }
     const normalizedPrimaryRunnerRows = normalizePrimaryRunnerRowsForClient(
       (patch.primaryRunnerByDevice as PrimaryRunnerRow[] | undefined) ??
         (existing?.primaryRunnerByDevice as PrimaryRunnerRow[] | undefined),
@@ -1189,6 +1296,7 @@ export const setByToken = mutation({
     // ACCOUNT across devices; the phone keeps a local copy because boot cannot
     // wait on a round-trip without flashing the wrong tab.
     startupScreen: v.optional(v.union(v.literal("projects"), v.literal("tasks"), v.null())),
+    publisherProfile: v.optional(publisherProfilePatchValidator),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -1357,6 +1465,12 @@ export const setByToken = mutation({
       patch.deployPreferences = mergeDeployPreferencePatch(
         existing?.deployPreferences as Record<string, string | undefined> | undefined,
         args.deployPreferences as Record<string, string | null | undefined>,
+      );
+    }
+    if (args.publisherProfile !== undefined) {
+      patch.publisherProfile = mergePublisherProfile(
+        existing?.publisherProfile as Record<string, unknown> | undefined,
+        args.publisherProfile as PublisherProfilePatch | null,
       );
     }
     const normalizedPrimaryRunnerRows = normalizePrimaryRunnerRowsForClient(

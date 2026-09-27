@@ -725,7 +725,11 @@ devices and flows P2P.
 (hashes only), `devices`, `relayServers`, `platformConfig`,
 `guestInvitations`, `guestAccess`, `teams`, `teamMembers`, `userProjects`
 (slug + deviceId + flags + branch — **no absolute paths**), activity audit
-summaries (action + target + outcome + timestamp).
+summaries (action + target + outcome + timestamp), and optional publisher
+identity metadata explicitly entered by the user (legal/publisher name,
+D-U-N-S number, business address/contact fields, and enrollment status).
+Publisher passwords, recovery codes, payment/bank/tax data, API credentials,
+and signing keys remain forbidden and use the platform or local vault lanes.
 
 **Forbidden in Convex** (enforced by `desktop/agent/convex_privacy_test.go`):
 vault values, raw tokens / API key plaintext, task input prompts or stdout,
