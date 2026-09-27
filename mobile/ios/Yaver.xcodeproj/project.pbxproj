@@ -902,7 +902,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -936,7 +936,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -970,7 +970,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.activity;
 				PRODUCT_NAME = YaverActivity;
@@ -996,7 +996,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = "io.yaver.mobile.share-extension";
 				PRODUCT_NAME = ShareExtension;
@@ -1140,7 +1140,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.watch;
 				PRODUCT_NAME = YaverWatch;
@@ -1171,7 +1171,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = "io.yaver.mobile.share-extension";
 				PRODUCT_NAME = ShareExtension;
@@ -1201,7 +1201,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.watch;
 				PRODUCT_NAME = YaverWatch;
@@ -1227,7 +1227,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.18.188;
+				MARKETING_VERSION = 1.18.189;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.activity;
 				PRODUCT_NAME = YaverActivity;

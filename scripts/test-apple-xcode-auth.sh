@@ -200,6 +200,12 @@ grep -q 'EXPORT_DESTINATION="export"' "$testflight_script" || \
   fail "iOS API-key deploys must export locally before App Store authentication"
 [ "$(grep -c -- '--type ios --apiKey' "$testflight_script")" -eq 2 ] || \
   fail "iOS API-key deploys must validate/upload the exported IPA with altool"
+grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$testflight_script" || \
+  fail "iOS API-key deploys must treat altool's server rejection as failure even when altool exits zero"
+grep -q "upload was not attempted" "$testflight_script" || \
+  fail "iOS validation failure must stop before the upload endpoint"
+grep -q "UPLOAD FAILED|Validation failed|Failed to upload package" "$testflight_script" || \
+  fail "iOS API-key deploys must not report success when altool's upload verdict is failure"
 grep -q 'Watch/YaverWatch.app' "$testflight_script" || \
   fail "iOS archive validation must check the collision-free YaverWatch product name"
 if grep -q 'Watch/Yaver.app' "$testflight_script"; then

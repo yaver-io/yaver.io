@@ -860,16 +860,39 @@ if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
   cp "$APP_STORE_KEY_PATH" "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
   chmod 600 "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
   cleanup_ios_upload_auth() {
+    [ -z "${VALIDATION_LOG:-}" ] || rm -f "$VALIDATION_LOG"
+    [ -z "${UPLOAD_LOG:-}" ] || rm -f "$UPLOAD_LOG"
     find "$UPLOAD_AUTH_DIR" -depth -delete 2>/dev/null || true
   }
   trap 'cleanup_ios_upload_auth; release_lease' EXIT
 
   echo "Validating iOS IPA with App Store Connect…"
-  (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$IPA_PATH" \
-    --type ios --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")
+  VALIDATION_LOG="$(mktemp -t yaver-ios-validation.XXXXXX)"
+  if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$IPA_PATH" \
+    --type ios --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
+    2>&1 | tee "$VALIDATION_LOG"; then
+    echo "ERROR: App Store Connect iOS validation command failed; upload was not attempted." >&2
+    exit 1
+  fi
+  # altool may return zero even when Apple's server verdict says VERIFY FAILED.
+  # Treat that verdict as authoritative; otherwise an invalid train is uploaded
+  # and the deploy ends with a false success message.
+  if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+    echo "ERROR: App Store Connect rejected iOS validation; upload was not attempted." >&2
+    exit 1
+  fi
   echo "Uploading iOS IPA to TestFlight…"
-  (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$IPA_PATH" \
-    --type ios --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")
+  UPLOAD_LOG="$(mktemp -t yaver-ios-upload.XXXXXX)"
+  if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$IPA_PATH" \
+    --type ios --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
+    2>&1 | tee "$UPLOAD_LOG"; then
+    echo "ERROR: App Store Connect iOS upload command failed." >&2
+    exit 1
+  fi
+  if grep -qE 'UPLOAD FAILED|Validation failed|Failed to upload package' "$UPLOAD_LOG"; then
+    echo "ERROR: App Store Connect rejected the iOS upload." >&2
+    exit 1
+  fi
 fi
 
 DEPLOY_OUTCOME=success   # the trap releases the lease with this outcome + quota++
