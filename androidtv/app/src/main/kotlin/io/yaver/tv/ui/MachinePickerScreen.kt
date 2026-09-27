@@ -157,13 +157,16 @@ private fun MachineCard(
     var focused by remember { mutableStateOf(false) }
     val now = System.currentTimeMillis()
 
-    val online = device.lastSeenAt?.let { now - it * 1000 < 2 * 60 * 1000 } ?: false
+    val online = device.controlPlaneState?.let { it != "offline" }
+        ?: (device.isOnline && (device.lastHeartbeat?.let { now - it < 15 * 60 * 1000 } ?: true))
     val wakeable = device.isManaged
 
     val badge: Pair<String, Color> = when {
         isSelected || isPrimary -> "Selected" to TvColors.Blue
+        device.needsAuth || device.controlPlaneState == "needs-auth" -> "Sign in" to TvColors.Orange
         !online && wakeable -> "Wake" to TvColors.Orange
-        online -> "Online" to TvColors.Green
+        online && device.relayConnected == false -> "LAN only" to TvColors.Orange
+        online -> "Reporting" to TvColors.Green
         else -> "Offline" to TvColors.TextMuted
     }
 

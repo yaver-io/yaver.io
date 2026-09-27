@@ -97,6 +97,9 @@ type DeviceLike = {
     online: boolean;
     at: number;
   };
+  controlPlaneStatus?: {
+    state?: "relay-online" | "reporting" | "needs-auth" | "offline";
+  };
 };
 
 function hasRecentLiveSignal(device: Pick<DeviceLike, "lastTunnelEvent">, maxAgeMs = 90_000): boolean {
@@ -394,7 +397,7 @@ export async function probeMobileDeviceStatus(
 }
 
 export function deriveMobileDeviceLifecycleState(args: {
-  device: Pick<DeviceLike, "online" | "needsAuth" | "peerState" | "lastTunnelEvent">;
+  device: Pick<DeviceLike, "online" | "needsAuth" | "peerState" | "lastTunnelEvent" | "controlPlaneStatus">;
   probe?: MobileDeviceStatusProbe | null;
   isConnected?: boolean;
   authExpired?: boolean;
@@ -409,7 +412,7 @@ export function deriveMobileDeviceLifecycleState(args: {
   // "connected" while the user's tasks 401.
   if (probe?.bootstrap) return "bootstrap";
   if (probe?.authExpired || authExpired) return "yaver-auth-expired";
-  if (device.needsAuth) return "yaver-auth-expired";
+  if (device.needsAuth || device.controlPlaneStatus?.state === "needs-auth") return "yaver-auth-expired";
   if (isConnected) return "connected";
   if (probe?.lifecycleState) return probe.lifecycleState;
   // "ready-to-connect" must mean we have a *positive, recent* signal that the
@@ -436,6 +439,8 @@ export function deriveMobileDeviceLifecycleState(args: {
   const optimistic =
     probe?.reachable ||
     device.online ||
+    device.controlPlaneStatus?.state === "relay-online" ||
+    device.controlPlaneStatus?.state === "reporting" ||
     device.peerState === "online" ||
     hasRecentLiveSignal(device);
 

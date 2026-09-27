@@ -405,50 +405,13 @@ function deviceReachabilitySummary(
   return "No recent agent signal";
 }
 
-const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
-
-function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "peerState" | "workspaceLive" | "probeState" | "probeInfo">,
-): boolean {
-  if (device.online) return false;
-  if (device.workspaceLive) return false;
-  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
-  if (lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired" || lifecycleState === "ready-to-connect") return false;
-  if (device.probeState === "ok" || device.probeState === "auth-expired") return false;
-  if (device.peerState === "online") return false;
-  if (device.needsAuth) return false;
-  if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
-  const age = lastSeenAgeMs(device.lastSeen);
-  return age !== null && age >= DORMANT_DEVICE_HIDE_MS;
-}
-
-function duplicateHostKey(device: Pick<Device, "platform" | "name">): string | null {
-  const platform = String(device.platform || "").trim().toLowerCase();
-  const name = String(device.name || "").trim().toLowerCase().replace(/\.local$/, "");
-  if (!platform || !name) return null;
-  return `${platform}:${name}`;
-}
-
-function stableAliasRank(device: Pick<Device, "alias">): number {
-  const alias = String(device.alias || "").trim().toLowerCase();
-  if (!alias) return 1;
-  return /-\d+$/.test(alias) ? 2 : 0;
-}
-
-function operationRank(device: Pick<Device, "online" | "needsAuth" | "workspaceLive" | "peerState" | "probeState" | "lastTunnelEvent">): number {
-  if (device.workspaceLive) return 0;
-  if (device.probeState === "ok") return 1;
-  if (device.online || device.peerState === "online" || device.lastTunnelEvent?.online === true) return 2;
-  if (!device.needsAuth) return 3;
-  return 4;
-}
-
 function formatRunnerChipLabel(runner: string): string {
   const cleaned = String(runner || "").trim();
   if (!cleaned) return cleaned;
   if (cleaned === "claude-code") return "claude";
   return cleaned;
 }
+
 
 function runnerChipsForDevice(device: Pick<Device, "runners">): string[] {
   const chips = new Set<string>();
@@ -3324,7 +3287,6 @@ export default function DevicesView({
   // session has expired.
   const [shellSession, setShellSession] = useState<{ device: Device; launch?: TerminalLaunchRunner } | null>(null);
   const [rescueStatus, setRescueStatus] = useState<Record<string, { msg: string; tone: "info" | "ok" | "err" } | undefined>>({});
-  const [showDormantDevices, setShowDormantDevices] = useState(false);
   const saveMachineRoleFavorite = useCallback(
     async (slot: "primary-runner" | "secondary-runner" | "primary-render" | "secondary-render", device: Device) => {
       if (!machineRoles || !token) return;
@@ -3371,41 +3333,11 @@ export default function DevicesView({
     machineRoles?.favorite?.secondaryRunnerDeviceId,
     machineRoles?.favorite?.secondaryRenderDeviceId,
   ]);
-  const duplicateAuthSiblingIds = useMemo(() => {
-    const byHost = new Map<string, Device[]>();
-    for (const device of devices) {
-      const key = duplicateHostKey(device);
-      if (!key) continue;
-      const list = byHost.get(key) || [];
-      list.push(device);
-      byHost.set(key, list);
-    }
-
-    const hidden = new Set<string>();
-    for (const group of byHost.values()) {
-      if (group.length < 2) continue;
-      const canonical = [...group].sort(
-        (a, b) =>
-          operationRank(a) - operationRank(b) ||
-          roleRank(a.id) - roleRank(b.id) ||
-          Number(Boolean(a.needsAuth)) - Number(Boolean(b.needsAuth)) ||
-          stableAliasRank(a) - stableAliasRank(b) ||
-          String(a.alias || a.id).localeCompare(String(b.alias || b.id)),
-      )[0];
-      for (const device of group) {
-        if (device.id !== canonical.id) hidden.add(device.id);
-      }
-    }
-    return hidden;
-  }, [
-    devices,
-    roleRank,
-  ]);
-  const isHiddenStaleDevice = (device: Device): boolean =>
-    isDormantUnreachableDevice(device) || duplicateAuthSiblingIds.has(device.id);
-  const actionableDevices = devices.filter((device) => !isHiddenStaleDevice(device));
-  const dormantDevices = devices.filter((device) => isHiddenStaleDevice(device));
-  const renderedDevices = [...(showDormantDevices ? devices : actionableDevices)].sort(
+  // /devices/list already performs identity-aware collapse using hardware ID
+  // and public keys. Never re-collapse by hostname here: two real machines may
+  // share a hostname, and an offline machine still needs a visible recovery
+  // route. Only explicit local hiding (handled by useDevices) removes a row.
+  const renderedDevices = [...devices].sort(
     (a, b) =>
       roleRank(a.id) - roleRank(b.id) ||
       (a.alias || a.name || a.id).localeCompare(b.alias || b.name || b.id),
@@ -3415,15 +3347,6 @@ export default function DevicesView({
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-surface-50">Devices</h2>
         <div className="flex items-center gap-2">
-          {dormantDevices.length > 0 ? (
-            <button
-              onClick={() => setShowDormantDevices((value) => !value)}
-              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-200 hover:bg-amber-500/15"
-              title="Reveal stale devices and duplicate auth-recovery rows"
-            >
-              {showDormantDevices ? "Hide stale devices" : `Show stale devices (${dormantDevices.length})`}
-            </button>
-          ) : null}
           <button
             onClick={() => { void handleRefresh(); }}
             disabled={refreshing}
@@ -3649,11 +3572,6 @@ export default function DevicesView({
               </button>
             </p>
           ) : null}
-          {dormantDevices.length > 0 ? (
-            <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
-              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden by default because they have no recent agent signal and no public path.
-            </p>
-          ) : null}
           {signedInEmail ? (
             <p className="mb-3 text-xs text-surface-500">
               Signed in as <span className="font-medium text-surface-300">{signedInEmail}</span>
@@ -3680,11 +3598,6 @@ export default function DevicesView({
               >
                 Show all
               </button>
-            </div>
-          ) : null}
-          {!showDormantDevices && dormantDevices.length > 0 ? (
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal, no usable relay/tunnel path, or are duplicate auth-recovery rows for a role-bearing machine.
             </div>
           ) : null}
           {renderedDevices.map((device) => {

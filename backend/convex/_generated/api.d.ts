@@ -53,6 +53,7 @@ import type * as deviceEvents from "../deviceEvents.js";
 import type * as deviceIdentityMerge from "../deviceIdentityMerge.js";
 import type * as deviceLabels from "../deviceLabels.js";
 import type * as deviceMetrics from "../deviceMetrics.js";
+import type * as devicePresence from "../devicePresence.js";
 import type * as deviceRemoval from "../deviceRemoval.js";
 import type * as devices from "../devices.js";
 import type * as dogfoodEnrollmentPolicy from "../dogfoodEnrollmentPolicy.js";
@@ -175,6 +176,7 @@ declare const fullApi: ApiFromModules<{
   deviceIdentityMerge: typeof deviceIdentityMerge;
   deviceLabels: typeof deviceLabels;
   deviceMetrics: typeof deviceMetrics;
+  devicePresence: typeof devicePresence;
   deviceRemoval: typeof deviceRemoval;
   devices: typeof devices;
   dogfoodEnrollmentPolicy: typeof dogfoodEnrollmentPolicy;

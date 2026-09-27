@@ -163,6 +163,17 @@ export interface Device {
     connectedAt?: number;
     durationSec?: number;
   };
+  /** Agent heartbeat's data-path verdict. False means off-LAN relay is not usable. */
+  relayConnected?: boolean;
+  /** Backend-observable truth; local browser reachability remains a separate probe. */
+  controlPlaneStatus?: {
+    state: "relay-online" | "reporting" | "needs-auth" | "offline";
+    reasonCode: string;
+    lastSignalAt: number | null;
+    freshUntil: number | null;
+    relayPath: "available" | "unavailable" | "unknown";
+    suggestedAction: "connect" | "reauth" | "try-connect" | "wake-or-start";
+  };
   peerState?: "online" | "stale" | "offline";
   peerLastSeen?: string;
   workspaceLive?: boolean;
@@ -716,6 +727,11 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
                 connectedAt: typeof d.lastTunnelEvent.connectedAt === "number" ? d.lastTunnelEvent.connectedAt : undefined,
                 durationSec: typeof d.lastTunnelEvent.durationSec === "number" ? d.lastTunnelEvent.durationSec : undefined,
               }
+            : undefined,
+        relayConnected: typeof d.relayConnected === "boolean" ? d.relayConnected : undefined,
+        controlPlaneStatus:
+          d.controlPlaneStatus && typeof d.controlPlaneStatus === "object"
+            ? d.controlPlaneStatus
             : undefined,
         agentVersion: typeof d.agentVersion === "string" ? d.agentVersion : undefined,
         agentVersionReportedAt:

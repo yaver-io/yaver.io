@@ -1057,7 +1057,8 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                   device.online &&
                   !connectedSet.has(device.id) &&
                   !reachableNow &&
-                  (device as any).relayConnected === false;
+                  (device.controlPlaneStatus?.relayPath === "unavailable" ||
+                    (device.controlPlaneStatus == null && device.relayConnected === false));
                 // Agent is up but running in bootstrap mode (no valid token) —
                 // typically a box that restarted after its token left disk. It
                 // is reachable and recoverable, so offer sign-in rather than a

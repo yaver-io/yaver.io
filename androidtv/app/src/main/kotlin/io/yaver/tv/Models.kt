@@ -82,7 +82,13 @@ data class RegisteredDevice(
     val machineId: String? = null,
     val localIps: List<String> = emptyList(),
     val quicHost: String? = null,
-    val lastSeenAt: Double? = null,
+    /** Backend epoch milliseconds; never multiply by 1,000 on read. */
+    val lastHeartbeat: Double? = null,
+    val isOnline: Boolean = false,
+    val needsAuth: Boolean = false,
+    val relayConnected: Boolean? = null,
+    val controlPlaneState: String? = null,
+    val controlPlaneReason: String? = null,
     val runnerIds: List<String> = emptyList(),
 ) {
     val isManaged: Boolean get() = hosting == "yaver-hosted" || !machineId.isNullOrEmpty()

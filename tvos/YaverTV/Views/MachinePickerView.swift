@@ -252,6 +252,11 @@ struct MachinePickerView: View {
         connecting = d.deviceId
         defer { connecting = nil }
 
+        if d.needsAuth == true || d.controlPlaneStatus?.state == "needs-auth" {
+            error = "(d.displayName) is running but signed out. Approve its sign-in from your phone or run `yaver auth` on the machine."
+            return
+        }
+
         // A parked managed box has no live address — wake it, don't try to reach it.
         if d.wakeable, d.isOnline != true {
             let box = boxTarget(for: d, host: d.quicHost ?? "")
@@ -381,8 +386,12 @@ private struct MachineRow: View {
             badge("Selected", .blue)
         } else if primary {
             badge("Primary", .blue)
+        } else if device.needsAuth == true || device.controlPlaneStatus?.state == "needs-auth" {
+            badge("Sign in", .orange)
         } else if device.wakeable && device.isOnline != true {
             badge("Wake", .orange)
+        } else if fresh && (device.controlPlaneStatus?.relayPath == "unavailable" || device.relayConnected == false) {
+            badge("LAN only", .orange)
         } else if fresh {
             badge(device.relayConnected == false ? "LAN-only" : "Online", .green)
         } else if device.isOnline == true {

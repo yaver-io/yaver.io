@@ -359,6 +359,15 @@ export interface Device {
    * heartbeat. When false, an "online" box has no off-LAN route — the phone
    * shows "online · no relay path" instead of implying it's reachable. */
   relayConnected?: boolean;
+  /** Backend-observable registry truth. Route reachability is still proven locally. */
+  controlPlaneStatus?: {
+    state: "relay-online" | "reporting" | "needs-auth" | "offline";
+    reasonCode: string;
+    lastSignalAt: number | null;
+    freshUntil: number | null;
+    relayPath: "available" | "unavailable" | "unknown";
+    suggestedAction: "connect" | "reauth" | "try-connect" | "wake-or-start";
+  };
   peerState?: "online" | "stale" | "offline";
   peerLastSeen?: number;
   /** every reachable IPv4 the agent broadcast in heartbeat — Wi-Fi LAN,
@@ -1447,6 +1456,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
             lastTunnelEvent,
             relayConnected: typeof d.relayConnected === "boolean" ? d.relayConnected : undefined,
+            controlPlaneStatus:
+              d.controlPlaneStatus && typeof d.controlPlaneStatus === "object"
+                ? d.controlPlaneStatus
+                : undefined,
             needsAuth: d.needsAuth ?? false,
             hosting: d.hosting === "yaver-hosted" || d.hosting === "byo" || d.hosting === "self-hosted" ? d.hosting : undefined,
             managed: typeof d.managed === "boolean" ? d.managed : undefined,

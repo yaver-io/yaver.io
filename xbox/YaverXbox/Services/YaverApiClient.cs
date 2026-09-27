@@ -117,12 +117,27 @@ namespace YaverXbox.Services
                 var platform = Text(item, "platform");
                 var version = Text(item, "agentVersion");
                 var online = item.ContainsKey("isOnline") && item["isOnline"].ValueType == JsonValueType.Boolean && item["isOnline"].GetBoolean();
+                var needsAuth = item.ContainsKey("needsAuth") && item["needsAuth"].ValueType == JsonValueType.Boolean && item["needsAuth"].GetBoolean();
+                var control = item.ContainsKey("controlPlaneStatus") && item["controlPlaneStatus"].ValueType == JsonValueType.Object
+                    ? item["controlPlaneStatus"].GetObject()
+                    : null;
+                var controlState = control == null ? "" : Text(control, "state");
+                var relayPath = control == null ? "" : Text(control, "relayPath");
+                var state = needsAuth || controlState == "needs-auth"
+                    ? "◐ sign-in needed"
+                    : controlState == "relay-online"
+                        ? "● relay online"
+                        : controlState == "reporting" && relayPath == "unavailable"
+                            ? "◐ reporting · no relay path"
+                            : online || controlState == "reporting"
+                                ? "◐ reporting · not verified"
+                                : "○ offline";
                 rows.Add(new MachineRow
                 {
                     DeviceId = Text(item, "deviceId"),
                     Name = name,
                     Detail = string.Join(" · ", new[] { platform, string.IsNullOrWhiteSpace(version) ? null : "agent " + version }.WhereNotEmpty()),
-                    State = online ? "● online" : "○ offline"
+                    State = state
                 });
             }
             return rows;

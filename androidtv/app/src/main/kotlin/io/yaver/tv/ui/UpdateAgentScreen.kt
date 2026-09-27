@@ -116,7 +116,8 @@ private fun UpdateRow(
     requested: Boolean,
     onRequest: () -> Unit,
 ) {
-    val online = device.lastSeenAt?.let { System.currentTimeMillis() - it * 1000 < 2 * 60 * 1000 } ?: false
+    val online = device.controlPlaneState?.let { it != "offline" }
+        ?: (device.isOnline && (device.lastHeartbeat?.let { System.currentTimeMillis() - it < 15 * 60 * 1000 } ?: true))
     Row(
         modifier = Modifier.fillMaxWidth().background(TvColors.Card, RoundedCornerShape(16.dp)).padding(20.dp),
         verticalAlignment = Alignment.CenterVertically,

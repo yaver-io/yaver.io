@@ -1176,7 +1176,9 @@ export default function DevicesScreen() {
         }
         setPeerStates(next);
       } catch {
-        if (!cancelled) setPeerStates({});
+        // Preserve the last observed snapshot on a transient read failure.
+        // Explicit offline events / a disconnected session clear it; a failed
+        // poll proves nothing about the peers themselves.
       }
     };
     void refreshPeerStates();

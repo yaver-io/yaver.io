@@ -369,44 +369,6 @@ function deviceReachabilitySummary(
   return "No recent agent signal";
 }
 
-const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
-
-function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "peerState" | "workspaceLive" | "probeState" | "probeInfo">,
-): boolean {
-  if (device.online) return false;
-  if (device.workspaceLive) return false;
-  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
-  if (lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired" || lifecycleState === "ready-to-connect") return false;
-  if (device.probeState === "ok" || device.probeState === "auth-expired") return false;
-  if (device.peerState === "online") return false;
-  if (device.needsAuth) return false;
-  if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
-  const age = lastSeenAgeMs(device.lastSeen);
-  return age !== null && age >= DORMANT_DEVICE_HIDE_MS;
-}
-
-function duplicateHostKey(device: Pick<Device, "platform" | "name">): string | null {
-  const platform = String(device.platform || "").trim().toLowerCase();
-  const name = String(device.name || "").trim().toLowerCase().replace(/\.local$/, "");
-  if (!platform || !name) return null;
-  return `${platform}:${name}`;
-}
-
-function stableAliasRank(device: Pick<Device, "alias">): number {
-  const alias = String(device.alias || "").trim().toLowerCase();
-  if (!alias) return 1;
-  return /-\d+$/.test(alias) ? 2 : 0;
-}
-
-function operationRank(device: Pick<Device, "online" | "needsAuth" | "workspaceLive" | "peerState" | "probeState" | "lastTunnelEvent">): number {
-  if (device.workspaceLive) return 0;
-  if (device.probeState === "ok") return 1;
-  if (device.online || device.peerState === "online" || device.lastTunnelEvent?.online === true) return 2;
-  if (!device.needsAuth) return 3;
-  return 4;
-}
-
 function formatRunnerChipLabel(runner: string): string {
   const cleaned = String(runner || "").trim();
   if (!cleaned) return cleaned;
@@ -1532,7 +1494,10 @@ export default function DashboardPage() {
         }
         setPeerStates(next);
       } catch {
-        if (!cancelled) setPeerStates({});
+        // A failed inventory read is absence of new evidence, not evidence that
+        // every peer went offline. Keep the last snapshot; an explicit peer
+        // state or disconnect clears it. Clearing here made cards flap into the
+        // stale bucket every time one 5-second poll timed out.
       }
     };
     void refreshPeerStates();
@@ -3609,45 +3574,10 @@ export default function DashboardPage() {
   const activeRunnerAuthIssue = runnerAuthIssue(activeRunnerRow);
   const canStartBrowserRunnerAuth = Boolean(activeRunnerRow && (activeRunnerRow.id === "claude" || activeRunnerRow.id === "codex"));
   const mobileWorkers = displayDevices.filter((d) => d.deviceClass === "edge-mobile");
-  const sidebarRoleRank = (id: string): number => {
-    const fav = machineRoles.favorite;
-    if (id === primaryDeviceId) return 0;
-    if (id === fav?.runnerDeviceId) return 1;
-    if (id === fav?.renderDeviceId) return 2;
-    if (id === secondaryDeviceId) return 3;
-    if (id === fav?.secondaryRunnerDeviceId || id === fav?.secondaryRenderDeviceId) return 4;
-    return 5;
-  };
-  const duplicateAuthSidebarIds = (() => {
-    const byHost = new Map<string, Device[]>();
-    for (const device of displayDevices) {
-      const key = duplicateHostKey(device);
-      if (!key) continue;
-      const list = byHost.get(key) || [];
-      list.push(device);
-      byHost.set(key, list);
-    }
-    const hidden = new Set<string>();
-    for (const group of byHost.values()) {
-      if (group.length < 2) continue;
-      const canonical = [...group].sort(
-        (a, b) =>
-          operationRank(a) - operationRank(b) ||
-          sidebarRoleRank(a.id) - sidebarRoleRank(b.id) ||
-          Number(Boolean(a.needsAuth)) - Number(Boolean(b.needsAuth)) ||
-          stableAliasRank(a) - stableAliasRank(b) ||
-          String(a.alias || a.id).localeCompare(String(b.alias || b.id)),
-      )[0];
-      for (const device of group) {
-        if (device.id !== canonical.id) hidden.add(device.id);
-      }
-    }
-    return hidden;
-  })();
-  const isHiddenSidebarDevice = (device: Device): boolean =>
-    isDormantUnreachableDevice(device) || duplicateAuthSidebarIds.has(device.id);
-  const dormantDevices = displayDevices.filter((d) => isHiddenSidebarDevice(d));
-  const visibleDevices = displayDevices.filter((d) => !isHiddenSidebarDevice(d));
+  // The backend has already performed stable-identity collapse. Keep offline
+  // machines visible so their recovery route remains reachable, and never
+  // treat a shared hostname as proof that two rows are duplicates.
+  const visibleDevices = displayDevices;
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   // Project paths are machine-local. Use the per-device client instead of the
   // mutable focused singleton so an in-flight project/Git action cannot be
@@ -4149,15 +4079,6 @@ export default function DashboardPage() {
                     className="w-full px-2 text-left text-[10px] text-surface-500 hover:text-surface-300"
                   >
                     +{visibleDevices.length - 10} more
-                  </button>
-                ) : null}
-                {dormantDevices.length > 0 ? (
-                  <button
-                    onClick={() => setActiveTab("devices")}
-                    className="w-full rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-left text-[10px] text-amber-700 dark:text-amber-200 hover:bg-amber-500/10"
-                    title="Open the Devices tab to reveal stale hidden devices"
-                  >
-                    {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden
                   </button>
                 ) : null}
               </div>

@@ -19,6 +19,11 @@ import {
   type LabelSignals,
 } from "./deviceLabels";
 import { activeDeviceRows, isActiveDeviceRow } from "./deviceRemoval";
+import {
+  deriveControlPlaneStatus,
+  HEARTBEAT_STALE_MS,
+  type ControlPlaneStatus,
+} from "./devicePresence";
 
 // Hard bound on the device black box (deviceFlightEvents). Mirrors
 // flightRecorderMaxEvents in desktop/agent/flightrecorder.go — the agent caps
@@ -112,8 +117,6 @@ const storageValidator = v.object({
 // safe for relay/bus-connected devices; LAN-only devices trade a slower
 // offline flip for far fewer writes. Keep in sync with
 // mobile/_core/constants.ts and web/lib/use-devices.ts.
-const HEARTBEAT_STALE_MS = 900 * 1000;
-
 // HEARTBEAT_WRITE_BUCKET_MS: presence-write coalescing for cost control at
 // scale (100k+ free users). A heartbeat that changes NOTHING but "still
 // alive" must not rewrite the device row every cycle — at 100k always-on
@@ -257,6 +260,8 @@ type ListedDevice = {
    * snapshot cannot come back at any price.
    */
   machineWakeable?: boolean;
+  /** Backend-observable truth only. Clients add their own route probe. */
+  controlPlaneStatus?: ControlPlaneStatus;
   /**
    * Agent instances that were collapsed AWAY into this row — same box, own
    * deviceId/port/version. Present only when two agents were heartbeating
@@ -1788,6 +1793,7 @@ export const listMyDevices = query({
     const hostingFor = (deviceId: string): "yaver-hosted" | "byo" | "self-hosted" =>
       managedByDeviceId.has(deviceId) ? "yaver-hosted" : byoDeviceIds.has(deviceId) ? "byo" : "self-hosted";
 
+    const now = Date.now();
     const result: ListedDevice[] = ownDevices.map((d) => ({
       deviceId: d.deviceId,
       name: d.name,
@@ -1842,7 +1848,16 @@ export const listMyDevices = query({
       machineWakeable: managedByDeviceId.get(d.deviceId)?.wakeable ?? false,
     }));
 
-    return collapseListedDevices(result);
+    return collapseListedDevices(result).map((device) => ({
+      ...device,
+      controlPlaneStatus: deriveControlPlaneStatus({
+        isOnline: device.isOnline,
+        needsAuth: device.needsAuth,
+        lastHeartbeat: device.lastHeartbeat,
+        relayConnected: device.relayConnected,
+        lastTunnelEvent: device.lastTunnelEvent,
+      }, now),
+    }));
   },
 });
 

@@ -66,7 +66,12 @@ object MachineRegistry {
                     machineId = d.optString("machineId").ifEmpty { null },
                     localIps = ips,
                     quicHost = d.optString("quicHost").ifEmpty { null },
-                    lastSeenAt = if (d.has("lastSeenAt")) d.optDouble("lastSeenAt") else null,
+                    lastHeartbeat = if (d.has("lastHeartbeat")) d.optDouble("lastHeartbeat") else null,
+                    isOnline = d.optBoolean("isOnline", false),
+                    needsAuth = d.optBoolean("needsAuth", false),
+                    relayConnected = if (d.has("relayConnected")) d.optBoolean("relayConnected") else null,
+                    controlPlaneState = d.optJSONObject("controlPlaneStatus")?.optString("state")?.ifEmpty { null },
+                    controlPlaneReason = d.optJSONObject("controlPlaneStatus")?.optString("reasonCode")?.ifEmpty { null },
                     runnerIds = runners,
                 )
             }

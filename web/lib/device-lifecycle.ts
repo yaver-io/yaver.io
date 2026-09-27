@@ -164,7 +164,7 @@ export interface BrowserReach {
  * map directly, so this stays a pure function React can re-render off.
  */
 export function deriveBrowserReach(
-  device: Pick<Device, "probeState" | "probeError" | "online" | "peerState" | "workspaceLive" | "lastTunnelEvent">,
+  device: Pick<Device, "probeState" | "probeError" | "online" | "peerState" | "workspaceLive" | "lastTunnelEvent" | "relayConnected" | "controlPlaneStatus">,
   lastFailure: LastFailureLike | null | undefined,
   now: number = Date.now(),
 ): BrowserReach {
@@ -207,13 +207,18 @@ export function deriveBrowserReach(
   // Heartbeat-only. The agent says it is alive; we have not proven we can get
   // there. This is the honest resting state for a card nobody has probed.
   if (device.online || device.peerState === "online" || hasRecentLiveSignal(device)) {
+    const relayUnavailable =
+      device.controlPlaneStatus?.relayPath === "unavailable" ||
+      (device.controlPlaneStatus == null && device.relayConnected === false);
     return {
       state: "claimed",
       unreachable: false,
       verified: false,
-      label: "Not verified from here",
-      detail: "This device reports in to Yaver, but this browser hasn't confirmed a working connection to it yet.",
-      reason: "unverified",
+      label: relayUnavailable ? "No relay path" : "Not verified from here",
+      detail: relayUnavailable
+        ? "This device reports in, but its agent says the relay data path is unavailable. A direct LAN or private tunnel may still work."
+        : "This device reports in to Yaver, but this browser hasn't confirmed a working connection to it yet.",
+      reason: relayUnavailable ? "relay-unavailable" : "unverified",
       checkedAt: null,
     };
   }
@@ -251,7 +256,11 @@ export function deviceStatusLabel(lifecycle: DeviceLifecycleState, reach: Browse
       // The heart of the model: only claim readiness when something actually
       // proved a path. Unprobed devices say what we know (a recent check-in),
       // not what we hope (that connecting will work).
-      return reach.verified ? "Ready to Connect" : "Reporting in · not verified";
+      return reach.verified
+        ? "Ready to Connect"
+        : reach.reason === "relay-unavailable"
+          ? "Reporting in · no relay path"
+          : "Reporting in · not verified";
     default: return "Offline";
   }
 }

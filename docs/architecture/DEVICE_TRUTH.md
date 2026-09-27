@@ -1,7 +1,7 @@
 # Device Truth — what "online" means, and what every surface may claim
 
-**Status:** audit + proposed model. Nothing here is implemented yet except where
-marked ✅. Written 2026-07-18 against `main` @ 20420b30b.
+**Status:** historical audit plus implemented contract. Re-verified 2026-09-27.
+Code remains authoritative.
 
 **Why this file exists.** The Devices list is the first screen a Yaver user sees
 after sign-in. Today it can tell a user a machine is "Ready to Connect" when
@@ -14,6 +14,31 @@ The rule this document exists to enforce:
 
 > **Never state a capability you have not verified. State the evidence you have,
 > and how old it is.**
+
+## Current cross-surface contract (2026-09-27)
+
+`GET /devices/list` now includes a computed `controlPlaneStatus` object. It is
+derived from fields the query already reads, so it creates no table, write,
+subscription, or additional poll:
+
+- `state`: `relay-online | reporting | needs-auth | offline`
+- `reasonCode`: stable machine-readable cause
+- `lastSignalAt` / `freshUntil`: epoch milliseconds
+- `relayPath`: `available | unavailable | unknown`
+- `suggestedAction`: a bounded action enum
+
+The producer is `backend/convex/devicePresence.ts`. This is control-plane truth,
+not proof that a particular client can reach the machine. Web/mobile/TV/Xbox
+must still attempt their local route before claiming `reachable`.
+
+The backend performs identity-aware collapse. Clients must not re-collapse by
+hostname: different machines can legitimately share a hostname. Offline rows
+remain visible because hiding them also hides their recovery route; only an
+explicit local hide or a server-confirmed removal may remove a row from view.
+
+Transient peer-inventory failures preserve the previous observation. An
+explicit offline event or a disconnected session clears it; a failed poll is
+not evidence that every peer went offline.
 
 ---
 

@@ -4,49 +4,23 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// Anchored on THIS file, not process.cwd() — see codexModelDefaults.test.ts.
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const view = readFileSync(join(root, "components/dashboard/DevicesView.tsx"), "utf8");
+const dashboard = readFileSync(join(root, "app/dashboard/page.tsx"), "utf8");
 
-test("DevicesView collapses duplicate host rows to the operational row", () => {
-  const src = readFileSync(join(root, "components/dashboard/DevicesView.tsx"), "utf8");
-  const duplicateBlock = src.slice(
-    src.indexOf("function duplicateHostKey"),
-    src.indexOf("function formatRunnerChipLabel"),
-  );
-
-  assert.match(
-    duplicateBlock,
-    /function duplicateHostKey\(device: Pick<Device, "platform" \| "name">/,
-    "duplicate detection must key on hostname/platform, not agent version",
-  );
-  assert.match(
-    src,
-    /function operationRank\(device: Pick<Device, "online" \| "needsAuth" \| "workspaceLive" \| "peerState" \| "probeState" \| "lastTunnelEvent">\)/,
-    "duplicate resolution must rank rows by the operation that actually works",
-  );
-  assert.match(
-    src,
-    /operationRank\(a\) - operationRank\(b\)/,
-    "a stale primary row must not hide a reachable replacement for the same host",
-  );
-  assert.doesNotMatch(
-    duplicateBlock,
-    /agentVersion/,
-    "duplicate resolution must not prefer a row by agent version",
-  );
+test("web trusts backend identity collapse and never hides by hostname", () => {
+  for (const [name, source] of [["DevicesView", view], ["dashboard", dashboard]]) {
+    assert.doesNotMatch(source, /function duplicateHostKey/, `${name} reintroduced hostname-only identity`);
+    assert.doesNotMatch(source, /duplicateAuthSiblingIds|duplicateAuthSidebarIds/, `${name} reintroduced client duplicate hiding`);
+  }
+  assert.match(view, /const renderedDevices = \[\.\.\.devices\]\.sort/);
+  assert.match(dashboard, /const visibleDevices = displayDevices/);
 });
 
-test("dashboard sidebar uses the same operational duplicate ranking", () => {
-  const src = readFileSync(join(root, "app/dashboard/page.tsx"), "utf8");
-
-  assert.match(
-    src,
-    /function operationRank\(device: Pick<Device, "online" \| "needsAuth" \| "workspaceLive" \| "peerState" \| "probeState" \| "lastTunnelEvent">\)/,
-    "sidebar duplicate resolution must share the operation-first ranking",
-  );
-  assert.match(
-    src,
-    /operationRank\(a\) - operationRank\(b\)/,
-    "sidebar must keep the reachable duplicate instead of a stale role row",
+test("transient peer inventory failures preserve the last evidence", () => {
+  assert.doesNotMatch(
+    dashboard,
+    /catch \{\s*if \(!cancelled\) setPeerStates\(\{\}\);\s*\}/,
+    "one failed peer poll must not mark every machine stale",
   );
 });

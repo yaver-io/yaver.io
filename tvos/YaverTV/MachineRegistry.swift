@@ -18,15 +18,26 @@ import Foundation
 /// DeviceContext.tsx:1153-1228 — enough to list, show liveness, resolve an
 /// address, and offer Wake for a managed box.
 struct RegisteredDevice: Decodable, Identifiable {
+    struct ControlPlaneStatus: Decodable {
+        let state: String
+        let reasonCode: String
+        let lastSignalAt: Double?
+        let freshUntil: Double?
+        let relayPath: String
+        let suggestedAction: String
+    }
+
     let deviceId: String
     let name: String?
     let alias: String?
     let platform: String?
     let isOnline: Bool?
+    let needsAuth: Bool?
     let quicHost: String?
     let quicPort: Int?
     let localIps: [String]?
     let relayConnected: Bool?
+    let controlPlaneStatus: ControlPlaneStatus?
     let agentVersion: String?
     let managed: Bool?
     let hosting: String?

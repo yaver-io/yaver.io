@@ -74,6 +74,26 @@ test("an unprobed heartbeating device is claimed, not reachable", () => {
   assert.equal(reach.unreachable, false);
 });
 
+test("backend no-relay truth demotes the claim without declaring LAN impossible", () => {
+  const d = device({
+    online: true,
+    relayConnected: false,
+    controlPlaneStatus: {
+      state: "reporting",
+      reasonCode: "heartbeat-fresh-no-relay",
+      lastSignalAt: NOW - 1_000,
+      freshUntil: NOW + 899_000,
+      relayPath: "unavailable",
+      suggestedAction: "try-connect",
+    },
+  });
+  const reach = deriveBrowserReach(d, null, NOW);
+  assert.equal(reach.state, "claimed");
+  assert.equal(reach.reason, "relay-unavailable");
+  assert.equal(deviceStatusLabel(deriveDeviceLifecycleState(d), reach), "Reporting in · no relay path");
+  assert.equal(canBrowserActOnDevice(deriveDeviceLifecycleState(d), reach), true);
+});
+
 test("claimed devices do not get a confident CTA", () => {
   const d = device({ online: true });
   const lc = deriveDeviceLifecycleState(d);
