@@ -347,7 +347,7 @@ case "$target" in
     ;;
   android-tv)
     require_deploy_boundary
-    run "$ROOT/scripts/deploy-android-tv.sh" --upload
+    run "$ROOT/scripts/deploy-android-tv.sh" --upload ${pass_args[@]+"${pass_args[@]}"}
     ;;
   tv)
     require_deploy_boundary

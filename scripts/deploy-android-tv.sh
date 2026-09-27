@@ -71,13 +71,15 @@ yaver_android_gradle_memory_args
 # shellcheck source=scripts/lib/android-aab-signing.sh
 source "$ROOT/scripts/lib/android-aab-signing.sh"
 
-if pgrep -f '[x]codebuild' >/dev/null 2>&1; then
-  echo "ERROR: refusing Android TV compilation while an Xcode build is active." >&2
-  echo "Wait for the mobile build to finish, then retry deploy/deploy.sh android-tv." >&2
-  exit 2
-fi
-
 if [ "$SKIP_BUILD" != "1" ]; then
+  # Compilation competes heavily with Xcode on the local release Mac. A
+  # verified --skip-build upload does not compile anything, so it must remain
+  # usable while another Apple release is archiving.
+  if pgrep -f '[x]codebuild' >/dev/null 2>&1; then
+    echo "ERROR: refusing Android TV compilation while an Xcode build is active." >&2
+    echo "Wait for the mobile build to finish, then retry deploy/deploy.sh android-tv." >&2
+    exit 2
+  fi
   if [ ! -f "$ROOT/mobile/android/keystore.properties" ] || [ ! -f "$ROOT/keys/yaver-upload.keystore" ]; then
     echo "Android TV release signing material is missing; running the Yaver signing bootstrap..."
     (cd "$ROOT" && ./scripts/bootstrap-android-signing.sh)

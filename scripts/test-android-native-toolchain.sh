@@ -189,6 +189,17 @@ grep -q 'android-xr|xr-android)' "$ROOT/deploy/deploy.sh"
 grep -q 'PLAY_TRACK="${PLAY_TRACK:-wear:internal}"' "$WEAR_DEPLOY"
 grep -q 'PACKAGE="${TV_PACKAGE:-io.yaver.mobile}"' "$TV_DEPLOY"
 grep -q 'PLAY_TRACK="${PLAY_TRACK:-tv:internal}"' "$TV_DEPLOY"
+grep -q 'deploy-android-tv.sh" --upload ${pass_args\[@\]+"${pass_args\[@\]}"}' "$ROOT/deploy/deploy.sh"
+python3 - "$TV_DEPLOY" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+skip_guard = source.index('if [ "$SKIP_BUILD" != "1" ]; then')
+xcode_guard = source.index("if pgrep -f '[x]codebuild'")
+if xcode_guard < skip_guard:
+    raise SystemExit("Android TV --skip-build is incorrectly blocked by Xcode")
+PY
 grep -q -- '-PyaverTvApplicationId="$PACKAGE"' "$TV_DEPLOY"
 grep -q 'io.yaver.mobile' "$ROOT/androidtv/app/build.gradle.kts"
 grep -q 'mobile/android/gradlew.*androidtv' "$TV_DEPLOY"
