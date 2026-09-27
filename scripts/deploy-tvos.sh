@@ -340,16 +340,36 @@ if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
   cp "$APP_STORE_KEY_PATH" "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
   chmod 600 "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
   cleanup_tvos_upload_auth() {
+    [ -z "${VALIDATION_LOG:-}" ] || rm -f "$VALIDATION_LOG"
+    [ -z "${UPLOAD_LOG:-}" ] || rm -f "$UPLOAD_LOG"
     find "$UPLOAD_AUTH_DIR" -depth -delete 2>/dev/null || true
   }
   trap cleanup_tvos_upload_auth EXIT
 
   echo "Validating tvOS IPA with App Store Connect…"
-  (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$IPA_PATH" \
-    --type appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")
+  VALIDATION_LOG="$(mktemp -t yaver-tvos-validation.XXXXXX)"
+  if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$IPA_PATH" \
+    --type appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
+    2>&1 | tee "$VALIDATION_LOG"; then
+    echo "ERROR: App Store Connect tvOS validation command failed; upload was not attempted." >&2
+    exit 1
+  fi
+  if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+    echo "ERROR: App Store Connect rejected tvOS validation; upload was not attempted." >&2
+    exit 1
+  fi
   echo "Uploading tvOS IPA to TestFlight…"
-  (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$IPA_PATH" \
-    --type appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")
+  UPLOAD_LOG="$(mktemp -t yaver-tvos-upload.XXXXXX)"
+  if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$IPA_PATH" \
+    --type appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
+    2>&1 | tee "$UPLOAD_LOG"; then
+    echo "ERROR: App Store Connect tvOS upload command failed." >&2
+    exit 1
+  fi
+  if grep -qE 'UPLOAD FAILED|Validation failed|Failed to upload package' "$UPLOAD_LOG"; then
+    echo "ERROR: App Store Connect rejected the tvOS upload." >&2
+    exit 1
+  fi
   echo "tvOS build $BUILD_NUMBER accepted by App Store Connect."
 else
   echo "tvOS upload submitted from $ARCHIVE_PATH"

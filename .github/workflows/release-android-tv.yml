@@ -1,0 +1,95 @@
+name: Release Android TV
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-android-tv
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore Android release credentials
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE"
+          test -n "$PLAY_STORE_SERVICE_ACCOUNT_JSON"
+          mkdir -p keys mobile/android
+          printf '%s' "$ANDROID_KEYSTORE" | base64 --decode > keys/yaver-upload.keystore
+          chmod 600 keys/yaver-upload.keystore
+          {
+            echo 'storeFile=../../../keys/yaver-upload.keystore'
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > mobile/android/keystore.properties
+          chmod 600 mobile/android/keystore.properties
+          PLAY_KEY="$RUNNER_TEMP/play-service-account.json"
+          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['PLAY_STORE_SERVICE_ACCOUNT_JSON']))" > "$PLAY_KEY" 2>/dev/null || true
+          if ! head -c1 "$PLAY_KEY" | grep -q '{'; then
+            printf '%s' "$PLAY_STORE_SERVICE_ACCOUNT_JSON" > "$PLAY_KEY"
+          fi
+          head -c1 "$PLAY_KEY" | grep -q '{'
+          chmod 600 "$PLAY_KEY"
+          echo "PLAY_STORE_KEY_FILE=$PLAY_KEY" >> "$GITHUB_ENV"
+
+      - name: Install Google Play client
+        run: python3 -m pip install --disable-pip-version-check google-auth google-auth-httplib2 google-api-python-client
+
+      - name: Choose an unused TV version code
+        run: |
+          set -euo pipefail
+          LOCAL_BASE=$(sed -n 's/.*versionCode \([0-9][0-9]*\).*/\1/p' mobile/android/app/build.gradle | head -1)
+          REMOTE_MAX=$(python3 -c '
+          import os
+          from google.oauth2.service_account import Credentials
+          from googleapiclient.discovery import build
+          package = "io.yaver.tv"
+          creds = Credentials.from_service_account_file(os.environ["PLAY_STORE_KEY_FILE"], scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          service = build("androidpublisher", "v3", credentials=creds)
+          edit = service.edits().insert(body={}, packageName=package).execute()
+          try:
+              bundles = service.edits().bundles().list(packageName=package, editId=edit["id"]).execute().get("bundles", [])
+              print(max((int(bundle["versionCode"]) for bundle in bundles), default=0))
+          finally:
+              service.edits().delete(packageName=package, editId=edit["id"]).execute()
+          ')
+          CANDIDATE=$((LOCAL_BASE + 2))
+          if [ "$REMOTE_MAX" -ge "$CANDIDATE" ]; then
+            CANDIDATE=$((REMOTE_MAX + 1))
+          fi
+          echo "TV_VERSION_CODE=$CANDIDATE" >> "$GITHUB_ENV"
+          echo "Android TV versionCode: $CANDIDATE (remote max: $REMOTE_MAX)"
+
+      - name: Build, verify, sign, and upload Android TV
+        run: ./deploy/deploy.sh android-tv
+
+      - name: Upload signed AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-aab-${{ env.TV_VERSION_CODE }}
+          path: androidtv/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
