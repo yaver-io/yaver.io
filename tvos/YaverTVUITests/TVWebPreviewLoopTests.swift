@@ -161,7 +161,7 @@ final class TVWebPreviewLoopTests: XCTestCase {
         }
     }
 
-    /// Entering Vibing must stop on a horizontal project choice, with the
+    /// Entering Vibing must stop on a compact searchable project grid, with the
     /// remembered project first/focused. The TV must not consume render/stream
     /// resources until Select confirms that card; one Select then opens the
     /// interactive WebRTC runtime.
@@ -179,6 +179,10 @@ final class TVWebPreviewLoopTests: XCTestCase {
         snap(app, "vibing-0000-launch")
 
         XCTAssertTrue(app.staticTexts["Vibing"].waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            app.textFields["vibing.project-search"].exists,
+            "Vibing must expose project search before the project grid"
+        )
         let latest = app.buttons.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "latest project")
         ).firstMatch

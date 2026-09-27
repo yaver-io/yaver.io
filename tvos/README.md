@@ -38,9 +38,11 @@ Shipped slice = the surfaces that are genuinely a 10-foot experience:
    remote, or TV are visible on the television.
 2. **Machine picker + wake** — account machines from `GET /devices/list`, selected-machine
    status, live-first auto-connect, shared-machine labels, and managed-box Wake.
-3. **Projects + preview** — project list from `/projects`; web projects start through
-   `POST /dev/start` and are captured headlessly through `/vibing/preview/*`; Android/RN
-   previews watch the redroid frame stream.
+3. **Vibing apps + preview** — a searchable four-column grid filters `/projects` to
+   mobile, web, frontend, and TV apps, with framework/surface labels instead of
+   backend-only repository rows. A selected app starts through `POST /dev/start`;
+   the TV verifies `/dev/status.workDir` belongs to that exact checkout before
+   opening interactive WebRTC, with authenticated frames as the bounded fallback.
 4. **Live session** — `runtime_turn` when available, with `/runner/session/turn` fallback,
    so the TV can drive an existing Codex/Claude session and render the pane/options.
 5. **Tasks and feedback** — glanceable task/session status and SDK feedback reports.
@@ -133,6 +135,28 @@ it every upload archives for minutes and is then rejected as a duplicate, burnin
 ~15-20/day TestFlight cap. The upload now stops before archiving if that ASC lookup is unreadable;
 retry once the API responds. Set `TVOS_BUILD_NUMBER` only to deliberately override from a verified
 ASC maximum, and it must exceed the current ASC max.
+
+GitHub Actions uses `.github/workflows/release-apple-surfaces.yml`. A manual run
+defaults to tvOS only, requires the protected `production` environment, validates
+the six Apple signing/App Store Connect secrets, chooses the next TV_OS build,
+and calls the same canonical `./deploy/deploy.sh tvos` entrypoint. It does not
+need a local env file or an Apple ID session on the runner.
+
+## Recording the App Store preview
+
+After installing and signing in to the build you want to submit on a booted
+Apple TV Simulator, record the real Vibing → SFMG → live-preview flow without
+rebuilding it:
+
+```bash
+scripts/record-tvos-app-preview.sh "$HOME/Desktop/Yaver-tvOS-App-Preview.mp4"
+```
+
+The recorder opens Vibing, waits five seconds, and gives you 25 seconds to use
+the Simulator remote. It exports and validates a 1920×1080, 30 fps, H.264 High
+Profile level 4.0 file at an 11 Mbps target bitrate with stereo AAC. Override
+the duration with `TVOS_PREVIEW_SECONDS=15..30`; the script refuses values
+outside Apple's accepted App Preview duration and never builds or uploads.
 
 ## File map
 

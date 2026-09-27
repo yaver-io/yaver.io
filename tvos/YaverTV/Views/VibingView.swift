@@ -3,9 +3,9 @@
 // The old dashboard split "Projects" (where previews lived) from "Vibing"
 // (a terminal session). That made the user's intended loop impossible to see:
 // pick SFMG → watch the stream while continuing the vibe. The remembered
-// project leads the horizontal rail and receives focus, but entering Vibing
-// never starts a stream by itself: one Select opens it, while Left/Right still
-// gives the user a real chance to choose another repository.
+// project leads the searchable grid and receives focus, but entering Vibing
+// never starts a stream by itself: one Select opens it, while the grid still
+// gives the user a real chance to choose another rendered app.
 
 import SwiftUI
 
@@ -20,10 +20,20 @@ struct VibingView: View {
     @State private var loading = true
     @State private var loadingOptions = false
     @State private var error: String?
+    @State private var searchQuery = ""
     @State private var rememberedProjectId: String?
     @State private var showingProjectStart = false
     @State private var startedTask: TaskSummary?
     @FocusState private var focusedProjectId: String?
+
+    private let projectColumns = Array(
+        repeating: GridItem(.flexible(minimum: 250, maximum: 420), spacing: 20, alignment: .top),
+        count: 4
+    )
+
+    private var visibleProjects: [ProjectSummary] {
+        tvVibingFilteredProjects(projects, query: searchQuery)
+    }
 
     var body: some View {
         Group {
@@ -38,6 +48,10 @@ struct VibingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
         .task { if projects.isEmpty { await loadProjects() } }
+        .onChange(of: searchQuery) { _, _ in
+            guard !visibleProjects.contains(where: { $0.id == focusedProjectId }) else { return }
+            focusedProjectId = visibleProjects.first?.id
+        }
         .sheet(isPresented: $showingProjectStart) {
             // ProjectStartView was removed when New Vibe became the native
             // keyboard-only TaskComposerView. Keeping the old symbol here
@@ -68,6 +82,12 @@ struct VibingView: View {
                         .font(.system(size: 16)).foregroundStyle(.secondary)
                 }
                 Spacer()
+                TextField("Search apps", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 18)
+                    .frame(width: 330, height: 52)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                    .accessibilityIdentifier("vibing.project-search")
                 Button("Start a project") { showingProjectStart = true }
                 Button { Task { await loadProjects() } } label: { Image(systemName: "arrow.clockwise") }
                     .disabled(loading)
@@ -87,16 +107,30 @@ struct VibingView: View {
                 } else if projects.isEmpty {
                     center {
                         VStack(spacing: 18) {
-                            Text("No projects were discovered on this machine.").foregroundStyle(.secondary)
+                            Text("No mobile, web, frontend, or TV apps were found on this machine.")
+                                .foregroundStyle(.secondary)
                             Button("Start a project") { showingProjectStart = true }
                         }
                     }
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(alignment: .top, spacing: 20) {
-                            ForEach(projects) { projectRow($0) }
+                } else if visibleProjects.isEmpty {
+                    center {
+                        VStack(spacing: 14) {
+                            Text(searchQuery.isEmpty
+                                ? "No mobile, web, frontend, or TV apps were found on this machine."
+                                : "No renderable app matches “\(searchQuery)”.")
+                                .foregroundStyle(.secondary)
+                            if !searchQuery.isEmpty {
+                                Button("Clear search") { searchQuery = "" }
+                            }
                         }
-                        .padding(48)
+                    }
+                } else {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVGrid(columns: projectColumns, alignment: .leading, spacing: 20) {
+                            ForEach(visibleProjects) { projectRow($0) }
+                        }
+                        .padding(.horizontal, 48)
+                        .padding(.vertical, 24)
                     }
                 }
             }
@@ -105,7 +139,7 @@ struct VibingView: View {
 
     @ViewBuilder
     private func projectRow(_ project: ProjectSummary) -> some View {
-        let style = FrameworkStyle.of(project.framework)
+        let style = FrameworkStyle.of(tvVibingDisplayFramework(project))
         Button {
             Task { await openProject(project) }
         } label: {
@@ -137,17 +171,36 @@ struct VibingView: View {
                         .lineLimit(2)
                 }
                 Spacer()
-                Label("Open", systemImage: "play.rectangle.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 7) {
+                    ForEach(tvVibingCapabilityLabels(project), id: \.self) { label in
+                        Text(label.uppercased())
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(style.color)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(style.color.opacity(0.14), in: Capsule())
+                    }
+                    Spacer()
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(24)
-            .frame(width: 330, height: 220, alignment: .leading)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .padding(22)
+            .frame(maxWidth: .infinity, minHeight: 205, maxHeight: 205, alignment: .leading)
+            .background(
+                focusedProjectId == project.id ? Color.white.opacity(0.16) : Color.white.opacity(0.07),
+                in: RoundedRectangle(cornerRadius: 20)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(focusedProjectId == project.id ? style.color : Color.white.opacity(0.10), lineWidth: focusedProjectId == project.id ? 4 : 1)
+            }
+            .scaleEffect(focusedProjectId == project.id ? 1.035 : 1)
+            .animation(.easeOut(duration: 0.12), value: focusedProjectId)
         }
         #if os(tvOS)
-        .buttonStyle(.card)
+        .buttonStyle(.plain)
         #endif
         .focused($focusedProjectId, equals: project.id)
         .accessibilityIdentifier("vibing.project.\(project.name)")
@@ -244,7 +297,7 @@ struct VibingView: View {
             guard let client = store.runnerClient() ?? store.renderClient() else {
                 throw AgentError(message: "No connected machine can provide project inventory")
             }
-            let loaded = try await client.listProjects().sorted {
+            let loaded = try await client.listProjects().filter(tvVibingProjectIsRenderable).sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
             if store.lastProject(for: store.runnerBox()?.id, projects: loaded) == nil,

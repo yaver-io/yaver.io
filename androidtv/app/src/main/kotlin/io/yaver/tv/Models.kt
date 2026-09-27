@@ -362,6 +362,10 @@ data class ProjectRow(
     val branch: String? = null,
     val framework: String? = null,
     val gitRemote: String? = null,
+    val frameworks: List<String> = emptyList(),
+    val surfaces: List<String> = emptyList(),
+    val testSurfaces: List<String> = emptyList(),
+    val isMonorepo: Boolean = false,
 )
 
 data class McpServer(val name: String, val enabled: Boolean = false)

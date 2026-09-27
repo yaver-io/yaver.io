@@ -293,10 +293,11 @@ class OpsClient(
     suspend fun listProjects(): List<ProjectRow> = withContext(Dispatchers.IO) {
         var result = request("GET", "/projects", null)
         var obj = bodyToJson(result.body)
-        // A stale project cache answers without the projects — refresh once.
+        // Companion scopes may browse projects but cannot mutate inventory.
+        // Retry the canonical read once; the agent refreshes its own cache.
         val arr = obj?.optJSONArray("projects")
         if (arr == null || arr.length() == 0) {
-            result = request("POST", "/projects/refresh", null)
+            result = request("GET", "/projects", null)
             obj = bodyToJson(result.body)
         }
         val projects = obj?.optJSONArray("projects") ?: JSONArray()
@@ -312,6 +313,10 @@ class OpsClient(
                     branch = p.optString("branch").ifEmpty { null },
                     framework = p.optString("framework").ifEmpty { null },
                     gitRemote = p.optString("gitRemote").ifEmpty { null },
+                    frameworks = p.optJSONArray("frameworks").toStringList(),
+                    surfaces = p.optJSONArray("surfaces").toStringList(),
+                    testSurfaces = p.optJSONArray("testSurfaces").toStringList(),
+                    isMonorepo = p.optBoolean("isMonorepo", false),
                 )
             )
         }
@@ -475,8 +480,25 @@ class OpsClient(
         bodyToJson(request("GET", "/dev/status", null).body) ?: JSONObject()
     }
 
-    suspend fun vibingPreviewStart(project: String): JSONObject = withContext(Dispatchers.IO) {
-        bodyToJson(request("POST", "/vibing/preview/start", JSONObject().put("project", project)).body) ?: JSONObject()
+    suspend fun webPreviewStart(): JSONObject = withContext(Dispatchers.IO) {
+        bodyToJson(request("POST", "/dev/web-preview/start", JSONObject()).body) ?: JSONObject()
+    }
+
+    suspend fun vibingPreviewStart(
+        project: String,
+        targetUrl: String,
+        workDir: String,
+        width: Int = 390,
+        height: Int = 844,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("project", project)
+            .put("targetUrl", targetUrl)
+            .put("workDir", workDir)
+            .put("mode", "live")
+            .put("width", width)
+            .put("height", height)
+        bodyToJson(request("POST", "/vibing/preview/start", body).body) ?: JSONObject()
     }
 
     suspend fun vibingPreviewStop(project: String) {

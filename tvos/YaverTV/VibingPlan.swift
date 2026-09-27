@@ -8,6 +8,101 @@
 
 import Foundation
 
+private let tvVibingWebFrameworks: Set<String> = [
+    "expo", "react-native", "reactnative", "rn", "react", "flutter",
+    "nextjs", "next", "vite", "web", "remix", "astro", "svelte",
+]
+
+private let tvVibingMobileFrameworks: Set<String> = [
+    "expo", "react-native", "reactnative", "rn", "flutter", "swift", "kotlin", "android",
+]
+
+/// Vibing is a rendered-app surface, not a repository browser. The agent's
+/// canonical `/projects` inventory can also contain API-only services, the
+/// daemon's home directory, and other repositories with nothing a TV can
+/// display. Keep those truthful rows available to Tasks/Session, but never
+/// turn them into blank cards here.
+func tvVibingProjectIsRenderable(_ project: ProjectSummary) -> Bool {
+    if project.kind != .unknown { return true }
+
+    let frameworks = Set(([project.framework].compactMap { $0 } + (project.frameworks ?? []))
+        .map { $0.lowercased() })
+    if !frameworks.isDisjoint(with: tvVibingWebFrameworks.union(tvVibingMobileFrameworks)) {
+        return true
+    }
+
+    let surfaces = Set(((project.surfaces ?? []) + (project.testSurfaces ?? []))
+        .map { $0.lowercased() })
+    let renderedSurfaces: Set<String> = [
+        "mobile", "ios", "android", "web", "frontend", "browser", "tv", "tvos", "tvos-simulator",
+    ]
+    return !surfaces.isDisjoint(with: renderedSurfaces)
+}
+
+func tvVibingFilteredProjects(_ projects: [ProjectSummary], query: String) -> [ProjectSummary] {
+    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return projects.filter { project in
+        guard tvVibingProjectIsRenderable(project) else { return false }
+        guard !needle.isEmpty else { return true }
+        let haystack = ([project.name, project.framework, project.branch].compactMap { $0 }
+            + (project.frameworks ?? [])
+            + (project.surfaces ?? [])
+            + (project.testSurfaces ?? []))
+            .joined(separator: " ")
+            .lowercased()
+        return haystack.contains(needle)
+    }
+}
+
+func tvVibingDisplayFramework(_ project: ProjectSummary) -> String? {
+    let candidates = [project.framework].compactMap { $0 } + (project.frameworks ?? [])
+    return candidates.first { candidate in
+        let normalized = candidate.lowercased()
+        return tvVibingWebFrameworks.contains(normalized) || tvVibingMobileFrameworks.contains(normalized)
+    } ?? project.framework
+}
+
+/// Short, shared vocabulary for the 10-foot cards. Framework remains the
+/// primary identity; these labels answer which visible app surface it can
+/// render without dumping the agent's entire capability inventory.
+func tvVibingCapabilityLabels(_ project: ProjectSummary) -> [String] {
+    let frameworks = ([project.framework].compactMap { $0 } + (project.frameworks ?? []))
+        .map { $0.lowercased() }
+    let declared = Set(((project.surfaces ?? []) + (project.testSurfaces ?? []))
+        .map { $0.lowercased() })
+    var labels: [String] = []
+
+    if frameworks.contains(where: tvVibingMobileFrameworks.contains)
+        || !declared.isDisjoint(with: ["mobile", "ios", "android"]) {
+        labels.append("Mobile")
+    }
+    if frameworks.contains(where: tvVibingWebFrameworks.contains)
+        || !declared.isDisjoint(with: ["web", "browser", "frontend"]) {
+        labels.append("Web")
+    }
+    if frameworks.contains(where: { ["nextjs", "next", "vite", "react", "web", "remix", "astro", "svelte"].contains($0) }) {
+        labels.append("Frontend")
+    }
+    if !declared.isDisjoint(with: ["tv", "tvos", "tvos-simulator"]) {
+        labels.append("TV")
+    }
+    return labels.reduce(into: [String]()) { unique, label in
+        if !unique.contains(label) { unique.append(label) }
+    }
+}
+
+/// `/dev/start` is an admission response. A green `running` bit for another
+/// checkout is not readiness for the selected project—the exact false green
+/// that left SFMG behind a permanent spinner while yaver.io/mobile was active.
+func tvRuntimeWorkDirMatchesProject(active: String?, selected: String?) -> Bool {
+    guard let active = active?.trimmingCharacters(in: .whitespacesAndNewlines),
+          let selected = selected?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !active.isEmpty, !selected.isEmpty else { return false }
+    let normalizedActive = active.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+    let normalizedSelected = selected.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+    return normalizedActive == normalizedSelected
+}
+
 enum TVPreviewDestination: Equatable {
     case webFrames
     case androidFrames

@@ -237,7 +237,12 @@ struct RemoteRuntimeWebRTCView: View {
             await runtime.start(
                 client: client,
                 project: project,
-                preferAuthenticatedFrames: form == .phone,
+                // WebRTC is the primary interactive lane on every form factor.
+                // The controller already falls back to authenticated frames
+                // after a bounded no-pixels watchdog; forcing every phone app
+                // straight to polling made the UI claim “interactive WebRTC”
+                // while never attempting WebRTC at all.
+                preferAuthenticatedFrames: false,
                 forcedTargetID: forcedTargetID,
                 launchGuest: launchGuest
             )
@@ -525,7 +530,7 @@ struct RemoteRuntimeWebRTCView: View {
                 runtime.fail("No reachable render machine is selected.")
                 return
             }
-            await runtime.start(client: client, project: project, preferAuthenticatedFrames: form == .phone)
+            await runtime.start(client: client, project: project, preferAuthenticatedFrames: false)
             enterRemoteOverlay()
         }
     }
@@ -544,7 +549,7 @@ struct RemoteRuntimeWebRTCView: View {
                 // screen while the remote app has already reloaded.
                 let mode = form == .phone ? "bundle" : "dev"
                 _ = try await client.reload(mode: mode, workDir: project.path)
-                await runtime.start(client: client, project: project, preferAuthenticatedFrames: form == .phone)
+                await runtime.start(client: client, project: project, preferAuthenticatedFrames: false)
                 enterRemoteOverlay()
             } catch {
                 runtime.fail(error, prefix: "Reload failed: ")
@@ -1388,13 +1393,23 @@ private final class TVRemoteRuntimeController: NSObject, ObservableObject {
             if let failure = current.error?.trimmingCharacters(in: .whitespacesAndNewlines), !failure.isEmpty {
                 throw AgentError(message: failure)
             }
-            if current.serving == true || (current.running == true && current.building != true) { break }
+            let selectedProjectIsActive = tvRuntimeWorkDirMatchesProject(
+                active: current.workDir,
+                selected: project.path
+            )
+            if selectedProjectIsActive,
+               (current.serving == true || (current.running == true && current.building != true)) {
+                break
+            }
             guard Date() < deadline else {
                 throw AgentError(message: "The \(project.name) dev server did not become ready within 2½ minutes.")
             }
             status = current.servingLabel?.isEmpty == false ? current.servingLabel! : "Starting \(project.name)…"
             try await Task.sleep(nanoseconds: 600_000_000)
             current = try await client.devServerStatus()
+        }
+        guard tvRuntimeWorkDirMatchesProject(active: current.workDir, selected: project.path) else {
+            throw AgentError(message: "The render machine did not switch its dev server to \(project.name). It is still serving another checkout.")
         }
         if ["expo", "react-native", "reactnative", "rn"].contains(framework) {
             // Modern agents start the Expo web sibling as part of /dev/start

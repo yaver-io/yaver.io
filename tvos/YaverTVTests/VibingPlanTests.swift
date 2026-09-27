@@ -17,6 +17,26 @@ final class VibingPlanTests: XCTestCase {
         )
     }
 
+    private func catalogProject(
+        _ name: String,
+        framework: String?,
+        frameworks: [String]? = nil,
+        surfaces: [String]? = nil
+    ) -> ProjectSummary {
+        ProjectSummary(
+            name: name,
+            path: "/work/\(name)",
+            framework: framework,
+            branch: "main",
+            gitRemote: nil,
+            frameworks: frameworks,
+            surfaces: surfaces,
+            testSurfaces: nil,
+            isMonorepo: frameworks != nil,
+            subframeworks: nil
+        )
+    }
+
     private var expoCapabilities: ProjectPreviewCapabilities {
         ProjectPreviewCapabilities(
             workDir: "/tmp/fixture",
@@ -39,8 +59,10 @@ final class VibingPlanTests: XCTestCase {
     ) -> RegisteredDevice {
         RegisteredDevice(
             deviceId: id, name: name, alias: nil, platform: "linux",
-            isOnline: online, quicHost: "127.0.0.1", quicPort: 18080,
-            localIps: [], relayConnected: online, agentVersion: nil,
+            isOnline: online, needsAuth: nil,
+            quicHost: "127.0.0.1", quicPort: 18080,
+            localIps: [], relayConnected: online, controlPlaneStatus: nil,
+            agentVersion: nil,
             managed: false, hosting: nil, machineId: nil,
             deviceKind: nil, cloudWorkspaceId: nil, lastHeartbeat: lastHeartbeat,
             runners: nil, installedRunnerIds: nil
@@ -83,6 +105,37 @@ final class VibingPlanTests: XCTestCase {
         XCTAssertEqual(webrtc?.destination, .interactiveWebRTC)
         XCTAssertTrue(webrtc?.detail.contains("Siri Remote pointer") == true)
         XCTAssertEqual(tvOSRenderLaneVerdicts.first { $0.id == "webrtc" }?.usable, true)
+    }
+
+    func testVibingCatalogShowsRenderedAppsAndDropsBackendOnlyRows() {
+        let rows = [
+            catalogProject("root", framework: nil),
+            catalogProject("api", framework: "go", surfaces: ["backend"]),
+            catalogProject("sfmg", framework: "expo", surfaces: ["mobile", "web"]),
+            catalogProject("storefront", framework: "nextjs", surfaces: ["web"]),
+            catalogProject("workspace", framework: "monorepo", frameworks: ["go", "flutter"], surfaces: ["backend", "mobile"]),
+        ]
+
+        XCTAssertEqual(
+            tvVibingFilteredProjects(rows, query: "").map(\.name),
+            ["sfmg", "storefront", "workspace"]
+        )
+        XCTAssertEqual(tvVibingFilteredProjects(rows, query: "expo").map(\.name), ["sfmg"])
+        XCTAssertEqual(tvVibingCapabilityLabels(rows[2]), ["Mobile", "Web"])
+        XCTAssertEqual(tvVibingCapabilityLabels(rows[3]), ["Web", "Frontend"])
+        XCTAssertEqual(tvVibingDisplayFramework(rows[4]), "flutter")
+    }
+
+    func testSelectedProjectMustOwnTheReadyDevServer() {
+        XCTAssertTrue(tvRuntimeWorkDirMatchesProject(
+            active: "/root/Workspace/sfmg/",
+            selected: "/root/Workspace/sfmg"
+        ))
+        XCTAssertFalse(tvRuntimeWorkDirMatchesProject(
+            active: "/root/Workspace/yaver.io/mobile",
+            selected: "/root/Workspace/sfmg"
+        ))
+        XCTAssertFalse(tvRuntimeWorkDirMatchesProject(active: nil, selected: "/root/Workspace/sfmg"))
     }
 
     func testFlutterUsesTheBrowserFrameLane() {

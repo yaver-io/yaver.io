@@ -1124,6 +1124,7 @@ actor AgentClient {
         let bundleUrl: String?
         let port: Int?
         let webPort: Int?
+        let workDir: String?
         let error: String?
         let recentLogs: [String]?
         let servingLabel: String?
@@ -1153,6 +1154,7 @@ actor AgentClient {
                               building: nil, framework: project.framework,
                               url: nil, directUrl: nil, bundleUrl: nil,
                               port: nil, webPort: nil,
+                              workDir: project.path,
                               error: nil, recentLogs: nil, servingLabel: nil)
     }
 

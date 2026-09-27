@@ -12,7 +12,7 @@ on:
         description: "Upload the native visionOS app"
         required: false
         type: boolean
-        default: true
+        default: false
 
 concurrency:
   group: release-apple-surfaces
@@ -29,12 +29,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify release selection and GitHub secrets
+        env:
+          UPLOAD_TVOS: ${{ inputs.upload_tvos }}
+          UPLOAD_VISIONOS: ${{ inputs.upload_visionos }}
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "$UPLOAD_TVOS" != "true" ] && [ "$UPLOAD_VISIONOS" != "true" ]; then
+            echo "ERROR: select at least one Apple surface to upload." >&2
+            exit 2
+          fi
+          missing=0
+          for name in APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD \
+            APP_STORE_CONNECT_API_KEY APP_STORE_CONNECT_KEY_ID \
+            APP_STORE_CONNECT_ISSUER_ID APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "ERROR: required GitHub Actions secret $name is missing." >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
+
       - name: Verify Apple release toolchain
+        env:
+          UPLOAD_TVOS: ${{ inputs.upload_tvos }}
+          UPLOAD_VISIONOS: ${{ inputs.upload_visionos }}
         run: |
           . scripts/apple-xcode-auth.sh
           apple_require_working_xcode
-          apple_require_store_sdk appletvos 26
-          apple_require_store_sdk xros 26
+          if [ "$UPLOAD_TVOS" = "true" ]; then
+            apple_require_store_sdk appletvos 26
+          fi
+          if [ "$UPLOAD_VISIONOS" = "true" ]; then
+            apple_require_store_sdk xros 26
+          fi
           command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
 
       - name: Import Apple distribution certificate

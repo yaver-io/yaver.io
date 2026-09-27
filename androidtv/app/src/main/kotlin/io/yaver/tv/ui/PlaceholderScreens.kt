@@ -474,25 +474,6 @@ fun SessionScreen(store: TvStore, nav: NavHostController) {
 }
 
 @Composable
-fun VibingScreen(store: TvStore, nav: NavHostController) {
-    val box by store.selectedBox.collectAsState()
-    Column(
-        modifier = Modifier.fillMaxSize().background(TvColors.Bg).padding(56.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
-        BackBar("Vibing", box?.name?.let { "Render on $it" }, onBack = { nav.popBackStack() })
-        Text("remoteless.dev-server.unavailable", color = TvColors.Orange, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text("This TV can display an already-served preview, but cannot run a shell, package manager, Flutter SDK, dev server, simulator, build, test, or deploy. Use a capable primary/secondary render machine or VPS.", color = TvColors.TextSecondary, fontSize = 20.sp)
-        TvTextButton("Choose a capable device", onClick = { nav.navigate(Routes.MACHINES) })
-    }
-}
-
-@Composable
-fun PreviewStreamScreen(store: TvStore, nav: NavHostController, projectName: String) {
-    placeholder(Modifier, "Preview $projectName")
-}
-
-@Composable
 fun DroidStreamScreen(store: TvStore, nav: NavHostController) {
     placeholder(Modifier, "Android screen")
 }
