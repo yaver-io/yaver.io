@@ -155,6 +155,12 @@ grep -q 'VISIONOS_PROVISIONING_PROFILE="${VISIONOS_PROVISIONING_PROFILE:-}"' "$v
   fail "visionOS must not default to a stale named provisioning profile"
 grep -q 'SIGNING_SETTINGS+=(CODE_SIGN_STYLE=Automatic)' "$visionos_deploy" || \
   fail "visionOS clean CI uploads must support automatic App Store provisioning"
+grep -q -- '--validate-app.*--type visionos' "$visionos_deploy" || \
+  fail "visionOS API-key deploys must validate the exported IPA before upload"
+grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$visionos_deploy" || \
+  fail "visionOS deploys must treat Apple's server validation verdict as authoritative"
+grep -q "UPLOAD FAILED|Validation failed|Failed to upload package" "$visionos_deploy" || \
+  fail "visionOS deploys must not report acceptance after a server-side upload failure"
 
 # A clean mobile checkout has no node_modules. Dependency self-healing must run
 # before either Node-based target injector, and must include their xcode module.
@@ -180,8 +186,10 @@ grep -q 'NODE_BINARY.*command -v node' "$ROOT/mobile/ios/.xcode.env" || \
 if grep -q '/Users/' "$ROOT/mobile/ios/.xcode.env"; then
   fail "the versioned Xcode environment must not pin one developer's home directory"
 fi
-grep -q -- "-destination 'generic/platform=iOS'" "$ROOT/.github/workflows/release-mobile.yml" || \
-  fail "Release Mobile CI must target generic iOS before automatic provisioning"
+if ! grep -q -- "-destination 'generic/platform=iOS'" "$ROOT/.github/workflows/release-mobile.yml" && \
+   ! grep -q './deploy/deploy.sh ios' "$ROOT/.github/workflows/release-mobile.yml"; then
+  fail "Release Mobile CI must use the generic-device canonical iOS deploy"
+fi
 grep -q 'runs-on: macos-26' "$ROOT/.github/workflows/release-mobile.yml" || \
   fail "Release Mobile CI must use a runner with Apple's required iOS 26 SDK"
 grep -q 'apple_require_store_sdk iphoneos 26' "$ROOT/.github/workflows/release-mobile.yml" || \
@@ -190,14 +198,16 @@ grep -q 'xcrun simctl bootstatus "$SIM_UDID" -b' "$ROOT/.github/workflows/test-s
   fail "iOS simulator smoke must wait for a cold simulator to finish booting"
 grep -q '"bootstatus", udid, "-b"' "$ROOT/desktop/agent/testkit/driver_iossim.go" || \
   fail "the reusable iOS simulator driver must wait for boot readiness"
-grep -q 'git restore --source=HEAD --worktree -- mobile/ios' "$ROOT/.github/workflows/release-mobile.yml" || \
-  fail "Release Mobile CI must restore tracked native overlays after Expo clean prebuild"
-grep -q 'cp mobile/sdk-manifest.json mobile/ios/Yaver/sdk-manifest.json' "$ROOT/.github/workflows/release-mobile.yml" || \
-  fail "Release Mobile CI must restore the generated SDK manifest after Expo clean prebuild"
-grep -q 'node scripts/add-watch-ios-target.js' "$ROOT/.github/workflows/release-mobile.yml" || \
-  fail "Release Mobile CI must restore the Watch target after Expo clean prebuild"
-grep -q 'node scripts/add-liveactivity-ios-target.js' "$ROOT/.github/workflows/release-mobile.yml" || \
-  fail "Release Mobile CI must restore the Live Activity target after Expo clean prebuild"
+grep -q 'git -C "$ROOT" ls-files -z mobile/ios' "$testflight_script" || \
+  fail "canonical iOS deploy must snapshot tracked native overlays before Expo clean prebuild"
+grep -q 'tar -xf "$IOS_OVERLAY_SNAPSHOT" -C "$ROOT"' "$testflight_script" || \
+  fail "canonical iOS deploy must restore tracked native overlays after Expo clean prebuild"
+git -C "$ROOT" ls-files --error-unmatch mobile/ios/Yaver/sdk-manifest.json >/dev/null || \
+  fail "the SDK manifest must be tracked so canonical overlay restoration preserves it"
+grep -q 'add-watch-ios-target.js' "$testflight_script" || \
+  fail "canonical iOS deploy must restore the Watch target after Expo clean prebuild"
+grep -q 'add-liveactivity-ios-target.js' "$testflight_script" || \
+  fail "canonical iOS deploy must restore the Live Activity target after Expo clean prebuild"
 grep -q 'APPLE_XCODE_AUTH_MODE.*api-key' "$testflight_script" || \
   fail "iOS API-key deploys must avoid the expirable Xcode account upload session"
 grep -q 'EXPORT_DESTINATION="export"' "$testflight_script" || \

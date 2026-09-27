@@ -48,6 +48,27 @@ RELEASE_STATUS = os.environ.get("PLAY_RELEASE_STATUS", _DEFAULT_RELEASE_STATUS)
 
 SCOPES = ["https://www.googleapis.com/auth/androidpublisher"]
 
+
+def next_version_code(package: str, floor: int):
+    """Return a collision-free versionCode without uploading a bundle."""
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+
+    credentials = Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES)
+    service = build("androidpublisher", "v3", credentials=credentials)
+    edit = service.edits().insert(body={}, packageName=package).execute()
+    edit_id = edit["id"]
+    try:
+        bundles = service.edits().bundles().list(
+            packageName=package, editId=edit_id
+        ).execute().get("bundles", [])
+        remote_max = max(
+            (int(bundle["versionCode"]) for bundle in bundles), default=0
+        )
+    finally:
+        service.edits().delete(packageName=package, editId=edit_id).execute()
+    print(max(floor, remote_max + 1), flush=True)
+
 def extract_aab_version_code(aab_path: str):
     """Best-effort versionCode for a build, read from the AAB's own manifest.
 
@@ -334,4 +355,19 @@ def main():
             print(f"(skipped cache cleanup: {exc})")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 4 and sys.argv[1] == "--next-version-code":
+        if not KEY_FILE:
+            raise SystemExit("PLAY_STORE_KEY_FILE is required")
+        try:
+            requested_floor = int(sys.argv[3])
+        except ValueError as exc:
+            raise SystemExit("versionCode floor must be an integer") from exc
+        if requested_floor < 1:
+            raise SystemExit("versionCode floor must be positive")
+        next_version_code(sys.argv[2], requested_floor)
+    elif len(sys.argv) != 1:
+        raise SystemExit(
+            "usage: upload-playstore.py [--next-version-code PACKAGE FLOOR]"
+        )
+    else:
+        main()

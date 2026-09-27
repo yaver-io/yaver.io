@@ -22,7 +22,8 @@ Options:
   --skip-build  Reuse the existing app-release.aab and release manifest.
 
 Environment:
-  TV_VERSION_CODE  Version code for Play upload. Defaults to mobile versionCode + 2.
+  TV_VERSION_CODE  Explicit version code. Uploads otherwise choose the first
+                   unused code at or above mobile versionCode + 2.
   TV_VERSION_NAME  Version name. Defaults to mobile versionName + "-tv".
 EOF
 }
@@ -36,6 +37,24 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+# Play permanently reserves every uploaded versionCode. Resolve the live
+# maximum before compiling rather than discovering a collision after the
+# expensive standalone TV build has completed.
+if [ "$UPLOAD" = "1" ] && [ -z "${TV_VERSION_CODE:-}" ]; then
+  PLAY_STORE_KEY_FILE="${PLAY_STORE_KEY_FILE:-$ROOT/keys/google-play-service-account.json}"
+  [ -f "$PLAY_STORE_KEY_FILE" ] || {
+    echo "ERROR: Play credentials are required to choose a collision-free Android TV versionCode." >&2
+    exit 2
+  }
+  VERSION_CODE="$(PLAY_STORE_KEY_FILE="$PLAY_STORE_KEY_FILE" \
+    "$ROOT/scripts/run-playstore-upload.sh" --next-version-code \
+    io.yaver.tv "$((MOBILE_VERSION_CODE + 2))" | tail -n 1)"
+  [[ "$VERSION_CODE" =~ ^[0-9]+$ ]] || {
+    echo "ERROR: Play returned an invalid Android TV versionCode: $VERSION_CODE" >&2
+    exit 2
+  }
+fi
 
 AAB="$ROOT/androidtv/app/build/outputs/bundle/release/app-release.aab"
 BANNER="$ROOT/androidtv/app/src/main/res/drawable-xhdpi/tv_banner.png"

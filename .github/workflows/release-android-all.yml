@@ -1,0 +1,97 @@
+name: Release Complete Android Stack
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_release:
+        description: "Type RELEASE_ANDROID_INTERNAL to upload every Android surface"
+        required: true
+        type: string
+
+concurrency:
+  group: release-android-all
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: inputs.confirm_release == 'RELEASE_ANDROID_INTERNAL'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.4"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/agent/go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release dependencies
+        run: |
+          cd mobile
+          npm ci --legacy-peer-deps
+          python3 -m pip install --disable-pip-version-check \
+            google-auth google-auth-httplib2 google-api-python-client
+
+      - name: Restore owner-only Android release credentials
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          for required in ANDROID_KEYSTORE ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD PLAY_STORE_SERVICE_ACCOUNT_JSON; do
+            test -n "${!required}" || { echo "ERROR: missing GitHub secret: $required" >&2; exit 2; }
+          done
+
+          mkdir -m 700 -p keys
+          printf '%s' "$ANDROID_KEYSTORE" | base64 --decode > keys/yaver-upload.keystore
+          chmod 600 keys/yaver-upload.keystore
+          {
+            echo 'storeFile=../../../keys/yaver-upload.keystore'
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > mobile/android/keystore.properties
+          chmod 600 mobile/android/keystore.properties
+
+          PLAY_KEY="$RUNNER_TEMP/play-service-account.json"
+          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['PLAY_STORE_SERVICE_ACCOUNT_JSON']))" > "$PLAY_KEY" 2>/dev/null || true
+          if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$PLAY_KEY" >/dev/null 2>&1; then
+            printf '%s' "$PLAY_STORE_SERVICE_ACCOUNT_JSON" > "$PLAY_KEY"
+          fi
+          python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$PLAY_KEY" >/dev/null
+          chmod 600 "$PLAY_KEY"
+          echo "PLAY_STORE_KEY_FILE=$PLAY_KEY" >> "$GITHUB_ENV"
+
+      # deploy-android-all is intentionally sequential: phone/tablet first,
+      # then Auto/XR verification, Wear OS, and the standalone Android TV app.
+      - name: Build, verify, sign, and upload every Android surface
+        run: ./deploy/deploy.sh android-all
+
+      - name: Preserve signed release bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaver-android-release-bundles-${{ github.run_number }}
+          path: |
+            mobile/android/app/build/outputs/bundle/release/app-release.aab
+            wear/app/build/outputs/bundle/release/app-release.aab
+            androidtv/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: warn
+          retention-days: 30

@@ -22,7 +22,8 @@ this artifact watch-targeted.
 
 Environment:
   WEAR_PACKAGE       Package for the bundle. Defaults to io.yaver.mobile.
-  WEAR_VERSION_CODE  Version code for Play upload. Defaults to mobile versionCode + 1.
+  WEAR_VERSION_CODE  Explicit version code. Uploads otherwise choose the first
+                     unused code at or above mobile versionCode + 1.
   WEAR_VERSION_NAME  Version name. Defaults to mobile versionName + "-wear".
   PLAY_TRACK         Google Play track for upload. Defaults to internal.
 
@@ -41,6 +42,25 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+# An uploaded bundle reserves its versionCode even when no current release
+# references it. Ask Play before the build so a long Wear compilation cannot
+# end in the avoidable "version code already used" rejection. android-all runs
+# this after the phone upload, so Wear remains newer than the shared AAB.
+if [ "$UPLOAD" = "1" ] && [ -z "${WEAR_VERSION_CODE:-}" ]; then
+  PLAY_STORE_KEY_FILE="${PLAY_STORE_KEY_FILE:-$ROOT/keys/google-play-service-account.json}"
+  [ -f "$PLAY_STORE_KEY_FILE" ] || {
+    echo "ERROR: Play credentials are required to choose a collision-free Wear versionCode." >&2
+    exit 2
+  }
+  VERSION_CODE="$(PLAY_STORE_KEY_FILE="$PLAY_STORE_KEY_FILE" \
+    "$ROOT/scripts/run-playstore-upload.sh" --next-version-code \
+    "$PACKAGE" "$((MOBILE_VERSION_CODE + 1))" | tail -n 1)"
+  [[ "$VERSION_CODE" =~ ^[0-9]+$ ]] || {
+    echo "ERROR: Play returned an invalid Wear versionCode: $VERSION_CODE" >&2
+    exit 2
+  }
+fi
 
 AAB="$ROOT/wear/app/build/outputs/bundle/release/app-release.aab"
 

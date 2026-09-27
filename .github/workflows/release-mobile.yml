@@ -320,26 +320,3 @@ jobs:
           PLAY_STORE_KEY_FILE: ${{ runner.temp }}/play-service-account.json
         run: |
           PLAY_STORE_KEY_FILE="$PLAY_STORE_KEY_FILE" python3 scripts/upload-playstore.py
-
-  update-versions:
-    needs: [validate, ios, android]
-    if: |
-      always() &&
-      needs.validate.result == 'success' &&
-      (needs.ios.result == 'success' || needs.ios.result == 'skipped') &&
-      (needs.android.result == 'success' || needs.android.result == 'skipped')
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Update Convex mobile version
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY_3 || secrets.CONVEX_DEPLOY_KEY_2 || secrets.CONVEX_DEPLOY_KEY }}
-        run: |
-          cd backend && npm ci
-          ../scripts/update-convex-version.sh mobile "$VERSION"
-# workflow sync

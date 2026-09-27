@@ -271,11 +271,44 @@ xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
 if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
   IPA_PATH="$EXPORT_PATH/Yaver.ipa"
   [ -f "$IPA_PATH" ] || { echo "ERROR: visionOS export did not produce $IPA_PATH" >&2; exit 1; }
-  echo "Uploading visionOS with the App Store Connect API key…"
-  xcrun altool --upload-app -f "$IPA_PATH" \
+
+  # altool has returned exit 0 alongside server-side VERIFY/UPLOAD FAILED
+  # verdicts. Treat Apple's text verdict as authoritative so CI can never mark
+  # a rejected build successful.
+  VALIDATION_LOG="$(mktemp -t yaver-visionos-validation.XXXXXX)"
+  UPLOAD_LOG="$(mktemp -t yaver-visionos-upload.XXXXXX)"
+  cleanup_visionos_altool_logs() {
+    rm -f "$VALIDATION_LOG" "$UPLOAD_LOG"
+  }
+  trap cleanup_visionos_altool_logs EXIT
+
+  echo "Validating visionOS with App Store Connect…"
+  set +e
+  xcrun altool --validate-app -f "$IPA_PATH" --type visionos \
     --apiKey "$APP_STORE_KEY_ID" \
     --apiIssuer "$APP_STORE_KEY_ISSUER" \
-    --p8-file-path "$APP_STORE_KEY_PATH"
+    --p8-file-path "$APP_STORE_KEY_PATH" 2>&1 | tee "$VALIDATION_LOG"
+  validation_status=${PIPESTATUS[0]}
+  set -e
+  if [ "$validation_status" -ne 0 ] || \
+     grep -Eq 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+    echo "ERROR: App Store Connect rejected the visionOS package; upload was not attempted." >&2
+    exit 1
+  fi
+
+  echo "Uploading visionOS with the App Store Connect API key…"
+  set +e
+  xcrun altool --upload-app -f "$IPA_PATH" --type visionos \
+    --apiKey "$APP_STORE_KEY_ID" \
+    --apiIssuer "$APP_STORE_KEY_ISSUER" \
+    --p8-file-path "$APP_STORE_KEY_PATH" 2>&1 | tee "$UPLOAD_LOG"
+  upload_status=${PIPESTATUS[0]}
+  set -e
+  if [ "$upload_status" -ne 0 ] || \
+     grep -Eq 'UPLOAD FAILED|Validation failed|Failed to upload package' "$UPLOAD_LOG"; then
+    echo "ERROR: App Store Connect did not accept the visionOS upload." >&2
+    exit 1
+  fi
 fi
 
 echo "✓ visionOS build uploaded to App Store Connect"
