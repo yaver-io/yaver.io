@@ -8,6 +8,7 @@
 // The raw console remains available as progressive disclosure, not the primary
 // interaction model.
 
+import AVKit
 import SwiftUI
 
 struct TaskDetailView: View {
@@ -61,6 +62,7 @@ struct TaskDetailView: View {
     @State private var runnerControlBusy = false
     @State private var runnerControlError: String?
     @State private var runnerControlNotice: String?
+    @State private var showVerificationVideo = false
 
     private enum RunnerControlMode: String, Identifiable {
         case model, effort, exit
@@ -103,6 +105,12 @@ struct TaskDetailView: View {
         }
         .defaultFocus($replyFocus, .field)
         .sheet(isPresented: $showTaskSettings) { taskSettingsPanel }
+        .fullScreenCover(isPresented: $showVerificationVideo) {
+            if let clipID = task.verification?.videoClipId ?? task.videoClipId,
+               let box = store.runnerBox() {
+                TaskVerificationVideoPlayer(clipID: clipID, box: box, token: store.token)
+            }
+        }
     }
 
     private var header: some View {
@@ -119,6 +127,18 @@ struct TaskDetailView: View {
                     EqualizerBars(barCount: 4, color: .green, active: true)
                     Text("LIVE").font(.system(size: 14, weight: .bold)).foregroundStyle(.green)
                 }
+            }
+            if let verification = task.verification {
+                Text(verification.status == "passed"
+                    ? "Verified \(verification.passed ?? 0)/\(verification.total ?? 0)"
+                    : verification.status == "failed" ? "Verification failed" : "Verifying…")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(verification.status == "passed" ? .green : verification.status == "failed" ? .red : .orange)
+            }
+            if (task.verification?.videoClipId ?? task.videoClipId) != nil {
+                Button("Watch browser proof") { showVerificationVideo = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("chat.verification-video")
             }
             Button(modelEffortLabel.isEmpty ? "Model" : modelEffortLabel) {
                 openRunnerControl(.model)
@@ -1193,5 +1213,37 @@ struct TaskDetailView: View {
         let value = status ?? task.status ?? ""
         guard !value.isEmpty else { return "" }
         return value.prefix(1).uppercased() + value.dropFirst()
+    }
+}
+
+private struct TaskVerificationVideoPlayer: View {
+    let clipID: String
+    let box: BoxTarget
+    let token: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VideoPlayer(player: makePlayer())
+            .ignoresSafeArea()
+            .overlay(alignment: .topLeading) {
+                Button("Done") { dismiss() }.padding(32)
+            }
+    }
+
+    private func makePlayer() -> AVPlayer {
+        guard let endpoint = box.requestEndpoints(path: "/vibing/preview/clip/\(clipID)").first else {
+            return AVPlayer()
+        }
+        var headers = [
+            "Authorization": "Bearer \(token)",
+            "X-Yaver-Surface": "tv",
+        ]
+        if endpoint.relay, let password = box.relayPassword, !password.isEmpty {
+            headers["X-Relay-Password"] = password
+        }
+        let asset = AVURLAsset(url: endpoint.url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        player.play()
+        return player
     }
 }

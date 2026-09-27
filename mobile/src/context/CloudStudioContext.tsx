@@ -9,6 +9,7 @@ import {
 } from "../lib/quic";
 import { useAuth } from "./AuthContext";
 import { useDevice } from "./DeviceContext";
+import { ENABLE_CLOUD_WORKSPACE_UI } from "../lib/launchFlags";
 
 const ACTIVE_SESSION_KEY = "@yaver/cloud_studio_active_project_session";
 
@@ -40,7 +41,7 @@ export function CloudStudioProvider({ children }: { children: React.ReactNode })
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!token) {
+    if (!ENABLE_CLOUD_WORKSPACE_UI || !token) {
       setStatus(null);
       setRepositories([]);
       setProjectSessions([]);
@@ -101,6 +102,7 @@ export function CloudStudioProvider({ children }: { children: React.ReactNode })
   }, [refresh]);
 
   const createProjectSession = useCallback(async (repositoryId: string, baseRef?: string) => {
+    if (!ENABLE_CLOUD_WORKSPACE_UI) throw new Error("Hosted Cloud Workspace is unavailable");
     const session = await quicClient.createProjectSession(repositoryId, baseRef);
     setProjectSessions((current) => [session, ...current.filter((item) => item.projectSessionId !== session.projectSessionId)]);
     setActiveProjectSession(session);
@@ -109,12 +111,14 @@ export function CloudStudioProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const selectProjectSession = useCallback(async (session: ProjectSession) => {
+    if (!ENABLE_CLOUD_WORKSPACE_UI) throw new Error("Hosted Cloud Workspace is unavailable");
     if (session.status !== "ready") throw new Error("Project session is not ready");
     setActiveProjectSession(session);
     await AsyncStorage.setItem(ACTIVE_SESSION_KEY, session.projectSessionId);
   }, []);
 
   const stopProjectSession = useCallback(async (projectSessionId: string) => {
+    if (!ENABLE_CLOUD_WORKSPACE_UI) throw new Error("Hosted Cloud Workspace is unavailable");
     const stopped = await quicClient.stopProjectSession(projectSessionId);
     setProjectSessions((current) => current.map((item) => item.projectSessionId === projectSessionId ? stopped : item));
     setActiveProjectSession((current) => current?.projectSessionId === projectSessionId ? null : current);

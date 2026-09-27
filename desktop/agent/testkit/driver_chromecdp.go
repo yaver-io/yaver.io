@@ -106,6 +106,14 @@ type WebDriver interface {
 	Close()
 }
 
+// ScriptWebDriver is the optional W3C execute/sync capability used for the
+// common browser_* parity actions (select, scroll, waits). Implementations
+// must pass arguments separately; callers never interpolate selectors/text
+// into JavaScript source.
+type ScriptWebDriver interface {
+	ExecuteScript(ctx context.Context, script string, args []interface{}) (interface{}, error)
+}
+
 // NewWebDriver returns the configured backend. driver is "" / "cdp"
 // for the default Chrome-DevTools-Protocol path, or "selenium" for the
 // opt-in WebDriver path.

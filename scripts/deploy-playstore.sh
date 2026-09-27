@@ -354,6 +354,13 @@ fi
 rm -f "$PAYMENT_DEP_REPORT"
 
 AAB_PATH="app/build/outputs/bundle/release/app-release.aab"
+R8_MAPPING_PATH="app/build/outputs/mapping/release/mapping.txt"
+
+if [ ! -s "$R8_MAPPING_PATH" ]; then
+  echo "ERROR: R8 optimization evidence is missing or empty: $R8_MAPPING_PATH" >&2
+  echo "Keep android.enableMinifyInReleaseBuilds=true for Play releases." >&2
+  exit 1
+fi
 
 MERGED_MANIFEST="app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml"
 if [ ! -f "$MERGED_MANIFEST" ]; then

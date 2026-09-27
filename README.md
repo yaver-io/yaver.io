@@ -108,7 +108,9 @@ The CLI, agent, relay, and backend are all self-hostable. Client apps currently 
 
 For remote access, Yaver Relay is the default path. The free shared relay is for
 light personal use and has fair limits; the relay implementation is open source
-if you want to run your own.
+if you want to run your own. Relay Pro is the optional $9/month managed lane
+with higher account-wide transfer limits. It connects to the machine or VPS you
+already control; it does not include hosted compute or an AI subscription.
 
 ## What works today
 
@@ -130,6 +132,7 @@ if you want to run your own.
 | Web dashboard | Browser | $0 |
 | Backend on your own machine | Your Mac / Linux / WSL / VPS | $0 + your hardware |
 | Yaver shared relay | Yaver-hosted, fair-use limited | $0 |
+| Relay Pro | Managed account-private lane on shared relay hosts | $9/month |
 | AI models (Ollama) | Your GPU or CPU | $0 |
 
 The open-source stack includes the mobile app, CLI, agent, web dashboard, SDKs,
@@ -137,8 +140,10 @@ and relay implementation. Yaver's shared relay is available with fair limits for
 getting started. Your coding agent brings its own login or subscription — Yaver
 never resells tokens.
 
-V1 is focused on your own devices and self-hosted machines. Managed paid
-products and machine-sharing surfaces are not part of the launch surface.
+V1 is focused on your own devices and self-hosted machines. Relay Pro is the
+only paid launch product; all client surfaces, browser/Hermes lanes, MCP and
+library integration, and the feedback SDK are included. Yaver does not sell a
+hosted coding workspace in this release.
 
 ## Repository map
 

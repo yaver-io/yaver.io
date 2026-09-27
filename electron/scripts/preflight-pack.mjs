@@ -25,11 +25,15 @@ const electronRoot = join(here, "..");
 const repoRoot = join(electronRoot, "..");
 
 const clientOnly = process.argv.includes("--client-only");
+const platformArg = process.argv.find((arg) => arg.startsWith("--platform="));
+const archArg = process.argv.find((arg) => arg.startsWith("--arch="));
+const targetPlatform = platformArg ? platformArg.slice("--platform=".length) : process.platform;
+const targetArch = archArg ? archArg.slice("--arch=".length) : process.arch;
 const versions = JSON.parse(readFileSync(join(repoRoot, "versions.json"), "utf8"));
 const pkg = JSON.parse(readFileSync(join(electronRoot, "package.json"), "utf8"));
 const agentVersion = process.env.YAVER_AGENT_VERSION || versions.cli || versions.agent || "unknown";
 
-const binaryName = process.platform === "win32" ? "yaver.exe" : "yaver";
+const binaryName = targetPlatform === "win32" ? "yaver.exe" : "yaver";
 const binPath = join(electronRoot, "resources", "bin", binaryName);
 let hasBinary = false;
 let binSize = null;
@@ -43,8 +47,8 @@ try {
 }
 
 const report = {
-  platform: process.platform,
-  arch: process.arch,
+  platform: targetPlatform,
+  arch: targetArch,
   guiVersion: pkg.version,
   agentVersion,
   bundledBinary: binPath,

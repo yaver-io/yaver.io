@@ -16,7 +16,12 @@ const convexURL =
   process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
   "https://perceptive-minnow-557.eu-west-1.convex.site";
 const recordAll = process.env.E2E_RECORD_ALL === "1";
+// Useful when driving an already-installed system Chromium on a workstation
+// where Playwright's downloaded FFmpeg helper is blocked by local execution
+// policy. Screenshots and traces still prove failures without masking tests.
+const disableVideo = process.env.E2E_DISABLE_VIDEO === "1";
 const testTimeout = Number(process.env.E2E_CELL_TIMEOUT_MS || 30_000);
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: "./tests",
@@ -36,12 +41,15 @@ export default defineConfig({
     baseURL,
     trace: recordAll ? "on" : "retain-on-failure",
     screenshot: recordAll ? "on" : "only-on-failure",
-    video: recordAll ? "on" : "retain-on-failure",
+    video: disableVideo ? "off" : recordAll ? "on" : "retain-on-failure",
   },
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        ...(chromiumExecutable ? { launchOptions: { executablePath: chromiumExecutable } } : {}),
+      },
     },
   ],
   webServer: useLocalServer

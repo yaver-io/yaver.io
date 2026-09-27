@@ -1,0 +1,82 @@
+name: Validate Yaver for Xbox
+
+# The Xbox package remains a development candidate until Partner Center
+# association and physical-console evidence exist. This workflow compiles the
+# real x64 UWP project and retains an explicitly non-releasable unsigned build.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "xbox/**"
+      - ".github/workflows/xbox-*.yml"
+  pull_request:
+    paths:
+      - "xbox/**"
+      - ".github/workflows/xbox-*.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xbox-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Xbox identity, auth, capability, and first-surface contract
+        run: node xbox/Tests/xbox-contract.test.mjs
+
+  compile-x64-uwp:
+    needs: contract
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - uses: NuGet/setup-nuget@v2
+
+      - name: Restore UWP dependencies
+        shell: pwsh
+        run: nuget restore xbox/YaverXbox.sln -NonInteractive
+
+      - name: Compile unsigned development package
+        shell: pwsh
+        run: |
+          msbuild xbox/YaverXbox.sln `
+            /m `
+            /t:Build `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Always `
+            /p:AppxBundlePlatforms=x64 `
+            /p:AppxPackageSigningEnabled=false `
+            /p:GenerateAppxPackageOnBuild=true
+          if ($LASTEXITCODE -ne 0) { throw "Yaver Xbox UWP build failed with exit code $LASTEXITCODE" }
+
+      - name: Reject a false production identity
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content xbox/YaverXbox/Package.appxmanifest
+          $identity = $manifest.Package.Identity
+          if ($identity.Name -ne 'io.yaver.xbox.dev' -or $identity.Publisher -ne 'CN=Development') {
+            throw 'Validation workflow must not pretend that the project is Partner Center-associated.'
+          }
+
+      - name: Retain non-releasable development evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaver-xbox-development-${{ github.run_id }}
+          path: |
+            xbox/YaverXbox/bin/x64/Release/**
+            xbox/YaverXbox/AppPackages/**
+          if-no-files-found: warn
+          retention-days: 7

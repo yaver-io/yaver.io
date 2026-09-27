@@ -10,7 +10,6 @@ import { appLog } from "../lib/logger";
 import { runtimeSurfaceClient } from "../lib/runtimeSurfaceClient";
 import { loadKeepLastProjectEnabled, loadLastTaskProject, loadLastTaskProjectFromConvex, loadMCPServersFromConvex, loadUseLatestMCPEnabled } from "../lib/taskComposerPrefs";
 import { watchBridgeBus } from "../lib/watchEntry";
-import { isDeviceAsleep, wakeManagedDevice } from "../lib/wakeMachine";
 import { mobileSessionSettings } from "../lib/appVersion";
 
 type NativeWatchBridge = {
@@ -23,18 +22,6 @@ type NativeWatchBridge = {
 function nativeBridge(): NativeWatchBridge | null {
   const mod = (NativeModules as { YaverWatchBridge?: NativeWatchBridge }).YaverWatchBridge;
   return mod && typeof mod.sendToWatch === "function" ? mod : null;
-}
-
-/** Resolve which managed machine the wrist's Wake should target: an explicit
- *  machineId from the message wins; else the focused/active box if it's a
- *  managed box that's asleep; else the first asleep managed box we know. */
-function resolveWakeMachineId(devices: any[], activeDevice: any | null, explicit?: string): string | undefined {
-  if (explicit) return explicit;
-  if (activeDevice?.managed && activeDevice?.machineId) return activeDevice.machineId;
-  const sleeping = devices.find((d) => isDeviceAsleep(d) && d?.machineId);
-  if (sleeping?.machineId) return sleeping.machineId;
-  const anyManaged = devices.find((d) => d?.managed && d?.machineId);
-  return anyManaged?.machineId;
 }
 
 function pickDeviceId(devices: any[], activeDevice: any | null): string {
@@ -164,14 +151,6 @@ export function WatchBridgeHost() {
         if (verb === "maps_open") return runtimeSurfaceClient.mapsOpen(targetDeviceId, payload as any);
         throw new Error(`unsupported watch ops verb ${verb}`);
       },
-      // The wrist can ask the phone to wake a parked managed box — the phone
-      // holds the control-plane token; the watch then polls /health and drives
-      // its own wake ladder to Ready.
-      wakeBox: async (machineId) => {
-        const mid = resolveWakeMachineId(devices, activeDevice, machineId);
-        if (!mid) return { ok: false, error: "No parked managed box to wake." };
-        return wakeManagedDevice(token, mid);
-      },
       appearance: async (theme) => {
         if (!token) return { ok: false, error: "Sign in to Yaver on your phone first." };
         const surface = Platform.OS === "ios" ? "watchos" : "wearos";
@@ -193,7 +172,6 @@ export function WatchBridgeHost() {
       sender: (json) => bridge.sendToWatch?.(json),
     });
     return () => watchBridgeBus.reset();
-    // token in deps so the wakeBox closure re-binds once auth is available.
   }, [codingPreference, targetDeviceId, token]);
 
   useEffect(() => {

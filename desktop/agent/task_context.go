@@ -205,6 +205,8 @@ Web / WebView preview rules:
 - Use web_preview_stop or POST /dev/web-preview/stop to shut the preview down.
 - Finishing code is not permission to replace the user's current preview. Do not reload merely because files changed.
 - When your changes affect visible UI, call yaver_request_render once after the change is ready. Yaver turns that typed signal into a Render updates button by default, or may render automatically when the user enabled Auto-render Vibing mode. If the tool is unavailable, say "UI updates are ready" as a compatibility fallback.
+- When the task depends on browser-visible behaviour and the project has yaver-tests specs, call yaver_verify_task after the implementation is ready and before yaver_report_complete. Treat its browser result as evidence: if it fails, use the named feature and artifacts to repair the implementation and retry. Never describe a failed or missing report as verified.
+- For browser-visible work, use browser_targets and the browser_* tools as first-class development tools: reproduce and inspect in the project's configured default target, use named DOM selectors, record the session when proof/demo was requested, close it so the MP4 finalizes, then run deterministic verification. Firefox and real Safari keep the same browser_* grammar after browser_open selects them. Stop for CAPTCHA, 2FA, agreements, payment, legal declarations, or access blocks and use the human handoff rather than bypassing them.
 - If the user explicitly asks to reload, re-render, or refresh, execute that request once it is safe.
 
 Remote visual feedback:

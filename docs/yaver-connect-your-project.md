@@ -1,27 +1,27 @@
 # Connect Your Project — surfacing any project's tools through Yaver
 
-**Status:** design (2026-07-06). No code lands from this doc alone.
+**Status:** implemented connection foundation; release-broker contract added 2026-09-25.
 
 **One line:** generalize the pattern Talos already uses in production — bring
 your own project, run it on a Yaver remote runtime, and drive its tools through
 Yaver's multi-surface UI (mobile / web / glass / watch / voice / TUI) — into a
 first-class, named onboarding flow.
 
-This replaces the abandoned "Yaver publishes other people's apps to the stores"
-ambition. It does **not** touch the core dev workflow (push / hot-reload /
-remote coding / deploy) — that stays exactly as-is.
+This also composes with Yaver's self-serve release broker. A connected project
+keeps its own build/deploy scripts and store identities; Yaver plans and invokes
+those adapters with project-scoped vault references, exact-target confirmation,
+durable local receipts and declared postconditions. Yaver does not become the
+developer-account holder or silently publish under Yaver's identity.
 
 ---
 
 ## Why this exists
 
-The store-publishing idea was the wrong shape: publishing on behalf of a third
-party means holding *their* Apple/Google identity (per-project vault, ASC JWT,
-Play service account — see `desktop/agent/appstoreconnect.go`,
-`playpublish_api.go`). That's an account-sharing ToS problem the moment it's
-more than self-serve, and there's no compliant intermediary business in it.
-Store tooling stays — reframed as *"manage YOUR OWN app's testers/builds"* — but
-we stop pretending to be a publishing broker.
+Centralized publishing under Yaver's developer accounts is the wrong shape.
+Self-serve orchestration under the connected project's own Apple, Google,
+Microsoft, npm or infrastructure identity is supported. The concrete contract
+is `.yaver/publish.yaml` version 2 plus `publish_plan` / `publish_run`; credential
+values stay in that project's local vault namespace.
 
 The replacement is stronger and already validated. **Talos already treats Yaver
 exactly this way**, in production:
@@ -144,7 +144,8 @@ by adding the `tools`/`surfaces` blocks it already implements informally.
   the subscription-auth remote runtime. Sell the surfaces, not the adapter.
 - Not a change to the dev workflow. Push / hot-reload / remote coding / deploy
   are untouched.
-- Not a store-publishing broker. Store tooling remains own-app self-serve only.
+- Not a shared-account publisher. The release broker is self-serve: the project
+  owns its accounts, scripts, identifiers, approvals and credentials.
 
 ---
 

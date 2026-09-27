@@ -27,11 +27,15 @@ test("ready lifecycle starts the embedded agent and availability policy", () => 
   assert.match(ready, /reconcileAutomaticUpdates\(\)/);
 });
 
-test("Mac App Store build is an honest sandboxed client, never a local agent", () => {
-  assert.match(main, /const storeClientOnly = process\.mas === true/);
+test("Mac Store stays client-only while Microsoft Store is Store-managed full-node", () => {
+  assert.match(main, /const storeClientOnly = process\.mas === true;/);
+  assert.match(main, /const storeManaged = process\.mas === true \|\| process\.windowsStore === true/);
   assert.match(main, /storeClientOnly \? "client-only" : "starting"/);
-  assert.match(main, /distribution: storeClientOnly \? "mac-app-store" : "direct"/);
+  assert.match(main, /distribution: distributionChannel/);
   assert.match(main, /port: storeClientOnly \? null : 18080/);
+  assert.match(main, /!storeManaged && isLoginItemSupported\(\)/);
+  assert.match(main, /if \(storeManaged \|\| !isLoginItemSupported\(\)\) return/);
+  assert.match(main, /loginItemSupported: !storeManaged && isLoginItemSupported\(\)/);
 });
 
 test("affected Apple-silicon MAS renderers apply the macOS 26 JIT workaround before startup", () => {
@@ -97,8 +101,8 @@ test("desktop connectivity repairs are fixed-id IPC, never renderer-provided com
   assert.match(main, /Unknown desktop connectivity repair; no change was made/);
 });
 
-test("direct updater is signed-release, architecture-aware, and excluded from MAS", () => {
-  assert.match(main, /if \(storeClientOnly \|\| !app\.isPackaged\) return false/);
+test("direct updater is signed-release, architecture-aware, and excluded from managed Stores", () => {
+  assert.match(main, /if \(storeManaged \|\| !app\.isPackaged\) return false/);
   assert.match(main, /require\("electron-updater"\)/);
   assert.match(main, /autoUpdater\.channel = `latest-\$\{process\.arch\}`/);
   assert.match(main, /process\.platform === "linux" && !process\.env\.APPIMAGE/);

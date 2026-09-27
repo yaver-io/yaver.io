@@ -41,9 +41,27 @@ final class VibingPlanTests: XCTestCase {
             deviceId: id, name: name, alias: nil, platform: "linux",
             isOnline: online, quicHost: "127.0.0.1", quicPort: 18080,
             localIps: [], relayConnected: online, agentVersion: nil,
-            managed: false, hosting: nil, machineId: nil, lastHeartbeat: lastHeartbeat,
+            managed: false, hosting: nil, machineId: nil,
+            deviceKind: nil, cloudWorkspaceId: nil, lastHeartbeat: lastHeartbeat,
             runners: nil, installedRunnerIds: nil
         )
+    }
+
+    func testAppleSurfacesHideHostedCloudButKeepUserOwnedVPS() throws {
+        func decode(_ json: String) throws -> RegisteredDevice {
+            try JSONDecoder().decode(RegisteredDevice.self, from: Data(json.utf8))
+        }
+        let hosted = try decode(#"{"deviceId":"hosted","hosting":"yaver-hosted","managed":true,"machineId":"m1"}"#)
+        let legacy = try decode(#"{"deviceId":"legacy","deviceKind":"cloud-runner","cloudWorkspaceId":"w1"}"#)
+        let legacyManaged = try decode(#"{"deviceId":"legacy-managed","managed":true,"machineId":"m2"}"#)
+        let byo = try decode(#"{"deviceId":"vps","hosting":"byo","managed":false}"#)
+        let local = try decode(#"{"deviceId":"mac","hosting":"self-hosted","managed":false}"#)
+
+        XCTAssertEqual(
+            appleVisibleDevices([hosted, legacy, legacyManaged, byo, local]).map(\.deviceId),
+            ["vps", "mac"]
+        )
+        XCTAssertFalse(byo.wakeable)
     }
 
     private func userSettings(primary: String?, secondary: String?) throws -> MachineRegistry.UserSettings {

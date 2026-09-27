@@ -556,9 +556,11 @@ changing those.
   **Security therefore rests on KEYS, not on secret request shapes — never add a
   "security" that a source reader defeats.** Non-negotiable invariants (see
   `docs/architecture/ROBUST_TRANSPORT_SSH_QUIC.md` §4d +
-  `SECURE_FRICTIONLESS_TRANSPORT_SETUP.md`): (1) the relay is **pass-through +
-  access-graph-scoped** — it forwards ciphertext, authorizes nothing, holds no
-  device keys, and bridges only within the **same owner/access-graph** (the same
+  `SECURE_FRICTIONLESS_TRANSPORT_SETUP.md`): (1) the relay is
+  **access-graph-scoped** and holds no device private keys; SSH/mesh payload lanes
+  forward ciphertext, while the shipped HTTP browser/proxy lane terminates relay
+  TLS and therefore must not be described as end-to-end encrypted. It bridges
+  only within the **same owner/access-graph** (the same
   userID check as the `already registered` eviction in `relay/server.go`); (2) a
   box authenticates the **client's device key, public-key ONLY**, against its own
   `# yaver-managed` set — a stranger's key isn't there, so the handshake fails,
@@ -633,11 +635,14 @@ changing those.
   fails for a reason that CI would also hit, fix the root cause; don't
   switch to CI as a workaround.
 
-## Distribution — npm only
+## Agent and desktop distribution
 
-As of 1.99.124, **`npm install -g yaver-cli`** is the **only** supported install
-path on every platform: macOS (Apple Silicon + Intel), Linux (x64 + arm64,
-including Raspberry Pi / ARM cloud), and Windows via WSL2.
+**`npm install -g yaver-cli`** remains the supported standalone agent path on
+macOS (Apple Silicon + Intel), Linux (x64 + arm64, including Raspberry Pi / ARM
+cloud), and Windows via WSL2. The native Windows x64 desktop source lane embeds
+the same Go agent and produces a signed per-user EXE candidate; it is not a
+publicly supported Store install until that exact candidate passes the clean
+Windows VM/WACK gates and is released through Partner Center.
 
 The npm package detects the platform and downloads the matching, signed +
 notarized agent binary into `~/.yaver/bin/<version>/<platform>/yaver`. macOS
@@ -1501,6 +1506,7 @@ matters.
 | Ping (reachability + auth-as-same-user) | `desktop/agent/ping_cmd.go`; mobile `DeviceDetailsModal.tsx::PingRow`; web `DevicesView.tsx::InlinePingButton` |
 | Vault | `desktop/agent/vault.go`, `vault_cmd.go`, `vault_http.go`. NaCl secretbox + Argon2id, encrypted with auth-token-derived key |
 | Deploy script generator + doctor | `desktop/agent/deploy_script_gen.go`, `doctor_build.go`, `deploy_script_http.go` |
+| Project release broker | `desktop/agent/publish.go`, `publish_broker.go`, `publish_postconditions.go`; project-owned `.yaver/publish.yaml` v2 manifests; MCP `publish_plan` / `publish_run` / `publish_status`; JS SDK `sdk/js/src/release.ts`. Mutating targets require an exact target confirmation, use project-scoped credentials, persist owner-only receipts, and fail unless declared postconditions pass. |
 | Store tester/build management (TestFlight + Play) | `desktop/agent/appstoreconnect.go` (ASC API: beta testers/groups/builds), `playpublish_api.go` (Play tracks/testers/rollout), `ops_store.go` (`store_*` MCP verbs, multi-tenant per-project vault, runs on managed cloud). Web `StoresView.tsx` Testers tab; mobile `app/store-testers.tsx` + `src/lib/storeTestersClient.ts`. Reuses Store Studio auth (`resolveAppleASCCreds`/`mintASCJWT`, `resolveGoogleSA`/`getGoogleAccessToken`). Apple=per-email testers; Google=track Google-Groups + rollout (per-email = Console-only). Doc `docs/yaver-store-tester-management.md`, blog `/blog/mobile-beta-testing-apple-google`. |
 | Container sandbox (deferred) | `desktop/agent/container_runner.go`, `Dockerfile.sandbox`. End-to-end testing TODO — see `docs/guides/DOCKER_REMAINED.md` |
 | Account linking + merge | `backend/convex/auth.ts::mergeUserInto`; `desktop/agent/account_cmd.go`, `mcp_auth_link_tools.go` |

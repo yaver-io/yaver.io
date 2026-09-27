@@ -45,6 +45,12 @@ export interface CarVoiceTaskRef {
     remedy?: string;
     code?: string;
   };
+  verification?: {
+    status: "running" | "passed" | "failed";
+    passed?: number;
+    total?: number;
+    videoClipId?: string;
+  };
   /** Output lines, when resultText is absent. */
   output?: string[];
 }
@@ -151,6 +157,13 @@ export function summarizeForReadback(task: CarVoiceTaskRef): string {
   const body = (semanticBody && semanticBody.trim()) ||
     (task.resultText && task.resultText.trim()) ||
     (failureLine && String(failureLine).trim()) || "";
+
+  if (task.verification?.status === "passed") {
+    return clampSentence(`Browser verified, ${task.verification.passed ?? 0} of ${task.verification.total ?? 0} checks passed. The recording is ready on your phone.`);
+  }
+  if (task.verification?.status === "failed") {
+    return "Browser verification failed. Open Yaver on your phone when parked for the named check and recording.";
+  }
 
   let lead: string;
   switch (status) {

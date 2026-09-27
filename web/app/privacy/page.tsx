@@ -62,16 +62,16 @@ export default function PrivacyPolicyPage() {
           Privacy-First Architecture
         </h2>
         <p>
-          Yaver is designed with a privacy-first, peer-to-peer architecture. Your code, task data,
-          prompts, and AI outputs flow directly between your devices over encrypted connections.
-          Our servers are used <strong className="text-surface-300">only</strong> for authentication
-          and device discovery — we never see, store, or process your code or task content.
+          Yaver is designed with a local-first architecture. Your source files, runner processes,
+          and durable task output remain on the machine doing the work. The hosted control plane
+          stores account, device, service, and synchronization metadata. Transport behavior depends
+          on the connection path, as described in the security section below.
         </p>
         <ul className="list-disc space-y-2 pl-6">
-          <li>No code is stored on our servers</li>
-          <li>No task data or AI output passes through our infrastructure</li>
-          <li>No logs of your prompts or responses are captured</li>
-          <li>Device-to-device communication is end-to-end encrypted</li>
+          <li>Yaver does not provide hosted source-code workspaces in this release</li>
+          <li>The hosted relay is designed not to persist proxied request or response bodies</li>
+          <li>Direct, VPN, and mesh paths avoid the hosted HTTP relay</li>
+          <li>Managed HTTP relay traffic is encrypted in transit, but is not end-to-end opaque to the relay process</li>
         </ul>
 
         <h2 className="!mt-10 border-b border-surface-800 pb-2 text-lg font-semibold text-surface-100">
@@ -165,10 +165,16 @@ export default function PrivacyPolicyPage() {
           Security of Your Personal Data
         </h2>
         <p>
-          The security of your Personal Data is important to us. Yaver&apos;s peer-to-peer architecture
-          means your code and task data never pass through our servers. For authentication data that
-          we do handle, we use commercially acceptable means to protect it. However, no method of
-          transmission over the Internet or electronic storage is 100% secure.
+          The security of your Personal Data is important to us. Yaver&apos;s hosted control plane handles
+          account, device, service, and synchronization metadata; it should not be understood as a
+          guarantee that every product payload bypasses Yaver infrastructure. Direct LAN, VPN, and end-to-end
+          encrypted mesh connections do not pass their payload through Yaver&apos;s HTTP relay. When a
+          client uses the Free Relay or Relay Pro HTTP/browser proxy, however, that traffic is encrypted
+          to the relay endpoint and processed there in memory before it is forwarded to your agent; that
+          path is not end-to-end opaque to the relay process. Use a direct path or a relay you self-host
+          when that trust boundary is required. For authentication data that we do handle, we use
+          commercially acceptable means to protect it. However, no method of transmission over the
+          Internet or electronic storage is 100% secure.
         </p>
 
         <h2 className="!mt-10 border-b border-surface-800 pb-2 text-lg font-semibold text-surface-100">
@@ -194,9 +200,9 @@ export default function PrivacyPolicyPage() {
           <li>
             <strong className="text-surface-300">It is peer-to-peer and self-hosted.</strong> The
             clone runs on your own device or your own machine. Your credentials, sessions, and the
-            data the gateway reads flow directly between your devices over Yaver&rsquo;s P2P transport
-            (direct LAN / Yaver Relay). They do not pass through, and are never
-            stored on, our backend (Convex).
+            data the gateway reads move between your devices over the selected Yaver transport
+            (direct LAN or a relay). They are not stored in our control-plane backend (Convex),
+            although a managed HTTP relay processes proxied traffic in memory while forwarding it.
           </li>
           <li>
             <strong className="text-surface-300">It is open source.</strong> The entire gateway

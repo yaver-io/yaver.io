@@ -49,6 +49,33 @@ mobile (`app/stores.tsx`) render one **Publish** surface (Setup Â· Permissions Â
 Listing) with a "Ready to ship?" banner, routing to official pages for the
 human-only steps.
 
+## General project release broker
+
+`.yaver/publish.yaml` version 2 is the project-owned publication contract for
+npm, PyPI, pub.dev, Apple/Google builds, Microsoft Partner Center wrappers and
+arbitrary project deploy scripts. Before mutation, use:
+
+```bash
+yaver publish plan --dir <repo> --target <id>
+yaver publish run --dir <repo> --target <id> --confirm <id>
+```
+
+The same operations are exposed as MCP (`publish_plan`, `publish_run`,
+`publish_status`) and by `YaverClient.releases` in `yaver-sdk`. A mutating v2
+target is invalid unless it requires exact confirmation and declares at least
+one postcondition. MCP and HTTP/SDK release access is owner-only. Runs and
+proof records persist owner-only under
+`~/.yaver/publishes/`; named projects never fall back to global Apple/Google
+credentials.
+
+Credential references are resolved only inside the manifest's `project`
+namespace. For example, a Talos Apple credential is entered as
+`yaver vault add APP_STORE_KEY_ID --project talos --value <id>`; SFMG uses the
+same key name under `--project sfmg`, so neither project can inherit Yaver's or
+the other project's signing identity. `publish plan` reports missing key names
+without exposing values and `publish run` refuses to execute until all declared
+keys resolve.
+
 ## What's automated vs routed
 
 | Step | Apple | Google |

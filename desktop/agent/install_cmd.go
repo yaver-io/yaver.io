@@ -1684,24 +1684,18 @@ func installNodeGlobalPackageStream(ctx context.Context, pkg string, progress fu
 	if runtime.GOOS == "linux" {
 		ensureLinuxRunnerSandboxSupport()
 	}
-	var nodeBin, npmPath string
+	// Use the same managed, sudo-free Node runtime on every supported OS. The
+	// Windows zip path is implemented in node_install.go; requiring a separate
+	// system Node here made a fresh Microsoft Store/desktop install unable to
+	// install its first coding runner even though the product already knew how
+	// to provision Node on Windows.
+	nodeBin, err := installNodeRuntime(ctx, progress)
+	if err != nil {
+		return err
+	}
+	npmPath := filepath.Join(nodeBin, "npm")
 	if runtime.GOOS == "windows" {
-		// A global yaver-cli install necessarily arrived through npm, but a
-		// standalone signed GUI may not have Node. Use the user's real npm when
-		// it exists; never advertise the Unix tarball installer on Windows.
-		var err error
-		npmPath, err = exec.LookPath("npm.cmd")
-		if err != nil {
-			return fmt.Errorf("Node.js/npm is required to install %s on Windows; install Node.js LTS from https://nodejs.org/ or `winget install OpenJS.NodeJS.LTS`, then retry", pkg)
-		}
-		nodeBin = filepath.Dir(npmPath)
-	} else {
-		var err error
-		nodeBin, err = installNodeRuntime(ctx, progress)
-		if err != nil {
-			return err
-		}
-		npmPath = filepath.Join(nodeBin, "npm")
+		npmPath += ".cmd"
 	}
 	if progress != nil {
 		progress(fmt.Sprintf("$ %s install -g %s", npmPath, pkg))

@@ -705,6 +705,13 @@ struct VibeTurnPanel: View {
             Text("\(taskConversationLabel(task)) · \(task.status ?? "queued")")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
+            if let verification = task.verification {
+                Text(verification.status == "passed"
+                    ? "Browser verified · \(verification.passed ?? 0)/\(verification.total ?? 0) passed"
+                    : verification.status == "failed" ? "Browser verification failed" : "Browser verification running…")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(verification.status == "passed" ? .green : verification.status == "failed" ? .red : .orange)
+            }
         }
     }
 
@@ -1369,7 +1376,10 @@ struct VibeTurnPanel: View {
             turns: task.turns,
             pendingFollowUps: task.pendingFollowUps,
             tmuxSession: task.tmuxSession,
-            executionSession: task.executionSession
+            executionSession: task.executionSession,
+            videoClipId: task.videoClipId,
+            videoStatus: task.videoStatus,
+            verification: task.verification
         )
     }
 
@@ -1380,7 +1390,9 @@ struct VibeTurnPanel: View {
             sessionId: task.sessionId, output: task.output, resultText: task.resultText,
             presentation: presentation, turns: task.turns,
             pendingFollowUps: task.pendingFollowUps, tmuxSession: task.tmuxSession,
-            executionSession: task.executionSession
+            executionSession: task.executionSession,
+            videoClipId: task.videoClipId, videoStatus: task.videoStatus,
+            verification: task.verification
         )
     }
 }

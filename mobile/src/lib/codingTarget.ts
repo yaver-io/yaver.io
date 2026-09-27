@@ -66,7 +66,7 @@ export function resolveCodingTarget(
             ok: false,
             code: "cloud_workspace_confirmation_required",
             route: "cloud-workspace",
-            message: "This task requires a Yaver Cloud Workspace. Confirm the workspace and its metered runtime before starting it.",
+            message: "This legacy hosted target is no longer offered. Choose your own machine or VPS before starting the task.",
           }
         : { ok: true, target };
     case "provider-ci":

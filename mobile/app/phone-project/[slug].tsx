@@ -445,7 +445,7 @@ export default function PhoneProjectDetailScreen() {
 
   async function publishWebInstall() {
     if (!project || !access || access.kind === "local") {
-      Alert.alert("Choose a host first", "Ship this sandbox to your dev machine or Yaver Cloud. That stable HTTPS target will host the Home Screen app.");
+      Alert.alert("Choose a host first", "Ship this sandbox to a paired machine or VPS. That stable HTTPS target will host the Home Screen app.");
       return;
     }
     setWebInstallBusy(true);

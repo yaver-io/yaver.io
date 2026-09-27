@@ -186,7 +186,7 @@ async function runDesktopConnectivityDiagnostics({
     name: "Local Yaver agent",
     status: clientOnly ? "info" : health?.ok ? "pass" : "fail",
     detail: clientOnly
-      ? "This store-sandboxed build is a client surface and cannot host the local agent. Install the signed direct desktop build to make this Mac remotely discoverable."
+      ? "This Store build is a client surface and cannot host the local agent. Install the signed direct desktop build to make this computer remotely discoverable."
       : health?.ok
       ? "The real /health operation answers on localhost:18080."
       : `The desktop agent is not answering on localhost:18080${agentStatusDetail ? `: ${agentStatusDetail}` : ` (${agentStatus})`}.`,

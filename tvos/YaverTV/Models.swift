@@ -212,6 +212,28 @@ struct TaskExecutionIdentity: Decodable {
     let lastActiveAt: String?
 }
 
+struct TaskVerificationCheck: Decodable, Identifiable {
+    let name: String
+    let status: String
+    let error: String?
+    let durationMs: Int?
+    var id: String { "\(name):\(status)" }
+}
+
+struct TaskVerification: Decodable {
+    let kind: String
+    let status: String
+    let attempt: Int
+    let total: Int?
+    let passed: Int?
+    let failed: Int?
+    let durationMs: Int?
+    let checks: [TaskVerificationCheck]?
+    let videoClipId: String?
+    let failureCode: String?
+    let failureReason: String?
+}
+
 struct TaskSummary: Decodable, Identifiable {
     let id: String
     let title: String?
@@ -229,10 +251,14 @@ struct TaskSummary: Decodable, Identifiable {
     let pendingFollowUps: [TaskPendingFollowUp]?
     let tmuxSession: String?     // present → the task has a live session to drive
     let executionSession: TaskExecutionIdentity?
+    let videoClipId: String?
+    let videoStatus: String?
+    let verification: TaskVerification?
 
     enum CodingKeys: String, CodingKey {
         case id, taskId, title, status, runner, runnerId, model, reasoningEffort, workDir, projectName, sessionId
         case output, resultText, presentation, turns, pendingFollowUps, tmuxSession, executionSession
+        case videoClipId, videoStatus, verification
     }
 
     init(
@@ -251,7 +277,10 @@ struct TaskSummary: Decodable, Identifiable {
         turns: [TaskConversationTurn]? = nil,
         pendingFollowUps: [TaskPendingFollowUp]? = nil,
         tmuxSession: String? = nil,
-        executionSession: TaskExecutionIdentity? = nil
+        executionSession: TaskExecutionIdentity? = nil,
+        videoClipId: String? = nil,
+        videoStatus: String? = nil,
+        verification: TaskVerification? = nil
     ) {
         self.id = id
         self.title = title
@@ -269,6 +298,9 @@ struct TaskSummary: Decodable, Identifiable {
         self.pendingFollowUps = pendingFollowUps
         self.tmuxSession = tmuxSession
         self.executionSession = executionSession
+        self.videoClipId = videoClipId
+        self.videoStatus = videoStatus
+        self.verification = verification
     }
 
     init(from decoder: Decoder) throws {
@@ -291,6 +323,9 @@ struct TaskSummary: Decodable, Identifiable {
         pendingFollowUps = try c.decodeIfPresent([TaskPendingFollowUp].self, forKey: .pendingFollowUps)
         tmuxSession = try c.decodeIfPresent(String.self, forKey: .tmuxSession)
         executionSession = try c.decodeIfPresent(TaskExecutionIdentity.self, forKey: .executionSession)
+        videoClipId = try c.decodeIfPresent(String.self, forKey: .videoClipId)
+        videoStatus = try c.decodeIfPresent(String.self, forKey: .videoStatus)
+        verification = try c.decodeIfPresent(TaskVerification.self, forKey: .verification)
     }
 
     /// The title is a raw prompt — it carries absolute paths. Redact for a TV.
@@ -816,8 +851,9 @@ struct BoxTarget: Codable, Identifiable, Equatable {
         return alias.hasPrefix("@") ? alias : "@\(alias)"
     }
 
-    /// True when this box can be resumed from the TV (managed + has a machineId).
-    var wakeable: Bool { (managed ?? false) && (machineId?.isEmpty == false) }
+    /// Hosted-compute wake is intentionally unavailable on Apple surfaces for
+    /// the Relay Pro release. Legacy fields remain decode-compatible only.
+    var wakeable: Bool { false }
 
     /// Ordered ops endpoints to try: direct first, relay second.
     ///

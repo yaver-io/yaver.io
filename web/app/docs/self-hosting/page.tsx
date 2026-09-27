@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 const options = [
   {
@@ -9,32 +8,20 @@ const options = [
     action: "Start with the CLI",
     href: "/manuals/cli-setup",
   },
-  ...(HIDE_PAID_UI
-    ? [
-        {
-          title: "Self-hosted relay",
-          description:
-            "The relay is open source. Run `yaver relay serve` on any box you control for private capacity — same protocol, your infrastructure.",
-          action: "Relay setup",
-          href: "/manuals/relay-setup",
-        },
-      ]
-    : [
-        {
-          title: "Relay Pro",
-          description:
-            "A private managed relay for daily remote work and higher limits without running network infrastructure yourself.",
-          action: "Open billing",
-          href: "/dashboard?tab=billing",
-        },
-        {
-          title: "Cloud Workspace",
-          description:
-            "Yaver-hosted compute with Relay Pro included. Use it when you want a saved development workspace, build machine, and deploy path without managing a box.",
-          action: "Open cloud",
-          href: "/dashboard?tab=cloud",
-        },
-      ]),
+  {
+    title: "Relay Pro",
+    description:
+      "Managed private connectivity for daily remote work and higher limits, while the coding runtime stays on your machine or VPS.",
+    action: "Open billing",
+    href: "/dashboard?tab=billing",
+  },
+  {
+    title: "Self-hosted relay",
+    description:
+      "Run the open-source relay on any box you control for private capacity on your own infrastructure.",
+    action: "Relay setup",
+    href: "/manuals/relay-setup",
+  },
 ];
 
 export default function SelfHostingPage() {
@@ -53,9 +40,9 @@ export default function SelfHostingPage() {
             Hosting and Relay Options
           </h1>
           <p className="text-sm leading-relaxed text-surface-400">
-            {HIDE_PAID_UI
-              ? "Yaver is open source and remains compatible with custom network setups. The normal user path is the free shared Yaver Relay; advanced operators can self-host their own relay from the same repository."
-              : "Yaver is open source and remains compatible with custom network setups, but the normal user path is Yaver Relay. Free Relay is for trying the product, Relay Pro is the managed remote-access product, and Cloud Workspace adds Yaver-hosted compute."}
+            Yaver runs on a Mac, PC, Linux host, VPS, or Pi you control. Use
+            Free Relay to try it, Relay Pro for managed private connectivity,
+            or operate the open-source relay yourself.
           </p>
         </header>
 
@@ -108,9 +95,8 @@ export default function SelfHostingPage() {
             </li>
             <li>
               <span className="font-medium text-surface-200">3.</span>{" "}
-              {HIDE_PAID_UI
-                ? "If you outgrow the shared relay, self-host your own relay on a box you control — same protocol, private capacity."
-                : "Upgrade to Relay Pro when Yaver becomes part of daily work, or choose Cloud Workspace when you also want Yaver-hosted compute."}
+              Upgrade to Relay Pro when Yaver becomes part of daily work, or
+              self-host the relay when you want to operate the network layer too.
             </li>
           </ol>
         </section>

@@ -4,6 +4,15 @@ import { internal } from "./_generated/api";
 import { randomHex } from "./auth";
 import { hetznerPickAvailableServerType } from "./cloudLifecycle";
 import {
+  pinnedHybridRelay,
+  relayDynamicProvisioningEnabled,
+  relayImageRef,
+  relayMaxHourlyEur,
+  relayMaxDynamicHosts,
+  RELAY_IMAGE_REQUIRED,
+} from "./relayDeploymentPolicy";
+import {
+  relayPublicHostname,
   sharedHostDeletionDecision,
   sharedHostGraceSnapshotDecision,
 } from "./relayPool";
@@ -18,10 +27,22 @@ const RELAY_LOCATION_CANDIDATES: Record<string, string[]> = {
   us: ["ash", "hil"],
 };
 
-// A relay is pass-through: 1 vCPU / 2 GB is ample (the scarce resource is
-// BANDWIDTH, not compute). Anything cheaper-sufficient is preferred; the
-// selector ranks by gross €/h so an expensive box is never picked.
-const RELAY_MIN_REQ = { minCores: 1, minRamGb: 2, minDiskGb: 20, architecture: "x86" as const };
+// A relay runs no tenant workloads: 1 vCPU / 2 GB is a conservative starting
+// point (the scarce resource is
+// BANDWIDTH, not compute). The published container is amd64+arm64, so do not
+// exclude cheaper ARM stock. More importantly, never let regional scarcity
+// turn a $9 subscription into an unbounded provider bill. €0.04/h is roughly
+// €29/month before the provider's monthly cap, or ~€1.46 per tenant at the
+// conservative 20-tenant pool target. Operators may lower this ceiling. A
+// higher value requires a reviewed code release; an environment typo or
+// compromised deployment credential cannot widen the provider spend guard.
+const RELAY_MAX_HOURLY_EUR = relayMaxHourlyEur();
+const RELAY_MIN_REQ = {
+  minCores: 1,
+  minRamGb: 2,
+  minDiskGb: 20,
+  maxHourlyPrice: RELAY_MAX_HOURLY_EUR,
+};
 
 /** Hetzner returns the routed IPv6 /64; the server owns the first address. */
 export function hetznerPrimaryIPv6(prefix: unknown): string | undefined {
@@ -68,12 +89,13 @@ async function pickRelayLocation(token: string, region: string): Promise<string 
   return undefined;
 }
 
-/** Cheapest orderable sufficient server type in `location`, or the env override. */
-async function pickRelayServerType(token: string, location: string): Promise<string> {
-  const envType = (process.env.YAVER_RELAY_SERVER_TYPE || "").trim();
-  if (envType) return envType;
-  const picked = await hetznerPickAvailableServerType(token, location, RELAY_MIN_REQ);
-  return picked ?? "cpx12"; // last-resort default (cpx12 = €13.49/mo, verified orderable 2026-07-21)
+/** Cheapest orderable sufficient server type in `location` under the hard
+ * hourly cost ceiling. There is deliberately no unverified SKU override. */
+async function pickRelayServerType(token: string, location: string): Promise<string | undefined> {
+  // Availability can change between the region probe and server creation.
+  // Never fall back to a retired or unverified SKU: returning no placement
+  // stops provider spend and gives the buyer an explicit retryable error.
+  return await hetznerPickAvailableServerType(token, location, RELAY_MIN_REQ);
 }
 
 /**
@@ -89,14 +111,15 @@ async function pickRelayServerType(token: string, location: string): Promise<str
  *  - SHARED hosts: per-user auth only (no RELAY_PASSWORD at all) + a random
  *    per-host RELAY_ADMIN_TOKEN so admin endpoints (/tunnels, /admin/*) are
  *    not reachable with any tenant's password.
- *  - DEDICATED (Private Relay) hosts: the tenant's own password is the shared
- *    secret (single tenant — no cross-tenant exposure) + Convex validation +
- *    admin token.
+ *  - LEGACY DEDICATED hosts: the tenant's own password is the shared secret
+ *    (single tenant — no cross-tenant exposure) + Convex validation + admin
+ *    token. Relay Pro is pooled and must never be marketed as dedicated.
  */
 function relayCloudInit(args: {
   domain: string;
   convexSite: string;
   adminToken: string;
+  imageRef: string;
   sharedPassword?: string;
 }): string {
   const envLines = [
@@ -132,7 +155,7 @@ runcmd:
     cat > /opt/yaver-relay/docker-compose.yml <<'YML'
     services:
       relay:
-        image: ghcr.io/kivanccakmak/yaver-relay:latest
+        image: ${args.imageRef}
         container_name: yaver-relay
         restart: always
         ports:
@@ -142,13 +165,6 @@ runcmd:
 ${envLines}
         volumes:
           - relay-data:/data
-      watchtower:
-        image: containrrr/watchtower
-        container_name: yaver-watchtower
-        restart: always
-        volumes:
-          - /var/run/docker.sock:/var/run/docker.sock
-        command: --interval 3600 --cleanup
     volumes:
       relay-data:
     YML
@@ -176,6 +192,12 @@ ${envLines}
   - ufw allow 80/tcp || true
   - ufw allow 443/tcp || true
   - ufw allow 4433/udp || true
+  - |
+    for attempt in $(seq 1 20); do
+      certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d ${args.domain} && exit 0
+      sleep 30
+    done
+    exit 1
 `;
 }
 
@@ -184,11 +206,13 @@ ${envLines}
  * answers (this is the actual delivery of Relay Pro — the box nobody dials is
  * worth nothing). Only repoints when the user has no custom relay (empty, the
  * platform default, or already this domain); a self-hosted relay the user
- * configured themselves is never clobbered. Idempotent.
+ * configured themselves is never clobbered. The managed relay password must
+ * be delivered for pooled and dedicated buyers alike; it is the per-user
+ * credential that enforces tenant isolation on a shared host. Idempotent.
  */
 async function wireUserRelayUrl(
   ctx: { runQuery: (ref: any, args: any) => Promise<any>; runMutation: (ref: any, args: any) => Promise<any> },
-  relay: { userId: any },
+  relay: { userId: any; isDedicated?: boolean; password?: string },
   domain: string,
 ): Promise<void> {
   try {
@@ -201,13 +225,21 @@ async function wireUserRelayUrl(
       defaultRelayUrl = relays[0]?.httpUrl;
     } catch { /* not configured */ }
     const current = settings?.relayUrl;
-    if (current && current !== defaultRelayUrl && current !== target) {
+    const currentIsYaverManagedRelay = (() => {
+      try {
+        return new URL(String(current || "")).hostname.endsWith(".relay.yaver.io");
+      } catch {
+        return false;
+      }
+    })();
+    if (current && current !== defaultRelayUrl && current !== target && !currentIsYaverManagedRelay) {
       console.log(`[provision] user ${relay.userId} has a custom relayUrl (${current}) — not overwriting with ${target}`);
       return;
     }
     await ctx.runMutation(internal.userSettings.setRelayForUser, {
       userId: relay.userId,
       relayUrl: target,
+      ...(relay.password ? { relayPassword: relay.password } : {}),
     });
     console.log(`[provision] wired ${relay.userId} to their managed relay ${target}`);
   } catch (e) {
@@ -250,21 +282,11 @@ export const provision = internalAction({
     // Host:-based request via the default server_name, so no extra
     // config is needed on the box itself.
     customDomain: v.optional(v.string()),
+    // Shared-host followers wait for the first tenant's provider operation
+    // instead of creating a duplicate host during concurrent checkouts.
+    poolWaitAttempt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const HCLOUD_TOKEN = process.env.HCLOUD_TOKEN;
-    const CF_API_TOKEN = process.env.CF_API_TOKEN;
-    const CF_ZONE_ID = process.env.CF_ZONE_ID;
-
-    if (!HCLOUD_TOKEN || !CF_API_TOKEN || !CF_ZONE_ID) {
-      await ctx.runMutation(internal.managedRelays.setStatus, {
-        relayId: args.relayId,
-        status: "error",
-        errorMessage: "Missing provisioning credentials (HCLOUD_TOKEN, CF_API_TOKEN, CF_ZONE_ID)",
-      });
-      return;
-    }
-
     // Fail-closed billing gate — NEVER create a Hetzner server unless
     // the subscription is active OR the owner is on the env allowlist
     // (lets the repo owner develop the managed Hetzner flow without
@@ -288,28 +310,40 @@ export const provision = internalAction({
     // Relay Pro rides a shared multi-tenant host by default. A dedicated box
     // per subscriber is 16% gross against $9/mo and cannot scale to zero (a
     // relay is useless when off), so the box is created ONCE per ~20 tenants
-    // and reused thereafter. Safe because the relay is pass-through AND the
-    // box validates each tenant's password per-user via Convex
+    // and reused thereafter. Safe because the box runs no tenant code AND it
+    // validates each tenant's password per-user via Convex
     // (CONVEX_URL in the container env — see relayCloudInit). A dedicated
     // ("Private Relay") row skips the pool entirely.
     const relay = await ctx.runQuery(internal.managedRelays.getById, { relayId: args.relayId });
     const dedicated = Boolean(relay?.isDedicated);
     const shortId = args.userId.substring(0, 8);
-    const subdomain = `${shortId}.relay`;
-    const domain = `${shortId}.relay.yaver.io`;
     const convexSite =
       process.env.CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
 
-    let slot: { hostKey: string; reason: string } | null = null;
-    if (!dedicated) {
-      slot = await ctx.runMutation(internal.relayPool.assignToPool, {
-        relayId: args.relayId,
-        region: args.region,
-      });
-    }
-    const hostKey = dedicated ? null : (slot?.hostKey ?? null);
-
+    let slot: { hostKey: string; reason: string; needsProvision: boolean } | null = null;
+    let hostKey: string | null = null;
+    let subdomain = "";
+    let domain = "";
+    let providerServerId: string | null = null;
     try {
+      // Adopt the existing public relay into the paid placement ledger before
+      // considering any provider purchase. This is environment-driven so no
+      // private inventory lands in the public repository. A partial anchor
+      // config fails closed and cannot accidentally buy a replacement VPS.
+      const anchor = pinnedHybridRelay();
+      if (!dedicated && anchor && anchor.region === args.region) {
+        await ctx.runMutation(internal.relayPool.upsertPinnedHybridHost, anchor);
+      }
+      if (!dedicated) {
+        slot = await ctx.runMutation(internal.relayPool.assignToPool, {
+          relayId: args.relayId,
+          region: args.region,
+          allowDynamicHost: relayDynamicProvisioningEnabled(),
+          maxDynamicHosts: relayMaxDynamicHosts(),
+        });
+      }
+      hostKey = dedicated ? null : (slot?.hostKey ?? null);
+
       // ── REUSE (shared only): another tenant already provisioned this host.
       // This is the whole saving — every tenant after the first costs nothing
       // but its share. Only valid for pooled rows; a dedicated relay always
@@ -317,6 +351,11 @@ export const provision = internalAction({
       if (hostKey) {
         const existingHost = await ctx.runQuery(internal.relayPool.hostEndpoint, { hostKey });
         if (existingHost?.serverId && existingHost.serverIp) {
+          domain = existingHost.hostname || relayPublicHostname({
+            dedicated: false,
+            shortUserId: shortId,
+            hostKey,
+          }).domain;
           await ctx.runMutation(internal.managedRelays.updateProvisioned, {
             relayId: args.relayId,
             hetznerServerId: existingHost.serverId,
@@ -324,84 +363,134 @@ export const provision = internalAction({
             serverIpv6: existingHost.serverIpv6,
             domain,
           });
-          // The tenant still gets its OWN canonical hostname pointing at the
-          // shared host, so its relay URL is stable and independent of which
-          // box it happens to sit on today.
-          await createRelayDNSRecords({
-            token: CF_API_TOKEN,
-            zoneId: CF_ZONE_ID,
-            name: subdomain,
-            ipv4: existingHost.serverIp,
-            ipv6: existingHost.serverIpv6,
-          }).catch(() => { /* DNS is best-effort; IP-direct still works */ });
           console.log(`[provision] Relay ${domain} joined shared host ${hostKey} (${slot?.reason ?? ""})`);
           await ctx.scheduler.runAfter(60_000, internal.provisionRelay.healthCheck, {
             relayId: args.relayId, domain,
           });
           return;
         }
+        if (slot && !slot.needsProvision) {
+          const attempt = Math.max(0, Math.floor(args.poolWaitAttempt ?? 0));
+          if (attempt >= 20) {
+            await ctx.runMutation(internal.managedRelays.setStatus, {
+              relayId: args.relayId,
+              status: "error",
+              errorMessage: `Shared relay host ${hostKey} did not become ready; retry from Billing`,
+            });
+            return;
+          }
+          await ctx.scheduler.runAfter(15_000, internal.provisionRelay.provision, {
+            ...args,
+            poolWaitAttempt: attempt + 1,
+          });
+          return;
+        }
       }
 
-      // ── Capacity-aware placement ─────────────────────────────────────────
-      // The pool host is created ONCE per ~20 tenants, so a sold-out
-      // preferred location/type would fail the whole pool. Ask Hetzner what
-      // is orderable: first location in the region group with ANY sufficient
-      // type, then the cheapest sufficient type there (same machinery the
-      // Cloud wake path uses — verified 2026-07-21: cax11 was sold out EU-wide
-      // and cpx12 was the cheapest orderable x86 type).
-      const location = await pickRelayLocation(HCLOUD_TOKEN, args.region);
-      if (!location) {
-        await ctx.runMutation(internal.managedRelays.setStatus, {
-          relayId: args.relayId,
-          status: "error",
-          errorMessage: `No orderable relay server type in any ${String(args.region || "eu").startsWith("us") ? "US" : "EU"} location — capacity is temporarily exhausted.`,
-        });
-        return;
+      // Reuse above does not need cloud credentials. Only this branch spends
+      // money and mutates DNS, so provider requirements live exactly here.
+      const HCLOUD_TOKEN = process.env.HCLOUD_TOKEN;
+      const CF_API_TOKEN = process.env.CF_API_TOKEN;
+      const CF_ZONE_ID = process.env.CF_ZONE_ID;
+      const imageRef = relayImageRef();
+      if (!HCLOUD_TOKEN || !CF_API_TOKEN || !CF_ZONE_ID || !imageRef) {
+        throw new Error(!imageRef
+          ? RELAY_IMAGE_REQUIRED
+          : "Missing provisioning credentials (HCLOUD_TOKEN, CF_API_TOKEN, CF_ZONE_ID)");
       }
-      const serverType = await pickRelayServerType(HCLOUD_TOKEN, location);
+
+      ({ subdomain, domain } = relayPublicHostname({
+        dedicated,
+        shortUserId: shortId,
+        hostKey,
+      }));
+
       // Host boxes are named per POOL SLOT, not per user — the box serves many
       // tenants, so naming it after the first one would be a lie that outlives
       // that tenant's subscription. Dedicated boxes are named per relay row.
       const serverName = dedicated
         ? `relay-dedicated-${args.relayId.toString().substring(0, 8)}`
         : (hostKey ?? `relay-${shortId}`);
-      const adminToken = randomHex(24);
-      const cloudConfig = relayCloudInit({
-        domain,
-        convexSite,
-        adminToken,
-        sharedPassword: dedicated ? args.password : undefined,
-      });
-
-      const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${HCLOUD_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: serverName,
-          server_type: serverType,
-          image: "ubuntu-24.04",
-          location,
-          // Labelled by POOL SLOT so the orphan sweep and cleanup can reason
-          // about it; `user` is the tenant who happened to create it first.
-          labels: dedicated
-            ? { service: "yaver-relay", dedicated: "true", user: shortId, managed: "true" }
-            : { service: "yaver-relay", pool: hostKey ?? "", user: shortId, managed: "true" },
-          user_data: cloudConfig,
-        }),
-      });
-
-      if (!hetznerResp.ok) {
-        const errText = await hetznerResp.text();
-        throw new Error(`Hetzner API error ${hetznerResp.status}: ${errText}`);
+      // A Convex action can time out after Hetzner accepted the create but
+      // before recordHostEndpoint committed. Reconcile by deterministic name
+      // and strict Yaver labels before attempting a second purchase.
+      const inventoryResp = await fetch(
+        `https://api.hetzner.cloud/v1/servers?name=${encodeURIComponent(serverName)}`,
+        { headers: { "Authorization": `Bearer ${HCLOUD_TOKEN}` } },
+      );
+      if (!inventoryResp.ok) {
+        throw new Error(`Hetzner inventory check failed (${inventoryResp.status})`);
+      }
+      const inventory = await inventoryResp.json() as any;
+      let providerServer = Array.isArray(inventory.servers) ? inventory.servers[0] : undefined;
+      if (providerServer) {
+        const labels = providerServer.labels || {};
+        const labelsMatch = labels.service === "yaver-relay" && labels.managed === "true" && (
+          dedicated ? labels.dedicated === "true" : labels.pool === hostKey
+        );
+        if (!labelsMatch) {
+          throw new Error(`Hetzner server name ${serverName} exists with non-matching ownership labels`);
+        }
       }
 
-      const hetznerData = await hetznerResp.json() as any;
-      const serverId = String(hetznerData.server.id);
-      const serverIp = hetznerData.server.public_net.ipv4.ip;
-      const serverIpv6 = hetznerPrimaryIPv6(hetznerData.server.public_net.ipv6?.ip);
+      let placementDescription = "adopted existing provider server";
+      if (!providerServer) {
+        // ── Capacity-aware placement ───────────────────────────────────────
+        const location = await pickRelayLocation(HCLOUD_TOKEN, args.region);
+        if (!location) {
+          if (hostKey && slot?.needsProvision) {
+            await ctx.runMutation(internal.relayPool.markHostError, {
+              hostKey,
+              errorMessage: `No orderable relay server type in region ${args.region}`,
+            });
+            await ctx.runMutation(internal.relayPool.abandonUncreatedHost, { hostKey });
+          }
+          await ctx.runMutation(internal.managedRelays.setStatus, {
+            relayId: args.relayId,
+            status: "error",
+            errorMessage: `No orderable relay server type in any ${String(args.region || "eu").startsWith("us") ? "US" : "EU"} location — capacity is temporarily exhausted.`,
+          });
+          return;
+        }
+        const serverType = await pickRelayServerType(HCLOUD_TOKEN, location);
+        if (!serverType) {
+          throw new Error(`Relay capacity changed in ${location}; no sufficient server type is currently orderable`);
+        }
+        const cloudConfig = relayCloudInit({
+          domain,
+          convexSite,
+          adminToken: randomHex(24),
+          imageRef,
+          sharedPassword: dedicated ? args.password : undefined,
+        });
+        const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${HCLOUD_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: serverName,
+            server_type: serverType,
+            image: "ubuntu-24.04",
+            location,
+            labels: dedicated
+              ? { service: "yaver-relay", dedicated: "true", user: shortId, managed: "true" }
+              : { service: "yaver-relay", pool: hostKey ?? "", user: shortId, managed: "true" },
+            user_data: cloudConfig,
+          }),
+        });
+        if (!hetznerResp.ok) {
+          throw new Error(`Hetzner API error ${hetznerResp.status}: ${await hetznerResp.text()}`);
+        }
+        providerServer = (await hetznerResp.json() as any).server;
+        placementDescription = `created ${serverType} @ ${location}`;
+      }
+
+      const serverId = String(providerServer.id);
+      providerServerId = serverId;
+      const serverIp = providerServer.public_net.ipv4.ip;
+      const serverIpv6 = hetznerPrimaryIPv6(providerServer.public_net.ipv6?.ip);
 
       // ── Step 2: Add Cloudflare DNS record ─────────────────────
 
@@ -425,6 +514,15 @@ export const provision = internalAction({
         serverIpv6,
         domain,
       });
+      if (hostKey) {
+        await ctx.runMutation(internal.relayPool.recordHostEndpoint, {
+          hostKey,
+          serverId,
+          serverIp,
+          serverIpv6,
+          hostname: domain,
+        });
+      }
 
       // Record custom-domain binding so the dashboard can show the user
       // which DNS records they still need to set at their registrar. This
@@ -440,7 +538,7 @@ export const provision = internalAction({
         });
       }
 
-      console.log(`[provision] Relay provisioned: ${domain} (${serverIp}), server ${serverId}, type ${serverType} @ ${location}`);
+      console.log(`[provision] Relay provisioned: ${domain} (${serverIp}), server ${serverId}, ${placementDescription}`);
 
       // ── Step 4: Schedule SSL setup ────────────────────────────
       // SSL is handled by cloud-init: certbot runs after nginx is up
@@ -453,11 +551,27 @@ export const provision = internalAction({
 
     } catch (error: any) {
       console.error("[provision] Failed:", error.message);
+      if (hostKey && slot?.needsProvision) {
+        await ctx.runMutation(internal.relayPool.markHostError, {
+          hostKey,
+          errorMessage: String(error?.message || error),
+        });
+        if (!providerServerId) {
+          await ctx.runMutation(internal.relayPool.abandonUncreatedHost, { hostKey });
+        }
+      }
       await ctx.runMutation(internal.managedRelays.setStatus, {
         relayId: args.relayId,
         status: "error",
         errorMessage: error.message,
       });
+      if (providerServerId) {
+        await ctx.scheduler.runAfter(0, internal.provisionRelay.deprovision, {
+          relayId: args.relayId,
+          hetznerServerId: providerServerId,
+          domain,
+        });
+      }
     }
   },
 });
@@ -467,39 +581,75 @@ export const healthCheck = internalAction({
   args: {
     relayId: v.id("managedRelays"),
     domain: v.string(),
+    attempt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     try {
-      // Try HTTPS first, then HTTP
+      const relay = await ctx.runQuery(internal.managedRelays.getById, { relayId: args.relayId });
+      if (!relay || relay.status === "stopped" || relay.status === "error") return;
+      // Delivery uses an https:// relay URL. HTTP liveness is not sufficient:
+      // accepting it would wire every client to a hostname with no valid TLS.
       let healthy = false;
-      for (const proto of ["https", "http"]) {
-        try {
-          const resp = await fetch(`${proto}://${args.domain}/health`, {
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (resp.ok) {
-            const data = await resp.json() as any;
-            if (data.ok) {
-              healthy = true;
-              break;
+      try {
+        const resp = await fetch(`https://${args.domain}/health`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (resp.ok) {
+          const data = await resp.json() as any;
+          if (data.ok && relay.password) {
+            // Public liveness alone can be green while the paid path is
+            // unusable. Exercise TLS + relay routing + Convex-backed per-user
+            // authentication before attaching the service to the account.
+            const authResp = await fetch(`https://${args.domain}/my/bandwidth`, {
+              headers: { "X-Relay-Password": relay.password },
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (authResp.ok) {
+              const authData = await authResp.json() as any;
+              healthy = authData?.ok === true;
             }
           }
-        } catch {
-          // Try next protocol
         }
+      } catch {
+        // Retry below; never downgrade a paid relay to plaintext delivery.
       }
 
       if (healthy) {
         await ctx.runMutation(internal.managedRelays.recordHealthCheck, {
           relayId: args.relayId,
         });
+        await wireUserRelayUrl(ctx, relay, args.domain);
         console.log(`[provision] Health check passed: ${args.domain}`);
       } else {
-        // Retry in 2 more minutes
+        const attempt = Math.max(0, Math.floor(args.attempt ?? 0));
+        if (attempt >= 15) {
+          if (relay.sharedHostKey) {
+            await ctx.runMutation(internal.relayPool.markHostError, {
+              hostKey: relay.sharedHostKey,
+              errorMessage: "Relay failed its authenticated operational health check",
+            });
+          }
+          await ctx.runMutation(internal.managedRelays.setStatus, {
+            relayId: args.relayId,
+            status: "error",
+            errorMessage: "Relay did not pass its operational health check; retry from Billing",
+          });
+          if (relay.hetznerServerId) {
+            await ctx.scheduler.runAfter(0, internal.provisionRelay.deprovision, {
+              relayId: args.relayId,
+              hetznerServerId: String(relay.hetznerServerId),
+              domain: args.domain,
+            });
+          }
+          return;
+        }
+        // Retry in 2 more minutes, with a hard bound so a dead deployment does
+        // not create an immortal scheduler loop.
         console.log(`[provision] Health check failed for ${args.domain}, retrying in 2min...`);
         await ctx.scheduler.runAfter(120_000, internal.provisionRelay.healthCheck, {
           relayId: args.relayId,
           domain: args.domain,
+          attempt: attempt + 1,
         });
       }
     } catch (error: any) {
@@ -526,15 +676,42 @@ export const deprovision = internalAction({
       relayId: args.relayId,
     });
 
-    // Mark the tenant gone FIRST so hostIsEmpty no longer counts this row
-    // when we ask whether the shared host can be drained.
-    await ctx.runMutation(internal.managedRelays.setStatus, {
+    // Release the tenant FIRST, atomically updating the indexed pool-host
+    // ledger. Repeated webhook/deprovision delivery is idempotent.
+    const release = await ctx.runMutation(internal.relayPool.releaseTenant, {
       relayId: args.relayId,
-      status: "stopped",
     });
+    if (relay?.userId && args.domain) {
+      await ctx.runMutation(internal.userSettings.clearRelayForUserIfMatches, {
+        userId: relay.userId,
+        relayUrl: `https://${args.domain}`,
+      });
+    }
 
-    // DNS cleanup ALWAYS — this tenant's own subdomain must stop resolving
-    // even when the shared box stays up for the other tenants.
+    // ─── Shared host: never delete a box other tenants still use ──────────
+    // A shared host serves up to RELAY_TENANTS_PER_HOST tenants from ONE
+    // Hetzner box. The pre-fix behaviour deleted the box unconditionally, so
+    // the FIRST tenant to cancel took the relay offline for everyone else on
+    // the host — a fleet-wide outage triggered by one subscription ending.
+    // Rule (relayPoolPolicy.sharedHostDeletionDecision): delete ONLY when the
+    // host is drained. Dedicated relays are tenant-private and always
+    // deletable.
+    if (relay?.sharedHostKey) {
+      const decision = sharedHostDeletionDecision({
+        sharedHostKey: relay.sharedHostKey,
+        liveTenantsOnHost: release.tenants,
+        pinned: release.pinned,
+      });
+      if (!decision.deleteServer) {
+        console.log(
+          `[deprovision] ${decision.reason} — keeping box, releasing this tenant's slot`,
+        );
+        return;
+      }
+    }
+
+    // Dedicated relays own their hostname. Pooled tenants share the host's
+    // TLS hostname, so delete DNS only after the final tenant has released it.
     if (CF_API_TOKEN && CF_ZONE_ID && args.domain) {
       try {
         const listResp = await fetch(
@@ -553,30 +730,6 @@ export const deprovision = internalAction({
         ));
       } catch (e) {
         console.error("[deprovision] DNS cleanup failed:", e);
-      }
-    }
-
-    // ─── Shared host: never delete a box other tenants still use ──────────
-    // A shared host serves up to RELAY_TENANTS_PER_HOST tenants from ONE
-    // Hetzner box. The pre-fix behaviour deleted the box unconditionally, so
-    // the FIRST tenant to cancel took the relay offline for everyone else on
-    // the host — a fleet-wide outage triggered by one subscription ending.
-    // Rule (relayPoolPolicy.sharedHostDeletionDecision): delete ONLY when the
-    // host is drained. Dedicated relays are tenant-private and always
-    // deletable.
-    if (relay?.sharedHostKey) {
-      const { tenants } = await ctx.runQuery(internal.relayPool.hostIsEmpty, {
-        hostKey: relay.sharedHostKey,
-      });
-      const decision = sharedHostDeletionDecision({
-        sharedHostKey: relay.sharedHostKey,
-        liveTenantsOnHost: tenants,
-      });
-      if (!decision.deleteServer) {
-        console.log(
-          `[deprovision] ${decision.reason} — keeping box, releasing this tenant's slot`,
-        );
-        return;
       }
     }
 
@@ -627,14 +780,27 @@ export const deprovision = internalAction({
       }
 
       // Delete Hetzner server
-      await fetch(`https://api.hetzner.cloud/v1/servers/${args.hetznerServerId}`, {
+      const deleteResp = await fetch(`https://api.hetzner.cloud/v1/servers/${args.hetznerServerId}`, {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${HCLOUD_TOKEN}` },
       });
+      if (!deleteResp.ok && deleteResp.status !== 404) {
+        throw new Error(`Hetzner delete failed (${deleteResp.status}): ${await deleteResp.text()}`);
+      }
+      if (relay?.sharedHostKey) {
+        await ctx.runMutation(internal.relayPool.markHostDeleted, {
+          hostKey: relay.sharedHostKey,
+        });
+      }
 
       console.log(`[deprovision] Relay deprovisioned: ${args.domain}`);
     } catch (error: any) {
       console.error("[deprovision] Error:", error.message);
+      await ctx.runMutation(internal.managedRelays.setStatus, {
+        relayId: args.relayId,
+        status: "error",
+        errorMessage: `Relay deprovision failed: ${String(error?.message || error)}`,
+      });
     }
   },
 });

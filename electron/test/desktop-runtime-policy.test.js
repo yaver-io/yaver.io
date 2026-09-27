@@ -10,19 +10,21 @@ const {
   needsMasJitlessWorkaround,
 } = require("../src/desktop-runtime-policy");
 
-test("remote-node defaults are explicit and reversible", () => {
+test("remote-node availability defaults require explicit user opt-in", () => {
   assert.deepEqual(normalizeSettings(null), DEFAULT_SETTINGS);
   assert.deepEqual(normalizeSettings({}), DEFAULT_SETTINGS);
-  assert.deepEqual(normalizeSettings({ keepAwake: false, launchAtLogin: false }), {
+  assert.deepEqual(normalizeSettings({ keepAwake: true, launchAtLogin: true }), {
     taskNotifications: true,
-    keepAwake: false,
-    launchAtLogin: false,
+    keepAwake: true,
+    launchAtLogin: true,
     automaticUpdates: true,
   });
+  assert.equal(DEFAULT_SETTINGS.keepAwake, false);
+  assert.equal(DEFAULT_SETTINGS.launchAtLogin, false);
 });
 
-test("invalid persisted values cannot silently disable availability", () => {
-  assert.deepEqual(normalizeSettings({ keepAwake: "false", launchAtLogin: 0 }), DEFAULT_SETTINGS);
+test("invalid persisted values cannot silently enable availability", () => {
+  assert.deepEqual(normalizeSettings({ keepAwake: "true", launchAtLogin: 1 }), DEFAULT_SETTINGS);
 });
 
 test("automatic updates default on but respect an explicit user opt-out", () => {

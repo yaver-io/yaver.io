@@ -726,7 +726,8 @@ func main() {
 	case "clean":
 		runClean(os.Args[2:])
 	case "cloud":
-		runCloud(os.Args[2:])
+		fmt.Fprintln(os.Stderr, "Cloud Workspace is not offered. Run Yaver on your own machine or VPS; Relay Pro is the optional managed connectivity plan.")
+		os.Exit(1)
 	case "primary":
 		runPrimary(os.Args[2:])
 	case "secondary":
@@ -989,11 +990,6 @@ Usage:
   yaver dogfood apps|app-set|testers|tester-set|installations|approve|cancel|revoke  Manage account-bound third-party app testing
   yaver ci add <hermes|feedback|push-to-device|publish-runner>  Scaffold a GitHub Actions workflow
   yaver ci list             List available CI targets
-  yaver cloud buy      Open the hosted cloud checkout flow
-  yaver cloud create   Start the cloud flow and wait for the machine
-  yaver cloud status   Show cloud machine status
-  yaver cloud ssh      SSH into your cloud machine
-  yaver cloud destroy  Tear down your cloud machine
   yaver 2fa status             Show whether two-factor auth is enabled
   yaver 2fa enable             Enroll a TOTP authenticator app (optional)
   yaver 2fa disable            Remove two-factor auth from your account

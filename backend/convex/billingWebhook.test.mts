@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   billingProductIdFromPayload,
   billingStateFlags,
+  subscriptionHasServiceAccess,
   isFullyRefundedOrder,
   normalizeBillingProduct,
   PAYMENT_PROBLEM_STATUSES,
@@ -127,6 +128,23 @@ test("subscriptionPeriodEnd falls back to now for paused subs (no renews_at/ends
 
 test("billingStateFlags: only active counts as subscribed", () => {
   assert.deepEqual(billingStateFlags("active"), { subscribed: true, paymentProblem: false });
+});
+
+test("billingStateFlags: cancellation preserves access only through the paid period", () => {
+  const now = 1_700_000_000_000;
+  assert.deepEqual(billingStateFlags("cancelled", now + 60_000, now), { subscribed: true, paymentProblem: false });
+  assert.deepEqual(billingStateFlags("cancelled", now, now), { subscribed: false, paymentProblem: false });
+});
+
+test("service access follows provider validity through trial, pause, dunning, and paid cancellation grace", () => {
+  const now = 1_700_000_000_000;
+  for (const status of ["on_trial", "active", "paused", "past_due", "unpaid", "payment_failed"]) {
+    assert.equal(subscriptionHasServiceAccess(status, null, now), true, status);
+  }
+  assert.equal(subscriptionHasServiceAccess("cancelled", now + 1, now), true);
+  for (const status of ["cancelled", "expired", "refunded", "unknown", null]) {
+    assert.equal(subscriptionHasServiceAccess(status, now, now), false, String(status));
+  }
 });
 
 test("billingStateFlags: past_due / unpaid / payment_failed surface a payment problem", () => {

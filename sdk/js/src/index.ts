@@ -16,6 +16,16 @@
  */
 
 export { YaverClient } from './client';
+export { YaverReleaseClient } from './release';
+export type {
+  ReleaseIdentity,
+  ReleasePostcondition,
+  ReleaseTarget,
+  ReleasePlan,
+  ReleaseProof,
+  ReleaseRun,
+  StartReleaseOptions,
+} from './release';
 export { YaverAuthClient } from './auth';
 export { transcribe, SPEECH_PROVIDERS } from './speech';
 export type {

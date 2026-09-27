@@ -229,9 +229,9 @@ jobs:
   build:
     needs: validate
     # macOS Developer ID credentials are scoped to the protected production
-    # environment. Windows users run the CLI through WSL2, which consumes the
-    # signed Linux artifact; the native Windows agent is intentionally not part
-    # of this matrix until an Authenticode identity is provisioned.
+    # environment. The non-exportable SimplySign identity lives on the release
+    # Mac, so native Windows artifacts use the local certificate-pinned release
+    # lane rather than pretending a hosted runner can access that identity.
     environment: production
     strategy:
       # Each platform publishes independently — a flaky darwin sign+notarize must
@@ -279,35 +279,13 @@ jobs:
       - name: Sign and verify Windows agent
         if: matrix.goos == 'windows'
         shell: pwsh
-        working-directory: desktop/agent
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WIN_CERTIFICATE_SHA1: ${{ vars.WIN_CERTIFICATE_SHA1 }}
+          WINDOWS_PUBLISHER_PATTERN: "(?i)simkab"
         run: |
-          $ErrorActionPreference = "Stop"
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
-            throw "WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD are required. Refusing to publish an unsigned Windows agent."
-          }
-          $encoded = $env:WIN_CSC_LINK -replace '^data:[^;]+;base64,', ''
-          $pfx = Join-Path $env:RUNNER_TEMP "yaver-windows-signing.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($encoded))
-          try {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-            if (-not $signtool) { throw "signtool.exe was not found on the Windows runner" }
-            $binary = "yaver-windows-${{ matrix.goarch }}.exe"
-            & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:WIN_CSC_KEY_PASSWORD $binary
-            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE" }
-            & $signtool verify /pa /all $binary
-            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with exit code $LASTEXITCODE" }
-            $signature = Get-AuthenticodeSignature $binary
-            if ($signature.Status -ne 'Valid') { throw "Authenticode status is $($signature.Status): $($signature.StatusMessage)" }
-            if ($signature.SignerCertificate.Subject -notmatch '(?i)simkab') {
-              throw "Unexpected Windows publisher: $($signature.SignerCertificate.Subject). Expected the Simkab signing identity."
-            }
-          } finally {
-            Remove-Item -Force -ErrorAction SilentlyContinue $pfx
-          }
+          ./scripts/windows-signing.ps1 -Path "desktop/agent/yaver-windows-${{ matrix.goarch }}.exe"
 
       # Sign + notarize macOS binaries so Gatekeeper doesn't kill them
       # on first run. Without this, every fresh release ships unsigned

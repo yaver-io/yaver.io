@@ -30,6 +30,9 @@ type seleniumMCPSession struct {
 	Profile   string
 	Width     int
 	Height    int
+	Browser   string
+	ClipID    string
+	Recorder  *WebDriverVideoRecorder
 	LastURL   string
 	Title     string
 }
@@ -51,14 +54,17 @@ func seleniumMCPTools() []map[string]interface{} {
 		},
 		{
 			"name":        "selenium_start",
-			"description": "Start a first-class Selenium/WebDriver Chrome session on this runtime host. Use for daily browser tasks that should explicitly go through WebDriver instead of CDP. Does not bypass CAPTCHA or site auth; hand off to the user when needed.",
+			"description": "Start a first-class W3C WebDriver session on this runtime host. Supports Chrome, Firefox, and real Safari (macOS with safaridriver enabled). Does not bypass CAPTCHA or site auth; hand off to the user when needed.",
 			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
-				"session_id": map[string]interface{}{"type": "string", "description": "Optional custom session ID"},
-				"url":        map[string]interface{}{"type": "string", "description": "Optional initial URL"},
-				"headful":    map[string]interface{}{"type": "boolean", "description": "Show Chrome window visibly"},
-				"profile":    map[string]interface{}{"type": "string", "description": "Persistent Chrome profile name or absolute user-data-dir"},
-				"width":      map[string]interface{}{"type": "integer", "description": "Viewport width, default 1280"},
-				"height":     map[string]interface{}{"type": "integer", "description": "Viewport height, default 800"},
+				"session_id":     map[string]interface{}{"type": "string", "description": "Optional custom session ID"},
+				"browser":        map[string]interface{}{"type": "string", "enum": []string{"chrome", "firefox", "safari"}, "description": "Actual browser to launch. Defaults to chrome; Safari is real Safari, not Playwright WebKit."},
+				"url":            map[string]interface{}{"type": "string", "description": "Optional initial URL"},
+				"headful":        map[string]interface{}{"type": "boolean", "description": "Show Chrome window visibly"},
+				"profile":        map[string]interface{}{"type": "string", "description": "Persistent Chrome profile name or absolute user-data-dir"},
+				"width":          map[string]interface{}{"type": "integer", "description": "Viewport width, default 1280"},
+				"height":         map[string]interface{}{"type": "integer", "description": "Viewport height, default 800"},
+				"record":         map[string]interface{}{"type": "boolean", "description": "Record the actual WebDriver session to an MP4 served through the task/video clip route."},
+				"record_seconds": map[string]interface{}{"type": "integer", "description": "Recording safety cap; default 600 seconds."},
 			}},
 		},
 		{
@@ -239,12 +245,15 @@ func mcpSeleniumToolCall(name string, args json.RawMessage) interface{} {
 }
 
 type seleniumStartArgs struct {
-	SessionID string `json:"session_id"`
-	URL       string `json:"url"`
-	Headful   bool   `json:"headful"`
-	Profile   string `json:"profile"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
+	SessionID     string `json:"session_id"`
+	URL           string `json:"url"`
+	Headful       bool   `json:"headful"`
+	Profile       string `json:"profile"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	Browser       string `json:"browser"`
+	Record        bool   `json:"record"`
+	RecordSeconds int    `json:"record_seconds"`
 }
 
 type seleniumSearchArgs struct {
@@ -572,8 +581,15 @@ func chromeBuildVersion(version string) string {
 }
 
 func (m *seleniumMCPManager) start(a seleniumStartArgs) (map[string]interface{}, error) {
+	a.Browser = strings.ToLower(strings.TrimSpace(a.Browser))
+	if a.Browser == "" {
+		a.Browser = "chrome"
+	}
+	if a.Browser != "chrome" && a.Browser != "firefox" && a.Browser != "safari" {
+		return nil, fmt.Errorf("browser must be chrome, firefox, or safari")
+	}
 	if a.SessionID == "" {
-		a.SessionID = fmt.Sprintf("selenium-%d", time.Now().UnixMilli()%1000000)
+		a.SessionID = fmt.Sprintf("%s-%d", a.Browser, time.Now().UnixMilli()%1000000)
 	}
 	if a.Width <= 0 {
 		a.Width = 1280
@@ -589,39 +605,88 @@ func (m *seleniumMCPManager) start(a seleniumStartArgs) (map[string]interface{},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	status := seleniumReadiness()
-	if ready, _ := status["ok"].(bool); !ready {
-		if reason, _ := status["error"].(string); reason != "" {
-			return nil, fmt.Errorf("selenium capability unavailable: %s", reason)
+	var driver testkit.WebDriver
+	var err error
+	switch a.Browser {
+	case "chrome":
+		status := seleniumReadiness()
+		if ready, _ := status["ok"].(bool); !ready {
+			if reason, _ := status["error"].(string); reason != "" {
+				return nil, fmt.Errorf("chrome webdriver capability unavailable: %s", reason)
+			}
+			return nil, fmt.Errorf("chrome webdriver capability unavailable")
 		}
-		return nil, fmt.Errorf("selenium capability unavailable")
+		driverPath, _ := status["chromedriver_path"].(string)
+		driver, err = testkit.NewWebDriver("selenium", testkit.ChromeOpts{
+			ViewportW: a.Width, ViewportH: a.Height, Headful: a.Headful,
+			UserDataDir: profile, DriverPath: driverPath,
+		})
+		if err == nil {
+			err = driver.Launch(ctx)
+		}
+	case "firefox":
+		var d *testkit.FirefoxDriver
+		d, err = testkit.NewFirefoxDriver(ctx)
+		if err == nil {
+			err = d.NewSession(ctx, a.Headful, a.Width, a.Height)
+			driver = d
+		}
+	case "safari":
+		var d *testkit.FirefoxDriver
+		d, err = testkit.NewSafariDriver(ctx)
+		if err == nil {
+			err = testkit.NewSafariSession(ctx, d, true, a.Width, a.Height)
+			driver = d
+		}
 	}
-	driverPath, _ := status["chromedriver_path"].(string)
-	driver, err := testkit.NewWebDriver("selenium", testkit.ChromeOpts{
-		ViewportW:   a.Width,
-		ViewportH:   a.Height,
-		Headful:     a.Headful,
-		UserDataDir: profile,
-		DriverPath:  driverPath,
-	})
 	if err != nil {
+		if driver != nil {
+			driver.Close()
+		}
 		return nil, err
 	}
-	if err := driver.Launch(ctx); err != nil {
-		driver.Close()
-		return nil, err
-	}
-	sess := &seleniumMCPSession{ID: a.SessionID, Driver: driver, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Headful: a.Headful, Profile: profile, Width: a.Width, Height: a.Height}
+	sess := &seleniumMCPSession{ID: a.SessionID, Driver: driver, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Headful: a.Headful || a.Browser == "safari", Profile: profile, Width: a.Width, Height: a.Height, Browser: a.Browser}
 	m.mu.Lock()
 	if old := m.sessions[a.SessionID]; old != nil {
 		old.Driver.Close()
 	}
 	m.sessions[a.SessionID] = sess
 	m.mu.Unlock()
-	if strings.TrimSpace(a.URL) != "" {
-		return m.navigate(a.SessionID, a.URL)
+	if a.Record {
+		vpm := ActiveVibePreviewManager()
+		if vpm == nil {
+			vpm = NewVibePreviewManager(nil)
+		}
+		recorder, recordErr := startWebDriverRecording(vpm, driver, a.SessionID, a.RecordSeconds)
+		if recordErr != nil {
+			_ = m.close(a.SessionID)
+			return nil, recordErr
+		}
+		m.mu.Lock()
+		sess.Recorder, sess.ClipID = recorder, recorder.clipID
+		m.mu.Unlock()
+		if taskID := strings.TrimSpace(os.Getenv("YAVER_TASK_ID")); taskID != "" {
+			writeTaskClipMarker(taskID, recorder.clipID)
+			if tm := ActiveTaskManager(); tm != nil {
+				tm.SetTaskVideoState(taskID, recorder.clipID, "recording")
+			}
+		}
 	}
-	return map[string]interface{}{"ok": true, "session_id": a.SessionID, "profile": profile, "headful": a.Headful, "width": a.Width, "height": a.Height}, nil
+	if strings.TrimSpace(a.URL) != "" {
+		out, navErr := m.navigate(a.SessionID, a.URL)
+		if out != nil {
+			out["browser"] = a.Browser
+			if sess.ClipID != "" {
+				out["recording"], out["clip_id"], out["clip_url"] = true, sess.ClipID, "/vibing/preview/clip/"+sess.ClipID
+			}
+		}
+		return out, navErr
+	}
+	out := map[string]interface{}{"ok": true, "session_id": a.SessionID, "browser": a.Browser, "profile": profile, "headful": sess.Headful, "width": a.Width, "height": a.Height}
+	if sess.ClipID != "" {
+		out["recording"], out["clip_id"], out["clip_url"] = true, sess.ClipID, "/vibing/preview/clip/"+sess.ClipID
+	}
+	return out, nil
 }
 
 func (m *seleniumMCPManager) search(a seleniumSearchArgs) (map[string]interface{}, error) {
@@ -692,6 +757,101 @@ func (m *seleniumMCPManager) typeText(sessionID, selector, text string) (map[str
 	return m.snapshot(sessionID)
 }
 
+func (m *seleniumMCPManager) execute(sessionID, script string, args ...interface{}) (interface{}, error) {
+	sess, err := m.get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	driver, ok := sess.Driver.(testkit.ScriptWebDriver)
+	if !ok {
+		return nil, fmt.Errorf("browser engine does not support script execution")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return driver.ExecuteScript(ctx, script, args)
+}
+
+func (m *seleniumMCPManager) selectValue(sessionID, selector, value string) (map[string]interface{}, error) {
+	if strings.TrimSpace(selector) == "" {
+		return nil, fmt.Errorf("selector is required")
+	}
+	_, err := m.execute(sessionID, `
+const el = document.querySelector(arguments[0]);
+if (!el) throw new Error('element not found: ' + arguments[0]);
+el.value = arguments[1];
+el.dispatchEvent(new Event('input', {bubbles:true}));
+el.dispatchEvent(new Event('change', {bubbles:true}));
+return el.value;`, selector, value)
+	if err != nil {
+		return nil, err
+	}
+	return m.snapshot(sessionID)
+}
+
+func (m *seleniumMCPManager) scroll(sessionID string, x, y int) (map[string]interface{}, error) {
+	_, err := m.execute(sessionID, `window.scrollBy(arguments[0], arguments[1]); return {x:scrollX,y:scrollY};`, x, y)
+	if err != nil {
+		return nil, err
+	}
+	return m.snapshot(sessionID)
+}
+
+func (m *seleniumMCPManager) waitVisible(sessionID, selector string, timeoutMs int) error {
+	if timeoutMs <= 0 {
+		timeoutMs = 10000
+	}
+	if timeoutMs > 60000 {
+		timeoutMs = 60000
+	}
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		value, err := m.execute(sessionID, `
+const el=document.querySelector(arguments[0]);
+if(!el) return false;
+const s=getComputedStyle(el), r=el.getBoundingClientRect();
+return s.display!=='none' && s.visibility!=='hidden' && r.width>0 && r.height>0;`, selector)
+		if err != nil {
+			return err
+		}
+		if visible, _ := value.(bool); visible {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("selector %q was not visible within %dms", selector, timeoutMs)
+}
+
+func (m *seleniumMCPManager) waitNavigation(sessionID string, timeoutMs int) error {
+	sess, err := m.get(sessionID)
+	if err != nil {
+		return err
+	}
+	initial := sess.LastURL
+	if timeoutMs <= 0 {
+		timeoutMs = 10000
+	}
+	if timeoutMs > 60000 {
+		timeoutMs = 60000
+	}
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		snap, snapErr := sess.Driver.Snapshot(ctx)
+		cancel()
+		if snapErr != nil {
+			return snapErr
+		}
+		if snap.URL != "" && snap.URL != initial {
+			m.mu.Lock()
+			sess.LastURL, sess.Title, sess.UpdatedAt = snap.URL, snap.Title, time.Now().UTC()
+			m.mu.Unlock()
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("browser URL did not change within %dms", timeoutMs)
+}
+
 func (m *seleniumMCPManager) snapshot(sessionID string) (map[string]interface{}, error) {
 	sess, err := m.get(sessionID)
 	if err != nil {
@@ -751,6 +911,8 @@ func (m *seleniumMCPManager) list() map[string]interface{} {
 			"url":        s.LastURL,
 			"title":      s.Title,
 			"headful":    s.Headful,
+			"browser":    s.Browser,
+			"clip_id":    s.ClipID,
 			"profile":    s.Profile,
 		})
 	}
@@ -768,8 +930,26 @@ func (m *seleniumMCPManager) close(sessionID string) error {
 	if sess == nil {
 		return fmt.Errorf("unknown selenium session %q", sessionID)
 	}
+	var recordErr error
+	if sess.Recorder != nil {
+		sess.Recorder.Stop()
+		videoStatus := "ready"
+		if sess.Recorder.rec.Status != "ready" {
+			videoStatus = "failed"
+			reason := strings.TrimSpace(sess.Recorder.rec.Err)
+			if reason == "" {
+				reason = "MP4 was not finalized"
+			}
+			recordErr = fmt.Errorf("browser recording failed: %s", reason)
+		}
+		if taskID := strings.TrimSpace(os.Getenv("YAVER_TASK_ID")); taskID != "" {
+			if tm := ActiveTaskManager(); tm != nil {
+				tm.SetTaskVideoState(taskID, sess.ClipID, videoStatus)
+			}
+		}
+	}
 	sess.Driver.Close()
-	return nil
+	return recordErr
 }
 
 func (m *seleniumMCPManager) get(sessionID string) (*seleniumMCPSession, error) {
@@ -783,6 +963,12 @@ func (m *seleniumMCPManager) get(sessionID string) (*seleniumMCPSession, error) 
 		return nil, fmt.Errorf("unknown selenium session %q", sessionID)
 	}
 	return sess, nil
+}
+
+func (m *seleniumMCPManager) has(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessions[strings.TrimSpace(sessionID)] != nil
 }
 
 func seleniumSearchURL(provider, query string) string {

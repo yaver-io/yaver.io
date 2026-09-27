@@ -3,6 +3,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -36,7 +37,9 @@ func NewSafariDriver(ctx context.Context) (*FirefoxDriver, error) {
 		}
 	}
 	port := pickFreePort()
-	cmd := exec.CommandContext(ctx, bin, "--port", fmt.Sprintf("%d", port))
+	// The startup context must not own the long-lived safaridriver process;
+	// Firefox/Safari sessions are closed explicitly by Driver.Close.
+	cmd := exec.Command(bin, "--port", fmt.Sprintf("%d", port))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -47,6 +50,7 @@ func NewSafariDriver(ctx context.Context) (*FirefoxDriver, error) {
 		port:    port,
 		cmd:     cmd,
 		baseURL: fmt.Sprintf("http://127.0.0.1:%d", port),
+		client:  &http.Client{Timeout: 30 * time.Second},
 	}
 	// Small wait-for-ready loop; safaridriver is usually ready in
 	// under 300ms.

@@ -39,6 +39,9 @@ var ownerOnlyToolPrefixes = []string{
 	"railway_deploy",
 	"pscale_deploy",
 	"mobile_platform_deploy",
+	"publish_", // generic artifact/package/store publication tools
+	"push_ios", // legacy store mutation aliases
+	"push_android",
 	"playstore_promote",  // mutates Play release tracks (internal→beta→production)
 	"testflight_promote", // mutates TestFlight build availability (owner-only publish)
 	"robot_",             // robot arm / robotics ops (incl. robot_camera image tool)

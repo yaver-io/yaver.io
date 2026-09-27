@@ -15,7 +15,10 @@ settings:
 packages:
   LiveKitWebRTC:
     url: https://github.com/livekit/webrtc-xcframework.git
-    exactVersion: 144.7559.13
+    # 144.7559.15 is the newest patch on the tvOS-proven 144 branch. The newer
+    # 150 package manifest does not declare tvOS, so do not cross that boundary
+    # until its Apple TV slices have been operation-probed in this target.
+    exactVersion: 144.7559.15
   Sodium:
     url: https://github.com/jedisct1/swift-sodium.git
     exactVersion: 0.10.0

@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -287,11 +288,20 @@ func (s *HTTPServer) handleWatchResult(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	spoken := summarizeForWatch(string(task.Status), voicePickResultText(task))
+	if verification := s.taskMgr.taskVerificationSnapshot(task.ID); verification != nil {
+		switch verification.Status {
+		case "passed":
+			spoken = fmt.Sprintf("Browser verified, %d of %d checks passed. The recording is ready on your phone.", verification.Passed, verification.Total)
+		case "failed":
+			spoken = "Browser verification failed. Open Yaver on your phone for the named check and recording."
+		}
+	}
 	writeJSON(w, http.StatusOK, watchReply{
 		V:      1,
 		Kind:   "summary",
 		TaskID: task.ID,
 		Status: string(task.Status),
-		Spoken: summarizeForWatch(string(task.Status), voicePickResultText(task)),
+		Spoken: spoken,
 	})
 }

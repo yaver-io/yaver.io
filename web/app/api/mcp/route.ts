@@ -371,7 +371,7 @@ function strategyGameText(gameType: string) {
     "- Yaver OAuth/session is the account of record for Yaver-hosted builds. Future mobile/TV purchases use Yaver-owned IAP, Play Billing, or web entitlements.",
     "- Target surfaces should be declared explicitly: web, iOS phone, Android phone, tablet, tvOS, Android TV, watch companion, car/voice companion, and remote runner.",
     "- TV/tablet/mobile are primary play surfaces. Watch and car should be companion/briefing/approval surfaces, not full dense gameplay.",
-    "- Development can use GitHub, GitLab, self-hosted Git, local folders, Yaver Cloud, self-hosted runtime, Codex, Claude Code, OpenCode, or other MCP/coding-agent tools.",
+    "- Development can use GitHub, GitLab, self-hosted Git, local folders, a machine or VPS you control, Codex, Claude Code, OpenCode, or other MCP/coding-agent tools.",
     "- Developers can still use Yaver to develop, test, run privately, self-host, or do whatever their own project/license allows without sharing source with Yaver.",
     "- Source/package sharing is only required for official in-Yaver catalog release/distribution, where private review access and Yaver compliance checks are mandatory.",
   ].join("\n");

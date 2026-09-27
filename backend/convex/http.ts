@@ -39,6 +39,12 @@ import {
 } from "./billingWebhook";
 import { rawSecretFieldsInSettings, settingsWithoutSecrets } from "./settingsSecretPolicy";
 import {
+  cloudWorkspacePublicEnabled,
+  CLOUD_WORKSPACE_UNAVAILABLE,
+  relayProCheckoutEnabled,
+  RELAY_PRO_CHECKOUT_UNAVAILABLE,
+} from "./productAvailability";
+import {
   MODEL_DEFAULTS_CONFIG_KEY,
   applyRunnerModelDefaults,
   canonicalModelRunnerId,
@@ -592,17 +598,17 @@ function creditPackByVariantId(variantId: string | number | undefined | null) {
 // Yaver's gates. Scheduled from subscriptions.cancelById.
 export const cancelLemonSqueezySubscription = internalAction({
   args: { lemonSqueezyId: v.string() },
-  handler: async (_ctx, { lemonSqueezyId }) => {
+  handler: async (_ctx, { lemonSqueezyId }): Promise<{ ok: boolean; status?: number; reason?: string }> => {
     const apiKey = lsEnv("API_KEY");
     if (!apiKey) {
       console.warn("[lemonsqueezy] subscription cancel skipped — API_KEY not configured");
-      return;
+      return { ok: false, reason: "API_KEY not configured" };
     }
     // Real LemonSqueezy subscription ids are numeric strings; e2e
     // fixtures use "e2e-…". Calling the API for a synthetic id just 404s.
     if (!/^[0-9]+$/.test(lemonSqueezyId)) {
       console.log(`[lemonsqueezy] subscription cancel skipped — non-numeric id "${lemonSqueezyId}" (test/dev sub)`);
-      return;
+      return { ok: true, reason: "test subscription" };
     }
     try {
       const resp = await fetch(
@@ -617,13 +623,17 @@ export const cancelLemonSqueezySubscription = internalAction({
       );
       if (resp.ok || resp.status === 404) {
         console.log(`[lemonsqueezy] subscription ${lemonSqueezyId} cancelled (HTTP ${resp.status})`);
+        return { ok: true, status: resp.status };
       } else {
+        const body = await resp.text();
         console.error(
-          `[lemonsqueezy] subscription ${lemonSqueezyId} cancel returned HTTP ${resp.status}: ${await resp.text()}`,
+          `[lemonsqueezy] subscription ${lemonSqueezyId} cancel returned HTTP ${resp.status}: ${body}`,
         );
+        return { ok: false, status: resp.status, reason: `provider returned HTTP ${resp.status}` };
       }
     } catch (e) {
       console.error(`[lemonsqueezy] subscription ${lemonSqueezyId} cancel failed:`, e);
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
     }
   },
 });
@@ -972,7 +982,7 @@ for (const path of [
   "/billing/yaver-cloud/dev-activate",
   "/billing/yaver-cloud/dev-adopt",
   "/billing/yaver-cloud/dev-deprovision",
-  "/billing/yaver-cloud/reconcile",
+  "/billing/relay-pro/reconcile",
   "/billing/yaver-cloud/runners-authorized",
   "/billing/yaver-cloud/usage",
   "/billing/credits/checkout",
@@ -4671,6 +4681,9 @@ http.route({
         reason: "placement does not require managed cloud activation",
       });
     }
+    if (!cloudWorkspacePublicEnabled()) {
+      return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
+    }
 
     const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
       userId: session.userDocId as any,
@@ -6433,11 +6446,17 @@ http.route({
           });
         }
 
-        // If new subscription, provision the appropriate resource
-        if (eventName === "subscription_created" && status === "active") {
+        // Converge paid fulfillment on EVERY event that says the subscription
+        // is active. Lemon Squeezy may create a trial/pending row and only
+        // later emit subscription_updated → active; tying delivery solely to
+        // subscription_created made a successfully-paying user depend on the
+        // manual Repair button. Relay creation is idempotent and the reusable
+        // row check prevents renewals/duplicate webhooks from making another
+        // pool assignment or provider resource.
+        if (status === "active") {
           const region = payload.meta?.custom_data?.region || "eu";
 
-          if (isCloudWorkspaceProduct) {
+          if (isCloudWorkspaceProduct && eventName === "subscription_created") {
             // Cloud dev machine — create and provision
             await ctx.runMutation(internal.cloudMachines.ensureForSubscription, {
               userId: user._id,
@@ -6467,7 +6486,12 @@ http.route({
             // dev-activate path (ensurePreviewCloudMachine). Never
             // re-add a shared-server attach on this paid webhook path.
             // isCloudWorkspaceProduct still selects the `plan` label above.
-          } else {
+          } else if (!isCloudWorkspaceProduct) {
+            const existingRelays = await ctx.runQuery(
+              internal.managedRelays.listBySubscription,
+              { subscriptionId: subId },
+            );
+            if (hasReusableManagedRelayForReconcile(existingRelays)) break;
             // Managed relay (default)
             const password = generateRelayPassword();
             const relayId = await ctx.runMutation(internal.managedRelays.create, {
@@ -6693,8 +6717,7 @@ http.route({
   }),
 });
 
-/** POST /billing/checkout — create authenticated Lemon Squeezy checkout for
- *  the two paid products: Relay Pro or Cloud Workspace. Free has no checkout. */
+/** POST /billing/checkout — create authenticated Relay Pro checkout. */
 http.route({
   path: "/billing/checkout",
   method: "POST",
@@ -6712,7 +6735,13 @@ http.route({
     }
     const productId = normalizeBillingProduct(body.productId);
     if (!productId) {
-      return errorResponse("productId must be 'relay-pro' or 'cloud-workspace'", 400);
+      return errorResponse("productId must be 'relay-pro'", 400);
+    }
+    if (productId !== "relay-pro") {
+      return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
+    }
+    if (!relayProCheckoutEnabled()) {
+      return errorResponse(RELAY_PRO_CHECKOUT_UNAVAILABLE, 503, "relay_pro_checkout_unavailable");
     }
     const region = (body.region ?? "eu").trim() || "eu";
     const variant = variantForBillingProduct(productId);
@@ -6749,7 +6778,7 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/checkout — legacy alias for Cloud Workspace checkout. */
+/** Legacy purchase path retained only to fail closed for old clients. */
 http.route({
   path: "/billing/yaver-cloud/checkout",
   method: "POST",
@@ -6759,40 +6788,7 @@ http.route({
     const scopeDenied = requireFullScope(session);
     if (scopeDenied) return scopeDenied;
 
-    let body: { region?: string } = {};
-    try {
-      body = await request.json();
-    } catch {
-      // allow empty body
-    }
-    const region = (body.region ?? "eu").trim() || "eu";
-    const variant = variantForBillingProduct("cloud-workspace");
-    if (!variant.variantId) {
-      return errorResponse(
-        `Cloud Workspace checkout is not configured (set LEMONSQUEEZY_${variant.envName})`,
-        503,
-      );
-    }
-
-    try {
-      const url = await createLemonSqueezyCheckout({
-        email: session.email,
-        variantId: variant.variantId,
-        variantEnvName: variant.envName,
-        custom: {
-          user_email: session.email,
-          product_type: "cloud-workspace",
-          plan_id: "cloud-workspace",
-          tier: "byok",
-          machine_type: "standard",
-          region,
-        },
-      });
-      return jsonResponse({ url, productId: "cloud-workspace", mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return errorResponse(message, 500);
-    }
+    return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
   }),
 });
 
@@ -6835,6 +6831,9 @@ http.route({
     if (!session) return errorResponse("Unauthorized", 401);
     const scopeDenied = requireFullScope(session);
     if (scopeDenied) return scopeDenied;
+    if (!cloudWorkspacePublicEnabled()) {
+      return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
+    }
     if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
@@ -6868,6 +6867,9 @@ http.route({
     if (!session) return errorResponse("Unauthorized", 401);
     const scopeDenied = requireFullScope(session);
     if (scopeDenied) return scopeDenied;
+    if (!cloudWorkspacePublicEnabled()) {
+      return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
+    }
     if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
@@ -6908,7 +6910,7 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/dev-relay — OWNER-ONLY: provision (or reuse) a
+/** OWNER-ONLY Relay Pro activation stub: provision (or reuse) a
  *  managed Relay Pro relay on the owner's real Hetzner account WITHOUT a
  *  LemonSqueezy subscription. The owner userId bypass in
  *  subscriptions.canProvisionManaged authorises the spend (fail-closed for
@@ -6921,11 +6923,12 @@ http.route({
  *                             shared host deleted only when drained; the
  *                             row is marked stopped first). Also clears a
  *                             stuck "provisioning" row so the next call
- *                             starts fresh. */
-http.route({
-  path: "/billing/yaver-cloud/dev-relay",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
+ *                             starts fresh.
+ *
+ * This is an infrastructure test seam, not a fake sale: it creates no paid
+ * subscription and is unavailable to every account outside the owner
+ * allowlist. Customer entitlement continues to come only from billing. */
+const relayProDevActivation = httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
     const scopeDenied = requireFullScope(session);
@@ -6962,7 +6965,7 @@ http.route({
     if (relay && relay.status !== "stopped" && relay.status !== "error") {
       return jsonResponse({
         ok: true,
-        mode: "dev-relay",
+        mode: "relay-pro-dev",
         relayId: relay._id,
         reused: true,
         domain: relay.domain ?? null,
@@ -6983,8 +6986,21 @@ http.route({
       region,
       password,
     });
-    return jsonResponse({ ok: true, mode: "dev-relay", relayId, provisioning: true });
-  }),
+    return jsonResponse({ ok: true, mode: "relay-pro-dev", relayId, provisioning: true });
+});
+
+http.route({
+  path: "/billing/relay-pro/dev-activate",
+  method: "POST",
+  handler: relayProDevActivation,
+});
+
+// Compatibility alias for existing owner scripts. Never expose this old name
+// in a client; the launch product and the canonical test route are Relay Pro.
+http.route({
+  path: "/billing/yaver-cloud/dev-relay",
+  method: "POST",
+  handler: relayProDevActivation,
 });
 
 /** POST /billing/yaver-cloud/dev-deprovision — tear down a managed machine the
@@ -7046,13 +7062,9 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/reconcile — self-heal: "I paid but have
- *  no resource". Relay Pro repairs a missing managed relay; Cloud Workspace
- *  repairs a missing managed box. Idempotent when a healthy/in-flight resource
- *  already exists. Provider actions still fail closed behind the active
- *  subscription/provisioning gates. project_managed_cloud_onboarding_gap. */
+/** POST /billing/relay-pro/reconcile — self-heal: "I paid but have no relay". */
 http.route({
-  path: "/billing/yaver-cloud/reconcile",
+  path: "/billing/relay-pro/reconcile",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
@@ -7067,11 +7079,11 @@ http.route({
       return errorResponse("No active subscription to reconcile", 400);
     }
     const productId = productForSubscriptionPlan(sub.plan);
-    if (productId !== "relay-pro" && productId !== "cloud-workspace") {
-      return errorResponse("Current subscription is not Relay Pro or Cloud Workspace", 400);
+    if (productId !== "relay-pro") {
+      return errorResponse("Current subscription is not Relay Pro", 400);
     }
 
-    if (productId === "relay-pro") {
+    {
       const relays = await ctx.runQuery(internal.managedRelays.listBySubscription, {
         subscriptionId: sub._id,
       });
@@ -7098,10 +7110,6 @@ http.route({
       return jsonResponse({ ok: true, checked: 1, repaired: 1, productId });
     }
 
-    const r = await ctx.runAction(internal.cloudMachines.reconcileSubscriptions, {
-      onlyUserId: session.userDocId as any,
-    });
-    return jsonResponse({ ok: true, productId, ...r });
   }),
 });
 
@@ -7253,11 +7261,9 @@ http.route({
     const pol = await ctx.runQuery(internal.gatewayPolicy.getAuthContext, {
       userId: session.userDocId as any,
     });
-    // Truthful billing state (audit G3): a subscription is "subscribed" only
-    // when it is ACTIVE. past_due/unpaid/payment_failed rows carry the raw
-    // status AND a named paymentProblem flag so surfaces can render "payment
-    // issue — workspace parked", never a green "subscribed" state.
-    const { subscribed, paymentProblem } = billingStateFlags(sub?.status);
+    // Truthful billing state: active and paid cancellation-grace subscriptions
+    // retain the product; payment problems remain explicitly named.
+    const { subscribed, paymentProblem } = billingStateFlags(sub?.status, sub?.currentPeriodEnd);
     const productId = subscribed ? productForSubscriptionPlan(sub?.plan) : "free";
     const runnerMode = pol.enabled ? "managed" : "byok";
     return jsonResponse({
@@ -7357,11 +7363,26 @@ http.route({
       return errorResponse("Current subscription is not Relay Pro or Cloud Workspace", 400);
     }
 
-    // Cancel the LemonSqueezy subscription (at period end) + local row. No
-    // teardown here — the `subscription_expired` webhook (or the reconcile
-    // sweep) tears down at the actual end of the paid period.
+    // Provider first: never show "cancelled" locally while Lemon Squeezy can
+    // still renew the subscription. Cleanup-initiated callers retain the
+    // scheduled best-effort path in cancelById, but an interactive customer
+    // cancellation must get a synchronous provider acknowledgement.
+    const providerCancel = await ctx.runAction(internal.http.cancelLemonSqueezySubscription, {
+      lemonSqueezyId: String(sub.lemonSqueezyId || ""),
+    });
+    if (!providerCancel.ok) {
+      return errorResponse(
+        `Cancellation was not confirmed by Lemon Squeezy; nothing changed. ${providerCancel.reason || "Try again from the billing portal."}`,
+        502,
+      );
+    }
+
+    // Record the period-end cancellation locally. No teardown here — the
+    // `subscription_expired` webhook (or reconcile sweep) tears down at the
+    // actual end of the paid period.
     await ctx.runMutation(internal.subscriptions.cancelById, {
       subscriptionId: sub._id,
+      providerAlreadyCancelled: true,
     });
 
     const [relays, machines] = await Promise.all([
@@ -7392,6 +7413,9 @@ http.route({
     if (!session) return errorResponse("Unauthorized", 401);
     const scopeDenied = requireFullScope(session);
     if (scopeDenied) return scopeDenied;
+    if (!cloudWorkspacePublicEnabled()) {
+      return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
+    }
     let body: any;
     try {
       body = await request.json();
@@ -7778,6 +7802,9 @@ http.route({
     if (!session) return errorResponse("Unauthorized", 401);
     const scopeDenied = requireFullScope(session);
     if (scopeDenied) return scopeDenied;
+    if (!cloudWorkspacePublicEnabled()) {
+      return errorResponse(CLOUD_WORKSPACE_UNAVAILABLE, 410, "cloud_workspace_unavailable");
+    }
     if (!cloudAccessAllowed(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }

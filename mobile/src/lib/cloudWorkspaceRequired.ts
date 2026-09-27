@@ -42,7 +42,7 @@ export class CloudWorkspaceRequiredError extends Error {
     activation?: CloudWorkspaceRequiredActivation;
     reason?: string;
   }) {
-    super(args.reason || args.activation?.reason || args.placement?.reason || "Cloud Workspace is required for this task.");
+    super(args.reason || args.activation?.reason || args.placement?.reason || "The selected hosted target is unavailable. Choose your own machine or VPS.");
     this.name = "CloudWorkspaceRequiredError";
     this.pendingTaskId = args.pendingTaskId;
     this.placement = args.placement;

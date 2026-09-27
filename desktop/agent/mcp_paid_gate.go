@@ -2,23 +2,24 @@ package main
 
 // Paid-plan MCP gate. Older launch builds hid Yaver's OWN paid-plan buyer
 // tools so a fresh user's coding agent saw only the free + self-hosted surface.
-// The current product model sells Relay Pro + Cloud Workspace from web-billed
-// checkout links, so the gate is off by default.
+// This release sells Relay Pro only. Yaver-managed Cloud Workspace purchase,
+// wake, and onboarding tools are hidden; BYO cloud/VPS tools remain available.
 //
 // Scope is deliberately narrow: ONLY the tools that are purely "buy/manage a
 // Yaver-billed plan." The cloud_*/relay/remote_* provisioning tools are shared
 // BYO (bring-your-own-token, self-hosted) paths and are NOT gated here — the
 // managed side of those is already fail-closed server-side (owner allowlist +
 // LemonSqueezy env), so hiding them would only break the free BYO story.
-const hidePaidMCPAtLaunch = false
+const hidePaidMCPAtLaunch = true
 
 // paidMCPToolsHiddenAtLaunch are the buyer-side "purchase/manage a Yaver plan"
 // tools (mcp_billing.go). Managed cloud/relay themselves ride the shared
 // cloud_*/relay verbs and stay reachable for BYO.
 var paidMCPToolsHiddenAtLaunch = map[string]bool{
-	"yaver_billing_status":   true,
-	"yaver_billing_checkout": true,
-	"yaver_billing_manage":   true,
+	"yaver_managed_cloud_onboarding": true,
+	"cloud_checkout":                  true,
+	"cloud_wake":                      true,
+	"cloud_park":                      true,
 }
 
 // mcpToolIsPaidHiddenAtLaunch reports whether a tool is a launch-hidden paid tool.
@@ -51,6 +52,6 @@ func mcpToolDeniedAsPaidAtLaunch(toolName string) *AccessDeniedReason {
 	}
 	return &AccessDeniedReason{
 		Denied: true,
-		Reason: "tool \"" + toolName + "\" is not available in this build — use the Yaver web dashboard Billing tab",
+		Reason: "tool \"" + toolName + "\" is not available — Cloud Workspace is not offered; use Relay Pro with your own machine or VPS",
 	}
 }

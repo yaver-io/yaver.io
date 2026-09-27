@@ -6,8 +6,6 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import ManagedCloudCard from "../../src/components/ManagedCloudCard";
-import { HIDE_PAID_UI } from "../../src/lib/launchFlags";
 import {
   deriveWakeView,
   isParkedStatus,
@@ -429,11 +427,6 @@ export default function InfraScreen() {
             <Metric c={c} label="Uptime" value={fmtUptime(summary.metrics?.uptime)} sub={summary.metrics?.hostname || summary.machine.deviceId} />
           </View>
 
-          {/* Yaver-managed parked boxes — a snapshotted+deleted cloud box that
-              costs nothing while asleep and can be recreated from its snapshot
-              on demand. Prominent Wake button + a staged waking-up ladder. */}
-          {!HIDE_PAID_UI && <ParkedMachinesSection c={c} token={token} />}
-
           {/* Sudo password sheet. Only the install stream can open
               it; the password flows through /install/sudo and never
               through any log stream. See install_registry.go for
@@ -732,10 +725,6 @@ export default function InfraScreen() {
               </View>
             ) : null}
           </Section>
-
-          {/* HN-LAUNCH-HIDE-PAID: managed (Yaver-billed) cloud billing card.
-              Flip HIDE_PAID_UI in src/lib/launchFlags.ts to restore. */}
-          {!HIDE_PAID_UI && <ManagedCloudCard c={c} token={token} />}
 
           <Section c={c} title="Microservices" subtitle="Wrap repo commands as durable Yaver companion services">
             <View style={{ gap: 8, marginTop: 8 }}>

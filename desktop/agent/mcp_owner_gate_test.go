@@ -10,7 +10,8 @@ func TestMcpToolIsOwnerOnly(t *testing.T) {
 		"appletv_now_playing", "capture_stream",
 		"deploy_all", "deploy_run", "deploy_rollback", "cf_deploy",
 		"mobile_platform_deploy", "fly_deploy", "railway_deploy",
-		"pscale_deploy",
+		"pscale_deploy", "publish_run", "publish_submit", "publish_upload",
+		"push_ios", "push_android",
 	}
 	for _, n := range ownerOnly {
 		if !mcpToolIsOwnerOnly(n) {
@@ -43,6 +44,7 @@ func TestFilterOwnerOnlyTools(t *testing.T) {
 		{"name": "mobile_deploy_to_phone"},
 		{"name": "deploy_all"},
 		{"name": "mobile_platform_deploy"},
+		{"name": "publish_run"},
 		{"name": "dogfood_status"},
 	}
 
@@ -57,7 +59,7 @@ func TestFilterOwnerOnlyTools(t *testing.T) {
 	for _, tl := range got {
 		names[tl["name"].(string)] = true
 	}
-	for _, hidden := range []string{"robot_status", "arm_movej", "circuit_plot", "deploy_all", "mobile_platform_deploy"} {
+	for _, hidden := range []string{"robot_status", "arm_movej", "circuit_plot", "deploy_all", "mobile_platform_deploy", "publish_run"} {
 		if names[hidden] {
 			t.Errorf("non-owner should NOT see %q", hidden)
 		}

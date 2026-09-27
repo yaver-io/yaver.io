@@ -30,7 +30,7 @@ export class CloudWorkspaceRequiredError extends Error {
     activation?: Partial<TaskPlacementActivation>;
     reason?: string;
   }) {
-    super(args.reason || args.activation?.reason || args.placement?.reason || "Cloud Workspace is required for this task.");
+    super(args.reason || args.activation?.reason || args.placement?.reason || "This task needs a capable connected machine or VPS.");
     this.name = "CloudWorkspaceRequiredError";
     this.pendingTaskId = args.pendingTaskId;
     this.placement = args.placement;

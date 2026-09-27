@@ -171,7 +171,7 @@ export function planDeploy(target: DeployTarget): DeployPlan | DeployPlanFailure
     return { ok: false, code: "deploy_target_missing", message: "Choose what to deploy before planning a deploy.", route: { method: "POST", path: "/deploy/discover" } };
   }
   if (!target.execution) {
-    return { ok: false, code: "deploy_execution_missing", message: "Choose where this deploy should run: provider API, CI, remote box, or Cloud Workspace.", route: { method: "POST", path: "/deploy/discover" } };
+    return { ok: false, code: "deploy_execution_missing", message: "Choose where this deploy should run: provider API, CI, or a paired machine/VPS.", route: { method: "POST", path: "/deploy/discover" } };
   }
   if ((target.execution === "provider-ci") && !clean(target.workflow)) {
     return { ok: false, code: "deploy_workflow_missing", message: "This CI deploy needs an existing workflow or pipeline.", route: { method: "POST", path: "/deploy/discover" } };
@@ -180,10 +180,10 @@ export function planDeploy(target: DeployTarget): DeployPlan | DeployPlanFailure
     return { ok: false, code: "deploy_device_missing", message: "Select a connected remote box for this deploy.", route: { method: "GET", path: "/devices" } };
   }
   if (target.execution === "cloud-workspace" && !clean(target.workspaceId)) {
-    return { ok: false, code: "deploy_workspace_missing", message: "Select or create a Cloud Workspace before deploying.", route: { method: "POST", path: "/workspaces" } };
+    return { ok: false, code: "deploy_workspace_missing", message: "Select a paired machine or VPS before deploying.", route: { method: "POST", path: "/devices" } };
   }
   if (target.execution === "direct-api" && !["cloudflare-pages", "cloudflare-workers"].includes(target.provider)) {
-    return { ok: false, code: "deploy_phone_runtime_unsupported", message: "This provider needs a build/runtime lane; use CI, a remote box, or Cloud Workspace.", route: { method: "POST", path: "/deploy/discover" } };
+    return { ok: false, code: "deploy_phone_runtime_unsupported", message: "This provider needs a build/runtime lane; use CI or a capable paired machine/VPS.", route: { method: "POST", path: "/deploy/discover" } };
   }
 
   const environment = clean(target.environment) || "production";

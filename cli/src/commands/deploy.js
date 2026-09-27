@@ -600,11 +600,13 @@ async function deploy(args) {
     for (const n of names) printTarget(n, table.targets[n], repoRoot);
     console.log('\nGroups:');
     for (const [g, members] of Object.entries(table.groups)) {
-      console.log(`  ${g}: ${members.join(', ')}`);
+      const resolved = expand(g, table);
+      if (resolved.length) console.log(`  ${g}: ${resolved.join(', ')}`);
     }
     console.log('\nAliases:');
     for (const [a, t] of Object.entries(table.aliases)) {
-      console.log(`  ${a} → ${t}`);
+      const resolved = expand(a, table);
+      if (resolved.length) console.log(`  ${a} → ${resolved.join(', ')}`);
     }
     console.log('');
     process.exit(0);

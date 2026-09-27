@@ -21,15 +21,17 @@ test("cold desktop startup does not false-fail at the old 15 second boundary", (
 // global keychain gate (vault_keychain.go::keychainAccessDisabled) for both
 // the vault mirror AND the runner-auth probe — the two `security` shell-outs
 // that prompt. Pin the env so the gate can't silently regress.
-test("agentEnv always sets YAVER_VAULT_SKIP_KEYCHAIN=1", () => {
+test("agentEnv disables keychain prompts and agent-owned auto-start", () => {
   const env = agentEnv();
   assert.equal(env.YAVER_VAULT_SKIP_KEYCHAIN, "1");
+  assert.equal(env.YAVER_SKIP_AUTO_START, "1");
   // And it must be inherited through to the spawned child, not dropped.
   const old = process.env.YAVER_VAULT_SKIP_KEYCHAIN;
   try {
     delete process.env.YAVER_VAULT_SKIP_KEYCHAIN;
     const env2 = agentEnv();
     assert.equal(env2.YAVER_VAULT_SKIP_KEYCHAIN, "1");
+    assert.equal(env2.YAVER_SKIP_AUTO_START, "1");
   } finally {
     if (old === undefined) delete process.env.YAVER_VAULT_SKIP_KEYCHAIN;
     else process.env.YAVER_VAULT_SKIP_KEYCHAIN = old;

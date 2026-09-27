@@ -1,14 +1,11 @@
 import Link from "next/link";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 const docs = [
   {
     title: "Hosting and Relay options",
-    description: HIDE_PAID_UI
-      ? "Use the free shared relay or self-host your own. Custom infrastructure remains source-compatible for advanced operators."
-      : "Choose Free Relay, Relay Pro, or Cloud Workspace. Custom infrastructure remains source-compatible for advanced operators.",
+    description: "Use Free Relay, Relay Pro, or self-host your own. Your coding runtime stays on a machine or VPS you control.",
     href: "/docs/self-hosting",
-    tags: HIDE_PAID_UI ? ["Relay", "Self-hosting"] : ["Relay", "Cloud Workspace", "Billing"],
+    tags: ["Relay", "Self-hosting", "Billing"],
   },
   {
     title: "MCP integration",
@@ -64,9 +61,7 @@ const docs = [
 const manualLinks = [
   {
     title: "Yaver Relay setup",
-    description: HIDE_PAID_UI
-      ? "Use the free shared relay, or self-host your own relay for private reachability."
-      : "Start with Free Relay, then use Relay Pro for private managed reachability.",
+    description: "Start with Free Relay, use Relay Pro for managed private reachability, or self-host the relay.",
     href: "/manuals/relay-setup",
     featured: true,
   },

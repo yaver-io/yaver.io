@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+const root = path.resolve(import.meta.dirname, "..");
+const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
+const manifest = read("YaverXbox/Package.appxmanifest");
+const client = read("YaverXbox/Services/YaverApiClient.cs");
+const page = read("YaverXbox/MainPage.xaml");
+const packageWorkflow = fs.readFileSync(path.resolve(root, "..", ".github/workflows/xbox-store-package.yml"), "utf8");
+
+assert.match(manifest, /TargetDeviceFamily Name="Windows\.Xbox"/);
+assert.doesNotMatch(manifest, /runFullTrust|broadFileSystemAccess/);
+assert.doesNotMatch(manifest, /privateNetworkClientServer/);
+assert.match(client, /\/auth\/device-code/);
+assert.match(client, /\/auth\/device-code\/claim/);
+assert.match(client, /\/devices\/list/);
+assert.match(client, /\/config/);
+assert.match(client, /\/tasks/);
+assert.match(client, /\/vibing\/preview\/clip\//);
+assert.match(client, /X-Relay-Password/);
+assert.match(client, /PasswordVault|X-Yaver-Surface/);
+assert.match(client, /Too many sign-in attempts/);
+assert.doesNotMatch(page, /WebView|PasswordBox/);
+assert.match(page, /Start sign-in/);
+assert.match(page, /Machines/);
+assert.match(page, /Verified tasks/);
+assert.match(page, /MediaElement/);
+assert.doesNotMatch(page, /Full task and preview controls follow/);
+assert.match(page, /ItemClick="MachineList_ItemClick"/);
+assert.match(packageWorkflow, /UapAppxPackageBuildMode=StoreUpload/);
+assert.match(packageWorkflow, /AppxPackageSigningEnabled=false/);
+assert.match(packageWorkflow, /BUILD YAVER XBOX/);
+assert.match(packageWorkflow, /Inspect the built Store upload/);
+assert.match(packageWorkflow, /Windows[.]Xbox/);
+assert.doesNotMatch(packageWorkflow, /microsoft-store-submission|ALLOW_SUBMIT|submit.*Partner Center/i);
+
+console.log("ok — Yaver Xbox identity, auth, least-privilege, first read path, and manual Store package contract");

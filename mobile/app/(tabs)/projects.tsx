@@ -12,6 +12,7 @@ import type { PhoneProject } from "../../src/lib/phoneProjects";
 import { listLocalPhoneProjectsMeta } from "../../src/lib/phoneSandboxLocal";
 import { discoverConnectedProviderProjects, type ProviderProject } from "../../src/lib/gitProviderProjects";
 import { cloneGitRepoToPhone } from "../../src/lib/cloneToPhone";
+import { ENABLE_CLOUD_WORKSPACE_UI } from "../../src/lib/launchFlags";
 
 const IS_TV = Boolean((Platform as typeof Platform & { isTV?: boolean }).isTV);
 
@@ -54,7 +55,7 @@ export default function ProjectsScreen() {
   }, [codingMode]);
 
   const loadLocal = useCallback(async () => {
-    if ((IS_TV && !legacyTvRunner) || !activeDevice || connectionStatus !== "connected") {
+    if ((ENABLE_CLOUD_WORKSPACE_UI && IS_TV && !legacyTvRunner) || !activeDevice || connectionStatus !== "connected") {
       setLocalProjects([]);
       return;
     }
@@ -121,7 +122,7 @@ export default function ProjectsScreen() {
     }
   };
 
-  if (IS_TV && !legacyTvRunner) {
+  if (ENABLE_CLOUD_WORKSPACE_UI && IS_TV && !legacyTvRunner) {
     const accessReady = cloud.status?.access.status === "active";
     const gitReady = cloud.status?.gitConnections.some((connection) => connection.status === "ready") ?? false;
     const workspaceReady = cloud.status?.workspaces.some((workspace) => workspace.state === "ready") ?? false;
@@ -131,7 +132,7 @@ export default function ProjectsScreen() {
       : !gitReady
         ? "A ready Git Connection is required."
         : !workspaceReady
-          ? "Cloud Workspace is not ready yet."
+          ? "The selected legacy hosted runner is not ready. Choose your own machine or VPS."
           : !runnerReady
             ? "Connect to the assigned Cloud Runner."
             : null;

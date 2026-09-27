@@ -1,0 +1,150 @@
+name: Build Yaver for Xbox Store package
+
+# Manual first-submission artifact only. This workflow binds the source to the
+# exact Partner Center identity, builds the x64 UWP Store upload, inspects the
+# resulting package, and retains it for a human Partner Center upload. It never
+# creates a product, changes a submission, or publishes to the RETAIL sandbox.
+on:
+  workflow_dispatch:
+    inputs:
+      identity_name:
+        description: "Exact Package/Identity/Name from the Yaver for Xbox Partner Center product"
+        required: true
+        type: string
+      publisher:
+        description: "Exact Package/Identity/Publisher from Partner Center"
+        required: true
+        type: string
+      publisher_display_name:
+        description: "Exact PublisherDisplayName from Partner Center"
+        required: true
+        type: string
+      package_version:
+        description: "Four-part Store version ending in .0"
+        required: true
+        default: "0.1.0.0"
+        type: string
+      confirmation:
+        description: "Type BUILD YAVER XBOX followed by a space and the identity name"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yaver-xbox-store-package
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node xbox/Tests/xbox-contract.test.mjs
+
+  package:
+    needs: contract
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      XBOX_IDENTITY_NAME: ${{ inputs.identity_name }}
+      XBOX_PUBLISHER: ${{ inputs.publisher }}
+      XBOX_PUBLISHER_DISPLAY_NAME: ${{ inputs.publisher_display_name }}
+      XBOX_PACKAGE_VERSION: ${{ inputs.package_version }}
+      XBOX_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - uses: NuGet/setup-nuget@v2
+
+      - name: Require exact human confirmation and Store identity
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:XBOX_IDENTITY_NAME) -or $env:XBOX_IDENTITY_NAME -match 'PENDING|Development') { throw 'Enter the exact Partner Center identity name.' }
+          if ([string]::IsNullOrWhiteSpace($env:XBOX_PUBLISHER) -or $env:XBOX_PUBLISHER -eq 'CN=Development') { throw 'Enter the exact Partner Center publisher.' }
+          if ([string]::IsNullOrWhiteSpace($env:XBOX_PUBLISHER_DISPLAY_NAME)) { throw 'Enter the exact Partner Center publisher display name.' }
+          if ($env:XBOX_PACKAGE_VERSION -notmatch '^\d+\.\d+\.\d+\.0$') { throw 'Package version must contain four numeric parts and end in .0.' }
+          if ($env:XBOX_CONFIRMATION -cne "BUILD YAVER XBOX $env:XBOX_IDENTITY_NAME") { throw 'Confirmation does not bind this run to the requested Store identity.' }
+
+      - name: Bind the package to the reserved Partner Center identity
+        shell: pwsh
+        run: |
+          $path = (Resolve-Path 'xbox/YaverXbox/Package.appxmanifest').Path
+          [xml]$manifest = Get-Content -LiteralPath $path -Raw
+          $manifest.Package.Identity.Name = $env:XBOX_IDENTITY_NAME
+          $manifest.Package.Identity.Publisher = $env:XBOX_PUBLISHER
+          $manifest.Package.Identity.Version = $env:XBOX_PACKAGE_VERSION
+          $manifest.Package.Properties.PublisherDisplayName = $env:XBOX_PUBLISHER_DISPLAY_NAME
+          $settings = [Xml.XmlWriterSettings]::new()
+          $settings.Encoding = [Text.UTF8Encoding]::new($false)
+          $settings.Indent = $true
+          $writer = [Xml.XmlWriter]::Create($path, $settings)
+          try { $manifest.Save($writer) } finally { $writer.Dispose() }
+
+      - name: Restore UWP dependencies
+        shell: pwsh
+        run: nuget restore xbox/YaverXbox.sln -NonInteractive
+
+      - name: Build unsigned Partner Center upload
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'YaverXbox-AppPackages\'
+          msbuild xbox/YaverXbox.sln `
+            /m `
+            /t:Build `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Always `
+            /p:AppxBundlePlatforms=x64 `
+            /p:AppxPackageSigningEnabled=false `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            "/p:AppxPackageDir=$out"
+          if ($LASTEXITCODE -ne 0) { throw "Yaver Xbox Store package build failed with exit code $LASTEXITCODE" }
+
+      - name: Inspect the built Store upload, not only the source manifest
+        id: upload
+        shell: pwsh
+        run: |
+          $uploads = @(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'YaverXbox-AppPackages') -Recurse -File | Where-Object { $_.Extension -in '.appxupload', '.msixupload' })
+          if ($uploads.Count -ne 1) { throw "Expected exactly one Store upload, found $($uploads.Count)." }
+          $zip = Join-Path $env:RUNNER_TEMP 'YaverXbox-upload.zip'
+          Copy-Item -LiteralPath $uploads[0].FullName -Destination $zip
+          $uploadDir = Join-Path $env:RUNNER_TEMP 'YaverXbox-upload'
+          Expand-Archive -LiteralPath $zip -DestinationPath $uploadDir
+          $bundle = @(Get-ChildItem -LiteralPath $uploadDir -Recurse -File | Where-Object { $_.Extension -in '.appxbundle', '.msixbundle' })
+          if ($bundle.Count -ne 1) { throw "Expected one x64 bundle inside the Store upload, found $($bundle.Count)." }
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter makeappx.exe -Recurse | Sort-Object FullName | Select-Object -Last 1
+          if (-not $makeappx) { throw 'makeappx.exe is unavailable.' }
+          $bundleDir = Join-Path $env:RUNNER_TEMP 'YaverXbox-bundle'
+          & $makeappx.FullName unbundle /p $bundle[0].FullName /d $bundleDir /o
+          if ($LASTEXITCODE -ne 0) { throw 'Could not unpack the Xbox bundle.' }
+          $package = @(Get-ChildItem -LiteralPath $bundleDir -File | Where-Object { $_.Extension -in '.appx', '.msix' })
+          if ($package.Count -ne 1) { throw "Expected one x64 app package, found $($package.Count)." }
+          $packageDir = Join-Path $env:RUNNER_TEMP 'YaverXbox-package'
+          & $makeappx.FullName unpack /p $package[0].FullName /d $packageDir /o
+          if ($LASTEXITCODE -ne 0) { throw 'Could not unpack the Xbox app package.' }
+          [xml]$built = Get-Content -LiteralPath (Join-Path $packageDir 'AppxManifest.xml') -Raw
+          if ($built.Package.Identity.Name -cne $env:XBOX_IDENTITY_NAME) { throw 'Built identity name differs from Partner Center.' }
+          if ($built.Package.Identity.Publisher -cne $env:XBOX_PUBLISHER) { throw 'Built publisher differs from Partner Center.' }
+          if ($built.Package.Identity.Version -ne $env:XBOX_PACKAGE_VERSION) { throw 'Built package version differs from the requested version.' }
+          if ($built.Package.Identity.ProcessorArchitecture -ne 'x64') { throw 'Built Xbox package is not x64.' }
+          $family = @($built.Package.Dependencies.TargetDeviceFamily)
+          if ($family.Count -ne 1 -or $family[0].Name -ne 'Windows.Xbox') { throw 'Built package is not Xbox-only.' }
+          $raw = Get-Content -LiteralPath (Join-Path $packageDir 'AppxManifest.xml') -Raw
+          if ($raw -match 'runFullTrust|broadFileSystemAccess|privateNetworkClientServer') { throw 'Built package requests a prohibited/unreviewed capability.' }
+          "path=$($uploads[0].FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($uploads[0].Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Retain manual Partner Center upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaver-xbox-store-${{ inputs.package_version }}-${{ github.run_id }}
+          path: ${{ steps.upload.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30

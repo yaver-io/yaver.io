@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 type PublishConfig struct {
 	Version       int               `json:"version" yaml:"version"`
+	Project       string            `json:"project,omitempty" yaml:"project,omitempty"`
 	DefaultTarget string            `json:"defaultTarget,omitempty" yaml:"defaultTarget,omitempty"`
 	Fallback      PublishFallback   `json:"fallback,omitempty" yaml:"fallback,omitempty"`
 	Targets       []PublishTarget   `json:"targets" yaml:"targets"`
@@ -50,6 +52,24 @@ type PublishTarget struct {
 	EnvFromGitHub map[string]string `json:"envFromGitHub,omitempty" yaml:"envFromGitHub,omitempty"`
 	RunnerLabels  []string          `json:"runnerLabels,omitempty" yaml:"runnerLabels,omitempty"`
 	Fallback      *PublishFallback  `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+	// Release-broker safety contract. A mutating third-party target should
+	// require an exact confirmation and declare the remote facts that prove the
+	// publication happened; process exit zero alone is not a release receipt.
+	RequiresConfirmation bool              `json:"requiresConfirmation,omitempty" yaml:"requiresConfirmation,omitempty"`
+	Identity             PublishIdentity   `json:"identity,omitempty" yaml:"identity,omitempty"`
+	Postconditions       []PublishPostcond `json:"postconditions,omitempty" yaml:"postconditions,omitempty"`
+}
+
+type PublishIdentity struct {
+	PackageName string `json:"packageName,omitempty" yaml:"packageName,omitempty"`
+	BundleID    string `json:"bundleId,omitempty" yaml:"bundleId,omitempty"`
+	ProductID   string `json:"productId,omitempty" yaml:"productId,omitempty"`
+	Track       string `json:"track,omitempty" yaml:"track,omitempty"`
+}
+
+type PublishPostcond struct {
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value,omitempty" yaml:"value,omitempty"`
 }
 
 type PublishRunStatus string
@@ -63,6 +83,7 @@ const (
 
 type PublishRun struct {
 	ID           string            `json:"id"`
+	Project      string            `json:"project,omitempty"`
 	ProjectDir   string            `json:"projectDir"`
 	TargetID     string            `json:"targetId"`
 	TargetKind   string            `json:"targetKind"`
@@ -75,6 +96,7 @@ type PublishRun struct {
 	ArtifactPath string            `json:"artifactPath,omitempty"`
 	ArtifactName string            `json:"artifactName,omitempty"`
 	Artifacts    []PublishArtifact `json:"artifacts,omitempty"`
+	Proofs       []PublishProof    `json:"proofs,omitempty"`
 	Message      string            `json:"message,omitempty"`
 	Error        string            `json:"error,omitempty"`
 	StartedAt    string            `json:"startedAt"`
@@ -96,14 +118,77 @@ type PublishManager struct {
 	execMgr  *ExecManager
 	buildMgr *BuildManager
 	workDir  string
+	stateDir string
 }
 
 func NewPublishManager(execMgr *ExecManager, buildMgr *BuildManager, workDir string) *PublishManager {
-	return &PublishManager{
+	pm := &PublishManager{
 		runs:     make(map[string]*PublishRun),
 		execMgr:  execMgr,
 		buildMgr: buildMgr,
 		workDir:  workDir,
+	}
+	if dir, err := ConfigDir(); err == nil {
+		pm.stateDir = filepath.Join(dir, "publishes")
+		if err := os.MkdirAll(pm.stateDir, 0o700); err != nil {
+			pm.stateDir = ""
+		} else if err := os.Chmod(pm.stateDir, 0o700); err != nil {
+			pm.stateDir = ""
+		}
+	}
+	pm.loadRuns()
+	return pm
+}
+
+// Publish runs outlive the daemon. Store processing and certification routinely
+// take longer than an agent process, so an in-memory-only status map made a
+// restart erase the release receipt. Files are owner-only and contain metadata,
+// never credential values.
+func (pm *PublishManager) persistRunLocked(run *PublishRun) {
+	if pm.stateDir == "" || run == nil || strings.TrimSpace(run.ID) == "" {
+		return
+	}
+	b, err := json.MarshalIndent(run, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := filepath.Join(pm.stateDir, run.ID+".json.part")
+	dst := filepath.Join(pm.stateDir, run.ID+".json")
+	if err := os.WriteFile(tmp, b, 0o600); err == nil {
+		if err := os.Chmod(tmp, 0o600); err == nil {
+			_ = os.Rename(tmp, dst)
+		}
+	}
+}
+
+func (pm *PublishManager) loadRuns() {
+	if pm.stateDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(pm.stateDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(pm.stateDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var run PublishRun
+		if json.Unmarshal(b, &run) != nil || strings.TrimSpace(run.ID) == "" {
+			continue
+		}
+		if run.Status == PublishRunRunning {
+			run.Status = PublishRunFailed
+			run.Error = "agent restarted before the publish operation completed; inspect the store before retrying"
+			run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		cp := run
+		pm.runs[run.ID] = &cp
+		pm.persistRunLocked(&cp)
 	}
 }
 
@@ -126,6 +211,9 @@ func loadPublishConfig(dir string) (*PublishConfig, error) {
 	if cfg.Targets == nil {
 		cfg.Targets = []PublishTarget{}
 	}
+	if err := validatePublishConfig(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -135,6 +223,9 @@ func savePublishConfig(dir string, cfg *PublishConfig) error {
 	}
 	if cfg.Targets == nil {
 		cfg.Targets = []PublishTarget{}
+	}
+	if err := validatePublishConfig(cfg); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Join(dir, ".yaver"), 0o755); err != nil {
 		return err
@@ -159,7 +250,8 @@ func loadOrScaffoldPublishConfig(dir string) (*PublishConfig, bool, error) {
 
 func scaffoldPublishConfig(dir string) *PublishConfig {
 	cfg := &PublishConfig{
-		Version: 1,
+		Version: 2,
+		Project: strings.TrimSpace(filepath.Base(filepath.Clean(dir))),
 		Fallback: PublishFallback{
 			GitHubAllowed: false,
 			Workflow:      "yaver-publish.yml",
@@ -239,12 +331,16 @@ func detectPublishTargets(root string) []PublishTarget {
 					EnvFromGitHub: map[string]string{
 						"NODE_AUTH_TOKEN": "NPM_TOKEN",
 					},
+					RequiresConfirmation: true,
+					Identity:             PublishIdentity{PackageName: pkg.Name},
+					Postconditions:       []PublishPostcond{{Kind: "npm-version-visible"}},
 				})
 				seen[id] = true
 			}
 			if looksLikeMobileProject(filepath.Dir(path), string(data)) {
+				bundleID, packageName := detectPublishMobileIdentities(filepath.Dir(path))
 				tf := publishTargetID("testflight", key)
-				if !seen[tf] {
+				if bundleID != "" && !seen[tf] {
 					targets = append(targets, PublishTarget{
 						ID:            tf,
 						Label:         publishTargetLabel("testflight", key),
@@ -254,11 +350,19 @@ func detectPublishTargets(root string) []PublishTarget {
 						Submitter:     "yaver",
 						BuildPlatform: detectIOSBuildPlatform(filepath.Dir(path), string(data)),
 						RunnerLabels:  []string{"self-hosted", "macOS"},
+						EnvFromVault: map[string]string{
+							"APP_STORE_KEY_PATH":   "APP_STORE_KEY_PATH",
+							"APP_STORE_KEY_ID":     "APP_STORE_KEY_ID",
+							"APP_STORE_KEY_ISSUER": "APP_STORE_KEY_ISSUER",
+						},
+						RequiresConfirmation: true,
+						Identity:             PublishIdentity{BundleID: bundleID, Track: "testflight"},
+						Postconditions:       []PublishPostcond{{Kind: "command-completed"}},
 					})
 					seen[tf] = true
 				}
 				ps := publishTargetID("playstore", key)
-				if !seen[ps] {
+				if packageName != "" && !seen[ps] {
 					targets = append(targets, PublishTarget{
 						ID:            ps,
 						Label:         publishTargetLabel("playstore", key),
@@ -267,6 +371,12 @@ func detectPublishTargets(root string) []PublishTarget {
 						Uploader:      "yaver",
 						Submitter:     "yaver",
 						BuildPlatform: detectAndroidBuildPlatform(filepath.Dir(path), string(data)),
+						EnvFromVault: map[string]string{
+							"PLAY_STORE_KEY_FILE": "PLAY_STORE_KEY_FILE",
+						},
+						RequiresConfirmation: true,
+						Identity:             PublishIdentity{PackageName: packageName, Track: "internal"},
+						Postconditions:       []PublishPostcond{{Kind: "command-completed"}},
 					})
 					seen[ps] = true
 				}
@@ -291,11 +401,19 @@ func detectPublishTargets(root string) []PublishTarget {
 					WorkDir:    key,
 					Uploader:   "yaver",
 					Submitter:  "yaver",
+					PrepareCmd: `dart pub token add https://pub.dev --env-var PUB_TOKEN`,
 					PublishCmd: "flutter pub publish --force",
+					EnvFromVault: map[string]string{
+						"PUB_TOKEN": "pub-token",
+					},
+					RequiresConfirmation: true,
+					Identity:             PublishIdentity{PackageName: pubspec.Name},
+					Postconditions:       []PublishPostcond{{Kind: "pubdev-version-visible"}},
 				})
 				seen[id] = true
 			}
-			if fileExists(filepath.Join(filepath.Dir(path), "ios")) {
+			bundleID, packageName := detectPublishMobileIdentities(filepath.Dir(path))
+			if bundleID != "" && fileExists(filepath.Join(filepath.Dir(path), "ios")) {
 				tf := publishTargetID("testflight", key)
 				if !seen[tf] {
 					targets = append(targets, PublishTarget{
@@ -307,11 +425,19 @@ func detectPublishTargets(root string) []PublishTarget {
 						Submitter:     "yaver",
 						BuildPlatform: string(PlatformFlutterIPA),
 						RunnerLabels:  []string{"self-hosted", "macOS"},
+						EnvFromVault: map[string]string{
+							"APP_STORE_KEY_PATH":   "APP_STORE_KEY_PATH",
+							"APP_STORE_KEY_ID":     "APP_STORE_KEY_ID",
+							"APP_STORE_KEY_ISSUER": "APP_STORE_KEY_ISSUER",
+						},
+						RequiresConfirmation: true,
+						Identity:             PublishIdentity{BundleID: bundleID, Track: "testflight"},
+						Postconditions:       []PublishPostcond{{Kind: "command-completed"}},
 					})
 					seen[tf] = true
 				}
 			}
-			if fileExists(filepath.Join(filepath.Dir(path), "android")) {
+			if packageName != "" && fileExists(filepath.Join(filepath.Dir(path), "android")) {
 				ps := publishTargetID("playstore", key)
 				if !seen[ps] {
 					targets = append(targets, PublishTarget{
@@ -322,11 +448,21 @@ func detectPublishTargets(root string) []PublishTarget {
 						Uploader:      "yaver",
 						Submitter:     "yaver",
 						BuildPlatform: string(PlatformFlutterAAB),
+						EnvFromVault: map[string]string{
+							"PLAY_STORE_KEY_FILE": "PLAY_STORE_KEY_FILE",
+						},
+						RequiresConfirmation: true,
+						Identity:             PublishIdentity{PackageName: packageName, Track: "internal"},
+						Postconditions:       []PublishPostcond{{Kind: "command-completed"}},
 					})
 					seen[ps] = true
 				}
 			}
 		case "pyproject.toml":
+			packageName, _, parseErr := manifestNameVersion(path)
+			if parseErr != nil {
+				return nil
+			}
 			id := publishTargetID("pypi", key)
 			if !seen[id] {
 				targets = append(targets, PublishTarget{
@@ -349,6 +485,9 @@ func detectPublishTargets(root string) []PublishTarget {
 					EnvFromGitHub: map[string]string{
 						"TWINE_PASSWORD": "PYPI_TOKEN",
 					},
+					RequiresConfirmation: true,
+					Identity:             PublishIdentity{PackageName: packageName},
+					Postconditions:       []PublishPostcond{{Kind: "pypi-version-visible"}},
 				})
 				seen[id] = true
 			}
@@ -367,6 +506,61 @@ func looksLikeMobileProject(dir, packageJSON string) bool {
 		strings.Contains(packageJSON, `"expo"`) ||
 		fileExists(filepath.Join(dir, "ios")) ||
 		fileExists(filepath.Join(dir, "android"))
+}
+
+func detectPublishMobileIdentities(dir string) (bundleID, packageName string) {
+	for _, name := range []string{"app.json", "app.config.json"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		var manifest struct {
+			Expo struct {
+				IOS struct {
+					BundleIdentifier string `json:"bundleIdentifier"`
+				} `json:"ios"`
+				Android struct {
+					Package string `json:"package"`
+				} `json:"android"`
+			} `json:"expo"`
+		}
+		if json.Unmarshal(data, &manifest) == nil {
+			bundleID = strings.TrimSpace(manifest.Expo.IOS.BundleIdentifier)
+			packageName = strings.TrimSpace(manifest.Expo.Android.Package)
+			if bundleID != "" && packageName != "" {
+				return bundleID, packageName
+			}
+		}
+	}
+	applicationID := regexp.MustCompile(`(?m)applicationId\s*(?:=\s*)?["']([^"']+)["']`)
+	for _, name := range []string{"android/app/build.gradle", "android/app/build.gradle.kts"} {
+		if packageName != "" {
+			break
+		}
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+			if match := applicationID.FindSubmatch(data); len(match) == 2 {
+				packageName = strings.TrimSpace(string(match[1]))
+				break
+			}
+		}
+	}
+	bundlePattern := regexp.MustCompile(`(?m)PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s]+)\s*;`)
+	projects, _ := filepath.Glob(filepath.Join(dir, "ios", "*.xcodeproj", "project.pbxproj"))
+	for _, project := range projects {
+		if bundleID != "" {
+			break
+		}
+		if data, err := os.ReadFile(project); err == nil {
+			if match := bundlePattern.FindSubmatch(data); len(match) == 2 {
+				candidate := strings.Trim(strings.TrimSpace(string(match[1])), `"'`)
+				if candidate != "" && !strings.Contains(candidate, "$(") {
+					bundleID = candidate
+					break
+				}
+			}
+		}
+	}
+	return bundleID, packageName
 }
 
 func detectIOSBuildPlatform(dir, packageJSON string) string {
@@ -411,6 +605,13 @@ func publishTargetLabel(kind, rel string) string {
 }
 
 func (pm *PublishManager) StartRun(projectDir, targetID string, allowGitHubFallback bool) (*PublishRun, error) {
+	return pm.StartRunConfirmed(projectDir, targetID, allowGitHubFallback, "")
+}
+
+func (pm *PublishManager) StartRunConfirmed(projectDir, targetID string, allowGitHubFallback bool, confirmation string) (*PublishRun, error) {
+	if pm.stateDir == "" {
+		return nil, fmt.Errorf("publish receipt storage is unavailable; refusing to mutate external state")
+	}
 	cfg, err := loadPublishConfig(projectDir)
 	if err != nil {
 		return nil, err
@@ -419,12 +620,23 @@ func (pm *PublishManager) StartRun(projectDir, targetID string, allowGitHubFallb
 	if err != nil {
 		return nil, err
 	}
+	if target.RequiresConfirmation && strings.TrimSpace(confirmation) != target.ID {
+		return nil, fmt.Errorf("target %q mutates a registry/store; repeat with confirmation exactly equal to %q", target.ID, target.ID)
+	}
+	project := strings.TrimSpace(cfg.Project)
+	if project == "" {
+		project = filepath.Base(projectDir)
+	}
+	if missing := missingPublishCredentials(target, project); len(missing) > 0 {
+		return nil, fmt.Errorf("target %q is missing project-scoped credentials: %s", target.ID, strings.Join(missing, ", "))
+	}
 	workDir := projectDir
 	if target.WorkDir != "" {
 		workDir = filepath.Join(projectDir, filepath.FromSlash(target.WorkDir))
 	}
 	run := &PublishRun{
 		ID:         uuid.New().String()[:8],
+		Project:    project,
 		ProjectDir: projectDir,
 		TargetID:   target.ID,
 		TargetKind: target.Kind,
@@ -435,6 +647,7 @@ func (pm *PublishManager) StartRun(projectDir, targetID string, allowGitHubFallb
 	}
 	pm.mu.Lock()
 	pm.runs[run.ID] = run
+	pm.persistRunLocked(run)
 	pm.mu.Unlock()
 	go pm.executeRun(run, cfg, target, allowGitHubFallback)
 	return run, nil
@@ -454,7 +667,7 @@ func (pm *PublishManager) executeRun(run *PublishRun, cfg *PublishConfig, target
 	}
 	var err error
 	switch target.Kind {
-	case "npm", "pypi", "pubdev", "custom":
+	case "npm", "pypi", "pubdev", "custom", "validate", "build":
 		err = pm.runShellPublish(run, target)
 	case "testflight", "playstore":
 		err = pm.runMobilePublish(run, target)
@@ -524,7 +737,7 @@ func (pm *PublishManager) dispatchGitHubFallback(run *PublishRun, cfg *PublishCo
 		}
 	}
 	rawLabels, _ := json.Marshal(labels)
-	if err := triggerGitHubWorkflow(optionalVaultToken("github-token"), repo, workflow, ref, map[string]string{
+	if err := triggerGitHubWorkflow(optionalVaultProjectToken(run.Project, "github-token"), repo, workflow, ref, map[string]string{
 		"target":  target.ID,
 		"runs_on": string(rawLabels),
 	}); err != nil {
@@ -535,6 +748,7 @@ func (pm *PublishManager) dispatchGitHubFallback(run *PublishRun, cfg *PublishCo
 	run.Status = PublishRunDispatched
 	run.Message = fmt.Sprintf("yaver local path failed; dispatched %s via %s to %s", target.ID, workflow, repo)
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	pm.persistRunLocked(run)
 	pm.mu.Unlock()
 	return nil
 }
@@ -559,7 +773,7 @@ func (pm *PublishManager) runShellPublish(run *PublishRun, target PublishTarget)
 	if prep := strings.TrimSpace(target.PrepareCmd); prep != "" {
 		command = prep + " && " + command
 	}
-	env := resolvePublishEnv(target)
+	env := resolvePublishEnv(target, run.Project)
 	session, err := pm.execMgr.StartExec(command, run.WorkDir, "", env, 7200)
 	if err != nil {
 		return err
@@ -583,6 +797,9 @@ func (pm *PublishManager) runShellPublish(run *PublishRun, target PublishTarget)
 	if err := pm.archiveTargetArtifacts(run, target); err != nil {
 		return err
 	}
+	if err := pm.verifyPostconditions(run, target, session.Stdout+"\n"+session.Stderr); err != nil {
+		return err
+	}
 	pm.completeRun(run, "publish completed locally")
 	return nil
 }
@@ -592,7 +809,7 @@ func (pm *PublishManager) runMobilePublish(run *PublishRun, target PublishTarget
 	if platform == "" {
 		return fmt.Errorf("buildPlatform missing for target %s", target.ID)
 	}
-	env := resolvePublishEnv(target)
+	env := resolvePublishEnv(target, run.Project)
 	command, patterns := resolveBuildCommand(platform, run.WorkDir, target.BuildArgs)
 	if strings.TrimSpace(command) == "" {
 		return fmt.Errorf("could not resolve build command for %s", platform)
@@ -632,18 +849,35 @@ func (pm *PublishManager) runMobilePublish(run *PublishRun, target PublishTarget
 	run.ArtifactPath = artifact
 	run.ArtifactName = filepath.Base(artifact)
 	pm.mu.Unlock()
+	if target.Kind == "testflight" && target.Identity.BundleID != "" {
+		if err := verifyIPAIdentity(artifact, target.Identity.BundleID); err != nil {
+			return err
+		}
+	}
 	if err := pm.archiveArtifactPaths(run, []string{artifact}); err != nil {
 		return err
 	}
 	var uploadErr error
 	switch target.Kind {
 	case "testflight":
-		uploadErr = uploadToTestFlight(artifact)
+		uploadErr = uploadToTestFlightForProject(artifact, run.Project, env)
 	case "playstore":
-		uploadErr = uploadToPlayStore(artifact)
+		if env == nil {
+			env = map[string]string{}
+		}
+		// The manifest identity is authoritative. Never let ambient variables or
+		// a reused helper's own-project defaults select a different Play app.
+		env["PLAY_PACKAGE_NAME"] = target.Identity.PackageName
+		if target.Identity.Track != "" {
+			env["PLAY_TRACK"] = target.Identity.Track
+		}
+		uploadErr = uploadToPlayStoreWithEnv(artifact, run.ProjectDir, run.Project, env)
 	}
 	if uploadErr != nil {
 		return uploadErr
+	}
+	if err := pm.verifyPostconditions(run, target, "native uploader completed"); err != nil {
+		return err
 	}
 	note := pm.rolloutAfterPublish(run, target)
 	pm.completeRun(run, fmt.Sprintf("%s uploaded%s", target.Kind, note))
@@ -726,7 +960,7 @@ func (pm *PublishManager) archiveArtifactPaths(run *PublishRun, paths []string) 
 	return nil
 }
 
-func resolvePublishEnv(target PublishTarget) map[string]string {
+func resolvePublishEnv(target PublishTarget, project string) map[string]string {
 	if len(target.Env) == 0 && len(target.EnvFromVault) == 0 && len(target.EnvFromGitHub) == 0 {
 		return nil
 	}
@@ -735,11 +969,15 @@ func resolvePublishEnv(target PublishTarget) map[string]string {
 		out[k] = v
 	}
 	for envKey, vaultKey := range target.EnvFromVault {
-		if val := optionalVaultToken(vaultKey); val != "" {
+		if val := optionalVaultReleaseToken(project, vaultKey); val != "" {
 			out[envKey] = val
 			continue
 		}
-		if val := os.Getenv(envKey); val != "" {
+		// Environment fallback is a legacy own-project escape hatch. Named
+		// third-party projects must fail closed instead of inheriting the agent's
+		// operator credentials.
+		if ownReleaseProject(project) && os.Getenv(envKey) != "" {
+			val := os.Getenv(envKey)
 			out[envKey] = val
 		}
 	}
@@ -747,18 +985,38 @@ func resolvePublishEnv(target PublishTarget) map[string]string {
 		if _, ok := out[envKey]; ok {
 			continue
 		}
-		if val := os.Getenv(githubName); val != "" {
-			out[envKey] = val
-			continue
-		}
-		if val := os.Getenv(envKey); val != "" {
-			out[envKey] = val
+		if ownReleaseProject(project) {
+			if val := os.Getenv(githubName); val != "" {
+				out[envKey] = val
+				continue
+			}
+			if val := os.Getenv(envKey); val != "" {
+				out[envKey] = val
+			}
 		}
 	}
 	return out
 }
 
 func optionalVaultToken(name string) string {
+	return optionalVaultProjectToken("", name)
+}
+
+func ownReleaseProject(project string) bool {
+	return project == "" || project == "mobile" || project == "yaver"
+}
+
+func optionalVaultReleaseToken(project, name string) string {
+	if value := optionalVaultProjectToken(project, name); value != "" {
+		return value
+	}
+	if project != "" && ownReleaseProject(project) {
+		return optionalVaultProjectToken("", name)
+	}
+	return ""
+}
+
+func optionalVaultProjectToken(project, name string) string {
 	passphrase := os.Getenv("YAVER_VAULT_PASSPHRASE")
 	if passphrase == "" {
 		cfg, err := LoadConfig()
@@ -771,7 +1029,7 @@ func optionalVaultToken(name string) string {
 	if err != nil {
 		return ""
 	}
-	entry, err := vs.Get("", name)
+	entry, err := vs.Get(project, name)
 	if err != nil {
 		return ""
 	}
@@ -796,6 +1054,7 @@ func (pm *PublishManager) completeRun(run *PublishRun, message string) {
 	run.Status = PublishRunCompleted
 	run.Message = message
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	pm.persistRunLocked(run)
 }
 
 func (pm *PublishManager) failRun(run *PublishRun, err error) {
@@ -804,6 +1063,7 @@ func (pm *PublishManager) failRun(run *PublishRun, err error) {
 	run.Status = PublishRunFailed
 	run.Error = err.Error()
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	pm.persistRunLocked(run)
 }
 
 func (pm *PublishManager) ListRuns() []*PublishRun {
@@ -847,6 +1107,8 @@ func runPublish(args []string) {
 	switch args[0] {
 	case "init":
 		runPublishInit(args[1:])
+	case "plan":
+		runPublishPlan(args[1:])
 	case "config":
 		runPublishConfig(args[1:])
 	case "run":
@@ -869,8 +1131,9 @@ func printPublishUsage() {
   yaver publish both    [--app <name>] [--machine <deviceId>] [--path <dir>]
 
   yaver publish init [--dir <path>] [--force]
+  yaver publish plan [--dir <path>] [--target <id>]
   yaver publish config [--dir <path>]
-  yaver publish run [--dir <path>] [--target <id>] [--allow-github-fallback]
+  yaver publish run [--dir <path>] [--target <id>] [--confirm <target-id>] [--allow-github-fallback]
   yaver publish list
   yaver publish status <run-id>
 
@@ -933,6 +1196,7 @@ func runPublishRun(args []string) {
 	dir := fs.String("dir", ".", "Project directory")
 	target := fs.String("target", "", "Target ID from .yaver/publish.yaml")
 	allowFallback := fs.Bool("allow-github-fallback", false, "Dispatch to workflow_dispatch when local capability is missing")
+	confirmation := fs.String("confirm", "", "For a mutating target, repeat its exact target ID")
 	fs.Parse(args)
 
 	abs, err := filepath.Abs(*dir)
@@ -944,6 +1208,7 @@ func runPublishRun(args []string) {
 		"dir":                 abs,
 		"target":              *target,
 		"allowGitHubFallback": *allowFallback,
+		"confirmation":        *confirmation,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "publish run: %v\n", err)
@@ -1013,6 +1278,9 @@ func (s *HTTPServer) handlePublishConfig(w http.ResponseWriter, r *http.Request)
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "publish not available"})
 		return
 	}
+	if !requirePublishOwner(w) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		dir := strings.TrimSpace(r.URL.Query().Get("dir"))
@@ -1048,6 +1316,30 @@ func (s *HTTPServer) handlePublishConfig(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+func (s *HTTPServer) handlePublishPlan(w http.ResponseWriter, r *http.Request) {
+	if s.publishMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "publish not available"})
+		return
+	}
+	if !requirePublishOwner(w) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
+	if dir == "" {
+		dir = s.publishMgr.workDir
+	}
+	plan, err := buildPublishPlan(dir, r.URL.Query().Get("target"))
+	if err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	jsonReply(w, http.StatusOK, plan)
+}
+
 func (s *HTTPServer) handlePublishRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -1057,10 +1349,14 @@ func (s *HTTPServer) handlePublishRun(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "publish not available"})
 		return
 	}
+	if !requirePublishOwner(w) {
+		return
+	}
 	var body struct {
 		Dir                 string `json:"dir"`
 		Target              string `json:"target"`
 		AllowGitHubFallback bool   `json:"allowGitHubFallback"`
+		Confirmation        string `json:"confirmation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -1070,7 +1366,7 @@ func (s *HTTPServer) handlePublishRun(w http.ResponseWriter, r *http.Request) {
 	if dir == "" {
 		dir = s.publishMgr.workDir
 	}
-	run, err := s.publishMgr.StartRun(dir, body.Target, body.AllowGitHubFallback)
+	run, err := s.publishMgr.StartRunConfirmed(dir, body.Target, body.AllowGitHubFallback, body.Confirmation)
 	if err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -1081,6 +1377,9 @@ func (s *HTTPServer) handlePublishRun(w http.ResponseWriter, r *http.Request) {
 func (s *HTTPServer) handlePublishRuns(w http.ResponseWriter, r *http.Request) {
 	if s.publishMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "publish not available"})
+		return
+	}
+	if !requirePublishOwner(w) {
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -1095,6 +1394,9 @@ func (s *HTTPServer) handlePublishRunByID(w http.ResponseWriter, r *http.Request
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "publish not available"})
 		return
 	}
+	if !requirePublishOwner(w) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -1106,4 +1408,12 @@ func (s *HTTPServer) handlePublishRunByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 	jsonReply(w, http.StatusOK, run)
+}
+
+func requirePublishOwner(w http.ResponseWriter) bool {
+	if currentUserIsOwner() {
+		return true
+	}
+	jsonReply(w, http.StatusForbidden, map[string]string{"error": "publishing is owner-only"})
+	return false
 }

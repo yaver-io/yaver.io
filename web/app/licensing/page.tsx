@@ -151,7 +151,7 @@ export default function LicensingPage() {
                 <strong className="text-surface-200">Modifying the core for internal use</strong>: permitted.
               </li>
               <li>
-                <strong className="text-surface-200">Running a paid SaaS that competes with Yaver Cloud</strong>: not
+                <strong className="text-surface-200">Running a paid SaaS that competes with Yaver&apos;s commercial services</strong>: not
                 permitted under FSL for 2 years per release; after that, the old version is Apache-2.0 and is fair game.
               </li>
             </ul>

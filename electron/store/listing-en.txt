@@ -1,0 +1,55 @@
+YAVER — MICROSOFT STORE LISTING (ENGLISH)
+
+Product name
+Yaver.io
+
+Short description
+Run Yaver locally on Windows, control remote nodes, or use both together from one desktop app.
+
+Description
+Yaver is a self-hostable developer tool with publicly available source code. The Microsoft Store edition includes a native x64 Windows agent and the Yaver desktop client. Use this PC as a development node, control another authorized Yaver node, or do both together.
+
+Start Codex, Claude Code, OpenCode, or terminal tasks against a repository on this PC or a paired node. Follow live output, approve work, and use Browser, Hermes, or WebRTC rendering lanes when the selected project and installed toolchains support them. Coding-agent output is live generative AI content when you select a generative AI runner. Report inappropriate output through the publisher support link on this listing.
+
+Your source code remains on the machine running the task unless you choose a workflow that sends it elsewhere. The Store package does not bundle WSL, a Linux distribution, services, drivers, or third-party coding tools. Node.js, project SDKs, browsers, FFmpeg, and coding runners are installed or selected only for workflows that need them. The local agent runs only while the desktop app is open; the Store package creates no hidden startup task.
+
+Yaver's core source is published under FSL-1.1-Apache-2.0 and each release converts to Apache-2.0 after two years; client SDKs are Apache-2.0 from release. The Store download is free. Optional third-party AI providers, managed workspaces, or relay services may require separate accounts or subscriptions.
+
+Features — enter each line separately
+Publicly available source code and self-hostable developer tooling
+Local or remote coding-agent tasks on authorized Yaver nodes
+Live task output and approval controls
+Browser, Hermes, and WebRTC rendering lanes
+Authorized machine status across your devices
+Codex, Claude Code, OpenCode, and terminal runners
+LAN, shared relay, Tailscale, and self-hosted connectivity
+Microsoft Store-managed installation and updates
+
+Search terms
+developer tools
+coding agent
+remote development
+self hosted
+browser preview
+task runner
+AI coding
+
+What's new
+Leave this field blank for the first Microsoft Store submission.
+
+System requirements
+64-bit Windows 10 or Windows 11 and an x64 processor.
+Internet access and a Yaver account are required.
+Git, Node.js, project SDKs, browsers, FFmpeg, or coding-agent accounts are required only for workflows that use them.
+WSL2 is not bundled or required for the native Windows agent. It may be installed separately for optional Unix-shell workflows.
+
+Website: https://yaver.io
+Privacy policy: https://yaver.io/privacy
+Terms: https://yaver.io/terms
+Source: https://github.com/yaver-io/yaver.io
+
+Copyright and trademark info
+Copyright © 2026 SIMKAB. Yaver and Yaver.io are product names of the publisher. Microsoft, Windows, Codex, Claude, and OpenCode are trademarks or product names of their respective owners.
+
+Applicable license terms
+Functional Source License, Version 1.1, Apache 2.0 Future License (FSL-1.1-Apache-2.0). Full license terms: https://github.com/yaver-io/yaver.io/blob/main/LICENSE

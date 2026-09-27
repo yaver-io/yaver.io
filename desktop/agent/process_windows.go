@@ -3,10 +3,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -111,32 +113,68 @@ func killAllClaude() {
 	time.Sleep(500 * time.Millisecond)
 }
 
+type windowsProcessRecord struct {
+	Name            string  `json:"Name"`
+	ProcessID       int     `json:"ProcessId"`
+	ParentProcessID int     `json:"ParentProcessId"`
+	CommandLine     *string `json:"CommandLine"`
+}
+
+func powershellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+// windowsProcessRecords uses CIM rather than wmic.exe. WMIC is disabled by
+// default on current Windows 11 releases and is being removed, so a PATH hit
+// or a successful build says nothing about whether process/session discovery
+// works on the clean machines that receive the Store installer.
+func windowsProcessRecords(binaryNames []string) ([]windowsProcessRecord, error) {
+	filter := ""
+	if len(binaryNames) > 0 {
+		quoted := make([]string, 0, len(binaryNames))
+		for _, name := range binaryNames {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if !strings.HasSuffix(strings.ToLower(name), ".exe") {
+				name += ".exe"
+			}
+			quoted = append(quoted, powershellSingleQuote(name))
+		}
+		if len(quoted) > 0 {
+			filter = fmt.Sprintf(" | Where-Object { @(%s) -contains $_.Name }", strings.Join(quoted, ","))
+		}
+	}
+	script := "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);" +
+		"$rows=@(Get-CimInstance Win32_Process" + filter +
+		" | Select-Object Name,ProcessId,ParentProcessId,CommandLine);" +
+		"ConvertTo-Json -Compress -InputObject $rows"
+	out, err := osexec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("query Windows processes with CIM: %w — %s", err, strings.TrimSpace(string(out)))
+	}
+	var rows []windowsProcessRecord
+	if err := json.Unmarshal(out, &rows); err != nil {
+		return nil, fmt.Errorf("parse Windows CIM process list: %w", err)
+	}
+	return rows, nil
+}
+
 // findRunnerProcesses returns PIDs and command lines of running processes
-// matching the given binary name (e.g. "claude"). Uses tasklist on Windows.
+// matching the given binary name (e.g. "claude").
 func findRunnerProcesses(binaryName string) []RunnerProcess {
-	// tasklist /FI "IMAGENAME eq claude.exe" /FO CSV /NH
-	exeName := binaryName + ".exe"
-	out, err := osexec.Command("tasklist", "/FI", fmt.Sprintf("IMAGENAME eq %s", exeName), "/FO", "CSV", "/NH").CombinedOutput()
+	rows, err := windowsProcessRecords([]string{binaryName})
 	if err != nil {
 		return nil
 	}
-	var procs []RunnerProcess
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.Contains(line, "No tasks are running") {
-			continue
+	procs := make([]RunnerProcess, 0, len(rows))
+	for _, row := range rows {
+		command := row.Name
+		if row.CommandLine != nil && strings.TrimSpace(*row.CommandLine) != "" {
+			command = strings.TrimSpace(*row.CommandLine)
 		}
-		// CSV format: "claude.exe","1234","Console","1","12,345 K"
-		fields := strings.Split(line, ",")
-		if len(fields) < 2 {
-			continue
-		}
-		pidStr := strings.Trim(fields[1], "\" ")
-		var pid int
-		if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil {
-			continue
-		}
-		procs = append(procs, RunnerProcess{PID: pid, Command: exeName})
+		procs = append(procs, RunnerProcess{PID: row.ProcessID, Command: command})
 	}
 	return procs
 }
@@ -144,58 +182,41 @@ func findRunnerProcesses(binaryName string) []RunnerProcess {
 // findAllRunnerSessions scans for all running processes of known agent binaries
 // and returns them with their PPID for ancestry checks.
 func findAllRunnerSessions(binaryNames []string) []sessionProcess {
-	var all []sessionProcess
-	for _, name := range binaryNames {
-		exeName := name + ".exe"
-		out, err := osexec.Command("wmic", "process", "where",
-			fmt.Sprintf("Name='%s'", exeName),
-			"get", "ProcessId,ParentProcessId,CommandLine", "/FORMAT:CSV").CombinedOutput()
-		if err != nil {
-			continue
+	rows, err := windowsProcessRecords(binaryNames)
+	if err != nil {
+		return nil
+	}
+	all := make([]sessionProcess, 0, len(rows))
+	for _, row := range rows {
+		command := row.Name
+		if row.CommandLine != nil && strings.TrimSpace(*row.CommandLine) != "" {
+			command = strings.TrimSpace(*row.CommandLine)
 		}
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "Node") {
-				continue
-			}
-			// CSV: Node,CommandLine,ParentProcessId,ProcessId
-			fields := strings.Split(line, ",")
-			if len(fields) < 4 {
-				continue
-			}
-			var pid, ppid int
-			fmt.Sscanf(strings.TrimSpace(fields[len(fields)-1]), "%d", &pid)
-			fmt.Sscanf(strings.TrimSpace(fields[len(fields)-2]), "%d", &ppid)
-			cmd := strings.TrimSpace(fields[1])
-			if cmd == "" {
-				cmd = exeName
-			}
-			all = append(all, sessionProcess{
-				PID:        pid,
-				PPID:       ppid,
-				Command:    cmd,
-				BinaryName: name,
-			})
-		}
+		all = append(all, sessionProcess{
+			PID:        row.ProcessID,
+			PPID:       row.ParentProcessID,
+			Command:    command,
+			BinaryName: strings.TrimSuffix(strings.ToLower(row.Name), ".exe"),
+		})
 	}
 	return all
 }
 
 // isDescendantOf checks if a process (by PID) is a descendant of the given ancestor PID.
 func isDescendantOf(pid, ancestorPID int) bool {
+	rows, err := windowsProcessRecords(nil)
+	if err != nil {
+		return false
+	}
+	parents := make(map[int]int, len(rows))
+	for _, row := range rows {
+		parents[row.ProcessID] = row.ParentProcessID
+	}
 	current := pid
 	for i := 0; i < 20; i++ {
-		out, err := osexec.Command("wmic", "process", "where",
-			fmt.Sprintf("ProcessId=%d", current),
-			"get", "ParentProcessId", "/VALUE").CombinedOutput()
-		if err != nil {
+		ppid, ok := parents[current]
+		if !ok {
 			return false
-		}
-		var ppid int
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "ParentProcessId=") {
-				fmt.Sscanf(strings.TrimPrefix(strings.TrimSpace(line), "ParentProcessId="), "%d", &ppid)
-			}
 		}
 		if ppid == ancestorPID {
 			return true
@@ -210,55 +231,53 @@ func isDescendantOf(pid, ancestorPID int) bool {
 
 // getMemoryUsedMB returns currently used system memory in MB on Windows.
 func getMemoryUsedMB() (int64, error) {
-	out, err := osexec.Command("wmic", "OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/Value").CombinedOutput()
+	script := "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);" +
+		"$o=Get-CimInstance Win32_OperatingSystem;" +
+		"[pscustomobject]@{Total=[int64]$o.TotalVisibleMemorySize;Free=[int64]$o.FreePhysicalMemory}|ConvertTo-Json -Compress"
+	out, err := osexec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("query Windows memory with CIM: %w — %s", err, strings.TrimSpace(string(out)))
 	}
-	var totalKB, freeKB int64
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "TotalVisibleMemorySize=") {
-			fmt.Sscanf(line, "TotalVisibleMemorySize=%d", &totalKB)
-		} else if strings.HasPrefix(line, "FreePhysicalMemory=") {
-			fmt.Sscanf(line, "FreePhysicalMemory=%d", &freeKB)
-		}
+	var memory struct {
+		Total int64 `json:"Total"`
+		Free  int64 `json:"Free"`
 	}
-	return (totalKB - freeKB) / 1024, nil
+	if err := json.Unmarshal(out, &memory); err != nil || memory.Total <= 0 || memory.Free < 0 || memory.Free > memory.Total {
+		return 0, fmt.Errorf("parse Windows CIM memory response")
+	}
+	return (memory.Total - memory.Free) / 1024, nil
 }
 
 // getCPUPercent returns CPU usage percentage on Windows.
 func getCPUPercent() (float64, error) {
-	out, err := osexec.Command("wmic", "cpu", "get", "LoadPercentage", "/Value").CombinedOutput()
+	script := "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);" +
+		"$p=@(Get-CimInstance Win32_Processor);" +
+		"if($p.Count -eq 0){throw 'no processor rows'};" +
+		"[double](($p|Measure-Object -Property LoadPercentage -Average).Average)"
+	out, err := osexec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("query Windows CPU with CIM: %w — %s", err, strings.TrimSpace(string(out)))
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "LoadPercentage=") {
-			var pct float64
-			fmt.Sscanf(line, "LoadPercentage=%f", &pct)
-			return pct, nil
-		}
+	pct, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if parseErr != nil {
+		return 0, fmt.Errorf("parse Windows CIM CPU response: %w", parseErr)
 	}
-	return 0, fmt.Errorf("could not determine CPU usage")
+	return pct, nil
 }
 
 // getSystemMemoryMB returns total system memory in MB on Windows.
 func getSystemMemoryMB() (int64, error) {
-	out, err := osexec.Command("wmic", "OS", "get", "TotalVisibleMemorySize", "/Value").CombinedOutput()
+	script := "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);" +
+		"[int64](Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize"
+	out, err := osexec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("query Windows total memory with CIM: %w — %s", err, strings.TrimSpace(string(out)))
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "TotalVisibleMemorySize=") {
-			var kb int64
-			if _, err := fmt.Sscanf(line, "TotalVisibleMemorySize=%d", &kb); err == nil {
-				return kb / 1024, nil
-			}
-		}
+	kb, parseErr := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if parseErr != nil || kb <= 0 {
+		return 0, fmt.Errorf("parse Windows CIM total memory response")
 	}
-	return 0, fmt.Errorf("could not determine memory")
+	return kb / 1024, nil
 }
 
 // isAutoStartInstalled checks if the Windows Scheduled Task exists.

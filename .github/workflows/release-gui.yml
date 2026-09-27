@@ -69,9 +69,9 @@ jobs:
     needs: [validate, test]
     # Signing/notarization credentials are repository-scoped because tag refs
     # are intentionally excluded by the production environment's branch rule.
-    # Windows remains pinned to the last published GUI release on
-    # yaver.io/download until an Authenticode identity is provisioned; never
-    # replace it with an unsigned installer.
+    # The non-exportable SimplySign identity lives on the release Mac. Windows
+    # Store candidates are built through ./deploy/deploy.sh desktop-windows;
+    # hosted CI must never substitute an unsigned installer.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -150,29 +150,44 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WIN_CERTIFICATE_SHA1: ${{ vars.WIN_CERTIFICATE_SHA1 }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) {
-            throw "WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD are required. Refusing to publish an unsigned Windows GUI."
+          if (([string]::IsNullOrWhiteSpace($env:CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) -and [string]::IsNullOrWhiteSpace($env:WIN_CERTIFICATE_SHA1)) {
+            throw "Configure WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD or WIN_CERTIFICATE_SHA1 on the dedicated SimplySign runner. Refusing an unsigned Windows GUI."
           }
-          npx electron-builder --win --${{ matrix.arch }} --publish never
+          ../scripts/windows-signing.ps1 -VerifyOnly -Path resources/bin/yaver.exe
+          npx electron-builder --config electron-builder.windows.cjs --win --${{ matrix.arch }} --publish never
           if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
       - name: Verify every shipped Windows executable is Authenticode-valid
         if: matrix.platform == 'win'
         shell: pwsh
         working-directory: electron
+        env:
+          WINDOWS_PUBLISHER_PATTERN: "(?i)simkab"
         run: |
-          $executables = Get-ChildItem dist -Recurse -File -Filter *.exe
-          if (-not $executables) { throw "No Windows executables were produced" }
-          foreach ($file in $executables) {
-            $signature = Get-AuthenticodeSignature $file.FullName
-            if ($signature.Status -ne 'Valid') {
-              throw "Unsigned/invalid executable: $($file.FullName) — $($signature.Status): $($signature.StatusMessage)"
-            }
-            if ($signature.SignerCertificate.Subject -notmatch '(?i)simkab') {
-              throw "Unexpected Windows publisher on $($file.FullName): $($signature.SignerCertificate.Subject). Expected the Simkab signing identity."
-            }
-            Write-Host "Valid Authenticode: $($file.FullName)"
-          }
+          ../scripts/windows-signing.ps1 -VerifyOnly -Path dist
+
+      - name: Operation-probe Microsoft Store silent install and uninstall
+        if: matrix.platform == 'win'
+        shell: pwsh
+        working-directory: electron
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem dist -File -Filter "yaver-gui-*-win-x64-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "No Windows NSIS installer was produced" }
+          $installRoot = Join-Path $env:RUNNER_TEMP "yaver-store-install-$env:GITHUB_RUN_ID"
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', "/D=$installRoot") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Silent installer exited $($process.ExitCode)" }
+          $app = Join-Path $installRoot "Yaver.exe"
+          $agent = Join-Path $installRoot "resources\bin\yaver.exe"
+          if (-not (Test-Path -LiteralPath $app)) { throw "Silent install did not create $app" }
+          if (-not (Test-Path -LiteralPath $agent)) { throw "Silent install did not embed $agent" }
+          ../scripts/windows-signing.ps1 -VerifyOnly -Path $installRoot
+          $uninstaller = Get-ChildItem $installRoot -File -Filter "Uninstall*.exe" | Select-Object -First 1
+          if (-not $uninstaller) { throw "Installed uninstaller was not found" }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstaller exited $($uninstall.ExitCode)" }
+          if (Test-Path -LiteralPath $app) { throw "Silent uninstall left the installed app executable behind" }
       - name: Package Linux
         if: matrix.platform == 'linux'
         working-directory: electron
@@ -266,13 +281,13 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "Yaver Desktop GUI ${{ github.ref_name }}"
           body: |
-            Native desktop GUI for Yaver — sign in (OAuth or email) and vibe tasks
-            straight from your computer. Embeds the Yaver agent, so this machine is
-            itself a Yaver node (vibe it directly, or from phone/TV/watch/web).
+            Native desktop host and control surface for Yaver. The embedded agent
+            makes this machine a development node, while the same UI can explicitly
+            target another paired box for runners, builds, and Browser Lane.
 
             ## Downloads
             - **macOS** — `yaver-gui-<version>-mac-arm64.dmg` or `-mac-x64.dmg` (signed + notarized)
-            - **Windows** — `yaver-gui-<version>-win-x64-setup.exe` (Authenticode-signed, per-user)
+            - **Windows** — published separately after Authenticode and clean-VM Store validation; the download page resolves the newest signed build
             - **Linux** — `yaver-gui-<version>-linux-<x64|arm64>.AppImage` · `.deb` · `.rpm` · `.tar.gz`
 
             apt-get (Debian/Ubuntu):

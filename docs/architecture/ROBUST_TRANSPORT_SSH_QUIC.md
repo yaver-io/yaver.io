@@ -134,7 +134,12 @@ agent `:18443`** (cert-pinned) — lowest latency, no relay, no bastion. This is
 SSH) to satisfy ATS. Gate it on a real reachability probe (the current code
 already races these legs; it just needs the TLS/ATS-safe leg to actually succeed).
 
-## 4. Security (must hold for any road)
+## 4. Security target (must hold for the SSH/direct encrypted roads)
+
+The statements below are the target for the SSH/mesh payload lanes. The current
+`/d/<deviceId>/...` HTTP browser/proxy lane terminates HTTPS at nginx/relay and
+reconstructs the request for the agent tunnel; it is authenticated and
+same-owner scoped, but it is not end-to-end opaque to the relay process.
 
 - **End-to-end, relay/bastion is pass-through.** The relay/bastion must never be
   able to read phone↔agent traffic — it forwards ciphertext. This preserves the
@@ -452,12 +457,14 @@ defense, each layer sufficient on its own:
    authenticate** without the owner's device private key — which lives in the
    phone's **Secure Enclave** (never extractable) or 0600 local storage, and which
    the **relay never sees**. Reading the source does not yield a key.
-2. **The relay is pass-through and access-graph-scoped.** It forwards **ciphertext**
-   only, authorizes nothing, holds no device keys. It bridges a connection **only
+2. **The SSH/mesh payload lane is pass-through and access-graph-scoped.** It forwards **ciphertext**
+   only and holds no device private keys. It bridges a connection **only
    between the same owner/access-graph** (Convex says who may reach whom — same
    rule as the `already registered` eviction that validates userID). So a hostile
-   tenant's bytes are not even routed to a stranger's box. A *fully compromised*
-   relay still can't get in — layer 1 stops it (it has no key).
+   tenant's bytes are not even routed to a stranger's box. On this SSH/mesh
+   lane, a *fully compromised* relay still cannot authenticate to the box —
+   layer 1 stops it because it has no client private key. This statement does
+   not apply to the legacy HTTP proxy lane described at the start of §4.
 3. **Forced-command cage.** Even a valid device key can ONLY run the whitelisted
    verbs (`sshSessionRoute`) — **never a shell, pty, port-forward, or subsystem**
    (all refused in `handleSession`). Worst case for a stolen *owner* key is

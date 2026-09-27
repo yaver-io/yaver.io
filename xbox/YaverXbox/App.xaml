@@ -1,0 +1,17 @@
+<Application x:Class="YaverXbox.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <ResourceDictionary>
+      <SolidColorBrush x:Key="PageBackground" Color="#090B10" />
+      <SolidColorBrush x:Key="CardBackground" Color="#151923" />
+      <SolidColorBrush x:Key="AccentBrush" Color="#6DE5B5" />
+      <Style TargetType="Button">
+        <Setter Property="MinHeight" Value="64" />
+        <Setter Property="Padding" Value="28,12" />
+        <Setter Property="FontSize" Value="22" />
+        <Setter Property="Margin" Value="0,8,16,8" />
+      </Style>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

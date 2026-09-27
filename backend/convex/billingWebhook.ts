@@ -102,17 +102,32 @@ export function subscriptionPeriodEnd(data: any, now: number = Date.now()): numb
 
 /**
  * Truthful billing-state flags for /billing/status (audit G3): a
- * subscription is "subscribed" only when ACTIVE. past_due/unpaid/payment_failed
- * surface as a named paymentProblem so UIs render "payment issue — workspace
- * parked" instead of a green "subscribed" state.
+ * subscription is shown as subscribed while active or during a paid
+ * cancel-at-period-end grace window. past_due/unpaid/payment_failed surface as
+ * a named paymentProblem instead of a green subscribed state.
  */
-export function billingStateFlags(status: unknown): {
+export function billingStateFlags(status: unknown, currentPeriodEnd?: number | null, now: number = Date.now()): {
   subscribed: boolean;
   paymentProblem: boolean;
 } {
   const s = String(status || "").trim().toLowerCase();
   const paymentProblem = ["past_due", "unpaid", "payment_failed"].includes(s);
-  return { subscribed: s === "active", paymentProblem };
+  const cancellingWithPaidTime = s === "cancelled" && Number(currentPeriodEnd || 0) > now;
+  return { subscribed: s === "active" || cancellingWithPaidTime, paymentProblem };
+}
+
+/** Product access follows Lemon Squeezy subscription validity, which is
+ * broader than a healthy billing badge. Trial, paused, and dunning states keep
+ * access until Lemon Squeezy marks the subscription expired; a cancellation
+ * keeps access only through ends_at. Refund handling revokes separately. */
+export function subscriptionHasServiceAccess(
+  status: unknown,
+  currentPeriodEnd?: number | null,
+  now: number = Date.now(),
+): boolean {
+  const value = String(status || "").trim().toLowerCase();
+  if (["on_trial", "active", "paused", "past_due", "unpaid", "payment_failed"].includes(value)) return true;
+  return value === "cancelled" && Number(currentPeriodEnd || 0) > now;
 }
 
 /** Subscription statuses that are "paid, but not healthy" (payment problem). */

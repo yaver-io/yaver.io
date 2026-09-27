@@ -58,22 +58,6 @@ export const blogPosts: BlogPost[] = [
       "How to store API keys and deploy credentials in `yaver vault`, source them into builds, and sync them peer-to-peer across your own devices. The under-the-hood path: local encrypted vault.enc, owner-authenticated peer sync, digest/pull/push anti-entropy, tombstones, and why Convex never stores secret values.",
   },
   {
-    slug: "yaver-cloud-image",
-    title: "Yaver Cloud Image: a dev box on any provider, in 90 seconds",
-    date: "2026-05-28",
-    published: true,
-    description:
-      "Run one command. Get a Linux box on Hetzner, AWS, or GCP that's already signed in to your Yaver account, with claude-code, codex, and opencode authenticated from your existing devices. No tokens to copy, no second OAuth, no AMI hunting — this post is the install guide.",
-  },
-  {
-    slug: "yaver-cloud-launch-anywhere",
-    title: "Yaver cloud launch: anywhere, in five steps",
-    date: "2026-05-28",
-    published: true,
-    description:
-      "The architecture behind `yaver launch hetzner/aws/gcp/ssh` and the yaver.io/launch portal. The device-code authorize chain, why the Hetzner branch works without a public snapshot, and how SSH adoption reuses the same plumbing minus the provisioning step.",
-  },
-  {
     slug: "yaver-sandbox-slim",
     title: "yaver-sandbox-slim: a distroless Docker image with three coding agents",
     date: "2026-05-28",

@@ -70,8 +70,11 @@ export const isActive = internalQuery({
 // calls deprovision→cancelById, this guard short-circuits in that
 // path — no double cancel.
 export const cancelById = internalMutation({
-  args: { subscriptionId: v.id("subscriptions") },
-  handler: async (ctx, { subscriptionId }) => {
+  args: {
+    subscriptionId: v.id("subscriptions"),
+    providerAlreadyCancelled: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { subscriptionId, providerAlreadyCancelled }) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub || sub.status === "cancelled") return false;
     await ctx.db.patch(subscriptionId, {
@@ -79,7 +82,7 @@ export const cancelById = internalMutation({
       cancelledAt: Date.now(),
       updatedAt: Date.now(),
     });
-    if (sub.lemonSqueezyId) {
+    if (sub.lemonSqueezyId && !providerAlreadyCancelled) {
       await ctx.scheduler.runAfter(
         0,
         internal.http.cancelLemonSqueezySubscription,

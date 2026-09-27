@@ -5,6 +5,7 @@ import type {
 } from './types';
 import type { ScreenlogAPI, ScreenlogConfig, ScreenlogPolicy, InputEvent } from './screenlog';
 import { createRemoteDesktopAPI, type RemoteDesktopAPI } from './remote-desktop';
+import { YaverReleaseClient } from './release';
 
 /**
  * Yaver client — connects to a Yaver agent's HTTP API.
@@ -24,6 +25,21 @@ export class YaverClient {
   /** Check if the agent is reachable. */
   async health(): Promise<{ status: string }> {
     return this.get('/health');
+  }
+
+  /** Project-scoped release planning, execution and durable receipts. */
+  get releases(): YaverReleaseClient {
+    return new YaverReleaseClient(async <T>(path: string, init: RequestInit = {}) => {
+      const resp = await fetchWithTimeout(`${this.baseURL}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          ...(init.headers as Record<string, string> | undefined),
+        },
+      }, this.timeout);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+      return resp.json() as Promise<T>;
+    });
   }
 
   /** Consent-gated live screen + input. Frames travel agent-to-viewer only. */

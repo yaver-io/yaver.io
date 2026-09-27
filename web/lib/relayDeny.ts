@@ -41,7 +41,7 @@ export function explainRelayDeny(cause: string | null | undefined): string | nul
 }
 
 export type RelayLimitCard = {
-  kind: "free-tier-rate" | "bandwidth-cap" | "rate-limit";
+  kind: "free-tier-rate" | "free-capacity" | "bandwidth-cap" | "rate-limit";
   title: string;
   detail: string;
 };
@@ -51,13 +51,22 @@ export type RelayLimitCard = {
 export function classifyRelayLimit(message: string | null | undefined): RelayLimitCard | null {
   const raw = String(message || "");
   const lower = raw.toLowerCase();
-  const bw = raw.match(/bandwidth limit exceeded: (\d+)MB used of (\d+)MB daily limit/i);
+  if (lower.includes("relay.free_capacity_busy") || lower.includes("free relay is busy")) {
+    return {
+      kind: "free-capacity",
+      title: "Free relay is busy",
+      detail:
+        "Paid traffic is using reserved headroom, so this Free request was not admitted. " +
+        "Retry shortly, or use a direct LAN, VPN, or self-hosted relay connection now.",
+    };
+  }
+  const bw = raw.match(/bandwidth limit exceeded: (\d+)MB used of (\d+)MB daily(?: account)? limit/i);
   if (bw) {
     return {
       kind: "bandwidth-cap",
       title: "Daily relay bandwidth cap reached",
       detail:
-        `This device moved ${bw[1]} MB of its ${bw[2]} MB daily relay allowance. ` +
+        `This account moved ${bw[1]} MB of its ${bw[2]} MB daily relay allowance. ` +
         "The cap resets daily. Direct LAN and tunnel connections are unmetered — " +
         "use one of those, or wait for the reset. A stream that stops mid-way with " +
         "this message was cut by the cap, not by your network.",
@@ -72,7 +81,7 @@ export function classifyRelayLimit(message: string | null | undefined): RelayLim
       kind: "bandwidth-cap",
       title: "Daily relay bandwidth cap reached",
       detail:
-        "This transfer was cut off because the device used up its daily relay " +
+        "This transfer was cut off because the account used up its daily relay " +
         "bandwidth allowance — not because your network dropped. The cap resets " +
         "daily. Direct LAN and tunnel connections are unmetered, so reconnecting " +
         "over one of those works right now.",

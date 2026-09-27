@@ -6,7 +6,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AgentClient, browserSessionSettings, buildCreateTaskBody } from "./agent-client";
+import {
+  AgentClient,
+  browserSessionSettings,
+  buildCreateTaskBody,
+  pollFailureRequiresReconnect,
+} from "./agent-client";
+
+test("remote polling tolerates isolated transport failures before reconnecting", () => {
+  assert.equal(pollFailureRequiresReconnect(1), false);
+  assert.equal(pollFailureRequiresReconnect(2), false);
+  assert.equal(pollFailureRequiresReconnect(3), true);
+});
 
 test("web createTask body defaults allowLocalFallback to false", () => {
   const body = buildCreateTaskBody({

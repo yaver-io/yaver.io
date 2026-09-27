@@ -1,21 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
-
-// Public pricing page — source of truth for the locked Model A catalog
-// (docs/audits/hetzner-access-and-monetization-2026-08.md §0.5):
-//   - Self-hosted: free, your machines, npm install.
-//   - Cloud Workspace: $29/mo BYOK, 120 standard hours, private relay,
-//     auto-stop, wallet for overage. The ONLY compute plan.
-//   - Relay Pro: $9/mo pooled private relay for self-hosted setups.
-// cloud-agent (managed model) is legacy/never-ship and deliberately absent.
-//
-// Copy rules (monetization.md): no "GPU", "Hetzner", "VM", "tokens" on the
-// public path — "workspace", "hours", "auto-stops", "bring your own AI
-// account". Purchase happens in the authenticated dashboard (BillingView)
-// because of App Store checkout policy; the CTA below is gated by
-// HIDE_PAID_UI (the single launch flag — never shadow a copy of it).
+// Public catalog: the open-source runtime on hardware the customer controls,
+// plus the $9/month managed Relay Pro connectivity layer. Yaver does not sell
+// hosted compute or AI model usage in this release.
 
 const PLANS = [
   {
@@ -35,64 +23,43 @@ const PLANS = [
     ctaHref: "/download",
   },
   {
-    name: "Cloud Workspace",
-    price: "$29",
-    per: "/mo",
-    highlight: true,
-    tagline: "A persistent remote runtime when you don't want to babysit a box.",
-    items: [
-      "Persistent workspace — repos and setup saved",
-      "120 standard hours of active runtime per month",
-      "Bring your own Claude Code, Codex, or OpenCode account",
-      "Private relay included — reachable from anywhere",
-      "Auto-stops when idle; reopens where you left off",
-      "One workspace per plan, fair-use metered",
-    ],
-    ctaLabel: HIDE_PAID_UI ? "Sign in to get started" : "Get started",
-    ctaHref: "/auth",
-  },
-  {
     name: "Relay Pro",
     price: "$9",
     per: "/mo",
-    highlight: false,
-    tagline: "Private connectivity for your self-hosted setup, away from home.",
+    highlight: true,
+    tagline: "Managed private connectivity to the machines you already own or rent.",
     items: [
-      "Private managed relay for your devices",
-      "Reachable on cellular, hotel Wi-Fi, anywhere",
-      "Per-user, per-device authentication",
-      "Rides a shared, pass-through pool — no tenant code, no cross-tenant access",
-      "Pairs with a self-hosted setup",
+      "Mac, Windows/WSL, Linux, VPS, or Pi",
+      "Claude Code, Codex, OpenCode, and terminal agents",
+      "Browser lane, Hermes/native previews, and Feedback SDK",
+      "Every supported Yaver client surface—or your own app using the SDK",
+      "Account- and device-scoped authentication on shared managed infrastructure",
     ],
-    ctaLabel: HIDE_PAID_UI ? "Sign in to get started" : "Get started",
+    ctaLabel: "Get Relay Pro",
     ctaHref: "/auth",
   },
 ];
 
 const PRICING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
-    q: "What is a standard hour?",
-    a: "Cloud Workspace includes 120 standard hours per month of active runtime. Bigger workspaces burn the same budget faster — a heavy workspace consumes standard hours at a higher rate, so upgrading can't stretch your allowance into a loss for us. The app always shows your remaining time in real wall-clock hours for your current workspace, not the adjusted number.",
-  },
-  {
-    q: "What happens when I'm idle?",
-    a: "The workspace auto-stops after idle — repos and setup are saved, and it reopens where you left off. Stopping halts compute billing entirely; only the parked state (saved workspace) costs anything, and that's covered by your plan. You'll get a heads-up before it stops.",
-  },
-  {
     q: "What does 'bring your own AI account' mean?",
-    a: "Yaver doesn't sell AI model access. You use your existing Claude Code, Codex, or OpenCode account — your subscription, your keys, your usage — and Yaver provides the workspace, the mobile cockpit, previews, private connectivity, and auto-stop around it.",
+    a: "Yaver doesn't sell AI model access. You use your existing Claude Code, Codex, OpenCode, or other terminal agent account on your own machine. Relay Pro provides the remote connectivity and Yaver clients around it.",
   },
   {
     q: "Can I self-host instead of paying?",
-    a: "Yes — the full runtime is free and open source. Install the CLI on your own machine, pair the app, and use LAN, your own relay, or Tailscale for connectivity. Cloud Workspace and Relay Pro are for when you want Yaver to run that infrastructure for you.",
+    a: "Yes. Install the CLI on your own machine or VPS, then use LAN, your own relay, or another private network. Relay Pro is the optional managed connectivity layer.",
   },
   {
     q: "Do I need a cloud account or token to use Yaver?",
-    a: "No. Yaver never asks you for cloud provider credentials. Your machines are yours; the managed path uses Yaver's own infrastructure, provisioned server-side behind your subscription.",
+    a: "No. Yaver runs on a computer you control, including a VPS from any provider. Relay Pro itself is provisioned server-side and never asks for your provider credentials.",
   },
   {
-    q: "What isn't for sale yet?",
-    a: "GPU workspaces and a managed (included) model tier are not offered. If they ship, they'll be priced so they're never subsidized by other plans.",
+    q: "Does Relay Pro include a cloud computer or AI subscription?",
+    a: "No. Relay Pro is connectivity, not hosted compute or model usage. Your coding agent runs on your own computer or VPS with your own agent account.",
+  },
+  {
+    q: "Is Relay Pro unlimited?",
+    a: "No. Relay Pro includes a high daily transfer allowance with fair-use controls so one account cannot degrade a shared relay host. The dashboard shows usage, and Yaver will name the limit instead of silently slowing or billing overage.",
   },
   {
     q: "How do I pay?",
@@ -127,15 +94,14 @@ export default function PricingPage() {
           </h1>
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 md:text-base">
             The full remote AI runtime is free on your own machines. The paid
-            plans are Yaver-managed: a persistent Cloud Workspace and private
-            relay connectivity.
+            option is Relay Pro: managed private connectivity to your own machine.
           </p>
         </div>
       </section>
 
       {/* ── Plan cards ── */}
       <section className="px-6 pb-16">
-        <div className="mx-auto grid max-w-5xl gap-6 md:grid-cols-3">
+        <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
           {PLANS.map((plan) => (
             <div
               key={plan.name}
@@ -175,10 +141,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="mx-auto mt-8 max-w-2xl text-center text-xs text-surface-600">
-          Cloud Workspace includes 120 standard hours per month. Beyond the
-          included hours, overage is metered from a small prepaid balance and
-          stops when it can't cover the rate — you're never billed for compute
-          we can't recover.
+          Relay Pro uses shared managed infrastructure with account- and device-scoped authorization. It is private to your account, but it is not a dedicated server or end-to-end-encryption product.
         </p>
       </section>
 
@@ -194,24 +157,21 @@ export default function PricingPage() {
                 <tr className="border-b border-surface-800 text-xs uppercase tracking-wider text-surface-500">
                   <th className="py-3 pr-4 font-medium">Feature</th>
                   <th className="py-3 pr-4 font-medium">Self-hosted</th>
-                  <th className="py-3 pr-4 font-medium">Cloud Workspace</th>
                   <th className="py-3 font-medium">Relay Pro</th>
                 </tr>
               </thead>
               <tbody className="text-surface-300">
                 {[
-                  ["Where the agent runs", "Your machines", "Yaver-managed workspace", "Your machines"],
-                  ["Setup", "npm install -g yaver-cli", "One tap from the app", "Attach to self-hosted"],
-                  ["Included runtime", "Unlimited (your hardware)", "120 standard hours/mo", "—"],
-                  ["Private relay", "Your own or Tailscale", "Included", "$9/mo"],
-                  ["Auto-stop", "Your choice", "Built in, saves your state", "—"],
-                  ["Monthly cost", "$0", "$29", "$9"],
+                  ["Where the agent runs", "Your machine or VPS", "Your machine or VPS"],
+                  ["Coding agents", "Your accounts", "Your accounts"],
+                  ["Yaver clients and SDK", "Included", "Included"],
+                  ["Remote relay", "Free shared / self-hosted", "Managed private lane"],
+                  ["Monthly cost", "$0", "$9"],
                 ].map((row) => (
                   <tr key={row[0]} className="border-b border-surface-800/40">
                     <td className="py-3 pr-4 font-medium text-surface-100">{row[0]}</td>
                     <td className="py-3 pr-4">{row[1]}</td>
-                    <td className="py-3 pr-4">{row[2]}</td>
-                    <td className="py-3">{row[3]}</td>
+                    <td className="py-3">{row[2]}</td>
                   </tr>
                 ))}
               </tbody>

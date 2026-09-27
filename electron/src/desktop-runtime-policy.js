@@ -5,15 +5,17 @@ const os = require("node:os");
 /**
  * Non-secret desktop runtime settings shared by main-process wiring and tests.
  *
- * A GUI node is useful as a remote box only while the process remains alive.
- * These defaults therefore keep the machine awake and start Yaver at login,
- * while leaving both choices visible and reversible from the tray. We never
- * mutate the OS power plan and never require administrator privileges.
+ * A GUI node is useful as a remote box only while the process remains alive,
+ * but availability settings are opt-in. Microsoft Store policy requires user
+ * consent before an app changes Windows startup/preferences; silently adding
+ * Yaver at login on first launch would fail that boundary even though the
+ * control was later reversible from the tray. We never mutate the OS power
+ * plan and never require administrator privileges.
  */
 const DEFAULT_SETTINGS = Object.freeze({
   taskNotifications: true,
-  keepAwake: true,
-  launchAtLogin: true,
+  keepAwake: false,
+  launchAtLogin: false,
   automaticUpdates: true,
 });
 

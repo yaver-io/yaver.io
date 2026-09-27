@@ -225,6 +225,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "yaver_verify_task",
+			"description": "Run this task project's configured yaver-tests browser acceptance specs through Yaver's Playwright lane and return independently collected pass/fail evidence. Use after a user-visible browser change, before yaver_report_complete. A failed result is not completion: inspect the named feature/artifacts, fix the code, and retry. The daemon binds the run to the current task project; no directory or secret environment can be supplied. Requires YAVER_TASK_ID.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"feature":     map[string]interface{}{"type": "string", "description": "Optional exact Feature name from yaver-tests; empty runs every discovered browser feature."},
+					"project":     map[string]interface{}{"type": "string", "description": "Optional non-secret label for the report."},
+					"profile":     map[string]interface{}{"type": "string", "description": "Optional configured local Playwright profile name. Profile contents never leave the machine."},
+					"trace":       map[string]interface{}{"type": "boolean", "description": "Capture a Playwright trace. Defaults true."},
+					"video":       map[string]interface{}{"type": "boolean", "description": "Record verification video and attach it to the task. Defaults true."},
+					"dev_command": map[string]interface{}{"type": "string", "description": "Optional project-local command that starts the dev server for this run."},
+					"wait_url":    map[string]interface{}{"type": "string", "description": "Optional readiness URL for dev_command."},
+					"timeout_sec": map[string]interface{}{"type": "integer", "minimum": 30, "maximum": 1800, "description": "Wall-clock deadline. Default 600 seconds."},
+				},
+			},
+		},
+		{
 			"name":        "access_policy_check",
 			"description": "F5 Access-Layer Policy Guard. Call BEFORE automating a gated source to check whether an {action} on a {source} is permitted from a {jurisdiction}. Returns {decision: allow|warn|block, reason, category}. It BLOCKS jurisdiction-illegal funding/betting (e.g. foreign sportsbooks from Turkey), WARNS on account actions (login/signup) in such jurisdictions, and ALLOWS public-data reading everywhere. Unknown sources => allow (it does not over-block legitimate automation). You MUST honor a 'block' (do not place/fund bets) and surface a 'warn' to the user. This is the boundary that keeps remote-hands legitimate.",
 			"inputSchema": map[string]interface{}{
@@ -515,6 +532,17 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "publish_plan",
+			"description": "Read-only release plan for one .yaver/publish.yaml target. Shows the exact command, external mutation, app/package identity, credential references, confirmation token, artifacts and required postconditions without executing anything.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dir":    map[string]interface{}{"type": "string", "description": "Project directory. Defaults to the agent work dir."},
+					"target": map[string]interface{}{"type": "string", "description": "Target ID. Defaults to defaultTarget."},
+				},
+			},
+		},
+		{
 			"name":        "publish_config_get",
 			"description": "Load a project's Yaver publish config (.yaver/publish.yaml). Returns the existing config or a scaffold preview if none exists yet.",
 			"inputSchema": map[string]interface{}{
@@ -545,6 +573,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"type":        "boolean",
 						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
 					},
+					"confirmation": map[string]interface{}{
+						"type":        "string",
+						"description": "For a guarded mutation, repeat the exact target ID returned by publish_plan.",
+					},
 				},
 			},
 		},
@@ -565,6 +597,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"allow_github_fallback": map[string]interface{}{
 						"type":        "boolean",
 						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
+					},
+					"confirmation": map[string]interface{}{
+						"type":        "string",
+						"description": "For a guarded mutation, repeat the exact target ID returned by publish_plan.",
 					},
 				},
 			},
@@ -587,6 +623,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"type":        "boolean",
 						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
 					},
+					"confirmation": map[string]interface{}{
+						"type":        "string",
+						"description": "For a guarded mutation, repeat the exact target ID returned by publish_plan.",
+					},
 				},
 			},
 		},
@@ -607,6 +647,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"allow_github_fallback": map[string]interface{}{
 						"type":        "boolean",
 						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
+					},
+					"confirmation": map[string]interface{}{
+						"type":        "string",
+						"description": "For a guarded mutation, repeat the exact target ID returned by publish_plan.",
 					},
 				},
 			},
@@ -4713,12 +4757,20 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// Browser automation tools — AI-driven browser control on the dev machine.
 	browserTools := []map[string]interface{}{
 		{
+			"name":        "browser_targets",
+			"description": "Read the current project's non-secret .yaver/browser.yaml targets and matrices. Availability remains unprobed until browser_open performs a real session handshake.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
 			"name":        "browser_open",
-			"description": "Open a new Chrome browser session on the dev machine. Returns a session_id to use in subsequent browser_* calls. Sessions persist across tool calls — cookies, auth state, and current URL survive between steps. Pass proxy_url to egress through a chosen vantage (a proxy or peer the user is entitled to use); the source then sees that egress IP, not this machine's.",
+			"description": "Open a configured browser session on the dev machine. Chrome defaults to CDP; Firefox and real Safari use W3C WebDriver. Returns one session_id used by the same browser_* actions regardless of engine. Sessions persist across tool calls. Pass proxy_url only for Chrome/CDP and only for a vantage the user owns or may use.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"session_id":     map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
+					"target":         map[string]interface{}{"type": "string", "description": "Named target from .yaver/browser.yaml. Omit to use the configured default."},
+					"engine":         map[string]interface{}{"type": "string", "enum": []string{"chrome", "firefox", "safari"}, "description": "Actual browser engine. Defaults chrome. Safari means real macOS Safari, never Playwright WebKit."},
+					"driver":         map[string]interface{}{"type": "string", "enum": []string{"cdp", "webdriver"}, "description": "Automation driver. Chrome defaults cdp; Firefox/Safari require webdriver."},
 					"headful":        map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
 					"proxy_url":      map[string]interface{}{"type": "string", "description": "Egress proxy for this session's vantage, e.g. http://host:8080 or socks5://host:1080. Omit for machine-native egress. Only use proxies/peers the user owns or is entitled to; never to defeat a geo/IP block."},
 					"profile":        map[string]interface{}{"type": "string", "description": "F2 persistent profile (name or absolute path). Reuses a user-data-dir so cookies + Cloudflare clearance PERSIST across runs. Pass the SAME profile name to browser_interactive_start: a human solves the challenge once in the visible co-browse window, then this (often headless) session reuses that saved clearance. Omit for a throwaway session."},
@@ -4869,6 +4921,14 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector"},
 					"attribute":  map[string]interface{}{"type": "string", "description": "Attribute name (e.g., href, value, data-id)"},
 				},
+			},
+		},
+		{
+			"name":        "browser_snapshot",
+			"description": "Return a compact structured snapshot of the current URL, title, and interactable DOM elements. Works across configured Chrome, Firefox, and real Safari sessions.",
+			"inputSchema": map[string]interface{}{
+				"type": "object", "required": []string{"session_id"},
+				"properties": map[string]interface{}{"session_id": map[string]interface{}{"type": "string"}},
 			},
 		},
 		{

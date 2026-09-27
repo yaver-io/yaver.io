@@ -53,12 +53,18 @@ app.setName("Yaver");
 
 const DASHBOARD_PRODUCTION_URL = "https://yaver.io/dashboard";
 const DEV_SERVER_URL = "http://localhost:3000";
-// A Mac App Store binary is obligatorily sandboxed. It can be the full Yaver
-// client surface, but it cannot honestly promise the direct build's arbitrary
-// repo access, CLI spawning, incoming agent listener, capture, or automation.
-// Electron defines process.mas only in a MAS build. Keep that distribution
-// client-only and leave the signed/notarized DMG as the full runner/renderer.
+// The sandboxed Mac App Store package is client-only. The Microsoft Store
+// package is a full-trust packaged desktop app and includes the native Windows
+// agent, so it supports client-only use, local-agent use, and both together.
+// Both Store channels receive Store-managed updates.
 const storeClientOnly = process.mas === true;
+const storeManaged = process.mas === true || process.windowsStore === true;
+const storeName = process.windowsStore === true ? "Microsoft Store" : "Mac App Store";
+const distributionChannel = process.windowsStore === true
+  ? "microsoft-store"
+  : process.mas === true
+    ? "mac-app-store"
+    : "direct";
 
 // This must be applied before the first renderer is created. A valid,
 // TestFlight-delivered MAS renderer otherwise crashes before first paint on
@@ -107,13 +113,13 @@ const guiFailureFixture = (process.env.GUI_FAILURE_FIXTURE || "").trim();
 let agentManager = null;
 let agentStatus = storeClientOnly ? "client-only" : "starting";
 let agentStatusDetail = storeClientOnly
-  ? "Mac App Store sandbox: connect to a Yaver agent on this or another machine"
+  ? `${storeName} client: connect to a Yaver node on another machine`
   : null;
 let keepAwakeBlockerId = null;
 let updateTimer = null;
 let directAutoUpdater = null;
-let updateStatus = storeClientOnly
-  ? { state: "store-managed", detail: "Updates are managed by the Mac App Store" }
+let updateStatus = storeManaged
+  ? { state: "store-managed", detail: `Updates are managed by the ${storeName}` }
   : { state: "idle", detail: null };
 
 /** Captured auth material, per origin: { token, relayPassword }.
@@ -256,7 +262,7 @@ function publishUpdateStatus(state, detail = null) {
 }
 
 function directUpdaterSupported() {
-  if (storeClientOnly || !app.isPackaged) return false;
+  if (storeManaged || !app.isPackaged) return false;
   // electron-updater performs in-place Linux updates for AppImage. deb/rpm
   // installations belong to the OS package manager and must not be silently
   // replaced with a second installation format.
@@ -301,8 +307,8 @@ function ensureDirectUpdater() {
 }
 
 async function checkForDesktopUpdate({ manual = false } = {}) {
-  if (storeClientOnly) {
-    publishUpdateStatus("store-managed", "Updates are managed by the Mac App Store");
+  if (storeManaged) {
+    publishUpdateStatus("store-managed", `Updates are managed by the ${storeName}`);
     return updateStatus;
   }
   if (!app.isPackaged) {
@@ -330,8 +336,8 @@ async function checkForDesktopUpdate({ manual = false } = {}) {
 function reconcileAutomaticUpdates() {
   if (updateTimer) clearInterval(updateTimer);
   updateTimer = null;
-  if (storeClientOnly) {
-    publishUpdateStatus("store-managed", "Updates are managed by the Mac App Store");
+  if (storeManaged) {
+    publishUpdateStatus("store-managed", `Updates are managed by the ${storeName}`);
     return;
   }
   if (!settings.automaticUpdates) {
@@ -371,7 +377,7 @@ function stopKeepAwake() {
 }
 
 function reconcileLaunchAtLogin() {
-  if (!isLoginItemSupported()) return;
+  if (storeManaged || !isLoginItemSupported()) return;
   try {
     if (process.platform === "linux") {
       const autostartDir = path.join(app.getPath("home"), ".config", "autostart");
@@ -560,6 +566,7 @@ ipcMain.on("yaver:set-keep-awake", (_event, enabled) => {
 });
 
 ipcMain.on("yaver:set-launch-at-login", (_event, enabled) => {
+  if (storeManaged) return;
   settings.launchAtLogin = Boolean(enabled);
   saveSettings(settings);
   reconcileLaunchAtLogin();
@@ -567,7 +574,7 @@ ipcMain.on("yaver:set-launch-at-login", (_event, enabled) => {
 });
 
 ipcMain.handle("yaver:set-automatic-updates", (_event, enabled) => {
-  if (storeClientOnly) return { enabled: true, managedByStore: true, ...updateStatus };
+  if (storeManaged) return { enabled: true, managedByStore: true, ...updateStatus };
   settings.automaticUpdates = Boolean(enabled);
   saveSettings(settings);
   reconcileAutomaticUpdates();
@@ -688,14 +695,14 @@ ipcMain.handle("yaver:get-desktop-status", () => ({
   surface: "desktop-gui",
   localDeviceId: localAgentDeviceId() || null,
   appVersion: app.getVersion(),
-  distribution: storeClientOnly ? "mac-app-store" : "direct",
+  distribution: distributionChannel,
   agent: { state: agentStatus, detail: agentStatusDetail, port: storeClientOnly ? null : 18080 },
   keepAwake: settings.keepAwake,
   launchAtLogin: settings.launchAtLogin,
-  loginItemSupported: isLoginItemSupported(),
+  loginItemSupported: !storeManaged && isLoginItemSupported(),
   updates: {
-    enabled: storeClientOnly ? true : settings.automaticUpdates,
-    managedByStore: storeClientOnly,
+    enabled: storeManaged ? true : settings.automaticUpdates,
+    managedByStore: storeManaged,
     ...updateStatus,
   },
   logs: { path: desktopLog.filePath, maxBytes: desktopLog.maxBytes, maxFiles: desktopLog.maxFiles },
@@ -1021,7 +1028,7 @@ function rebuildTray() {
         rebuildTray();
       },
     }] : []),
-    ...(isLoginItemSupported() ? [{
+    ...(!storeManaged && isLoginItemSupported() ? [{
       label: "Start Yaver at login",
       type: "checkbox",
       checked: settings.launchAtLogin,
@@ -1032,8 +1039,8 @@ function rebuildTray() {
         rebuildTray();
       },
     }] : []),
-    ...(storeClientOnly ? [{
-      label: "Updates · managed by App Store",
+    ...(storeManaged ? [{
+      label: `Updates · managed by ${storeName}`,
       enabled: false,
     }] : [{
       label: "Automatic updates",

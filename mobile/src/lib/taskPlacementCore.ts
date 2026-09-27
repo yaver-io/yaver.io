@@ -49,7 +49,7 @@ export function mobileManagedArtifactStorageDeniedReason(req: {
     Boolean(req.uploadIntentId);
   if (!usesYaverStorage) return null;
   if (req.confirmedCloudWorkspaceStorage === true) return null;
-  return "Yaver artifact storage requires Cloud Workspace on web. Save an external HTTPS artifact link from mobile.";
+  return "Hosted artifact uploads are unavailable. Save an external HTTPS artifact link from mobile.";
 }
 
 export function taskPlacementRequestBody(

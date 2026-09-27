@@ -129,6 +129,13 @@ func (s *seleniumBackend) Navigate(ctx context.Context, url string) error {
 	return s.d.Navigate(ctx, url)
 }
 
+func (s *seleniumBackend) ExecuteScript(ctx context.Context, script string, args []interface{}) (interface{}, error) {
+	if s.d == nil {
+		return nil, fmt.Errorf("selenium session is not running")
+	}
+	return s.d.ExecuteScript(ctx, script, args)
+}
+
 func (s *seleniumBackend) Snapshot(ctx context.Context) (Snapshot, error) {
 	resp, err := s.d.post(ctx, "/session/"+s.d.sessionID+"/execute/sync", map[string]interface{}{
 		// W3C execute/sync accepts a function body, not a CDP expression. Without

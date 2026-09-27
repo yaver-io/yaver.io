@@ -437,7 +437,11 @@ final class YaverStore: ObservableObject {
             TokenStore.save(legacyStoredToken)
             legacyStoredToken = ""
         }
-        boxes = (try? JSONDecoder().decode([BoxTarget].self, from: Data(storedBoxesJSON.utf8))) ?? []
+        let decodedBoxes = (try? JSONDecoder().decode([BoxTarget].self, from: Data(storedBoxesJSON.utf8))) ?? []
+        // Remove legacy hosted-compute selections persisted by older builds.
+        // A Yaver-managed row carried both fields; manually added/BYO machines
+        // carry neither and remain available, including a user's own VPS.
+        boxes = decodedBoxes.filter { !(($0.managed ?? false) && $0.machineId?.isEmpty == false) }
         // Fail closed until the live session refresh proves owner preview
         // access. Older builds may have persisted this choice for any account.
         remotelessMode = false

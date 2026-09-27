@@ -1,4 +1,5 @@
-version: 1
+version: 2
+project: yaver
 defaultTarget: npm-cli
 fallback:
   githubAllowed: true
@@ -19,6 +20,11 @@ targets:
       NODE_AUTH_TOKEN: npm-token
     envFromGitHub:
       NODE_AUTH_TOKEN: NPM_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver-cli
+    postconditions:
+      - kind: npm-version-visible
   - id: npm-sdk-errors-js
     label: npm (sdk/errors-js)
     kind: npm
@@ -32,6 +38,11 @@ targets:
       NODE_AUTH_TOKEN: npm-token
     envFromGitHub:
       NODE_AUTH_TOKEN: NPM_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver-errors
+    postconditions:
+      - kind: npm-version-visible
   - id: npm-sdk-js
     label: npm (sdk/js)
     kind: npm
@@ -45,6 +56,11 @@ targets:
       NODE_AUTH_TOKEN: npm-token
     envFromGitHub:
       NODE_AUTH_TOKEN: NPM_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver-sdk
+    postconditions:
+      - kind: npm-version-visible
   - id: npm-feedback-react-native
     label: npm (sdk/feedback/react-native)
     kind: npm
@@ -58,6 +74,11 @@ targets:
       NODE_AUTH_TOKEN: npm-token
     envFromGitHub:
       NODE_AUTH_TOKEN: NPM_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver-feedback-react-native
+    postconditions:
+      - kind: npm-version-visible
   - id: npm-feedback-web
     label: npm (sdk/feedback/web)
     kind: npm
@@ -71,6 +92,11 @@ targets:
       NODE_AUTH_TOKEN: npm-token
     envFromGitHub:
       NODE_AUTH_TOKEN: NPM_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver-feedback-web
+    postconditions:
+      - kind: npm-version-visible
   - id: pypi-sdk-python
     label: PyPI (sdk/python)
     kind: pypi
@@ -86,6 +112,11 @@ targets:
       TWINE_PASSWORD: pypi-token
     envFromGitHub:
       TWINE_PASSWORD: PYPI_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver
+    postconditions:
+      - kind: pypi-version-visible
   - id: pubdev-feedback-flutter
     label: pub.dev (sdk/feedback/flutter)
     kind: pubdev
@@ -99,6 +130,11 @@ targets:
       - macOS
     envFromGitHub:
       PUB_TOKEN: PUB_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver_feedback
+    postconditions:
+      - kind: pubdev-version-visible
   - id: pubdev-sdk-flutter
     label: pub.dev (sdk/flutter)
     kind: pubdev
@@ -112,24 +148,37 @@ targets:
       - macOS
     envFromGitHub:
       PUB_TOKEN: PUB_TOKEN
+    requiresConfirmation: true
+    identity:
+      packageName: yaver
+    postconditions:
+      - kind: pubdev-version-visible
   - id: testflight-mobile
     label: TestFlight (mobile)
-    kind: testflight
-    workDir: mobile
+    kind: custom
+    workDir: .
     uploader: yaver
     submitter: yaver
-    buildPlatform: xcode-ipa
+    publishCommand: ./deploy/deploy.sh ios
     runnerLabels:
       - self-hosted
       - macOS
+    requiresConfirmation: true
+    identity:
+      bundleId: io.yaver.mobile
+      track: testflight
+    postconditions:
+      - kind: apple-upload-log-accepted
   - id: playstore-mobile
     label: Play Internal (mobile)
-    kind: playstore
-    workDir: mobile
+    kind: custom
+    workDir: .
     uploader: yaver
     submitter: yaver
-    buildPlatform: gradle-aab
-    envFromVault:
-      ANDROID_KEYSTORE_PASSWORD: android-keystore-password
-      ANDROID_KEY_ALIAS: android-key-alias
-      ANDROID_KEY_PASSWORD: android-key-password
+    publishCommand: ./deploy/deploy.sh android
+    requiresConfirmation: true
+    identity:
+      packageName: io.yaver.mobile
+      track: internal
+    postconditions:
+      - kind: google-edit-committed

@@ -4,7 +4,10 @@
   "version": "0.1.12",
   "description": "Desktop GUI for the Yaver web dashboard — chat, vibing, devices, and previews in a native shell.",
   "main": "src/main.js",
-  "author": "Kivanç Çakmak <kivanc.cakmak@simkab.com>",
+  "author": {
+    "name": "SIMKAB",
+    "email": "kivanc.cakmak@simkab.com"
+  },
   "homepage": "https://yaver.io/download",
   "license": "FSL-1.1-Apache-2.0",
   "private": true,
@@ -17,11 +20,15 @@
     "dist:mac": "node scripts/preflight-pack.mjs && electron-builder --mac",
     "dist:mas": "electron-builder --config electron-builder.mas.cjs --mac mas --universal --publish never",
     "dist:mas-dev": "YAVER_MAS_TARGET=mas-dev electron-builder --config electron-builder.mas.cjs --mac mas-dev --publish never",
-    "dist:win": "node scripts/preflight-pack.mjs && electron-builder --win",
-    "dist:linux": "node scripts/preflight-pack.mjs && electron-builder --linux"
+    "dist:win": "node scripts/preflight-pack.mjs --platform=win32 --arch=x64 && electron-builder --config electron-builder.windows.cjs --win --x64",
+    "dist:win:store": "electron-builder --config electron-builder.microsoft-store.cjs --win --x64 --publish never",
+    "signing:windows:prepare": "bash scripts/prepare-jsign.sh",
+    "dist:linux": "node scripts/preflight-pack.mjs && electron-builder --linux",
+    "store:windows:metadata": "node scripts/microsoft-store-package-metadata.mjs",
+    "store:windows:status": "node ../scripts/microsoft-store-submission.mjs status"
   },
   "devDependencies": {
-    "electron": "43.4.0",
+    "electron": "43.7.5",
     "electron-builder": "26.15.3"
   },
   "dependencies": {
@@ -55,7 +62,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "kivanccakmak",
+        "owner": "yaver-io",
         "repo": "yaver.io",
         "releaseType": "release"
       }
@@ -68,6 +75,10 @@
           "yaver",
           "yaver.exe"
         ]
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE.txt"
       }
     ],
     "mac": {
@@ -125,6 +136,8 @@
       "allowElevation": false,
       "selectPerMachineByDefault": false,
       "allowToChangeInstallationDirectory": true,
+      "uninstallDisplayName": "Yaver",
+      "shortcutName": "Yaver",
       "artifactName": "yaver-gui-${version}-win-${arch}-setup.${ext}",
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico"

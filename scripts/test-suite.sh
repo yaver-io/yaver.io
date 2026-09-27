@@ -618,10 +618,13 @@ run_unit_tests() {
               convex/billingWebhook.test.mts \
               convex/credentialHandoffDevices.test.mts \
               convex/dogfoodEnrollmentPolicy.test.mts \
+              convex/productAvailability.test.mts \
+              convex/relayDeploymentPolicy.test.mts \
               convex/relayPoolPolicy.test.mts \
               convex/settingsSecretPolicy.test.mts \
               convex/taskPlacementPolicy.test.mts \
-              convex/wakeOnRequestPolicy.test.mts > "$TEST_DIR/convex-policy-test.log" 2>&1); then
+              convex/wakeOnRequestPolicy.test.mts > "$TEST_DIR/convex-policy-test.log" 2>&1 && \
+              npx tsx --test convex/http.test.mts >> "$TEST_DIR/convex-policy-test.log" 2>&1); then
             pass "Convex policy unit tests passed"
         else
             fail "Convex policy unit tests failed"

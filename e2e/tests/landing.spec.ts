@@ -33,7 +33,8 @@ test.describe("landing page", () => {
     await expect(hero).toContainText(/Yaver is an open-source/i);
     await expect(hero).toContainText(/real-device app loop/i);
     await expect(page.getByText(/Vibe it, see it\. Instantly on your real phone/i)).toBeVisible();
-    await expect(page.getByText(/Your coding agent builds on your own machine/i)).toBeVisible();
+    await expect(page.getByText(/Your coding agent builds on your own Mac, PC, Linux box, or VPS/i)).toBeVisible();
+    await expect(page.getByText(/Cloud Workspace/i)).toHaveCount(0);
 
     expect(errors, `console errors on /: ${errors.join(" | ")}`).toEqual([]);
   });

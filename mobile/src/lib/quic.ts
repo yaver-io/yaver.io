@@ -660,6 +660,8 @@ export interface Task {
   videoSource?: "browser" | "sim-ios" | "sim-android" | "phone";
   videoClipId?: string;
   videoStatus?: "queued" | "recording" | "ready" | "failed" | "stale";
+  /** Structured browser verification produced by the desktop agent. */
+  verification?: TaskVerification;
   /** Task-proof evidence (vibe-preview F3): the agent records what it did
    *  after completion. `proofStatus`/`proofUrl` on the Task row mirror the
    *  hydrated `TaskProof` from GET /tasks/{id}/proof. */
@@ -668,6 +670,42 @@ export interface Task {
   commitSha?: string;
   commitSubject?: string;
   diffShortstat?: string;
+}
+
+export interface TaskVerificationCheck {
+  name: string;
+  status: "pass" | "fail" | string;
+  error?: string;
+  durationMs?: number;
+}
+
+export interface TaskVerificationArtifact {
+  kind: string;
+  name?: string;
+  mimeType?: string;
+  bytes?: number;
+  url?: string;
+}
+
+export interface TaskVerification {
+  kind: string;
+  status: "running" | "passed" | "failed";
+  attempt: number;
+  project?: string;
+  feature?: string;
+  total?: number;
+  passed?: number;
+  failed?: number;
+  durationMs?: number;
+  checks?: TaskVerificationCheck[];
+  artifacts?: TaskVerificationArtifact[];
+  videoClipId?: string;
+  videoUrl?: string;
+  posterUrl?: string;
+  failureCode?: string;
+  failureReason?: string;
+  startedAt: string;
+  finishedAt?: string;
 }
 
 export interface TaskExecutionIdentity {

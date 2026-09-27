@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.net.Uri
+import android.widget.VideoView
 import androidx.navigation.NavHostController
 import io.yaver.tv.AgentError
 import io.yaver.tv.TaskRow
@@ -90,7 +94,7 @@ fun TasksScreen(store: TvStore, nav: NavHostController) {
         when {
             box == null -> {
                 Text("remoteless.code-edit.unavailable", color = TvColors.Orange, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Android TV has no phone-local repository or safe background coding runtime. Choose your primary/secondary machine; use Cloud Workspace when neither can provide the required capability.", color = TvColors.TextSecondary, fontSize = 20.sp)
+                Text("Android TV has no local repository or safe background coding runtime. Choose a capable primary/secondary machine or VPS.", color = TvColors.TextSecondary, fontSize = 20.sp)
                 TvTextButton("Choose a capable device", onClick = { nav.navigate(Routes.MACHINES) })
             }
             loading -> Text("Loading tasks…", color = TvColors.TextSecondary, fontSize = 22.sp)
@@ -179,6 +183,7 @@ fun TaskDetailScreen(store: TvStore, nav: NavHostController, taskId: String) {
     var runnerControlBusy by remember { mutableStateOf(false) }
     var runnerControlError by remember { mutableStateOf<String?>(null) }
     var runnerControlNotice by remember { mutableStateOf<String?>(null) }
+    var showVerificationVideo by remember { mutableStateOf(false) }
     fun reload() {
         scope.launch {
             loading = true
@@ -261,6 +266,11 @@ fun TaskDetailScreen(store: TvStore, nav: NavHostController, taskId: String) {
             loading -> Text("Loading task…", color = TvColors.TextSecondary, fontSize = 22.sp)
             error != null -> ErrorPanel(error!!, onRetry = ::reload)
             task != null -> {
+                val verification = task!!.optJSONObject("verification")
+                val verificationStatus = verification?.optString("status").orEmpty()
+                val verificationClip = verification?.optString("videoClipId").orEmpty()
+                    .ifEmpty { task!!.optString("videoClipId") }
+                val taskStatus = task!!.optString("status")
                 Text(task!!.optString("title").ifEmpty { "Untitled task" }, color = TvColors.TextPrimary, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 val model = task!!.optString("model")
                 val effort = task!!.optString("reasoningEffort")
@@ -274,8 +284,37 @@ fun TaskDetailScreen(store: TvStore, nav: NavHostController, taskId: String) {
                     TvTextButton(if (model.isEmpty()) "Model" else listOf(model, effort).filter { it.isNotEmpty() }.joinToString(" · "), onClick = { openRunnerControl("model") })
                     TvTextButton("Exit", onClick = { openRunnerControl("exit") })
                 }
+                if (verificationStatus.isNotEmpty()) {
+                    Text(
+                        when (verificationStatus) {
+                            "passed" -> "Browser verified · ${verification?.optInt("passed") ?: 0}/${verification?.optInt("total") ?: 0} passed"
+                            "failed" -> "Browser verification failed · ${verification?.optString("failureReason").orEmpty().ifEmpty { "open the task checks for the cause" }}"
+                            else -> "Browser verification running…"
+                        },
+                        color = when (verificationStatus) { "passed" -> TvColors.Green; "failed" -> TvColors.Red; else -> TvColors.Orange },
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                if (verificationClip.isNotEmpty()) {
+                    TvTextButton(if (showVerificationVideo) "Close browser proof" else "Watch browser proof", onClick = { showVerificationVideo = !showVerificationVideo })
+                    if (showVerificationVideo) {
+                        val endpoint = box?.requestEndpoints("/vibing/preview/clip/$verificationClip")?.firstOrNull()
+                        if (endpoint != null) AndroidView(
+                            factory = { context ->
+                                VideoView(context).apply {
+                                    val headers = mutableMapOf("Authorization" to "Bearer ${store.token.value}", "X-Yaver-Surface" to "android-tv")
+                                    if (endpoint.relay && !box?.relayPassword.isNullOrEmpty()) headers["X-Relay-Password"] = box!!.relayPassword!!
+                                    setVideoURI(Uri.parse(endpoint.url), headers)
+                                    setOnPreparedListener { player -> player.isLooping = false; start() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(360.dp),
+                        )
+                    }
+                }
                 val presentation = io.yaver.tv.parseTaskPresentation(task!!.optJSONArray("presentation"))
-                val primaryUpdate = if (status == "running" || status == "queued") {
+                val primaryUpdate = if (taskStatus == "running" || taskStatus == "queued") {
                     presentation.lastOrNull { it.kind == "message" && it.role == "assistant" }
                 } else null
                 (primaryUpdate ?: presentation.lastOrNull { it.kind != "message" })?.let { summary ->
@@ -407,6 +446,15 @@ private fun TaskCard(task: TaskRow, onClick: () -> Unit) {
             (primaryUpdate ?: task.presentation.lastOrNull { it.kind != "message" })?.let { summary ->
                 Text(summary.text, color = TvColors.TextSecondary, fontSize = 16.sp, maxLines = 2)
             }
+            task.verificationStatus?.let { verification ->
+                Text(
+                    if (verification == "passed") "Verified ${task.verificationPassed ?: 0}/${task.verificationTotal ?: 0}"
+                    else if (verification == "failed") "Verification failed" else "Verifying…",
+                    color = when (verification) { "passed" -> TvColors.Green; "failed" -> TvColors.Red; else -> TvColors.Orange },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
         Text("Select ›", color = TvColors.TextSecondary, fontSize = 17.sp)
     }
@@ -434,7 +482,7 @@ fun VibingScreen(store: TvStore, nav: NavHostController) {
     ) {
         BackBar("Vibing", box?.name?.let { "Render on $it" }, onBack = { nav.popBackStack() })
         Text("remoteless.dev-server.unavailable", color = TvColors.Orange, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text("This TV can display an already-served preview, but cannot run a shell, package manager, Flutter SDK, dev server, simulator, build, test, or deploy. Use the primary/secondary render machine or Cloud Workspace.", color = TvColors.TextSecondary, fontSize = 20.sp)
+        Text("This TV can display an already-served preview, but cannot run a shell, package manager, Flutter SDK, dev server, simulator, build, test, or deploy. Use a capable primary/secondary render machine or VPS.", color = TvColors.TextSecondary, fontSize = 20.sp)
         TvTextButton("Choose a capable device", onClick = { nav.navigate(Routes.MACHINES) })
     }
 }

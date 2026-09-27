@@ -68,6 +68,12 @@ function agentEnv() {
   return {
     ...process.env,
     YAVER_VAULT_SKIP_KEYCHAIN: "1",
+    // The desktop shell owns the user's single Start at login preference.
+    // Without this guard, `yaver serve` independently registers a launchd /
+    // systemd / Windows Task Scheduler entry on first start, so the UI can say
+    // the preference is off while the agent has already enabled persistence.
+    // Direct CLI installs retain their existing auto-start behaviour.
+    YAVER_SKIP_AUTO_START: "1",
   };
 }
 

@@ -232,7 +232,7 @@ export default function TermsOfServicePage() {
           of Turkey, without regard to conflict of law principles.
         </p>
 
-        <h2 className="!mt-10 border-b border-surface-800 pb-2 text-lg font-semibold text-surface-100">
+        <h2 id="contact" className="!mt-10 border-b border-surface-800 pb-2 text-lg font-semibold text-surface-100">
           16. Contact
         </h2>
         <p>SIMKAB ELEKTRIK</p>

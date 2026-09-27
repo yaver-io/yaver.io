@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "channel": "microsoft-store-full-node",
+  "modes": ["client", "agent", "client-and-agent"],
+  "localAgent": true,
+  "bundledWsl": false,
+  "updates": "microsoft-store"
+}

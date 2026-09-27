@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         IgnorableNamespaces="uap mp">
+  <!-- Development identity only. Partner Center association replaces it. -->
+  <Identity Name="io.yaver.xbox.dev" Publisher="CN=Development" Version="0.1.0.0" ProcessorArchitecture="x64" />
+  <mp:PhoneIdentity PhoneProductId="b6c07c68-2334-45fb-b771-c255ba4178f1" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+  <Properties>
+    <DisplayName>Yaver</DisplayName>
+    <PublisherDisplayName>SIMKAB</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Xbox" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources><Resource Language="en-us" /></Resources>
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="YaverXbox.App">
+      <uap:VisualElements DisplayName="Yaver" Description="View your Yaver machine availability from Xbox"
+                          BackgroundColor="#090B10" Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#090B10" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+  <Capabilities><Capability Name="internetClient" /></Capabilities>
+</Package>

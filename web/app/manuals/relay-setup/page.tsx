@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 export default function RelaySetupManual() {
   return (
@@ -55,13 +54,13 @@ export default function RelaySetupManual() {
             </div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
-            {HIDE_PAID_UI
-              ? "After the agent is running, sign in on the web dashboard or mobile app and pick your machine. The shared relay is free with fair limits that keep the pool reliable for everyone."
-              : "After the agent is running, sign in on the web dashboard or mobile app and pick your machine. Free Relay is shared and limited. Relay Pro gives you a private managed relay and higher limits."}
+            After the agent is running, sign in from any supported Yaver client
+            and pick your machine. Free Relay is shared and limited. Relay Pro
+            provides a managed account-private lane with higher limits.
           </p>
         </section>
 
-        {!HIDE_PAID_UI && (
+        {(
           <section className="mb-10 grid gap-4 md:grid-cols-2">
             <Link
               href="/dashboard?tab=billing"
@@ -79,21 +78,6 @@ export default function RelaySetupManual() {
               </span>
             </Link>
 
-            <Link
-              href="/dashboard?tab=cloud"
-              className="rounded-lg border border-surface-800 bg-surface-900/60 p-5 transition-colors hover:border-surface-600"
-            >
-              <h2 className="mb-2 text-base font-semibold text-surface-100">
-                Cloud Workspace
-              </h2>
-              <p className="mb-4 text-sm leading-relaxed text-surface-400">
-                Choose Cloud Workspace when you also want a saved Yaver-hosted dev
-                machine for builds, app previews, and deployment work.
-              </p>
-              <span className="text-xs font-medium text-surface-200">
-                Open cloud &rarr;
-              </span>
-            </Link>
           </section>
         )}
 

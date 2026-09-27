@@ -46,7 +46,7 @@ const faqs = [
   },
   {
     q: "Where does the coding agent run?",
-    a: "It runs on your laptop, workstation, home server, self-hosted machine, or optional Yaver Cloud Workspace. The repository and local development tools stay on the selected runtime machine.",
+    a: "It runs on a laptop, workstation, home server, self-hosted machine, or VPS you control. The repository and local development tools stay on that runtime machine.",
   },
   {
     q: "Can I preview an agent's mobile app changes on a real phone?",
@@ -122,7 +122,7 @@ export default function RemoteAiCodingAgentPage() {
             Remote AI runner and real-device UI testing
           </h1>
           <p className="max-w-3xl text-lg leading-relaxed text-surface-300">
-            Yaver runs Claude Code, OpenAI Codex, OpenCode, and terminal coding agents on your own development machine—or an optional Cloud Workspace—while you supervise them from your phone, browser, or desktop. Build and inspect supported app changes on real iPhone and Android devices.
+            Yaver runs Claude Code, OpenAI Codex, OpenCode, and terminal coding agents on your own development machine or VPS while you supervise them from your phone, browser, desktop, watch, TV, car, or spatial client. Build and inspect supported app changes on real iPhone and Android devices.
           </p>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-surface-400">
             In practical terms, Yaver is a self-hostable AI coding agent runner: the agent stays beside your repository and toolchain, while secure remote surfaces let you keep the task moving from elsewhere.

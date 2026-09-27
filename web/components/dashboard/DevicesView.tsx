@@ -11,9 +11,7 @@ import { SilentInputPanel } from "./SilentInputPanel";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { DevicePowerModal } from "@/components/dashboard/DevicePowerModal";
-import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
 import WakeProgress, { ParkedSummary } from "@/components/dashboard/WakeProgress";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, isRunnerBrowserAuthTerminal, requestAgentUpdateViaConvex, type AgentUpdateStatus, type ConnectAttemptDiagnostic, type OpenCodeConfigSummary, type OpenCodeModelSummary, type OpenCodeProviderSummary, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { runnerAuthLivenessLine } from "@/lib/runnerAuthFlow";
@@ -67,6 +65,7 @@ import type { useMachineRoles, MachineRolesRow } from "@/lib/useMachineRoles";
 import { isThisDesktopDevice, type DesktopSurfaceInfo } from "@/lib/desktopSurface";
 import { runnerMenuStatusText } from "@/lib/runnerMenuStatus";
 import { deviceRemovalPolicy } from "@/lib/deviceRemovalPolicy";
+import { ENABLE_CLOUD_WORKSPACE_UI } from "@/lib/launchFlags";
 
 function transportToneClasses(tone: TransportInfo["tone"]): string {
   switch (tone) {
@@ -3173,9 +3172,12 @@ export default function DevicesView({
   // any card re-renders the list and the connected card can pick up its RTT.
   const reachSampleVersion = useDeviceReachSampleVersion();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
-  const managedDeviceIds = useManagedDeviceIds(token);
+  // Hidden means absent, including background inventory calls and labels on
+  // otherwise-normal device cards. Existing self-hosted/VPS devices remain.
+  const cloudToken = ENABLE_CLOUD_WORKSPACE_UI ? token : null;
+  const managedDeviceIds = useManagedDeviceIds(cloudToken);
   const { machines: managedMachines, refresh: refreshManagedMachines } =
-    useManagedMachines(token);
+    useManagedMachines(cloudToken);
   const [refreshing, setRefreshing] = useState(false);
   // Refresh must mean "re-check everything", not "re-fetch the device list".
   // It previously fired a single GET /devices/list and left probe backoff,
@@ -3684,10 +3686,6 @@ export default function DevicesView({
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal, no usable relay/tunnel path, or are duplicate auth-recovery rows for a role-bearing machine.
             </div>
-          ) : null}
-          {/* HN-LAUNCH-HIDE-PAID: hide the "Yaver Cloud — rent a managed box" banner. */}
-          {onNavigateCloud && !HIDE_PAID_UI ? (
-            <ManagedCloudSummary token={token} onOpen={onNavigateCloud} />
           ) : null}
           {renderedDevices.map((device) => {
             const isSelectedWorkspace = activeWorkspaceDeviceId === device.id;

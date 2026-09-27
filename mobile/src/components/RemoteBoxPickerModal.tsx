@@ -35,6 +35,7 @@ import {
   WAKE_STAGES,
 } from "../lib/parkedMachines";
 import type { ManagedCloudMachineSummary } from "../lib/subscription";
+import { ENABLE_CLOUD_WORKSPACE_UI } from "../lib/launchFlags";
 
 interface Props {
   visible: boolean;
@@ -463,7 +464,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     justWoke: managedJustWoke,
     wake: wakeManagedMachine,
     refresh: refreshManagedMachines,
-  } = useParkedMachines(token);
+  } = useParkedMachines(ENABLE_CLOUD_WORKSPACE_UI ? token : null);
   const [recoveringMachineId, setRecoveringMachineId] = React.useState<string | null>(null);
   const [recoveringDeviceId, setRecoveringDeviceId] = React.useState<string | null>(null);
   const sleepingMachines = React.useMemo(
@@ -1302,7 +1303,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                 rendered only on the row disappears at exactly the moment it has
                 something to say. That is the bug the user filmed: tap Wake, the
                 row vanishes, nothing is ever explained. */}
-            {sleepingMachines.length > 0 || managedLastFailure || managedJustWoke ? (
+            {ENABLE_CLOUD_WORKSPACE_UI && (sleepingMachines.length > 0 || managedLastFailure || managedJustWoke) ? (
               <View style={{ marginTop: 8 }}>
                 <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700", marginBottom: 2 }}>
                   Sleeping machines

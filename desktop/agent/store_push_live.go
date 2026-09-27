@@ -98,7 +98,7 @@ func resolveAppleASCCreds(project string) (*ascCreds, error) {
 	// instead of hard-failing.
 	//
 	// Own project only — see ascCredsFromEnv's SECURITY note.
-	ownProject := project == "" || project == "mobile"
+	ownProject := project == "" || project == "mobile" || project == "yaver"
 
 	vs, err := openVaultOptional()
 	if err != nil || vs == nil {
@@ -113,8 +113,13 @@ func resolveAppleASCCreds(project string) (*ascCreds, error) {
 		if e, err := vs.Get(project, name); err == nil {
 			return e.Value
 		}
-		if e, err := vs.Get("", name); err == nil { // fall back to global
-			return e.Value
+		// A named third-party project must never inherit the operator's global
+		// App Store identity. Global fallback is reserved for Yaver's own/default
+		// project for backwards compatibility with the original vault layout.
+		if ownProject {
+			if e, err := vs.Get("", name); err == nil {
+				return e.Value
+			}
 		}
 		return ""
 	}
@@ -177,8 +182,12 @@ func resolveGoogleSA(project string) (*googleSA, error) {
 	path := ""
 	if e, err := vs.Get(project, "PLAY_STORE_KEY_FILE"); err == nil {
 		path = e.Value
-	} else if e, err := vs.Get("", "PLAY_STORE_KEY_FILE"); err == nil {
-		path = e.Value
+	} else if project == "" || project == "mobile" || project == "yaver" {
+		// As with Apple credentials, only Yaver's own/default project may use
+		// the legacy global vault entry. Named projects fail closed.
+		if e, err := vs.Get("", "PLAY_STORE_KEY_FILE"); err == nil {
+			path = e.Value
+		}
 	}
 	if path == "" {
 		return nil, fmt.Errorf("missing PLAY_STORE_KEY_FILE in vault — see `yaver stores google-service-account`")

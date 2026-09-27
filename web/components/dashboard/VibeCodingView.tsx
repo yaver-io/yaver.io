@@ -1247,6 +1247,18 @@ export default function VibeCodingView({
             setStreamedOutput("");
             return;
           }
+          if (event?.type === "task_verification" && event.verification) {
+            const verification = event.verification as Task["verification"];
+            setTaskList((current) => current.map((task) => task.id === activeStreamTaskId
+              ? {
+                  ...task,
+                  verification,
+                  videoClipId: verification?.videoClipId || task.videoClipId,
+                  videoStatus: verification?.videoClipId ? "ready" : task.videoStatus,
+                }
+              : task));
+            return;
+          }
           // Structured render intent — the runner finished a turn and asked
           // for the preview to refresh. Captured here (the same event
           // PreviewPane/RuntimeLabView consume) so the preview reloads when
@@ -1599,7 +1611,7 @@ export default function VibeCodingView({
     if (shouldConfirmExpensiveCloudPlacement(placementPreview)) {
       const ok = window.confirm(expensiveCloudPlacementMessage(placementPreview));
       if (!ok) {
-        setBusy("Heavy Cloud Workspace task cancelled.");
+        setBusy("Hosted-runner task cancelled.");
         return;
       }
     }
@@ -1690,7 +1702,7 @@ export default function VibeCodingView({
       setDraftTitle("");
       setTaskList((prev) => [pendingTask, ...prev.filter((row) => row.id !== pendingTask.id)]);
       setActiveTaskId(pendingTask.id);
-      setBusy("Cloud Workspace is waking. Task is queued locally; it was not sent to the wrong machine.");
+      setBusy("The legacy hosted runner is unavailable. The task remains queued locally; choose your own machine or VPS.");
       setRefreshNonce((value) => value + 1);
       return;
     }
@@ -1769,7 +1781,7 @@ export default function VibeCodingView({
       setDraftTitle("");
       setTaskList((prev) => [pendingTask, ...prev.filter((row) => row.id !== pendingTask.id)]);
       setActiveTaskId(pendingTask.id);
-      setBusy("Cloud Workspace is waking. Task is queued locally; it was not sent to the wrong machine.");
+      setBusy("The legacy hosted runner is unavailable. The task remains queued locally; choose your own machine or VPS.");
       setRefreshNonce((value) => value + 1);
       return;
     }
@@ -3537,6 +3549,19 @@ export default function VibeCodingView({
                 ) : activeTask?.videoStatus === "recording" || activeTask?.videoStatus === "queued" ? (
                   <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
                     🎬 {activeTask.videoStatus}…
+                  </span>
+                ) : null}
+                {!activeGraphRunId && activeTask?.verification ? (
+                  <span className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
+                    activeTask.verification.status === "passed"
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : activeTask.verification.status === "failed"
+                        ? "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  }`}>
+                    {activeTask.verification.status === "passed"
+                      ? `Verified ${activeTask.verification.passed ?? 0}/${activeTask.verification.total ?? 0}`
+                      : activeTask.verification.status === "failed" ? "Verification failed" : "Verifying…"}
                   </span>
                 ) : null}
                 {!activeGraphRunId && placementLaneLabel(activeTask?.placementLane) ? (

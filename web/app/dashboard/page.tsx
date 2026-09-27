@@ -86,7 +86,6 @@ import { isRelayCredentialDeny, RELAY_CREDENTIAL_REMEDY } from "@/lib/relayAuth"
 import { usableTunnelUrls } from "@/lib/endpoints";
 import { classifyFetchError, summarizeFailures } from "@/lib/connection-error";
 import { clearLastFailure, recordLastFailure } from "@/lib/probe-backoff";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { parseDashboardChatIntent } from "@/lib/dashboard-chat-intent";
 import {
   loadLastProjectFromConvex,
@@ -1729,6 +1728,18 @@ export default function DashboardPage() {
           setTasks((previous) => previous.map((task) => task.id === tid
             ? { ...task, presentation: reduceTaskPresentation(task.presentation ?? [], evt) }
             : task));
+        } else if (evt.type === "task_verification" && evt.verification) {
+          const verification = evt.verification as Task["verification"];
+          const apply = (task: Task): Task => task.id === tid
+            ? {
+                ...task,
+                verification,
+                videoClipId: verification?.videoClipId || task.videoClipId,
+                videoStatus: verification?.videoClipId ? "ready" : task.videoStatus,
+              }
+            : task;
+          setActiveTask((current) => current ? apply(current) : current);
+          setTasks((previous) => previous.map(apply));
         } else if (evt.type === "agent_question" && evt.question) {
           const q = evt.question as {
             id: string;
@@ -1841,6 +1852,8 @@ export default function DashboardPage() {
       next.proofStatus !== activeTask.proofStatus ||
       next.videoStatus !== activeTask.videoStatus ||
       next.videoClipId !== activeTask.videoClipId ||
+      next.verification?.status !== activeTask.verification?.status ||
+      next.verification?.attempt !== activeTask.verification?.attempt ||
       next.commitSha !== activeTask.commitSha
     ) {
       setActiveTask(next);
@@ -4772,7 +4785,7 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ExtrasView /></div>
           ) : activeTab === "share" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
-          ) : activeTab === "build" && !HIDE_PAID_UI ? (
+          ) : activeTab === "build" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-semibold text-surface-100">Build your app</h2>
               <p className="mt-1 max-w-2xl text-xs leading-5 text-surface-500">

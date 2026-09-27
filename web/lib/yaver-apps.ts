@@ -257,7 +257,7 @@ const defaultDeveloperWorkspace = {
     provider: "hetzner",
     scaleToZero: true,
     notes:
-      "Yaver Cloud is optional managed compute for builds, previews, and runners. Hetzner machines must snapshot and delete when idle; stopped boxes still bill.",
+      "Legacy hosted compute is unavailable at launch. Builds, previews, and runners use the developer's connected machine or VPS.",
   },
   codingRunners: {
     supported: ["claude", "codex", "opencode", "custom-tmux"],
@@ -319,7 +319,7 @@ export const SFMG_YAVER_APP: YaverAppManifest = {
     cloudAllocation: {
       ...defaultDeveloperWorkspace.cloudAllocation,
       notes:
-        "Kivanc and Serhat can allocate temporary Yaver Cloud/Hetzner development boxes for SFMG, clone the closed SFMG repo there, configure OpenCode/GLM on that target, and tear the box down when idle.",
+        "Named owners can use temporary private development boxes for SFMG, clone the closed repo there, configure OpenCode/GLM on that target, and tear the box down when idle.",
     },
     exitRights: {
       ...defaultDeveloperWorkspace.exitRights,
@@ -589,10 +589,10 @@ export const PERSONAL_RUNTIME_APP: YaverAppManifest = {
   launchPlan: [
     "Unify personal assistant connectors, browser automation, redroid, and device surfaces as one Yaver app runtime.",
     "Use phone for setup and risky approvals, watch for glanceable approvals, car for voice summaries, and TV/XR for wallboard views.",
-    "Sell managed cloud, inference, and relay capacity as the paid runtime behind the app.",
+    "Sell private relay access while execution stays on each user's own devices or VPS.",
   ],
   platformExtensions: [
-    "Third-party developers can build connector packs and publish outside Yaver while paying for Yaver cloud/inference.",
+    "Third-party developers can build connector packs and publish outside Yaver while using Relay Pro for private reachability.",
     "Official catalog connector packs use Yaver billing and revenue-share terms.",
   ],
   platformPositioning: {
@@ -658,7 +658,7 @@ export const PERSONAL_HEALTH_AGENT_APP: YaverAppManifest = {
     cloudAllocation: {
       ...defaultDeveloperWorkspace.cloudAllocation,
       notes:
-        "Health connectors should default to local/self-hosted execution. Yaver Cloud is opt-in for scheduled checks, must scale to zero, and must keep health artifacts in the user's runtime/vault rather than Convex.",
+        "Health connectors use local or self-hosted execution and keep health artifacts in the user's runtime or vault rather than Convex.",
     },
   },
   publishPolicy: {

@@ -7,9 +7,9 @@ test("missing runner is a named render capability failure with an actionable rou
   const failure = remoteRenderRequiredFailure("This TV");
   assert.equal(failure.legacyCode, REMOTE_RENDER_REQUIRED);
   assert.equal(failure.code, "remoteless.dev-server.unavailable");
-  assert.match(failure.message, /primary\/secondary device/i);
+  assert.match(failure.message, /own capable machine or VPS/i);
   assert.equal(failure.action.route, "/devices");
-  assert.equal(failure.alternativeAction?.route, "/cloud-onboarding");
+  assert.equal(failure.alternativeAction?.route, "/devices");
 });
 
 test("Flutter on iPhone names the exact missing remoteless capability", () => {

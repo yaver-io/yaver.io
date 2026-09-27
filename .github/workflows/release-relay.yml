@@ -81,6 +81,9 @@ jobs:
   docker:
     needs: validate
     runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      digest: ${{ steps.relay_image.outputs.digest }}
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -96,6 +99,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push Docker image
+        id: relay_image
         uses: docker/build-push-action@v6
         with:
           context: relay
@@ -108,6 +112,7 @@ jobs:
   release:
     needs: [validate, build, docker]
     runs-on: ubuntu-latest
+    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -134,8 +139,9 @@ jobs:
             release/*
 
   update-version:
-    needs: [validate, release]
+    needs: [validate, release, docker]
     runs-on: ubuntu-latest
+    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -148,4 +154,10 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY_3 || secrets.CONVEX_DEPLOY_KEY_2 || secrets.CONVEX_DEPLOY_KEY }}
         run: |
           cd backend && npm ci
+          IMAGE="ghcr.io/${{ github.repository_owner }}/yaver-relay@${{ needs.docker.outputs.digest }}"
+          case "$IMAGE" in
+            *@sha256:????????????????????????????????????????????????????????????????) ;;
+            *) echo "ERROR: relay image is not digest-pinned: $IMAGE" >&2; exit 1 ;;
+          esac
+          npx convex env set YAVER_RELAY_IMAGE "$IMAGE" --prod
           ../scripts/update-convex-version.sh relay "$VERSION"

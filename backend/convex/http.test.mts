@@ -176,6 +176,43 @@ test("dev preview activation does not schedule managed provisioning", () => {
   assert.doesNotMatch(block, /internal\.cloudMachines\.create,/);
 });
 
+test("owner preview activation and adoption also obey the launch cloud kill switch", () => {
+  for (const path of ["/billing/yaver-cloud/dev-activate", "/billing/yaver-cloud/dev-adopt"]) {
+    const block = httpRouteBlock(path, "POST");
+    assert.match(block, /cloudWorkspacePublicEnabled\(\)/, path);
+    assert.match(block, /CLOUD_WORKSPACE_UNAVAILABLE/, path);
+  }
+});
+
+test("interactive cancellation confirms Lemon Squeezy before changing local state", () => {
+  const block = httpRouteBlock("/billing/cancel", "POST");
+  const providerCall = block.indexOf("cancelLemonSqueezySubscription");
+  const localCancel = block.indexOf("subscriptions.cancelById");
+  assert.ok(providerCall >= 0, "cancel route calls the billing provider");
+  assert.ok(localCancel > providerCall, "local cancellation happens only after provider confirmation");
+  assert.match(block, /if \(!providerCancel\.ok\)/);
+  assert.match(block, /providerAlreadyCancelled: true/);
+});
+
+test("Relay Pro has an owner-only real-infrastructure activation stub", () => {
+  const route = httpRouteBlock("/billing/relay-pro/dev-activate", "POST");
+  assert.match(route, /handler: relayProDevActivation/);
+  const start = httpSource.indexOf("const relayProDevActivation");
+  const end = httpSource.indexOf("path: \"/billing/relay-pro/dev-activate\"", start);
+  const handler = httpSource.slice(start, end);
+  assert.match(handler, /isCloudPreviewUser/);
+  assert.match(handler, /managedRelays\.create/);
+  assert.match(handler, /provisionRelay\.provision/);
+  assert.doesNotMatch(handler, /subscriptions\.upsertFromWebhook/);
+});
+
+test("Relay Pro checkout stays closed until the explicit payment launch gate", () => {
+  const block = httpRouteBlock("/billing/checkout", "POST");
+  assert.match(block, /relayProCheckoutEnabled\(\)/);
+  assert.match(block, /RELAY_PRO_CHECKOUT_UNAVAILABLE/);
+  assert.match(block, /relay_pro_checkout_unavailable/);
+});
+
 test("billing product normalizer exposes only Relay Pro and Cloud Workspace", () => {
   for (const value of [undefined, "", "relay-pro", "relay-monthly", "relay-yearly", "managed-relay"]) {
     assert.equal(normalizeBillingProduct(value), "relay-pro", String(value));
@@ -280,7 +317,7 @@ test("account-level billing and cloud-control routes require full user scope", (
     { path: "/billing/yaver-cloud/dev-activate" },
     { path: "/billing/yaver-cloud/dev-adopt" },
     { path: "/billing/yaver-cloud/dev-deprovision" },
-    { path: "/billing/yaver-cloud/reconcile" },
+    { path: "/billing/relay-pro/reconcile" },
     { path: "/billing/yaver-cloud/runners-authorized" },
     { path: "/billing/yaver-cloud/topup-dev" },
     { path: "/billing/credits/packs" },
@@ -305,6 +342,20 @@ test("buyer billing status does not expose raw wallet balance", () => {
   assert.match(block, /includedStandardCredits/);
 });
 
+test("Cloud Workspace purchase, activation, and wake routes fail closed", () => {
+  for (const route of [
+    { path: "/billing/yaver-cloud/checkout", method: "POST" },
+    { path: "/billing/yaver-cloud/change-plan", method: "POST" },
+    { path: "/billing/yaver-cloud/start", method: "POST" },
+  ]) {
+    const block = httpRouteBlock(route.path, route.method);
+    assert.match(block, /CLOUD_WORKSPACE_UNAVAILABLE/);
+    assert.match(block, /410/);
+  }
+  assert.match(httpRouteBlock("/tasks/placement/activate", "POST"), /cloudWorkspacePublicEnabled/);
+  assert.match(httpRouteBlock("/billing/checkout", "POST"), /productId !== "relay-pro"/);
+});
+
 test("cloud placement activation filters machines through placement eligibility before wake", () => {
   const block = httpRouteBlock("/tasks/placement/activate", "POST");
   assert.match(block, /requireFullScope\(session\)/);
@@ -315,10 +366,12 @@ test("cloud placement activation filters machines through placement eligibility 
   assert.doesNotMatch(block, /"stopped"[\s\S]*selectCloudMachineForPlacement/);
 });
 
-test("lemonsqueezy webhook provisions only for active subscription_created events", () => {
+test("lemonsqueezy webhook idempotently fulfills Relay Pro on every active lifecycle event", () => {
   const block = httpRouteBlock("/webhooks/lemonsqueezy", "POST");
   assert.match(block, /const status = normalizeLemonSqueezySubscriptionStatus\(data\.status\)/);
-  assert.match(block, /if \(eventName === "subscription_created" && status === "active"\)/);
+  assert.match(block, /if \(status === "active"\)/);
+  assert.match(block, /hasReusableManagedRelayForReconcile\(existingRelays\)/);
+  assert.match(block, /isCloudWorkspaceProduct && eventName === "subscription_created"/);
   assert.doesNotMatch(block, /data\.status === "active" \? "active" : data\.status === "past_due" \? "past_due" : "active"/);
 });
 

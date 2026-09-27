@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "releaseStatus": "superseded",
+  "releaseBlockers": [
+    "Partner Center validation 58809486 could not verify silent installation or identify the Installed apps name and publisher",
+    "Windows payload contains the macOS ARM64 resources/bin/yaver binary",
+    "Embedded agent can register a Windows scheduled task while the desktop Start at login preference is off",
+    "No retained clean-Windows install/uninstall validation exists for these exact bytes",
+    "No approved synthetic Store screenshots exist",
+    "Privacy policy and terms need a current Microsoft Store and managed-workspace legal review"
+  ],
+  "product": "Yaver",
+  "submissionType": "EXE",
+  "version": "0.1.11",
+  "installerFile": "yaver-gui-0.1.11-win-x64-setup.exe",
+  "installerUrl": "https://download.yaver.io/windows/0.1.11/yaver-gui-0.1.11-win-x64-setup.exe",
+  "installerSizeBytes": 130029648,
+  "installerSha256": "479c95cbd7f68745892ff0d5f4b59c30403de22826d241d47dcd7648ea685ee0",
+  "architectures": ["X64"],
+  "languages": ["en-us"],
+  "installerParameters": "/S",
+  "installerReturnCodeDocumentationUrl": "https://yaver.io/support/windows-installer-exit-codes",
+  "installerReturnCodes": {
+    "installationSuccessful": 0,
+    "installationCancelledByUser": 1,
+    "miscellaneous": 2
+  }
+}

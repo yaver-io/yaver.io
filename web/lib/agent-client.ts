@@ -114,6 +114,42 @@ export interface DomItemsReport {
   items?: { selector?: string; tag?: string; id?: string; classes?: string; text?: string; rect?: string }[];
 }
 
+export interface TaskVerificationCheck {
+  name: string;
+  status: "pass" | "fail" | string;
+  error?: string;
+  durationMs?: number;
+}
+
+export interface TaskVerificationArtifact {
+  kind: string;
+  name?: string;
+  mimeType?: string;
+  bytes?: number;
+  url?: string;
+}
+
+export interface TaskVerification {
+  kind: string;
+  status: "running" | "passed" | "failed";
+  attempt: number;
+  project?: string;
+  feature?: string;
+  total?: number;
+  passed?: number;
+  failed?: number;
+  durationMs?: number;
+  checks?: TaskVerificationCheck[];
+  artifacts?: TaskVerificationArtifact[];
+  videoClipId?: string;
+  videoUrl?: string;
+  posterUrl?: string;
+  failureCode?: string;
+  failureReason?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -152,6 +188,9 @@ export interface Task {
   videoSource?: "browser" | "sim-ios" | "sim-android" | "phone";
   videoClipId?: string;
   videoStatus?: "queued" | "recording" | "ready" | "failed" | "stale";
+  /** Agent-owned browser verification. All surfaces project this same verdict;
+   * clients never infer pass/fail from runner prose or the presence of video. */
+  verification?: TaskVerification;
   /** Task-proof package (docs/audits/task-proof-showcase-audit-2026-07.md §9):
    *  when proof capture ran for this task the agent stamps proofStatus onto
    *  the task JSON and `GET /tasks/{id}/proof` (getTaskProof below) returns
@@ -2128,6 +2167,15 @@ export function buildCreateTaskBody(params: CreateTaskParams): Record<string, un
   };
 }
 
+/**
+ * A single missed remote poll is not evidence that the workspace is gone.
+ * Reconnect only after a short consecutive failure streak; any HTTP response
+ * resets the streak because it proves the transport completed end to end.
+ */
+export function pollFailureRequiresReconnect(consecutiveFailures: number): boolean {
+  return consecutiveFailures >= 3;
+}
+
 export class AgentClient {
   private host: string | null = null;
   private port: number | null = null;
@@ -2721,6 +2769,7 @@ export class AgentClient {
         videoSource: t.videoSource || undefined,
         videoClipId: t.videoClipId || undefined,
         videoStatus: t.videoStatus || undefined,
+        verification: t.verification || undefined,
         proofStatus: t.proofStatus || undefined,
         proofUrl: t.proofUrl || undefined,
         commitSha: t.commitSha || undefined,
@@ -2784,6 +2833,7 @@ export class AgentClient {
       videoSource: t.videoSource || undefined,
       videoClipId: t.videoClipId || undefined,
       videoStatus: t.videoStatus || undefined,
+      verification: t.verification || undefined,
       proofStatus: t.proofStatus || undefined,
       proofUrl: t.proofUrl || undefined,
       commitSha: t.commitSha || undefined,
@@ -4395,6 +4445,8 @@ export class AgentClient {
     plan: string;
     isPaid: boolean;
     unmetered: boolean;
+    accountUsedMb: number;
+    accountLimitMb: number;
     devices: Array<{ deviceId: string; usedMb: number; limitMb: number; isPaid: boolean; unmetered?: boolean }>;
   } | null> {
     if (!this._activeRelayUrl || !this.activeRelayPassword) return null;
@@ -5286,6 +5338,12 @@ export class AgentClient {
 
   private startPolling(): void {
     if (this.pollInterval) return;
+    // A remote relay response can legitimately take longer than the 3-second
+    // cadence below. Do not stack another /tasks request on top of one that is
+    // still in flight: overlapping polls multiply relay load and let an older
+    // transient rejection overwrite a newer success.
+    let pollInFlight = false;
+    let consecutiveTransportFailures = 0;
     // Track how much of each task's output we've already emitted as complete
     // lines. We can't key on length alone because a poll can land mid-line —
     // if we emit the partial head now, the rest of the line arrives on the
@@ -5295,11 +5353,17 @@ export class AgentClient {
     const emittedUpTo = new Map<string, number>();
 
     this.pollInterval = setInterval(async () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
       try {
         // Only fetch recent tasks (limit=5) to keep payload small through relay
         const res = await fetch(`${this.taskBaseUrl}/tasks?limit=5`, {
           headers: this.authHeaders,
         });
+        // Any HTTP response proves the transport is still open. Endpoint-level
+        // status handling remains below; only thrown network failures count
+        // toward reconnecting the workspace.
+        consecutiveTransportFailures = 0;
         if (!res.ok) return;
         const data = await res.json();
         const rawTasks = data.tasks || [];
@@ -5330,9 +5394,13 @@ export class AgentClient {
           emittedUpTo.set(t.id, advance);
         }
       } catch {
+        consecutiveTransportFailures += 1;
+        if (!pollFailureRequiresReconnect(consecutiveTransportFailures)) return;
         this.setConnectionState("error");
         this.clearTimers();
         this.scheduleReconnect();
+      } finally {
+        pollInFlight = false;
       }
     }, 3000);
   }

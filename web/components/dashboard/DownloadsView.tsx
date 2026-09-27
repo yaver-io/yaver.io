@@ -14,7 +14,7 @@ import {
   detectDesktopPlatform,
   type DesktopPlatform,
 } from "@/lib/desktopDownloads";
-import { GUI_DOWNLOADS, GUI_VERSION } from "@/lib/versions";
+import { GUI_DOWNLOADS } from "@/lib/versions";
 
 function DownloadCard({
   platform,
@@ -70,7 +70,7 @@ export default function DownloadsView() {
           </p>
         </div>
         <span className="rounded-full border border-surface-700 bg-surface-950 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-400">
-          GUI v{GUI_VERSION}
+          Latest signed desktop
         </span>
       </div>
 
@@ -83,9 +83,9 @@ export default function DownloadsView() {
           Yaver for {DESKTOP_PLATFORM_LABELS[selectedPlatform]}
         </h3>
         <p className="mt-2 max-w-2xl text-xs leading-5 text-surface-400">
-          A native desktop shell around this dashboard — sign in and vibe tasks straight from the
-          computer. It embeds the same Go agent, so the machine you install it on is itself a Yaver
-          node. Includes tray, task notifications, and deep links.
+          A native host and control surface, not just a browser tab. Its embedded Go agent can use
+          this machine&apos;s projects, runners, browser lane, and OS resources, while the same UI can
+          independently target another paired Yaver box. Includes tray, task notifications, and deep links.
         </p>
         <div
           className="mt-4 flex flex-wrap gap-2"

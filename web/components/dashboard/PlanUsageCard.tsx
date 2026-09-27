@@ -17,11 +17,11 @@ import { useEffect, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 
 type UsageRow = { deviceId: string; usedMb: number; limitMb: number; isPaid: boolean; unmetered?: boolean };
-type Usage = { plan: string; isPaid: boolean; unmetered: boolean; devices: UsageRow[] };
+type Usage = { plan: string; isPaid: boolean; unmetered: boolean; accountUsedMb: number; accountLimitMb: number; devices: UsageRow[] };
 
 const PLAN_LABEL: Record<string, string> = {
   "owner-dev": "Owner",
-  "cloud-workspace": "Cloud Workspace",
+  "cloud-workspace": "Legacy hosted plan",
   "relay-pro": "Relay Pro",
   free: "Free",
 };
@@ -41,6 +41,9 @@ export function PlanUsageCard({ deviceNames }: { deviceNames?: Record<string, st
 
   const planLabel = usage ? (PLAN_LABEL[usage.plan] || usage.plan || "Free") : null;
   const isOwner = usage?.plan === "owner-dev";
+  const accountPct = !usage || usage.unmetered || usage.accountLimitMb <= 0
+    ? 0
+    : Math.min(100, Math.round((usage.accountUsedMb / usage.accountLimitMb) * 100));
 
   return (
     <section className="mb-4 rounded-lg border border-surface-800 bg-surface-900/60 p-4">
@@ -75,9 +78,17 @@ export function PlanUsageCard({ deviceNames }: { deviceNames?: Record<string, st
             {isOwner
               ? "You are the owner — relay traffic is unmetered for your account, on every device and every lane. Usage is still recorded so a runaway loop stays visible:"
               : usage.isPaid
-                ? "Paid plan — each device gets the raised daily relay allowance. Usage today:"
-                : "Free plan — each device gets the free daily relay allowance. Same-LAN connections bypass the relay and don't count. Usage today:"}
+                ? `Paid plan — ${usage.accountUsedMb || 0} MB of ${usage.accountLimitMb || 0} MB used across your account today. Device breakdown:`
+                : `Free plan — ${usage.accountUsedMb || 0} MB of ${usage.accountLimitMb || 0} MB used across your account today. Same-LAN connections don't count. Device breakdown:`}
           </p>
+          {!isOwner && usage.accountLimitMb > 0 ? (
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-800">
+              <span
+                className={`block h-full rounded-full ${accountPct >= 90 ? "bg-rose-500" : accountPct >= 70 ? "bg-amber-500" : "bg-emerald-500"}`}
+                style={{ width: `${accountPct}%` }}
+              />
+            </div>
+          ) : null}
           <ul className="mt-2 space-y-1.5">
             {usage.devices.length === 0 ? (
               <li className="text-[12px] text-surface-500">No devices are connected through the relay right now.</li>
@@ -85,23 +96,15 @@ export function PlanUsageCard({ deviceNames }: { deviceNames?: Record<string, st
               usage.devices.map((d) => {
                 const name = deviceNames?.[d.deviceId] || `${d.deviceId.slice(0, 8)}…`;
                 const uncapped = d.unmetered || isOwner;
-                const pct = uncapped || d.limitMb <= 0 ? 0 : Math.min(100, Math.round((d.usedMb / d.limitMb) * 100));
                 return (
                   <li key={d.deviceId} className="flex items-center gap-3 text-[12px]">
                     <span className="min-w-0 flex-1 truncate text-surface-300">{name}</span>
                     <span className="tabular-nums text-surface-400">
-                      {d.usedMb} MB{uncapped ? " · no limit" : ` of ${d.limitMb} MB`}
+                      {d.usedMb} MB{uncapped ? " · no limit" : ""}
                     </span>
-                    {!uncapped ? (
-                      <span className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-800">
-                        <span
-                          className={`block h-full rounded-full ${pct >= 90 ? "bg-rose-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </span>
-                    ) : (
+                    {uncapped ? (
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">∞</span>
-                    )}
+                    ) : null}
                   </li>
                 );
               })

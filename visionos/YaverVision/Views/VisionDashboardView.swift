@@ -4,6 +4,7 @@
 // machine: machine health, active project, connected preview devices, tasks,
 // and deliberate reload controls with honest delivery feedback.
 
+import AVKit
 import SwiftUI
 
 struct VisionDashboardView: View {
@@ -44,6 +45,7 @@ struct VisionDashboardView: View {
         startAt == "projects" || startAt.hasPrefix("preview:")
     }
     @State private var showSession = false
+    @State private var verificationVideoTask: TaskSummary?
     @State private var logTask: Task<Void, Never>?
     @State private var devLog: [String] = []
 
@@ -78,11 +80,17 @@ struct VisionDashboardView: View {
             .sheet(isPresented: $showAddBox) { AddBoxView() }
             .sheet(isPresented: $showCodingPreferences) { VisionCodingPreferencesView() }
             .sheet(isPresented: $showSession) { VisionSessionView() }
+            .sheet(item: $verificationVideoTask) { task in
+                if let clipID = task.verification?.videoClipId ?? task.videoClipId,
+                   let box = store.selectedBox {
+                    VisionVerificationVideoPlayer(clipID: clipID, box: box, token: store.token)
+                }
+            }
             .confirmationDialog("Remove this machine from Yaver?", isPresented: $confirmRemoval) {
                 Button("Remove", role: .destructive) { Task { await removeSelectedMachine() } }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("BYO and local machines disappear from every surface immediately. Yaver-hosted boxes are fully decommissioned with no snapshot.")
+                Text("This removes the machine from every Yaver surface. Its repositories and operating system are not touched.")
             }
         }
         .task(id: store.selectedBox?.id) { await refresh() }
@@ -236,6 +244,18 @@ struct VisionDashboardView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        if let verification = task.verification {
+                            Text(verification.status == "passed"
+                                ? "Browser verified · \(verification.passed ?? 0)/\(verification.total ?? 0) passed"
+                                : verification.status == "failed" ? "Browser verification failed" : "Browser verification running…")
+                                .font(.caption.bold())
+                                .foregroundStyle(verification.status == "passed" ? .green : verification.status == "failed" ? .red : .orange)
+                                .lineLimit(1)
+                        }
+                        if (task.verification?.videoClipId ?? task.videoClipId) != nil {
+                            Button("Watch browser proof") { verificationVideoTask = task }
+                                .buttonStyle(.bordered)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -490,16 +510,10 @@ struct VisionDashboardView: View {
             guard let device = devices.first(where: { $0.deviceId == deviceId }) else {
                 throw AgentError(message: "This machine is no longer in your Yaver account.")
             }
-            if device.hosting == "yaver-hosted" {
-                guard let machineId = device.machineId, !machineId.isEmpty else {
-                    throw AgentError(message: "This cloud box is missing its provider identity. Open Cloud Workspace to decommission it.")
-                }
-                try await MachineRegistry.decommissionCloudMachine(machineId: machineId, token: store.token)
-            } else {
-                // A vision-scoped token may remove the account row, but not
-                // destroy the local agent through the companion API.
-                try await MachineRegistry.removeDevice(deviceId: device.deviceId, token: store.token)
-            }
+            // A vision-scoped token may remove the account row, but not
+            // destroy the local agent through the companion API. Hosted rows
+            // never reach this Apple surface.
+            try await MachineRegistry.removeDevice(deviceId: device.deviceId, token: store.token)
             store.removeBox(selected)
         } catch {
             if store.handleAuthenticationFailure(error) { return }
@@ -563,6 +577,40 @@ struct VisionDashboardView: View {
         } catch {
             notice = .error(error.localizedDescription)
         }
+    }
+}
+
+private struct VisionVerificationVideoPlayer: View {
+    let clipID: String
+    let box: BoxTarget
+    let token: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Browser verification").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            VideoPlayer(player: makePlayer())
+                .frame(minWidth: 900, minHeight: 520)
+        }
+        .padding(24)
+    }
+
+    private func makePlayer() -> AVPlayer {
+        guard let endpoint = box.requestEndpoints(path: "/vibing/preview/clip/\(clipID)").first else {
+            return AVPlayer()
+        }
+        var headers = ["Authorization": "Bearer \(token)", "X-Yaver-Surface": "vision-pro"]
+        if endpoint.relay, let password = box.relayPassword, !password.isEmpty {
+            headers["X-Relay-Password"] = password
+        }
+        let asset = AVURLAsset(url: endpoint.url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        player.play()
+        return player
     }
 }
 

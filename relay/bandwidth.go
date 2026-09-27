@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-// BandwidthManager tracks and limits per-device bandwidth usage.
+// BandwidthManager records per-device usage but enforces one daily allowance
+// per authenticated account. Otherwise adding devices silently multiplies a
+// subscriber's entitlement and makes shared-host capacity impossible to price.
 // When overall server load is low, limits are relaxed.
 // When load is high, per-device limits are enforced strictly.
 type BandwidthManager struct {
@@ -49,8 +51,9 @@ type BandwidthConfig struct {
 
 // DeviceBandwidth tracks a single device's bandwidth usage.
 type DeviceBandwidth struct {
-	DeviceID string `json:"deviceId"`
-	IsPaid   bool   `json:"isPaid"`
+	DeviceID  string `json:"deviceId"`
+	AccountID string `json:"accountId,omitempty"`
+	IsPaid    bool   `json:"isPaid"`
 	// Unmetered exempts the device from the daily cap entirely (usage is
 	// still RECORDED for stats). Granted per-request from the caller's
 	// Convex-verified plan (owner-dev) — never from anything client-sent.
@@ -153,15 +156,20 @@ func (bm *BandwidthManager) CheckAllowed(deviceID string, bytesRequested int64) 
 		limitMB = bm.config.PaidDeviceLimitMB
 	}
 
-	// Apply dynamic multiplier based on server load
-	multiplier := bm.getCurrentMultiplier()
-	effectiveLimitBytes := int64(limitMB) * 1024 * 1024 * int64(multiplier)
+	// Paid traffic stays at the advertised hard allowance. Relaxing 20 GB/day
+	// across 20 tenants could turn a safe ~12 TB/month host into 36 TB/month and
+	// create unbounded egress charges. Only the small free allowance may borrow
+	// otherwise-idle capacity.
+	multiplier := bm.limitMultiplier(dev.IsPaid)
+	effectiveLimitBytes := int64(float64(int64(limitMB)*1024*1024) * multiplier)
 
-	totalUsed := dev.BytesIn + dev.BytesOut
+	bm.mu.RLock()
+	totalUsed := bm.usageForAccountLocked(dev.AccountID, dev.ResetDate, deviceID)
+	bm.mu.RUnlock()
 	if totalUsed+bytesRequested > effectiveLimitBytes {
 		// deviceID[:8] panicked for any id shorter than 8 bytes — a crash in
 		// a request path, reachable by a device that registers a short id.
-		return fmt.Errorf("bandwidth limit exceeded: %dMB used of %dMB daily limit (device %s)",
+		return fmt.Errorf("bandwidth limit exceeded: %dMB used of %dMB daily account limit (device %s)",
 			totalUsed/(1024*1024), int64(float64(limitMB)*multiplier), shortDeviceRef(deviceID))
 	}
 
@@ -194,11 +202,72 @@ func (bm *BandwidthManager) RecordBytes(deviceID string, bytesIn, bytesOut int64
 
 	dev.BytesIn += bytesIn
 	dev.BytesOut += bytesOut
-	dev.IsPaid = isPaid
+	if dev.windowStart.IsZero() || time.Since(dev.windowStart) >= time.Minute {
+		dev.windowStart = time.Now()
+		dev.windowBytes = 0
+	}
+	dev.windowBytes += bytesIn + bytesOut
+	// Usage accounting is not an entitlement verdict. Preserve a previously
+	// resolved paid tier when this byte record came from a lane that could not
+	// resolve billing; ApplyEntitlement performs explicit downgrades.
+	if isPaid {
+		dev.IsPaid = true
+	}
 	dev.LastActive = time.Now()
 
 	bm.totalBytesIn += bytesIn
 	bm.totalBytesOut += bytesOut
+}
+
+// BindDeviceAccount attaches the Convex-verified owner to a device. Empty
+// identities are ignored; callers must never manufacture an account from a
+// client-controlled header.
+func (bm *BandwidthManager) BindDeviceAccount(deviceID, accountID string) {
+	if deviceID == "" || accountID == "" {
+		return
+	}
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	dev, ok := bm.devices[deviceID]
+	if !ok {
+		dev = &DeviceBandwidth{DeviceID: deviceID, ResetDate: time.Now().Format("2006-01-02")}
+		bm.devices[deviceID] = dev
+	}
+	dev.AccountID = accountID
+}
+
+func (bm *BandwidthManager) usageForAccountLocked(accountID, resetDate, fallbackDeviceID string) int64 {
+	if accountID == "" {
+		if dev := bm.devices[fallbackDeviceID]; dev != nil && dev.ResetDate == resetDate {
+			return dev.BytesIn + dev.BytesOut
+		}
+		return 0
+	}
+	var total int64
+	for _, candidate := range bm.devices {
+		if candidate.AccountID == accountID && candidate.ResetDate == resetDate {
+			total += candidate.BytesIn + candidate.BytesOut
+		}
+	}
+	return total
+}
+
+// AccountUsageFor reports the account-wide meter shown by /my/bandwidth.
+func (bm *BandwidthManager) AccountUsageFor(deviceIDs []string) (usedMB, limitMB int) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	for _, id := range deviceIDs {
+		dev := bm.devices[id]
+		if dev == nil {
+			continue
+		}
+		limitMB = bm.config.FreeDeviceLimitMB
+		if dev.IsPaid {
+			limitMB = bm.config.PaidDeviceLimitMB
+		}
+		return int(bm.usageForAccountLocked(dev.AccountID, time.Now().Format("2006-01-02"), id) / (1024 * 1024)), limitMB
+	}
+	return 0, bm.config.FreeDeviceLimitMB
 }
 
 // SummaryFor returns usage rows for exactly the given devices — the
@@ -251,11 +320,7 @@ func (bm *BandwidthManager) GetStats() BandwidthStats {
 		}
 	}
 
-	// Load estimate: active devices as % of what we think max is
-	// Rough: each active device might use 1Mbps average
-	if bm.config.MaxBandwidthMbps > 0 {
-		stats.LoadPercent = float64(stats.ActiveDevices) / float64(bm.config.MaxBandwidthMbps) * 100
-	}
+	stats.LoadPercent = bm.currentLoadRatioLocked() * 100
 	stats.LimitsRelaxed = stats.LoadPercent < bm.config.LowLoadThreshold*100
 
 	// Top devices by usage
@@ -384,8 +449,11 @@ func (bm *BandwidthManager) RemainingBytes(deviceID string) int64 {
 	if dev.IsPaid {
 		limitMB = bm.config.PaidDeviceLimitMB
 	}
-	effective := int64(limitMB) * 1024 * 1024 * int64(bm.getCurrentMultiplier())
-	remaining := effective - (dev.BytesIn + dev.BytesOut)
+	effective := int64(float64(int64(limitMB)*1024*1024) * bm.limitMultiplier(dev.IsPaid))
+	bm.mu.RLock()
+	used := bm.usageForAccountLocked(dev.AccountID, dev.ResetDate, deviceID)
+	bm.mu.RUnlock()
+	remaining := effective - used
 	if remaining <= 0 {
 		return 1
 	}
@@ -402,20 +470,19 @@ func (bm *BandwidthManager) getCurrentMultiplier() float64 {
 	return bm.getCurrentMultiplierLocked()
 }
 
-func (bm *BandwidthManager) getCurrentMultiplierLocked() float64 {
-	activeDevices := 0
-	cutoff := time.Now().Add(-5 * time.Minute)
-	for _, dev := range bm.devices {
-		if dev.LastActive.After(cutoff) {
-			activeDevices++
-		}
+func (bm *BandwidthManager) limitMultiplier(isPaid bool) float64 {
+	if isPaid {
+		return 1.0
 	}
+	return bm.getCurrentMultiplier()
+}
+
+func (bm *BandwidthManager) getCurrentMultiplierLocked() float64 {
+	loadRatio := bm.currentLoadRatioLocked()
 
 	if bm.config.MaxBandwidthMbps == 0 {
 		return bm.config.RelaxMultiplier
 	}
-
-	loadRatio := float64(activeDevices) / float64(bm.config.MaxBandwidthMbps)
 
 	if loadRatio <= bm.config.LowLoadThreshold {
 		return bm.config.RelaxMultiplier // full relaxation
@@ -428,6 +495,25 @@ func (bm *BandwidthManager) getCurrentMultiplierLocked() float64 {
 	range_ := bm.config.HighLoadThreshold - bm.config.LowLoadThreshold
 	position := (loadRatio - bm.config.LowLoadThreshold) / range_
 	return bm.config.RelaxMultiplier - (bm.config.RelaxMultiplier-1.0)*position
+}
+
+func (bm *BandwidthManager) currentLoadRatioLocked() float64 {
+	var recentBytes int64
+	now := time.Now()
+	for _, dev := range bm.devices {
+		if !dev.windowStart.IsZero() && now.Sub(dev.windowStart) < time.Minute {
+			recentBytes += dev.windowBytes
+		}
+	}
+
+	if bm.config.MaxBandwidthMbps == 0 {
+		return 0
+	}
+
+	// Compare measured traffic in the current minute with configured link
+	// capacity. Device count is not a bandwidth unit: one build download can
+	// saturate a link while hundreds of idle SSE connections consume almost 0.
+	return (float64(recentBytes) * 8 / 60 / 1_000_000) / float64(bm.config.MaxBandwidthMbps)
 }
 
 func (bm *BandwidthManager) cleanupLoop() {

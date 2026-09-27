@@ -1273,6 +1273,9 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	// boundary as everything else here: the plan is Convex's cached verdict
 	// about the AUTHENTICATED registrant ("register" action), never a client
 	// claim.
+	if regUserID != "" {
+		s.bandwidth.BindDeviceAccount(reg.DeviceID, regUserID)
+	}
 	if regPaid, regPlan := s.relayAccessEntitlement("register", reg.DeviceID, reg.Password, reg.Token); regPlan != "" || regPaid {
 		ent := deviceEntitlement{Known: true, IsPaid: regPaid, Unmetered: planBandwidthExempt(regPlan)}
 		if regUserID != "" {
@@ -1530,6 +1533,9 @@ func (s *RelayServer) handleAgentWebSocket(ws *websocket.Conn) {
 	// Same registration-time tier stamp as the QUIC path above — the WS
 	// fallback is still a registration, and a box that fell back to
 	// websocket must not silently lose its owner's exemption.
+	if regUserID != "" {
+		s.bandwidth.BindDeviceAccount(reg.DeviceID, regUserID)
+	}
 	if regPaid, regPlan := s.relayAccessEntitlement("register", reg.DeviceID, reg.Password, reg.Token); regPlan != "" || regPaid {
 		ent := deviceEntitlement{Known: true, IsPaid: regPaid, Unmetered: planBandwidthExempt(regPlan)}
 		if regUserID != "" {
@@ -2020,17 +2026,26 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// "free tier" over a verified exemption, so the owner's own browser lane
 	// refused itself at 1911MB while the store said unmetered (2026-07-27).
 	entitlement := entitlementUnknown
+	bandwidthAccountID := userID
+	if bandwidthAccountID == "" {
+		bandwidthAccountID = s.ownerOfTunnel(deviceID)
+	}
 	if relayPlan != "" || relayPaid {
 		entitlement = deviceEntitlement{Known: true, IsPaid: relayPaid, Unmetered: planBandwidthExempt(relayPlan)}
 		s.rememberUserEntitlement(userID, entitlement)
 	} else {
-		owner := userID
-		if owner == "" {
-			owner = s.ownerOfTunnel(deviceID)
-		}
-		entitlement = s.entitlementForUser(owner)
+		entitlement = s.entitlementForUser(bandwidthAccountID)
 	}
 	relayUnmetered := entitlement.Known && entitlement.Unmetered
+	relayPriority := entitlement.Known && (entitlement.IsPaid || entitlement.Unmetered)
+	if !relayPriority {
+		if !s.abuseGuard.tryEnterFreeHTTP() {
+			s.abuseGuard.logLimited("free-http-concurrency", bandwidthAccountID)
+			writeRelayErrorCode(w, http.StatusServiceUnavailable, RelayCodeFreeCapacityBusy, "free relay is busy; Relay Pro capacity is reserved")
+			return
+		}
+		defer s.abuseGuard.leaveFreeHTTP()
+	}
 	// The middleware defers the per-IP proxy verdict to HERE, where the
 	// ACCOUNT is known: an over-budget request survives only when the
 	// authenticated account's Convex-verified plan is bandwidth-exempt.
@@ -2077,6 +2092,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if bytesRequested < 0 {
 		bytesRequested = 0
 	}
+	s.bandwidth.BindDeviceAccount(deviceID, bandwidthAccountID)
 	s.bandwidth.ApplyEntitlement(deviceID, entitlement)
 
 	// Check bandwidth limit
@@ -2864,14 +2880,17 @@ func (s *RelayServer) handleMyBandwidth(w http.ResponseWriter, r *http.Request) 
 	}
 	s.mu.RUnlock()
 	sort.Strings(mine)
+	accountUsedMB, accountLimitMB := s.bandwidth.AccountUsageFor(mine)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":        true,
-		"plan":      plan,
-		"isPaid":    isPaid,
-		"unmetered": planBandwidthExempt(plan),
-		"devices":   s.bandwidth.SummaryFor(mine),
+		"ok":             true,
+		"plan":           plan,
+		"isPaid":         isPaid,
+		"unmetered":      planBandwidthExempt(plan),
+		"accountUsedMb":  accountUsedMB,
+		"accountLimitMb": accountLimitMB,
+		"devices":        s.bandwidth.SummaryFor(mine),
 	})
 }
 

@@ -280,15 +280,12 @@ async function authRunner(runner) {
         </section>
 
         <section>
-          <h2 className="mb-3 text-xl font-semibold text-surface-100">Get the box first</h2>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">Connect your machine first</h2>
           <p>
-            The SDK needs an agent to talk to. Spin one up with{" "}
-            <Link href="/blog/yaver-cloud-image" className="text-surface-100 underline decoration-dotted underline-offset-4 hover:text-surface-50">
-              the Yaver cloud image
-            </Link>{" "}
-            (a dev box pre-signed-in to your coding agents), or adopt an existing machine with{" "}
-            <Link href="/blog/yaver-cloud-launch-anywhere" className="text-surface-100 underline decoration-dotted underline-offset-4 hover:text-surface-50">
-              yaver launch
+            The SDK needs an agent to talk to. Install Yaver on your Mac, PC,
+            Linux box, Pi, or VPS by following the{" "}
+            <Link href="/docs/self-hosting" className="text-surface-100 underline decoration-dotted underline-offset-4 hover:text-surface-50">
+              self-hosting guide
             </Link>
             . Then point {code("yaver-sdk")} at its device ID and you&apos;re live.
           </p>

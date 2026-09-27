@@ -65,7 +65,7 @@ test("Flutter rendering on iPhone is a named blocked capability with a route", (
     assert.equal(result.capability.code, "remoteless.flutter-render.unavailable");
     assert.match(result.capability.detail, /Flutter SDK/);
     assert.equal(result.capability.route.path, "/devices");
-    assert.equal(result.capability.alternateRoute?.path, "/cloud-onboarding");
+    assert.equal(result.capability.alternateRoute?.path, "/devices");
   }
 });
 

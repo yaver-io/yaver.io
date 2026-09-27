@@ -181,6 +181,7 @@ echo "✓ TestFlight build $EFFECTIVE_BUILD uploaded."
 : "${ANDROID_KEYSTORE_PASSWORD:?Missing ANDROID_KEYSTORE_PASSWORD (yaver vault add ANDROID_KEYSTORE_PASSWORD --project {{.App}})}"
 : "${ANDROID_KEY_ALIAS:?Missing ANDROID_KEY_ALIAS}"
 : "${ANDROID_KEY_PASSWORD:?Missing ANDROID_KEY_PASSWORD}"
+: "${ANDROID_KEYSTORE_PATH:?Missing ANDROID_KEYSTORE_PATH (project-scoped path to this app's keystore)}"
 
 if [ -x "./gradlew" ]; then GRADLE="./gradlew"; else GRADLE="gradle"; fi
 
@@ -219,7 +220,7 @@ if [ $RESUME -eq 0 ]; then
 
   # keystore.properties is gitignored; write it from vault values just for this build.
   cat > keystore.properties <<EOF
-storeFile=../../../keys/yaver-upload.keystore
+storeFile=$ANDROID_KEYSTORE_PATH
 storePassword=$ANDROID_KEYSTORE_PASSWORD
 keyAlias=$ANDROID_KEY_ALIAS
 keyPassword=$ANDROID_KEY_PASSWORD
@@ -248,15 +249,26 @@ export AAB_PATH="$(pwd)/$AAB"
 
 if [ -n "${PLAY_STORE_KEY_FILE:-}" ] && [ -f "$PLAY_STORE_KEY_FILE" ]; then
   echo "Uploading $PLAY_PACKAGE_NAME to Play $PLAY_TRACK track..."
-  if python3 "$(dirname "$0")/upload-playstore.py" 2>&1 | tail -5; then
+  # The generated script lives under /tmp, so resolving the uploader relative
+  # to $0 silently targeted a file that could not exist. A project either owns
+  # an uploader or supplies its exact path; absence is a failed upload, never a
+  # successful build-and-manually-upload-later result.
+  UPLOAD_HELPER="${YAVER_PLAY_UPLOAD_HELPER:-{{.Path}}/scripts/run-playstore-upload.sh}"
+  if [ ! -x "$UPLOAD_HELPER" ]; then
+    UPLOAD_HELPER="{{.Path}}/scripts/upload-playstore.py"
+  fi
+  if [ ! -f "$UPLOAD_HELPER" ]; then
+    echo "ERROR: Play upload requested but no uploader exists. Add scripts/run-playstore-upload.sh or set YAVER_PLAY_UPLOAD_HELPER." >&2
+    exit 2
+  fi
+  if "$UPLOAD_HELPER" 2>&1 | tail -5; then
     # Upload succeeded — clear the fingerprint so the next invocation
     # builds fresh. Deliberate: we don't delete the AAB (gradle will
     # overwrite it; leaving it helps debug).
     rm -f "$FP"
   else
-    # Deliberately keep $FP + $AAB so the next run resumes. The
-    # script exits non-zero only when python3/script is absent.
-    echo "(Upload helper not found — AAB is ready; upload manually.)"
+    echo "ERROR: Play upload failed. AAB and fingerprint kept for a safe retry." >&2
+    exit 1
   fi
 fi
 `,

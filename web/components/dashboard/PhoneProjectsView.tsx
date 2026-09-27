@@ -472,7 +472,7 @@ export default function PhoneProjectsView() {
     await runPush(
       { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined },
       "yaver-cloud",
-      "Yaver Cloud",
+      "Legacy hosted target",
     );
   }
 
@@ -512,9 +512,9 @@ export default function PhoneProjectsView() {
       const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
       const local = result.pushes.find((push) => push.kind === "dev-hw");
       if (cloud) {
-        setLastDeploy({ kind: "yaver-cloud", via: "Yaver Cloud + Dev Machine", url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined }, cloud.result) });
+        setLastDeploy({ kind: "yaver-cloud", via: "Legacy hosted target + Dev Machine", url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined }, cloud.result) });
       } else if (local) {
-        setLastDeploy({ kind: "dev-hw", via: "Dev Machine + Yaver Cloud", url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl }, local.result) });
+        setLastDeploy({ kind: "dev-hw", via: "Dev Machine + legacy hosted target", url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl }, local.result) });
       }
     } catch (e) {
       showNotice("error", cleanMessage(e, "Deploy failed. One or more targets may be offline — try again."));
@@ -543,13 +543,13 @@ export default function PhoneProjectsView() {
       if (cloud) {
         setLastDeploy({
           kind: "yaver-cloud",
-          via: `${SELF_HOSTED_LABEL} + Yaver Cloud`,
+          via: `${SELF_HOSTED_LABEL} + legacy hosted target`,
           url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined }, cloud.result),
         });
       } else if (selfHosted) {
         setLastDeploy({
           kind: "custom",
-          via: `${SELF_HOSTED_LABEL} + Yaver Cloud`,
+          via: `${SELF_HOSTED_LABEL} + legacy hosted target`,
           url: selfHosted.result.browseUrl || deriveTargetUrl({ kind: "custom", baseUrl: SELF_HOSTED_BASE }, selfHosted.result),
         });
       }
@@ -1052,7 +1052,7 @@ export default function PhoneProjectsView() {
 
                   {canUseYaverCloud ? (
                     <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
-                      <div className="text-base font-semibold text-surface-100">Yaver Cloud</div>
+                      <div className="text-base font-semibold text-surface-100">Legacy hosted target</div>
                       <div className="mt-0.5 text-xs text-surface-400">
                         {canUseCloudPreview ? "Private preview" : "Managed machine"} at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
                       </div>
@@ -1090,7 +1090,7 @@ export default function PhoneProjectsView() {
                     <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
                       <div className="text-base font-semibold text-surface-100">{SELF_HOSTED_LABEL} + Cloud</div>
                       <div className="mt-0.5 text-xs text-surface-400">
-                        Push the same sandbox to your self-hosted runtime and Yaver Cloud in one run.
+                        Push the same sandbox to your self-hosted runtime and a legacy hosted target in one run.
                       </div>
                       <div className="mt-3">
                         <button

@@ -13,18 +13,18 @@
  */
 export const GUI_VERSION = "0.1.12";
 export const GUI_WINDOWS_VERSION = "0.1.2";
-export const GUI_BASE_URL =
-  `https://github.com/yaver-io/yaver.io/releases/download/gui/v${GUI_VERSION}`;
-export const GUI_WINDOWS_BASE_URL =
-  `https://github.com/yaver-io/yaver.io/releases/download/gui/v${GUI_WINDOWS_VERSION}`;
+// Public pages use stable same-origin routes that resolve only an asset which
+// actually exists in a published GitHub GUI release. This prevents a source
+// version bump from turning every landing-page button into a 404 before the
+// signed artifacts finish building. GitHub remains the artifact host.
 export const GUI_DOWNLOADS = {
-  macArm64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-mac-arm64.dmg`,
-  macX64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-mac-x64.dmg`,
-  winX64: `${GUI_WINDOWS_BASE_URL}/yaver-gui-${GUI_WINDOWS_VERSION}-win-setup.exe`,
-  linuxX64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-linux-x86_64.AppImage`,
-  linuxArm64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-linux-arm64.AppImage`,
-  debX64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-linux-amd64.deb`,
-  debArm64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-linux-arm64.deb`,
-  rpmX64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-linux-x86_64.rpm`,
-  rpmArm64: `${GUI_BASE_URL}/yaver-gui-${GUI_VERSION}-linux-aarch64.rpm`,
+  macArm64: "/download/desktop/macos-arm64",
+  macX64: "/download/desktop/macos-x64",
+  winX64: "/download/desktop/windows-x64",
+  linuxX64: "/download/desktop/linux-appimage-x64",
+  linuxArm64: "/download/desktop/linux-appimage-arm64",
+  debX64: "/download/desktop/linux-deb-x64",
+  debArm64: "/download/desktop/linux-deb-arm64",
+  rpmX64: "/download/desktop/linux-rpm-x64",
+  rpmArm64: "/download/desktop/linux-rpm-arm64",
 } as const;

@@ -1,0 +1,155 @@
+name: Microsoft Store AppX release
+
+# Yaver reuses Talos's Microsoft-signs-and-hosts AppX release mechanism, while
+# retaining Yaver's native x64 agent for client, agent, and combined modes.
+# No Convex deployment, Windows certificate, CDN, bundled WSL image, or Hetzner
+# machine participates in this workflow.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "gui-store/v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yaver-microsoft-store-production
+  cancel-in-progress: false
+
+jobs:
+  lane-contracts:
+    name: Browser, Hermes, and WebRTC contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/agent/go.mod
+          cache-dependency-path: desktop/agent/go.sum
+      - name: Test the packaged-agent rendering lanes
+        working-directory: desktop/agent
+        run: >-
+          go test -count=1 . -run
+          'Test(ProbeBrowserLaneSeesRealMount|ProbeBrowserLaneDistinguishesDeadServerFromBlankPage|BuildWebRTCDoctorReport_AlwaysIncludesBuiltins|ApplyWebRTCOffer_AnswerHasBothDataChannels|ValidateHermesBundle_Valid|DogfoodReloadHermesRequiresProjectIdentity|DogfoodReloadWebRTCRetainsSelectedCheckout|RemoteRuntimeCapabilitiesForRNIsWebRTCEligibleButHermesPrimary|BrowserFrameworkCapabilities|HermesOfferedOnlyForReactNativeAndExpo)$'
+
+  package:
+    name: Build and validate x64 full-node AppX
+    needs: lane-contracts
+    runs-on: windows-2022
+    timeout-minutes: 45
+    environment: microsoft-store-production
+    env:
+      YAVER_STORE_PRODUCTION: "1"
+      YAVER_STORE_IDENTITY_NAME: ${{ vars.YAVER_STORE_IDENTITY_NAME }}
+      YAVER_STORE_PUBLISHER: ${{ vars.YAVER_STORE_PUBLISHER }}
+      YAVER_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.YAVER_STORE_PUBLISHER_DISPLAY_NAME }}
+      YAVER_STORE_DISPLAY_NAME: ${{ vars.YAVER_STORE_DISPLAY_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/agent/go.mod
+          cache-dependency-path: desktop/agent/go.sum
+
+      - name: Bind source or tag to the GUI version
+        shell: pwsh
+        run: |
+          $versions = Get-Content versions.json -Raw | ConvertFrom-Json
+          $package = Get-Content electron/package.json -Raw | ConvertFrom-Json
+          if ($versions.gui -ne $package.version) { throw 'GUI version sources differ.' }
+          if ('${{ github.event_name }}' -eq 'push' -and '${{ github.ref_name }}' -ne "gui-store/v$($package.version)") {
+            throw 'Release tag does not match the GUI version.'
+          }
+          foreach ($name in @('YAVER_STORE_IDENTITY_NAME', 'YAVER_STORE_PUBLISHER', 'YAVER_STORE_PUBLISHER_DISPLAY_NAME', 'YAVER_STORE_DISPLAY_NAME')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ([string]::IsNullOrWhiteSpace($value) -or $value -match 'PENDING|VALIDATION') {
+              throw "$name must be copied exactly from Partner Center > Product identity."
+            }
+          }
+
+      - name: Install Electron dependencies
+        working-directory: electron
+        run: npm ci
+
+      - name: Test Microsoft Store and desktop contracts
+        working-directory: electron
+        run: npm test
+
+      - name: Build and inspect Microsoft Store AppX
+        shell: pwsh
+        run: |
+          ./electron/scripts/build-microsoft-store.ps1 `
+            -RunPreflight `
+            -PreflightReport "$env:RUNNER_TEMP/Yaver-Store-Preflight.txt"
+
+      - name: Retain first-submission package and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaver-microsoft-store-x64-${{ github.run_id }}
+          path: |
+            electron/dist-microsoft-store/Yaver-*-x64-store.appx
+            ${{ runner.temp }}/Yaver-Store-Preflight.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  submit:
+    name: Submit existing Partner Center application
+    if: ${{ github.event_name == 'push' }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: microsoft-store-production
+    env:
+      YAVER_MS_STORE_APPLICATION_ID: ${{ vars.YAVER_MS_STORE_APPLICATION_ID }}
+      YAVER_MS_STORE_TENANT_ID: ${{ secrets.YAVER_MS_STORE_TENANT_ID }}
+      YAVER_MS_STORE_CLIENT_ID: ${{ secrets.YAVER_MS_STORE_CLIENT_ID }}
+      YAVER_MS_STORE_CLIENT_SECRET: ${{ secrets.YAVER_MS_STORE_CLIENT_SECRET }}
+      YAVER_MS_STORE_CERTIFICATION_NOTES: ${{ vars.YAVER_MS_STORE_CERTIFICATION_NOTES }}
+      YAVER_MS_STORE_ALLOW_SUBMIT: "YES"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: yaver-microsoft-store-x64-${{ github.run_id }}
+          path: release
+
+      - name: Create Partner Center upload archive
+        id: archive
+        shell: bash
+        run: |
+          version="$(node -p "require('./electron/package.json').version")"
+          package="$(find release -name "Yaver-${version}-x64-store.appx" -type f -print -quit)"
+          test -n "$package"
+          archive="$RUNNER_TEMP/Yaver-${version}-Partner-Center.zip"
+          PACKAGE="$package" ARCHIVE="$archive" python3 - <<'PY'
+          import os, pathlib, zipfile
+          package = pathlib.Path(os.environ["PACKAGE"])
+          with zipfile.ZipFile(os.environ["ARCHIVE"], "w", zipfile.ZIP_DEFLATED) as output:
+              output.write(package, package.name)
+          PY
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Submit package through Partner Center
+        run: >-
+          node scripts/microsoft-store-appx-submission.mjs release
+          "--package=${{ steps.archive.outputs.package }}"
+          "--archive=${{ steps.archive.outputs.archive }}"
+          "--confirm-application=$YAVER_MS_STORE_APPLICATION_ID"
+
+      - name: Retain submitted archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaver-microsoft-store-submission-${{ github.ref_name }}
+          path: ${{ runner.temp }}/Yaver-*-Partner-Center.zip
+          if-no-files-found: warn
+          retention-days: 30

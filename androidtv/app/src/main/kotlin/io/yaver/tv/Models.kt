@@ -222,6 +222,10 @@ data class TaskRow(
     val lastActiveAt: String? = null,
     val presentation: List<TaskPresentationMessage> = emptyList(),
     val createdAt: Double? = null,
+    val verificationStatus: String? = null,
+    val verificationPassed: Int? = null,
+    val verificationTotal: Int? = null,
+    val videoClipId: String? = null,
 ) {
     val safeTitle: String get() = redactHomePaths(title ?: "Untitled task")
 }
@@ -382,5 +386,10 @@ fun parseTaskRow(obj: org.json.JSONObject): TaskRow? {
         lastActiveAt = execution?.optString("lastActiveAt")?.ifEmpty { null },
         presentation = parseTaskPresentation(obj.optJSONArray("presentation")),
         createdAt = if (obj.has("createdAt")) obj.optDouble("createdAt") else null,
+        verificationStatus = obj.optJSONObject("verification")?.optString("status")?.ifEmpty { null },
+        verificationPassed = obj.optJSONObject("verification")?.takeIf { it.has("passed") }?.optInt("passed"),
+        verificationTotal = obj.optJSONObject("verification")?.takeIf { it.has("total") }?.optInt("total"),
+        videoClipId = obj.optJSONObject("verification")?.optString("videoClipId")?.ifEmpty { null }
+            ?: obj.optString("videoClipId").ifEmpty { null },
     )
 }

@@ -1120,6 +1120,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
 	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
 	mux.HandleFunc("/publish/config", s.auth(s.handlePublishConfig))
+	mux.HandleFunc("/publish/plan", s.auth(s.handlePublishPlan))
 	mux.HandleFunc("/publish/run", s.auth(s.handlePublishRun))
 	mux.HandleFunc("/publish/runs", s.auth(s.handlePublishRuns))
 	mux.HandleFunc("/publish/runs/", s.auth(s.handlePublishRunByID))
@@ -4105,6 +4106,7 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 		RawOffset:       rawOffset,
 		ResultText:      task.ResultText,
 		Presentation:    taskPresentationSnapshot(task),
+		Verification:    taskVerificationForWire(task.Verification),
 		Failure:         task.Failure,
 		CostUSD:         task.CostUSD,
 		Turns:           task.Turns,
@@ -4698,6 +4700,10 @@ func (s *HTTPServer) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		// default mode offers Render updates; opt-in auto-render waits for the
 		// coding turn to settle.
 		s.requestTaskRender(w, r, taskID)
+	case "verify":
+		// Runner-owned, agent-executed browser verification. The request is
+		// bound to this task's workdir; callers cannot point it at another repo.
+		s.requestTaskVerification(w, r, taskID)
 	case "fork":
 		// Runtime agent switch: keep parent immutable, spawn child with
 		// new runner/model/mode + bounded recent-context handoff. See
@@ -4719,6 +4725,10 @@ func (s *HTTPServer) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		// every Yaver surface, never terminal text that clients must parse.
 		s.handleTaskRunnerControl(w, r, taskID)
 	default:
+		if strings.HasPrefix(action, "verification/artifacts/") {
+			s.serveTaskVerificationArtifact(w, r, taskID, strings.TrimPrefix(action, "verification/artifacts/"))
+			return
+		}
 		jsonError(w, http.StatusNotFound, "unknown action")
 	}
 }
@@ -6494,7 +6504,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		case "create_task", "yaver_ask", "list_tasks", "get_task", "stop_task",
 			"continue_task", "fork_task", "get_info", "get_system_info",
 			"list_runners", "switch_runner", "agent_graph_start", "code_mesh_start",
-			"publish_config_get", "list_directory", "tmux_list_sessions",
+			"publish_plan", "publish_config_get", "list_directory", "tmux_list_sessions",
 			"git_sync_remote", "yaver_doctor", "development_doctor", "yaver_status",
 			"yaver_ping", "mobile_hermes_doctor", "pipeline_list", "session_list":
 			return mcpToolError("task manager unavailable — start the Yaver agent and retry")
@@ -6875,6 +6885,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "yaver_request_render":
 		return forwardYaverRequestRender(call.Arguments)
+
+	case "yaver_verify_task":
+		return forwardYaverVerifyTask(call.Arguments)
 
 	case "wire_detect":
 		// List USB-attached phones on the agent's host. See mcp_wire_tools.go.
@@ -7642,6 +7655,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(content)
 
+	case "publish_plan":
+		var args struct {
+			Dir    string `json:"dir"`
+			Target string `json:"target"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		dir := strings.TrimSpace(args.Dir)
+		if dir == "" {
+			dir = s.taskMgr.workDir
+		}
+		plan, err := buildPublishPlan(dir, args.Target)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "plan": plan})
+
 	case "publish_config_get":
 		var args struct {
 			Dir string `json:"dir"`
@@ -7670,13 +7699,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Dir                 string `json:"dir"`
 			Target              string `json:"target"`
 			AllowGitHubFallback bool   `json:"allow_github_fallback"`
+			Confirmation        string `json:"confirmation"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		dir := strings.TrimSpace(args.Dir)
 		if dir == "" {
 			dir = s.taskMgr.workDir
 		}
-		run, err := s.publishMgr.StartRun(dir, args.Target, args.AllowGitHubFallback)
+		run, err := s.publishMgr.StartRunConfirmed(dir, args.Target, args.AllowGitHubFallback, args.Confirmation)
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
@@ -16876,6 +16906,23 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(EvaluateAccessPolicy(args.Source, args.Action, args.Jurisdiction))
 
 	// --- Browser Automation ---
+	case "browser_targets":
+		cfg, err := loadBrowserProjectConfig("")
+		if err != nil {
+			return mcpToolError("browser_targets: " + err.Error())
+		}
+		if cfg == nil {
+			return mcpToolJSON(map[string]interface{}{
+				"configured": false, "default": "default",
+				"targets": map[string]BrowserTargetConfig{"default": {Engine: "chrome", Driver: "cdp"}},
+				"note":    "No .yaver/browser.yaml found; Chrome/CDP is the compatibility default. browser_open is the authoritative launch probe.",
+			})
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"configured": true, "default": cfg.Default, "targets": cfg.Targets, "matrix": cfg.Matrix,
+			"note": "Configuration is intent, not proof of availability. browser_open performs the real handshake.",
+		})
+
 	case "browser_open":
 		// Lazy-init so browser tools (and recording) work in the stdio-child
 		// process a task agent runs in, not just the daemon. Matches
@@ -16888,11 +16935,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		s.browserMgr.ensureVPM(s.vibePreviewMgr, ActiveVibePreviewManager())
 		var args struct {
 			SessionID     string `json:"session_id"`
+			Target        string `json:"target"`
+			Engine        string `json:"engine"`
+			Driver        string `json:"driver"`
 			Headful       bool   `json:"headful"`
 			ProxyURL      string `json:"proxy_url"`
 			Profile       string `json:"profile"` // F2: persistent profile name/path (shares clearance with co-browse)
 			Record        bool   `json:"record"`
 			RecordSeconds int    `json:"record_seconds"`
+			Width         int    `json:"width"`
+			Height        int    `json:"height"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		// Inside a task launched with video on, the runner sets
@@ -16900,6 +16952,46 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		// automatically — the agent doesn't have to opt in per call.
 		if !args.Record && os.Getenv("YAVER_TASK_RECORD_BROWSER") == "1" {
 			args.Record = true
+		}
+		targetName, configured, configErr := resolveBrowserTarget("", args.Target)
+		if configErr != nil {
+			return mcpToolError("browser_open config: " + configErr.Error())
+		}
+		engine := strings.ToLower(strings.TrimSpace(args.Engine))
+		if engine == "" {
+			engine = configured.Engine
+		}
+		driverName := strings.ToLower(strings.TrimSpace(args.Driver))
+		if driverName == "" {
+			driverName = configured.Driver
+		}
+		if args.Profile == "" {
+			args.Profile = configured.Profile
+		}
+		args.Headful = args.Headful || configured.Headful
+		if args.Width == 0 {
+			args.Width = configured.Width
+		}
+		if args.Height == 0 {
+			args.Height = configured.Height
+		}
+		if engine == "firefox" || engine == "safari" || driverName == "webdriver" {
+			if args.ProxyURL != "" {
+				return mcpToolError("proxy_url is currently supported only by the Chrome/CDP browser target")
+			}
+			out, openErr := seleniumMCP.start(seleniumStartArgs{
+				SessionID: args.SessionID, Browser: engine, Headful: args.Headful,
+				Profile: args.Profile, Record: args.Record, RecordSeconds: args.RecordSeconds,
+				Width: args.Width, Height: args.Height,
+			})
+			if openErr != nil {
+				return mcpToolError(fmt.Sprintf("browser_open %s/webdriver: %v", engine, openErr))
+			}
+			out["target"] = targetName
+			return mcpToolJSON(out)
+		}
+		if engine != "chrome" {
+			return mcpToolError("engine must be chrome, firefox, or safari")
 		}
 		if args.SessionID == "" {
 			args.SessionID = fmt.Sprintf("browser-%d", time.Now().UnixMilli()%100000)
@@ -16916,11 +17008,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 			_ = os.MkdirAll(profileDir, 0o755)
 		}
-		if err := s.browserMgr.OpenSessionWithProfile(args.SessionID, args.Headful, args.ProxyURL, profileDir); err != nil {
+		if err := s.browserMgr.OpenSessionWithViewport(args.SessionID, args.Headful, args.ProxyURL, profileDir, args.Width, args.Height); err != nil {
 			return mcpToolError(fmt.Sprintf("browser_open: %v", err))
 		}
 		resp := map[string]interface{}{
 			"session_id": args.SessionID,
+			"target":     targetName,
+			"engine":     "chrome",
+			"driver":     "cdp",
 			"headful":    args.Headful,
 			"status":     "open",
 			"message":    "Browser session opened. Use browser_navigate to go to a URL.",
@@ -16954,15 +17049,21 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(resp)
 
 	case "browser_close":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			return mcpToolError("session_id is required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			if err := seleniumMCP.close(args.SessionID); err != nil {
+				return mcpToolError(fmt.Sprintf("browser_close: %v", err))
+			}
+			return mcpToolResult("Browser session closed and any recording finalized.")
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
 		}
 		if err := s.browserMgr.CloseSession(args.SessionID); err != nil {
 			return mcpToolError(fmt.Sprintf("browser_close: %v", err))
@@ -17065,17 +17166,24 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult("Interactive session stopped. Profile persisted on disk for future automation.")
 
 	case "browser_sessions":
-		if s.browserMgr == nil {
-			return mcpToolJSON(map[string]interface{}{"sessions": []interface{}{}})
+		var sessions []interface{}
+		if s.browserMgr != nil {
+			for _, session := range s.browserMgr.ListSessions() {
+				sessions = append(sessions, session)
+			}
+		}
+		if wd := seleniumMCP.list(); wd != nil {
+			if rows, ok := wd["sessions"].([]map[string]interface{}); ok {
+				for _, row := range rows {
+					sessions = append(sessions, row)
+				}
+			}
 		}
 		return mcpToolJSON(map[string]interface{}{
-			"sessions": s.browserMgr.ListSessions(),
+			"sessions": sessions,
 		})
 
 	case "browser_navigate":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 			URL       string `json:"url"`
@@ -17084,6 +17192,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.SessionID == "" || args.URL == "" {
 			return mcpToolError("session_id and url are required")
 		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.navigate(args.SessionID, args.URL)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_navigate: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
 		result, err := s.browserMgr.Navigate(args.SessionID, args.URL)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("browser_navigate: %v", err))
@@ -17091,9 +17209,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpBrowserResult(result, fmt.Sprintf("Navigated to %s — title: %s", result.URL, result.Title))
 
 	case "browser_click":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 			Selector  string `json:"selector"`
@@ -17102,6 +17217,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.SessionID == "" || args.Selector == "" {
 			return mcpToolError("session_id and selector are required")
 		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.click(args.SessionID, args.Selector)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_click: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
 		result, err := s.browserMgr.Click(args.SessionID, args.Selector)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("browser_click: %v", err))
@@ -17109,9 +17234,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpBrowserResult(result, fmt.Sprintf("Clicked %q — now at %s", args.Selector, result.URL))
 
 	case "browser_type":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 			Selector  string `json:"selector"`
@@ -17121,6 +17243,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" || args.Selector == "" || args.Text == "" {
 			return mcpToolError("session_id, selector, and text are required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.typeText(args.SessionID, args.Selector, args.Text)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_type: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
 		}
 		result, err := s.browserMgr.Type(args.SessionID, args.Selector, args.Text, args.Clear)
 		if err != nil {
@@ -17141,6 +17273,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.SessionID == "" || args.Selector == "" || args.Value == "" {
 			return mcpToolError("session_id, selector, and value are required")
 		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.selectValue(args.SessionID, args.Selector, args.Value)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_select: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
 		result, err := s.browserMgr.Select(args.SessionID, args.Selector, args.Value)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("browser_select: %v", err))
@@ -17159,6 +17298,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			return mcpToolError("session_id is required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.scroll(args.SessionID, args.X, args.Y)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_scroll: %v", err))
+			}
+			return mcpToolJSON(out)
 		}
 		if args.Y == 0 && args.X == 0 {
 			args.Y = 300
@@ -17182,15 +17328,18 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.SessionID == "" || args.Selector == "" {
 			return mcpToolError("session_id and selector are required")
 		}
+		if seleniumMCP.has(args.SessionID) {
+			if err := seleniumMCP.waitVisible(args.SessionID, args.Selector, args.TimeoutMs); err != nil {
+				return mcpToolError(fmt.Sprintf("browser_wait: %v", err))
+			}
+			return mcpToolResult(fmt.Sprintf("Element %q is now visible.", args.Selector))
+		}
 		if err := s.browserMgr.WaitFor(args.SessionID, args.Selector, args.TimeoutMs); err != nil {
 			return mcpToolError(fmt.Sprintf("browser_wait: %v", err))
 		}
 		return mcpToolResult(fmt.Sprintf("Element %q is now visible.", args.Selector))
 
 	case "browser_wait_navigation":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 			TimeoutMs int    `json:"timeout_ms"`
@@ -17199,21 +17348,43 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.SessionID == "" {
 			return mcpToolError("session_id is required")
 		}
+		if seleniumMCP.has(args.SessionID) {
+			if err := seleniumMCP.waitNavigation(args.SessionID, args.TimeoutMs); err != nil {
+				return mcpToolError(fmt.Sprintf("browser_wait_navigation: %v", err))
+			}
+			return mcpToolResult("Navigation completed.")
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
 		if err := s.browserMgr.WaitForNavigation(args.SessionID, args.TimeoutMs); err != nil {
 			return mcpToolError(fmt.Sprintf("browser_wait_navigation: %v", err))
 		}
 		return mcpToolResult("Navigation completed.")
 
 	case "browser_screenshot":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			return mcpToolError("session_id is required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.screenshot(args.SessionID)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_screenshot: %v", err))
+			}
+			if b64, _ := out["base64"].(string); b64 != "" {
+				return map[string]interface{}{"content": []map[string]interface{}{
+					{"type": "text", "text": fmt.Sprintf("Screenshot captured from browser session %s", args.SessionID)},
+					{"type": "image", "data": b64, "mimeType": "image/png"},
+				}}
+			}
+			return mcpToolJSON(out)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
 		}
 		result, err := s.browserMgr.Screenshot(args.SessionID)
 		if err != nil {
@@ -17222,9 +17393,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpBrowserResult(result, fmt.Sprintf("Screenshot captured — %s", result.URL))
 
 	case "browser_extract_text":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 			Selector  string `json:"selector"`
@@ -17232,6 +17400,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			return mcpToolError("session_id is required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.text(args.SessionID, args.Selector)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_extract_text: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
 		}
 		text, err := s.browserMgr.ExtractText(args.SessionID, args.Selector)
 		if err != nil {
@@ -17274,6 +17452,31 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(fmt.Sprintf("browser_get_dom: %v", err))
 		}
 		return mcpToolResult(htmlContent)
+
+	case "browser_snapshot":
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			out, err := seleniumMCP.snapshot(args.SessionID)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_snapshot: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		htmlContent, err := s.browserMgr.GetDOM(args.SessionID)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_snapshot: %v", err))
+		}
+		url, _ := s.browserMgr.GetURL(args.SessionID)
+		return mcpToolJSON(map[string]interface{}{"ok": true, "session_id": args.SessionID, "url": url, "dom": htmlContent})
 
 	case "browser_evaluate":
 		if s.browserMgr == nil {

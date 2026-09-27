@@ -11,11 +11,10 @@ import GitSettingsCard from "./GitSettingsCard";
 import SourceCodeStatusCard from "./SourceCodeStatusCard";
 import VisionSettingsCard from "./VisionSettingsCard";
 import OpenCodeSettingsView from "./OpenCodeSettingsView";
-import { ManagedCloudPanel } from "./ManagedCloudPanel";
 import { agentClient } from "@/lib/agent-client";
 import type { DogfoodSourceStatus, RemoteRuntimeSession } from "@/lib/agent-client";
 import RemoteRuntimeViewer from "./RemoteRuntimeViewer";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
+import { ENABLE_RELAY_PRO_UI } from "@/lib/launchFlags";
 import { useAutoRenderVibing } from "@/lib/autoRenderVibing";
 import {
   resolveRuntimeProjectPreference,
@@ -1250,16 +1249,10 @@ export default function SettingsView({ user, onLogout, onOpenTwoFactor }: Settin
       <SourceCodeStatusCard devices={ownedDevices} />
       <RuntimeProjectDefaultsCard token={token} devices={ownedDevices} />
 
-      {!HIDE_PAID_UI ? (
-        <>
-          <div className="mb-6">
-            <BillingView token={token} />
-          </div>
-
-          <div className="mb-6">
-            <ManagedCloudPanel token={token} standalone />
-          </div>
-        </>
+      {ENABLE_RELAY_PRO_UI ? (
+        <div className="mb-6">
+          <BillingView token={token} />
+        </div>
       ) : null}
 
       <div className="card mb-6">
@@ -1474,6 +1467,12 @@ export default function SettingsView({ user, onLogout, onOpenTwoFactor }: Settin
             className="flex items-center gap-2 text-sm text-surface-400 transition-colors hover:text-surface-50"
           >
             <span aria-hidden>📄</span> Terms of Service
+          </a>
+          <a
+            href="mailto:kivanc.cakmak@simkab.com?subject=Report%20inappropriate%20Yaver%20AI%20output"
+            className="flex items-center gap-2 text-sm text-surface-400 transition-colors hover:text-surface-50"
+          >
+            <span aria-hidden>⚑</span> Report inappropriate AI output
           </a>
         </div>
       </div>

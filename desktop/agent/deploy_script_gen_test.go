@@ -93,6 +93,7 @@ func TestGenerateDeployScriptPlaystore(t *testing.T) {
 	}
 	for _, s := range []string{
 		"ANDROID_KEYSTORE_PASSWORD",
+		"ANDROID_KEYSTORE_PATH",
 		"bundleRelease",
 		"app-release.aab",
 		// Resumable-AAB guarantees:
@@ -103,10 +104,18 @@ func TestGenerateDeployScriptPlaystore(t *testing.T) {
 		"vc=$NEW git=$GIT_SHA",
 		// Upload success clears fingerprint; failure keeps it.
 		`rm -f "$FP"`,
+		"YAVER_PLAY_UPLOAD_HELPER",
+		"Play upload failed",
 	} {
 		if !strings.Contains(script, s) {
 			t.Errorf("playstore script missing %q", s)
 		}
+	}
+	if strings.Contains(script, "Upload helper not found — AAB is ready; upload manually") {
+		t.Error("missing Play uploader must fail, not report a build-only success")
+	}
+	if strings.Contains(script, "../../../keys/yaver-upload.keystore") {
+		t.Error("generic Play template must not use Yaver's own keystore path")
 	}
 }
 

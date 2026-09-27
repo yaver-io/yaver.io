@@ -9,23 +9,23 @@ import { GUI_DOWNLOADS } from "@/lib/versions";
 // Canonical definitional one-liner — picked up by AI search
 // (ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Framed
 // around the product, not the MCP protocol: Yaver is a real-device app
-// development loop. Run your coding agent on your own machine — or in a
-// Yaver Cloud Workspace — and drive it from a native desktop app, your
+// development loop. Run your coding agent on your own machine or VPS and
+// drive it from a native desktop app, your
 // phone, tablet, watch, or the web. No comparative claims against named
 // competitors, per LEGAL_SAFETY.md §2 (trademark) and §3.
 const LANDING_TAGLINE =
-  "Yaver is an open-source, self-hostable real-device app development loop. It runs Claude Code, Codex, and OpenCode on your own machine — or in a Yaver Cloud Workspace — and hot-reloads the real app on your iPhone or Android seconds after the agent edits it. Drive it from the Yaver desktop app for macOS, Windows, and Linux, from your phone, or from the web.";
+  "Yaver is an open-source, self-hostable real-device app development loop. It runs Claude Code, Codex, and OpenCode on your own Mac, PC, Linux host, home server, or VPS and hot-reloads the real app on your iPhone or Android seconds after the agent edits it. Drive it from desktop, phone, tablet, watch, TV, car, spatial clients, the web, or your own app using Yaver's SDK.";
 
 const SUPPORTED_SURFACES = ["iOS", "Android", "Web", "watchOS", "tvOS", "Wear OS", "CarPlay", "Android Auto"];
 
 const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: "What is Yaver?",
-    a: "Yaver is an open-source real-device app development loop. Your coding agent — Claude Code, Codex, or OpenCode — runs on the machine that does the work: your laptop, a home server, or a Yaver Cloud Workspace. Yaver compiles your React Native or Expo app to Hermes bytecode and hot-reloads it on your real iPhone or Android in seconds. Drive it from the desktop app, your phone, or the web.",
+    a: "Yaver is an open-source real-device app development loop. Claude Code, Codex, OpenCode, or another terminal agent runs on your own laptop, workstation, home server, or VPS. Yaver adds secure remote control, browser lane, Hermes/native previews, feedback capture, and clients from phone and watch to TV and spatial surfaces.",
   },
   {
     q: "Where does the agent run?",
-    a: "Wherever you want it to. Self-host on your own machines with npm install -g yaver-cli, or use a Yaver Cloud Workspace — a persistent remote box with your repos and setup saved, which auto-stops when you are idle so it does not run your bill up. Bring your own Claude Code, Codex, or OpenCode account either way.",
+    a: "On a computer you control: a laptop, workstation, Mac mini, Linux box, home server, or VPS. Install Yaver there and use your own Claude Code, Codex, OpenCode, or terminal-agent account.",
   },
   {
     q: "Is it a WebView?",
@@ -33,11 +33,11 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Does my code leave my machine?",
-    a: "Your source, prompts, runner output, files, and secrets stay on the machine doing the work. The hosted coordination plane stores sign-in and peer-discovery metadata; traffic is encrypted and the relay forwards bytes without reading them. Self-host the relay too if you want zero Yaver infrastructure.",
+    a: "Your source files, runner processes, and durable output stay on the machine doing the work. The hosted control plane stores account and device metadata. Managed relay traffic is encrypted in transit and forwarded without persistent body storage, but the HTTP relay process is inside the transport trust boundary. Use a direct path or self-host the relay when you need to control that boundary.",
   },
   {
     q: "How self-hosted is it?",
-    a: "The CLI, agent, relay, and backend are all self-hostable. Run your own relay or use Tailscale for connectivity, and the only Yaver component left is the optional mobile app. The managed path — Cloud Workspace and Relay Pro — is there for when you want it without running your own always-on box.",
+    a: "The CLI, agent, relay, and backend are self-hostable, and the client SDK can put Yaver inside your own app. Run your own relay or private network, or use the optional $9/month Relay Pro connectivity service. No first-party Yaver app is required.",
   },
   {
     q: "Which coding agents work?",
@@ -62,7 +62,7 @@ const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: str
   },
   {
     name: "Build and hot-reload",
-    text: "Ask the agent to build something. Yaver runs it on your machine — or your Cloud Workspace — compiles the bundle, and hot-reloads it on your paired phone.",
+    text: "Ask the agent to build something. Yaver runs it on your machine or VPS, compiles the bundle, and hot-reloads it on your paired phone.",
     url: "https://yaver.io/manuals/cli-setup",
   },
 ];
@@ -158,17 +158,10 @@ export default function HomePage() {
     itemListElement: [
       {
         "@type": "Offer",
-        name: "Cloud Workspace",
-        price: "29",
-        priceCurrency: "USD",
-        description: "Persistent remote workspace, 120 standard hours per month, bring your own AI account, auto-stops when idle.",
-      },
-      {
-        "@type": "Offer",
         name: "Relay Pro",
         price: "9",
         priceCurrency: "USD",
-        description: "Private relay connectivity so your devices stay reachable from anywhere.",
+        description: "Managed account-private relay connectivity to a machine or VPS you control.",
       },
     ],
   };
@@ -223,10 +216,10 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
-            Your coding agent builds on your own machine — or a Cloud
-            Workspace — and the app hot-reloads on your real iPhone or
-            Android seconds later. Drive it from the desktop app, your phone,
-            or the web. Bring your own AI account.
+            Your coding agent builds on your own Mac, PC, Linux box, or VPS,
+            and the app hot-reloads on your real iPhone or Android seconds
+            later. Drive it from the desktop app, your phone, or the web.
+            Bring your own AI account.
           </p>
 
           <div className="mx-auto mt-6 flex max-w-2xl flex-wrap items-center justify-center gap-2">
@@ -240,7 +233,7 @@ export default function HomePage() {
             ))}
           </div>
 
-          {/* Two-path CTA: desktop app / self-host vs Cloud Workspace */}
+          {/* Free runtime plus optional managed relay. */}
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link
               href="/download"
@@ -252,7 +245,7 @@ export default function HomePage() {
               href="/pricing"
               className="rounded-lg border border-surface-700 bg-surface-900/70 px-6 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
             >
-              Cloud Workspace from $29/mo &rarr;
+              Relay Pro — $9/mo &rarr;
             </Link>
           </div>
 
@@ -261,7 +254,7 @@ export default function HomePage() {
               One install turns any machine into a remote AI runtime:
             </p>
             <div className="space-y-1.5 rounded-lg border border-surface-800 bg-surface-950 px-4 py-3 font-mono text-[12px] leading-relaxed">
-              <div className="text-surface-500"># on the machine that does the work (or in a Cloud Workspace):</div>
+              <div className="text-surface-500"># on the machine or VPS that does the work:</div>
               <div className="text-surface-600">
                 $ <span className="select-all break-all text-surface-200">npm install -g yaver-cli && yaver auth</span>
               </div>
@@ -300,7 +293,7 @@ export default function HomePage() {
           />
           <p className="mx-auto mt-4 max-w-2xl text-center text-sm text-surface-300">
             Open Yaver on your desktop or phone, pick a project from your
-            machine or Cloud Workspace, preview it on your phone, shake to
+            machine or VPS, preview it on your phone, shake to
             vibe-code — fix a bug, ship a small feature, or tweak a style —
             and a fresh bundle lands in seconds. One screen, real device, no
             extra hardware.
@@ -316,8 +309,9 @@ export default function HomePage() {
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-surface-400">
             The native desktop app embeds the Yaver agent, so a fresh machine
-            becomes a full Yaver node — vibe it directly, or from any other
-            device. The CLI turns any machine into a remote AI runtime.
+            becomes both a development runtime and a control surface. Run on
+            this machine, or explicitly target another paired box for coding,
+            builds, and Browser Lane. The CLI turns headless machines into remote runtimes.
           </p>
 
           {/* Desktop app — the product shell */}
@@ -422,11 +416,11 @@ export default function HomePage() {
               </p>
             </div>
 
-            {/* Column 2 — cloud workspace path */}
+            {/* Column 2 — optional managed relay path */}
             <div className="rounded-xl border border-emerald-500/20 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-sm font-bold text-emerald-500">2</span>
-                <span className="text-sm font-semibold text-surface-100">Cloud Workspace — $29/mo, managed</span>
+                <span className="text-sm font-semibold text-surface-100">Relay Pro — $9/mo, managed</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -435,16 +429,15 @@ export default function HomePage() {
                   <div className="terminal-dot bg-[#28c840]" />
                 </div>
                 <div className="terminal-body space-y-1 text-[12px]">
-                  <div className="text-surface-500"># from the app or dashboard:</div>
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">create Cloud Workspace</span></div>
-                  <div className="text-[11px] text-green-400/80">{"\u2192 120 standard hours included · auto-stops when idle"}</div>
+                  <div className="text-surface-500"># keep using your own runtime:</div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
+                  <div className="text-[11px] text-green-400/80">{"\u2192 reachable through your managed private relay lane"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                A persistent remote box with your repos and setup saved.
-                Bring your own Claude Code / Codex / OpenCode account. Private
-                relay included so it is reachable from anywhere. Auto-stops
-                when you leave; reopens where you left off.{" "}
+                Keep the repository and coding agent on your Mac, PC, Linux
+                box, or VPS. Relay Pro makes that runtime reachable by every
+                supported Yaver client and by apps using the Yaver SDK.{" "}
                 <Link href="/pricing" className="underline hover:text-surface-300">
                   Pricing & details
                 </Link>.
@@ -543,7 +536,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Section 4: Pricing teaser — three paths, one cockpit ── */}
+      {/* ── Section 4: Pricing teaser ── */}
       <section id="pricing" className="border-t border-surface-800/60 px-6 py-20">
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-3 text-center text-2xl font-bold text-surface-50 md:text-3xl">
@@ -552,7 +545,7 @@ export default function HomePage() {
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-surface-400">
             Self-host for free. Pay only when you want Yaver to run infrastructure for you.
           </p>
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
             {[
               {
                 name: "Self-hosted",
@@ -568,29 +561,15 @@ export default function HomePage() {
                 cta: { href: "/download", label: "Install free" },
               },
               {
-                name: "Cloud Workspace",
-                price: "$29",
-                per: "/mo",
-                highlight: true,
-                items: [
-                  "Persistent remote workspace",
-                  "120 standard hours included",
-                  "Bring your own AI account",
-                  "Private relay included",
-                  "Auto-stops when idle — reopens saved",
-                ],
-                cta: { href: "/pricing", label: "See details" },
-              },
-              {
                 name: "Relay Pro",
                 price: "$9",
                 per: "/mo",
-                highlight: false,
+                highlight: true,
                 items: [
-                  "Private relay connectivity",
-                  "Your devices reachable from anywhere",
-                  "Works with self-hosted setup",
-                  "Per-user, per-device auth",
+                  "Managed private relay connectivity",
+                  "Mac, PC, Linux box, VPS, or Pi",
+                  "Browser lane, Hermes, Feedback SDK",
+                  "Every Yaver surface and client SDK",
                 ],
                 cta: { href: "/pricing", label: "See details" },
               },
@@ -632,8 +611,7 @@ export default function HomePage() {
             ))}
           </div>
           <p className="mt-8 text-center text-xs text-surface-600">
-            Cloud Workspace hours are metered honestly: bigger machines burn the same
-            budget faster, and the app shows you real wall-clock hours remaining.
+            Relay Pro is a private account-scoped lane on shared pass-through infrastructure, not a dedicated server or hosted coding machine.
           </p>
         </div>
       </section>
@@ -648,7 +626,7 @@ export default function HomePage() {
             {[
               {
                 t: "Remote by default",
-                d: "The agent runs where the work is — your machine or a Cloud Workspace — and you drive it from a phone, watch, TV, car, or the web. Coding is no longer tied to a desk.",
+                d: "The agent runs where the work is — your machine or VPS — and you drive it from a phone, watch, TV, car, spatial client, the web, or your own app. Coding is no longer tied to a desk.",
               },
               {
                 t: "Real phone loop",

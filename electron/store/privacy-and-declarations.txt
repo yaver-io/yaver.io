@@ -1,0 +1,53 @@
+YAVER — PRIVACY AND PRODUCT DECLARATIONS
+
+Confirm each answer against the current Partner Center wording at submission.
+
+Does the app access, collect, or transmit personal information?
+YES
+
+Privacy policy URL
+https://yaver.io/privacy
+
+Data handled
+- Account identity, authentication/session identifiers, linked providers, and
+  account settings.
+- User-owned device identity, app/OS version, connectivity status, and bounded
+  diagnostic events.
+- Task prompts, output, approvals, and project metadata needed for the selected
+  coding workflow. Source files stay on the task machine unless the user invokes
+  an external provider, Git host, deploy, backup, or sharing workflow.
+- Screen frames and remote input only after the local user grants the relevant
+  consent. SSH and mesh payload lanes remain opaque to the shared relay. The
+  current HTTP browser/proxy lane terminates relay TLS and processes proxy
+  envelopes; the target machine independently enforces bearer/device access.
+
+Suggested Store properties
+- Primary category: Developer tools
+- Acquisition price: Free
+- Account required: Yes for cross-device/cloud-backed surfaces
+- Separate paid service may be required: Yes, for optional third-party AI or
+  managed Yaver services; disclose this in the description
+- Personal information: Yes
+- Accessibility declaration: Do not claim until a dedicated audit passes
+- Target device: PC only
+- Future device families: No; do not enable automatic availability
+- Architecture: x64
+- Incorporates generative AI: Yes; Yaver invokes user-selected coding agents
+
+Installer/dependency declarations
+- Microsoft-hosted x64 AppX/MSIX-family package for Windows.Desktop
+- Partner Center manages signing, installation, updates, and removal
+- NT service dependency: No
+- Non-Microsoft driver dependency: No for core operation
+- WSL2/Linux distribution dependency: No; not bundled
+- Bundleware/promoted software: No
+- Optional downloads: supported Node.js runtime and coding-runner CLIs only
+  after an explicit user request for a workflow that needs them
+
+Permissions and Windows changes
+- No Start-at-login task, service, driver, silent WSL enablement, Remote Desktop
+  enablement, or global power-plan change
+- Keep-awake, scoped Private/Domain firewall repair, screen view, and remote
+  input are explicit user-controlled functions
+- Package capabilities: internetClient, privateNetworkClientServer, and
+  runFullTrust (Electron desktop entry plus native agent)

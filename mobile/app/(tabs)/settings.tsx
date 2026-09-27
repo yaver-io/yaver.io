@@ -2237,7 +2237,7 @@ export default function SettingsScreen() {
                     </Text>
                     {codingMode === "local-only" ? (
                       <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-                        DeepSeek and Git run on this phone. Builds, shells, tests, previews, and deploys need a box or Cloud Workspace.
+                        DeepSeek and Git run on this phone. Builds, shells, tests, previews, and deploys need a capable paired machine or VPS.
                       </Text>
                     ) : null}
                   </View>

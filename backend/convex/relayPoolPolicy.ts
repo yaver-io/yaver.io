@@ -12,12 +12,46 @@
  * allowance), not CPU — a small box has ample CPU for pass-through. Raise this
  * only with measured per-tenant throughput, never optimistically.
  */
-export const RELAY_TENANTS_PER_HOST = Number(process.env.YAVER_RELAY_TENANTS_PER_HOST) || 20;
+export function relayTenantsPerHost(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const parsed = Number(env.YAVER_RELAY_TENANTS_PER_HOST);
+  // The value is a packing target, not a licence for an environment typo to
+  // put an unbounded number of paid accounts on one failure domain.
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 50 ? parsed : 20;
+}
+
+export const RELAY_TENANTS_PER_HOST = relayTenantsPerHost();
 
 /** Host key for a (region, index) slot. Stable and human-readable in logs. */
 export function relayHostKey(region: string, index: number): string {
   const r = String(region || "eu").trim().toLowerCase();
-  return `relay-${r}-${Math.max(0, index)}`;
+  // v2 hosts use one certified hostname per pool slot. The version prevents a
+  // new tenant from joining a legacy host that was certified only for its
+  // first tenant's per-user hostname.
+  return `relay-v2-${r}-${Math.max(0, index)}`;
+}
+
+/** Collision-resistant v3 key for the indexed pool-host ledger. The seed is a
+ * Convex relay id, so creating a host never needs a region-wide counter or a
+ * bounded scan for the next numeric slot. */
+export function relayHostKeyFromSeed(region: string, seed: string): string {
+  const r = String(region || "eu").trim().toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const suffix = String(seed || "host").toLowerCase().replace(/[^a-z0-9]/g, "").slice(-16) || "host";
+  return `relay-v3-${r}-${suffix}`;
+}
+
+/** Public TLS name: pooled tenants share one certified host name; dedicated
+ * tenants retain a per-user name. Authentication, not DNS, isolates tenants. */
+export function relayPublicHostname(args: {
+  dedicated: boolean;
+  shortUserId: string;
+  hostKey?: string | null;
+}): { subdomain: string; domain: string } {
+  const label = args.dedicated
+    ? `${args.shortUserId}.relay`
+    : `${args.hostKey || "relay-unassigned"}.relay`;
+  return { subdomain: label, domain: `${label}.yaver.io` };
 }
 
 export type RelayPoolAssignment = {
@@ -45,7 +79,11 @@ export function selectRelayHostSlot(args: {
   // packed so an idle host can eventually be drained and deleted. Least-loaded
   // spreads tenants evenly and guarantees every host stays half-empty forever,
   // which is the same always-on cost this pool exists to remove.
-  for (let i = 0; i < 1000; i++) {
+  // With N occupied keys, first-fit must find a free key within N + 1 probes.
+  // Deriving the bound from observed state avoids a hidden 1,000-host ceiling
+  // while still making malformed input terminate deterministically.
+  const maximumProbe = Object.keys(args.hostCounts).length;
+  for (let i = 0; i <= maximumProbe; i++) {
     const key = relayHostKey(args.region, i);
     const count = args.hostCounts[key] ?? 0;
     if (count < capacity) {
@@ -59,7 +97,7 @@ export function selectRelayHostSlot(args: {
       };
     }
   }
-  throw new Error(`relay pool exhausted for region ${args.region}`);
+  throw new Error(`relay pool placement invariant failed for region ${args.region}`);
 }
 
 /**
@@ -75,11 +113,16 @@ export function selectRelayHostSlot(args: {
  */
 export function sharedHostDeletionDecision(args: {
   sharedHostKey?: string | null;
+  /** A pre-existing hybrid/free anchor is infrastructure, not subscription inventory. */
+  pinned?: boolean;
   /** Live tenant count AFTER this tenant's row has been marked stopped. */
   liveTenantsOnHost: number;
 }): { deleteServer: boolean; reason: string } {
   if (!args.sharedHostKey) {
     return { deleteServer: true, reason: "dedicated relay — box is tenant-private" };
+  }
+  if (args.pinned) {
+    return { deleteServer: false, reason: "pinned hybrid relay — never delete from subscription churn" };
   }
   if (args.liveTenantsOnHost <= 0) {
     return { deleteServer: true, reason: "last tenant on shared host — drain and delete the box" };
@@ -96,7 +139,7 @@ export function sharedHostDeletionDecision(args: {
  * DEDICATED relays: YES — the box is tenant-private, so a resubscribe can be
  * restored from the snapshot.
  *
- * SHARED pool hosts: NO — the host is pass-through (no tenant data worth
+ * SHARED pool hosts: NO — the host has no durable tenant workspace data worth
  * restoring), and a drained host's snapshot is a billed orphan with no restore
  * path. Measured 2026-08-09: a 0.39 GB `yaver-predelete-relay-*` snapshot was
  * left billed on the owner's account by a shared-host teardown and had to be

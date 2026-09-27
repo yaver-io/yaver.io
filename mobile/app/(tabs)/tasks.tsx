@@ -4342,6 +4342,21 @@ export default function TasksScreen() {
           }
           return;
         }
+        if (evt.type === "task_verification" && evt.verification) {
+          const tid = selectedTask.id;
+          const verification = evt.verification as Task["verification"];
+          const apply = (task: Task): Task => task.id === tid
+            ? {
+                ...task,
+                verification,
+                videoClipId: verification?.videoClipId || task.videoClipId,
+                videoStatus: verification?.videoClipId ? "ready" : task.videoStatus,
+              }
+            : task;
+          setTasks((prev) => prev.map(apply));
+          setSelectedTask((prev) => prev ? apply(prev) : prev);
+          return;
+        }
         if (isTaskPresentationEvent(evt)) {
           const tid = selectedTask.id;
           const apply = (task: Task): Task => task.id === tid
@@ -9445,6 +9460,19 @@ export default function TasksScreen() {
 
                 {/* Video summary chip — kept out of the header so Row 1
                     stays clean (B1). Inline strip below the header. */}
+                {selectedTask.verification ? (
+                  <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
+                    <View style={{ alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: selectedTask.verification.status === "passed" ? "#22c55e22" : selectedTask.verification.status === "failed" ? "#ef444422" : "#eab30822" }}>
+                      <Text style={{ color: selectedTask.verification.status === "passed" ? "#22c55e" : selectedTask.verification.status === "failed" ? "#ef4444" : "#eab308", fontSize: 11, fontWeight: "600" }}>
+                        {selectedTask.verification.status === "running"
+                          ? "Browser verification running…"
+                          : selectedTask.verification.status === "passed"
+                            ? `Browser verified · ${selectedTask.verification.passed ?? 0}/${selectedTask.verification.total ?? 0} passed`
+                            : `Browser verification failed${selectedTask.verification.failureReason ? ` · ${selectedTask.verification.failureReason}` : ""}`}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
                 {selectedTask.videoStatus === "ready" && selectedTask.videoClipId ? (
                   <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
                     <Pressable

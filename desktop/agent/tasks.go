@@ -1402,16 +1402,20 @@ type Task struct {
 	// ReviewRequested is set only by the runner's structured
 	// yaver_report_complete MCP call. Process exit, an idle tmux pane, and a
 	// line of terminal text must never promote a task into Review.
-	ReviewRequested bool                  `json:"reviewRequested,omitempty"`
-	ReviewSummary   string                `json:"reviewSummary,omitempty"`
-	Failure         *TaskFailureDiagnosis `json:"failure,omitempty"`
-	CostUSD         float64               // Total API cost
-	InputTokens     int                   // Tokens consumed (prompt + cache reads + cache creation)
-	OutputTokens    int                   // Tokens produced by the model
-	Turns           []ConversationTurn    // Full conversation history
-	CreatedAt       time.Time             `json:"created_at"`
-	StartedAt       *time.Time            `json:"started_at,omitempty"`
-	FinishedAt      *time.Time            `json:"finished_at,omitempty"`
+	ReviewRequested bool   `json:"reviewRequested,omitempty"`
+	ReviewSummary   string `json:"reviewSummary,omitempty"`
+	// Verification is evidence collected by the agent through a real browser
+	// operation. Runner prose remains a claim; this record is the independently
+	// observed result returned by yaver_verify_task.
+	Verification *TaskVerification     `json:"verification,omitempty"`
+	Failure      *TaskFailureDiagnosis `json:"failure,omitempty"`
+	CostUSD      float64               // Total API cost
+	InputTokens  int                   // Tokens consumed (prompt + cache reads + cache creation)
+	OutputTokens int                   // Tokens produced by the model
+	Turns        []ConversationTurn    // Full conversation history
+	CreatedAt    time.Time             `json:"created_at"`
+	StartedAt    *time.Time            `json:"started_at,omitempty"`
+	FinishedAt   *time.Time            `json:"finished_at,omitempty"`
 
 	WorkDir string `json:"workDir,omitempty"` // per-task workDir (auto-detected from prompt)
 	// ProjectName is the portable project identity selected by the user. It is
@@ -1701,6 +1705,18 @@ func (tm *TaskManager) RequestTaskReview(id, summary string) error {
 		tm.mu.Unlock()
 		return fmt.Errorf("task %s is not actively running", id)
 	}
+	// Once the runner explicitly requested browser verification, it cannot
+	// ignore that operation's result and still promote its prose claim to
+	// Review. Tasks that never requested verification retain the historical
+	// completion path (backend/docs work must not acquire a browser gate).
+	if task.Verification != nil && task.Verification.Status != "passed" {
+		status := task.Verification.Status
+		if status == "" {
+			status = "unknown"
+		}
+		tm.mu.Unlock()
+		return fmt.Errorf("task verification is %s; fix or finish verification before reporting complete", status)
+	}
 	task.ReviewRequested = true
 	task.ReviewSummary = strings.TrimSpace(summary)
 	text := "The agent reports the requested work is fully complete; finishing this turn."
@@ -1801,6 +1817,7 @@ type TaskInfo struct {
 	RawOffset    int64                     `json:"rawOffset,omitempty"`
 	ResultText   string                    `json:"resultText,omitempty"`
 	Presentation []TaskPresentationMessage `json:"presentation,omitempty"`
+	Verification *TaskVerification         `json:"verification,omitempty"`
 	Failure      *TaskFailureDiagnosis     `json:"failure,omitempty"`
 	CostUSD      float64                   `json:"costUsd,omitempty"`
 	InputTokens  int                       `json:"inputTokens,omitempty"`
@@ -5622,6 +5639,7 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			Output:           output,
 			ResultText:       t.ResultText,
 			Presentation:     taskPresentationListSnapshot(t),
+			Verification:     taskVerificationForWire(t.Verification),
 			Failure:          t.Failure,
 			CostUSD:          t.CostUSD,
 			InputTokens:      t.InputTokens,

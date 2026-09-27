@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { GUI_DOWNLOADS, GUI_VERSION } from "@/lib/versions";
+import { GUI_DOWNLOADS } from "@/lib/versions";
 
 const card = "rounded-2xl border border-surface-800 bg-surface-900 p-6";
 const secondaryButton =
@@ -70,7 +70,9 @@ export default function DownloadPage() {
           <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 id="desktop-downloads" className="text-3xl font-semibold text-surface-50">Get Yaver Desktop</h2>
-              <p className="mt-2 text-sm text-surface-400">The signed GUI includes the Yaver Go agent. Version {GUI_VERSION}.</p>
+              <p className="mt-2 text-sm text-surface-400">
+                The newest signed desktop release includes the Yaver Go agent. Use this machine as the runtime, or control another paired box.
+              </p>
             </div>
             <a href="https://github.com/yaver-io/yaver.io/releases" className="text-sm text-surface-400 underline hover:text-surface-50">
               All desktop releases

@@ -1,0 +1,45 @@
+name: Validate Microsoft Store package contract
+
+on:
+  pull_request:
+    paths:
+      - "electron/**"
+      - "scripts/microsoft-store-appx-submission.mjs"
+      - ".github/workflows/microsoft-store-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "electron/**"
+      - "scripts/microsoft-store-appx-submission.mjs"
+      - ".github/workflows/microsoft-store-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yaver-microsoft-store-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+      - name: Install Electron dependencies
+        working-directory: electron
+        run: npm ci
+      - name: Prove full-node package and submission guards
+        working-directory: electron
+        run: npm test
+      - name: Parse Store workflow and configuration
+        shell: bash
+        run: |
+          node -e "require('./electron/node_modules/js-yaml').load(require('fs').readFileSync('.github/workflows/microsoft-store-release.yml','utf8'))"
+          node -e "const c=require('./electron/electron-builder.microsoft-store.cjs'); if(c.win.target[0]!=='appx'||!c.extraResources.some(x=>x.from==='resources/bin/yaver.exe')) process.exit(1)"

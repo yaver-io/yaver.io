@@ -9,6 +9,7 @@ const read = (relativePath) => readFileSync(join(here, relativePath), "utf8");
 const appConfig = JSON.parse(read("../../app.json"));
 const mainManifest = read("../../android/app/src/main/AndroidManifest.xml");
 const localReleaseScript = read("../../../scripts/deploy-playstore.sh");
+const gradleProperties = read("../../android/gradle.properties");
 const ciReleaseWorkflow = read("../../../.github/workflows/release-mobile.yml");
 const pickerCallSites = [
   read("../../app/phone-projects.tsx"),
@@ -48,5 +49,16 @@ for (const source of pickerCallSites) {
     "system photo-picker call sites must not request broad library access first",
   );
 }
+
+assert.match(
+  gradleProperties,
+  /^android\.enableMinifyInReleaseBuilds=true$/m,
+  "Play releases must keep R8 minification enabled",
+);
+assert.match(
+  localReleaseScript,
+  /R8_MAPPING_PATH=.*mapping\/release\/mapping\.txt/,
+  "the local Play build must verify that R8 produced its mapping file",
+);
 
 console.log("Android system photo-picker contract passed");

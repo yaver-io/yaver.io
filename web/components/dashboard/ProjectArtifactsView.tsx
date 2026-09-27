@@ -146,7 +146,7 @@ export default function ProjectArtifactsView({ token }: { token: string | null |
   async function uploadArtifact() {
     if (!token || !normalizedSlug || !file) return;
     if (!storageEntitled) {
-      setError("Yaver artifact storage is included with Cloud Workspace. Save an external HTTPS artifact link instead.");
+      setError("Hosted artifact uploads are not offered in this release. Save an external HTTPS artifact link instead.");
       return;
     }
     setBusy(true);
@@ -233,7 +233,7 @@ export default function ProjectArtifactsView({ token }: { token: string | null |
         <div>
           <h2 className="text-lg font-semibold">Project Artifacts</h2>
           <p className="mt-1 text-xs leading-5 text-surface-500">
-            Save APKs, Hermes bundles, web previews, and other private project outputs. Yaver-hosted artifact storage is included with Cloud Workspace.
+            Save links to APKs, Hermes bundles, web previews, and other project outputs.
           </p>
         </div>
         <button
@@ -297,7 +297,7 @@ export default function ProjectArtifactsView({ token }: { token: string | null |
         <h3 className="text-sm font-semibold text-surface-100">Add artifact</h3>
         {!storageEntitled ? (
           <p className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
-            Uploading files to Yaver storage requires Cloud Workspace. Free and Relay Pro can save external HTTPS artifact links.
+            Hosted file uploads are not offered in this release. Save an external HTTPS artifact link instead.
           </p>
         ) : null}
         <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -352,7 +352,7 @@ export default function ProjectArtifactsView({ token }: { token: string | null |
             disabled={busy || !normalizedSlug || !file || !storageEntitled}
             className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-200"
           >
-            {storageEntitled ? "Upload File" : "Cloud Workspace Only"}
+            {storageEntitled ? "Upload File" : "Hosted upload unavailable"}
           </button>
         </div>
       </section>

@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Yaver Relay Setup — Yaver Manual",
   description:
-    "Use Yaver Relay for remote access to your coding box. Free Relay is for light use, Relay Pro is for daily private reachability, and Cloud Workspace adds compute.",
+    "Use Yaver Relay for remote access to your coding box or VPS. Free Relay is for light use, and Relay Pro provides managed private reachability for daily work.",
   alternates: { canonical: "https://yaver.io/manuals/relay-setup" },
   robots: { index: false, follow: true },
 };

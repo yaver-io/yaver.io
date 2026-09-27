@@ -38,6 +38,7 @@ import { AssistantMarkdown } from "@/components/dashboard/VibeCodingView";
  *  least a demo clip) exists or was attempted. */
 export function taskProofVisible(task: Task | null | undefined): boolean {
   if (!task) return false;
+  if (task.verification) return true;
   if (task.status !== "completed" && task.status !== "review") return false;
   return Boolean(task.proofStatus || task.videoClipId);
 }
@@ -49,6 +50,16 @@ type ProofPhase =
   | { kind: "ready" };
 
 function derivePhase(task: Task, proof: TaskProof | null): ProofPhase {
+  if (task.verification) {
+    if (task.verification.status === "failed") {
+      return {
+        kind: "failed",
+        reason: task.verification.failureReason || "Browser verification failed. Open the checks below for the named cause.",
+      };
+    }
+    if (task.verification.status === "running") return { kind: "capturing" };
+    return { kind: "ready" };
+  }
   if (task.proofStatus === "failed" || proof?.status === "failed" || task.videoStatus === "failed") {
     return {
       kind: "failed",
@@ -77,11 +88,11 @@ function firstLine(text: string | undefined): string {
   return line || "";
 }
 
-function StatusPill({ phase }: { phase: ProofPhase }) {
+function StatusPill({ phase, label = "Proof" }: { phase: ProofPhase; label?: string }) {
   if (phase.kind === "ready") {
     return (
       <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-300">
-        Proof ✓
+        {label} ✓
       </span>
     );
   }
@@ -101,7 +112,7 @@ function StatusPill({ phase }: { phase: ProofPhase }) {
   }
   return (
     <span className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700 dark:text-rose-300">
-      Proof failed
+      {label} failed
     </span>
   );
 }
@@ -149,7 +160,7 @@ const TaskProofCard = memo(function TaskProofCard({
   }, [task.id, task.proofStatus, task.proofUrl, agentClient]);
 
   const phase = derivePhase(task, proof);
-  const clipId = proof?.clipId || task.videoClipId || null;
+  const clipId = task.verification?.videoClipId || proof?.clipId || task.videoClipId || null;
 
   // ── Poster thumbnail: authed fetch → blob (B8: the poster route is
   //    authSDK; a bare <img src> 401s over the relay). ──
@@ -248,7 +259,7 @@ const TaskProofCard = memo(function TaskProofCard({
     return (
       <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-300">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
-        Recording demo…
+        {task.verification?.status === "running" ? "Running browser verification…" : "Recording demo…"}
       </div>
     );
   }
@@ -268,9 +279,9 @@ const TaskProofCard = memo(function TaskProofCard({
               failed ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"
             }`}
           >
-            Task proof
+            {task.verification ? "Browser verification" : "Task proof"}
           </span>
-          <StatusPill phase={phase} />
+          <StatusPill phase={phase} label={task.verification ? "Browser" : "Proof"} />
           {caption ? <span className="ml-auto text-[10px] text-surface-500">{caption}</span> : null}
         </div>
 
@@ -332,6 +343,12 @@ const TaskProofCard = memo(function TaskProofCard({
             {diffShortstat ? (
               <div className="mt-1 text-[10px] text-surface-500">{diffShortstat}</div>
             ) : null}
+            {task.verification ? (
+              <div className="mt-2 text-[11px] text-surface-300">
+                {task.verification.passed ?? 0}/{task.verification.total ?? 0} checks passed
+                {task.verification.durationMs ? ` · ${(task.verification.durationMs / 1000).toFixed(1)}s` : ""}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -350,7 +367,7 @@ const TaskProofCard = memo(function TaskProofCard({
               <span className="min-w-0 flex-1 truncate text-sm font-semibold text-surface-100">
                 {task.title || "Task proof"}
               </span>
-              <StatusPill phase={phase} />
+              <StatusPill phase={phase} label={task.verification ? "Browser" : "Proof"} />
               <button
                 type="button"
                 onClick={() => setOverlayOpen(false)}
@@ -427,6 +444,16 @@ const TaskProofCard = memo(function TaskProofCard({
                     <div className="text-[13px] leading-6 text-surface-100 break-words [&_pre]:whitespace-pre-wrap">
                       <AssistantMarkdown text={proof.summaryMarkdown} />
                     </div>
+                  </div>
+                ) : null}
+                {task.verification?.checks?.length ? (
+                  <div className="rounded-2xl border border-surface-800 bg-surface-950/60 px-4 py-2">
+                    {task.verification.checks.map((check, index) => (
+                      <EvidenceRow key={`${check.name}:${index}`} label={check.status === "pass" ? "Passed" : "Failed"}>
+                        {check.name}
+                        {check.error ? <span className="mt-0.5 block text-rose-300">{check.error}</span> : null}
+                      </EvidenceRow>
+                    ))}
                   </div>
                 ) : null}
               </div>

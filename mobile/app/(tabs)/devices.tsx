@@ -18,7 +18,7 @@ import { getConvexSiteUrlSync } from "../../src/lib/backendConfig";
 import { useLocalSearchParams, router } from "expo-router";
 import { Device, useDevice } from "../../src/context/DeviceContext";
 import { appTag } from "../../src/lib/appVersion";
-import { HIDE_PAID_UI } from "../../src/lib/launchFlags";
+import { ENABLE_CLOUD_WORKSPACE_UI } from "../../src/lib/launchFlags";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { chipPalette } from "../../src/lib/chipPalette";
@@ -897,7 +897,7 @@ function DeviceCard({
           ) : null}
           {/* Up/down for a Yaver-hosted (managed) box. Resume when paused/stopped,
               else Pause. Self-hosted boxes have no machineId ⇒ nothing here. */}
-          {!HIDE_PAID_UI && device.machineId ? (
+          {ENABLE_CLOUD_WORKSPACE_UI && device.machineId ? (
             device.machineStatus === "paused" ||
             device.machineStatus === "stopped" ||
             device.machineStatus === "suspended" ? (
@@ -1546,7 +1546,7 @@ export default function DevicesScreen() {
                 const actionLabel = item.hosting === "yaver-hosted" ? "Manage cloud box" : "Remove from Yaver";
                 const isConnectedHere = connectedSet.has(item.id);
                 const message = item.hosting === "yaver-hosted"
-                  ? "This is a Yaver-hosted box. Decommission it from Cloud Workspace so the provider resources and billing are removed too."
+                  ? "This is a legacy hosted resource. Manage or cancel it from Billing on the web so its provider resources are removed too."
                   : isConnectedHere
                     ? "Disconnect, or remove this device from every Yaver surface? Remove also asks the connected agent to uninstall its local Yaver service and data. Your repositories and operating system are not touched. Pair it again after repair to recreate it."
                     : "Remove this device from every Yaver surface? It is offline, so Yaver will revoke its sessions and keep a hidden tombstone. Pair it again after repair to recreate it.";
@@ -1584,7 +1584,7 @@ export default function DevicesScreen() {
                   style: "destructive",
                   onPress: async () => {
                     if (item.hosting === "yaver-hosted") {
-                      Alert.alert("Cloud Workspace", "Open the Cloud Workspace section and choose Decommission so Yaver can remove the cloud resource and stop billing.");
+                      Alert.alert("Legacy hosted resource", "Open Billing on the web to manage or cancel this resource and stop its linked billing.");
                       return;
                     }
                     try {

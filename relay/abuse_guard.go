@@ -35,11 +35,14 @@ type abuseGuardConfig struct {
 	TURNCredPerIPPerMin     int
 	TURNCredBurstPerIP      int
 	MaxConcurrentHTTP       int
-	MaxConcurrentPerDevice  int
-	MaxRequestBodyBytes     int64
-	MaxExposeBodyBytes      int64
-	CleanupInterval         time.Duration
-	IdleEntryTTL            time.Duration
+	// Lower than global HTTP to reserve admission headroom for Relay Pro.
+	// Tier is QoS only; both lanes use identical authentication/isolation.
+	MaxConcurrentFreeHTTP  int
+	MaxConcurrentPerDevice int
+	MaxRequestBodyBytes    int64
+	MaxExposeBodyBytes     int64
+	CleanupInterval        time.Duration
+	IdleEntryTTL           time.Duration
 }
 
 func defaultAbuseGuardConfig() abuseGuardConfig {
@@ -63,6 +66,7 @@ func defaultAbuseGuardConfig() abuseGuardConfig {
 		TURNCredPerIPPerMin:     60,
 		TURNCredBurstPerIP:      20,
 		MaxConcurrentHTTP:       2048,
+		MaxConcurrentFreeHTTP:   1536,
 		MaxConcurrentPerDevice:  64,
 		MaxRequestBodyBytes:     64 << 20,
 		MaxExposeBodyBytes:      200 << 20,
@@ -92,6 +96,7 @@ func abuseGuardConfigFromEnv() abuseGuardConfig {
 	cfg.TURNCredPerIPPerMin = envInt("RELAY_TURN_CREDENTIAL_RATE_PER_IP_PER_MIN", cfg.TURNCredPerIPPerMin)
 	cfg.TURNCredBurstPerIP = envInt("RELAY_TURN_CREDENTIAL_BURST_PER_IP", cfg.TURNCredBurstPerIP)
 	cfg.MaxConcurrentHTTP = envInt("RELAY_MAX_CONCURRENT_HTTP", cfg.MaxConcurrentHTTP)
+	cfg.MaxConcurrentFreeHTTP = envInt("RELAY_MAX_CONCURRENT_FREE_HTTP", cfg.MaxConcurrentFreeHTTP)
 	cfg.MaxConcurrentPerDevice = envInt("RELAY_MAX_CONCURRENT_PER_DEVICE", cfg.MaxConcurrentPerDevice)
 	cfg.MaxRequestBodyBytes = envInt64("RELAY_MAX_REQUEST_BODY_BYTES", cfg.MaxRequestBodyBytes)
 	cfg.MaxExposeBodyBytes = envInt64("RELAY_MAX_EXPOSE_BODY_BYTES", cfg.MaxExposeBodyBytes)
@@ -135,6 +140,7 @@ type abuseGuard struct {
 	cfg            abuseGuardConfig
 	buckets        map[string]*tokenBucket
 	httpSem        chan struct{}
+	freeHTTPSem    chan struct{}
 	deviceActive   map[string]int
 	deniedLogLast  map[string]time.Time
 	trustedProxies []*net.IPNet
@@ -192,6 +198,9 @@ func newAbuseGuard(cfg abuseGuardConfig) *abuseGuard {
 	}
 	if cfg.MaxConcurrentHTTP > 0 {
 		g.httpSem = make(chan struct{}, cfg.MaxConcurrentHTTP)
+	}
+	if cfg.MaxConcurrentFreeHTTP > 0 {
+		g.freeHTTPSem = make(chan struct{}, cfg.MaxConcurrentFreeHTTP)
 	}
 	go g.cleanupLoop()
 	return g
@@ -275,6 +284,24 @@ func (g *abuseGuard) tryEnterHTTP() bool {
 func (g *abuseGuard) leaveHTTP() {
 	if g.httpSem != nil {
 		<-g.httpSem
+	}
+}
+
+func (g *abuseGuard) tryEnterFreeHTTP() bool {
+	if g.freeHTTPSem == nil {
+		return true
+	}
+	select {
+	case g.freeHTTPSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *abuseGuard) leaveFreeHTTP() {
+	if g.freeHTTPSem != nil {
+		<-g.freeHTTPSem
 	}
 }
 
@@ -479,6 +506,7 @@ const (
 	RelayCodePasswordInvalid        = "relay_password_invalid"
 	RelayCodePasswordRateLimited    = "relay_password_rate_limited"
 	RelayCodeAuthBackendUnavailable = "relay_auth_backend_unavailable"
+	RelayCodeFreeCapacityBusy       = "relay.free_capacity_busy"
 
 	// RelayCodeDeviceNotConnected is the genuine absence: nobody holds a
 	// tunnel for this deviceId right now.

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 const faqs = [
   {
@@ -18,7 +17,7 @@ const faqs = [
       },
       {
         q: "Do I need API keys?",
-        a: "Self-hosted Yaver does not need Yaver API keys. Your chosen coding agent may need its own login, subscription, or API key. Optional Yaver Cloud is web-billed managed infrastructure for a saved workspace and private relay; the mobile app controls existing machines and does not sell cloud access inside the app.",
+        a: "Yaver does not need model API keys. Your chosen coding agent may need its own login, subscription, or API key. Relay Pro is web-billed managed connectivity; it does not include hosted compute or model usage.",
       },
       {
         q: "Don't some agents already have remote access?",
@@ -39,9 +38,7 @@ const faqs = [
     items: [
       {
         q: "Do I need a relay server?",
-        a: HIDE_PAID_UI
-          ? "Only if your phone and dev machine aren't on the same network. On the same WiFi, Yaver finds your machine automatically via LAN broadcast. For remote access, use Yaver's free shared relay — or self-host your own relay from the open-source repo."
-          : "Only if your phone and dev machine aren't on the same network. On the same WiFi, Yaver finds your machine automatically via LAN broadcast. For remote access, start with Yaver's free shared relay. Relay Pro gives you a private managed relay and higher limits.",
+        a: "Only if your client and coding machine aren't on the same network. On the same WiFi, Yaver finds your machine over LAN. For remote access, use Free Relay, Relay Pro, or self-host the open-source relay.",
       },
       {
         q: "Can I use Yaver with a VPN?",
@@ -49,7 +46,7 @@ const faqs = [
       },
       {
         q: "What happens if my connection fails?",
-        a: "Yaver tries direct connection first, then falls back to relay servers in priority order. If a relay goes down, traffic routes through remaining relays. The CLI reconnects with exponential backoff (up to 30s). Network changes (WiFi to cellular) trigger an automatic reconnect — no manual intervention.",
+        a: "Yaver tries direct connection first, then configured relay servers in priority order. The CLI reconnects with exponential backoff. A Relay Pro assignment is sticky to the relay node that owns the live tunnel, so DNS round-robin is not used; automatic managed-node failover is still launch work.",
       },
     ],
   },
@@ -58,9 +55,7 @@ const faqs = [
     items: [
       {
         q: "Which relay should I use?",
-        a: HIDE_PAID_UI
-          ? "The free shared relay covers personal use. If you need dedicated capacity, the relay is open source — run your own with `yaver relay serve` on any box you control."
-          : "Start with Free Relay for light personal use. Upgrade to Relay Pro when Yaver becomes part of daily work and you need private managed capacity with higher limits.",
+        a: "Start with Free Relay for light personal use. Choose Relay Pro for managed account-private connectivity and higher limits, or run `yaver relay serve` on infrastructure you control. Relay Pro uses shared pass-through hosts; it is not a dedicated server.",
       },
       {
         q: "Can I run everything locally with no cloud?",
@@ -73,19 +68,19 @@ const faqs = [
     items: [
       {
         q: "Is my code safe?",
-        a: "Yaver connects your phone to your dev machine over the best available Yaver transport. CLI-to-relay uses QUIC (TLS encrypted), mobile-to-relay uses HTTPS, and the relay is password-protected and forwards bytes without inspecting them. On LAN, the beacon uses a SHA-256 token fingerprint so only your devices can discover each other. No code, tasks, or output are stored on Yaver servers. All of this is open source — read the code yourself.",
+        a: "Yaver connects your client to your dev machine over the best available transport. CLI-to-relay uses QUIC with TLS and browser/mobile relay requests use HTTPS. The managed relay authorizes the account and device, then processes proxy envelopes in memory; this path is not end-to-end opaque to the relay process. Source files and runner processes remain on your machine, and the relay is designed not to persist proxied bodies. Use direct/VPN/mesh transport or a self-hosted relay for a boundary you control.",
       },
       {
         q: "What is the privacy model?",
-        a: "Zero-knowledge. All code, prompts, and outputs flow P2P between your devices. The backend only handles OAuth sign-in and device discovery — it never sees your data. The website is just for registration and account management, not a control plane. Even if the auth backend were compromised, your code would be safe because it never passes through it.",
+        a: "Local-first, not blanket zero-knowledge. The control plane stores identity, device, entitlement, usage, and synchronization metadata. Direct/VPN/mesh payloads bypass the managed HTTP relay. Free Relay and Relay Pro terminate client TLS and forward traffic to your agent, so the relay process is inside that transport trust boundary even though it is designed not to persist request or response bodies.",
       },
       {
         q: "How does authentication work?",
-        a: "You sign in via OAuth (Apple, Google, or Microsoft). Both the CLI and mobile app receive a session token from Convex. This token authenticates all API requests and device registration. The relay server has a separate shared password that prevents unauthorized agents from connecting. On LAN, the UDP beacon includes a fingerprint derived from your user ID (first 8 hex chars of SHA-256), so only devices signed in to the same account will discover each other.",
+        a: "You sign in via OAuth (Apple, Google, or Microsoft). Clients receive a scoped session token for API requests and device registration. Shared Yaver relay hosts validate per-account credentials and device ownership through the control plane; Free versus Pro is a capacity boundary, not a security boundary. The agent still enforces its own authenticated device access.",
       },
       {
         q: "What encryption is used?",
-        a: "It depends on the connection path. CLI-to-relay uses QUIC with TLS. Mobile-to-relay uses HTTPS with TLS certificates. Direct LAN uses HTTP on your local network, where traffic stays on your WiFi. The relay is a pass-through transport.",
+        a: "It depends on the connection path. CLI-to-relay uses QUIC with TLS; browser/mobile relay requests use HTTPS; direct LAN may use HTTP on your local network. End-to-end mesh paths are distinct from the managed HTTP proxy. TLS to the managed relay protects data in transit but does not make the relay process cryptographically blind.",
       },
       {
         q: "Where are my relay credentials stored?",
@@ -188,7 +183,7 @@ const faqs = [
       },
       {
         q: "Is my screen recording data safe?",
-        a: "Yes. Screen recordings, voice, and screenshots transfer directly to your dev machine via P2P (same encrypted channel as everything else in Yaver). Nothing passes through our servers. The relay is a pass-through that can't read the data. Recordings are stored on your dev machine under ~/.yaver/feedback/ and you can delete them anytime with `yaver feedback delete <id>`.",
+        a: "Recordings are stored on your dev machine under ~/.yaver/feedback/ and you can delete them with `yaver feedback delete <id>`. On a direct or end-to-end mesh path, payloads bypass the managed HTTP relay. On Free Relay or Relay Pro, the TLS relay endpoint processes forwarded traffic in memory and therefore is part of the trust boundary; self-host the relay when you need to operate that boundary yourself.",
       },
       {
         q: "What does `yaver feedback fix` do?",

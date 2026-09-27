@@ -45,6 +45,7 @@ import {
   remotelessAccessAllowed,
   type MobileExecutionMode,
 } from "../lib/executionMode";
+import { isHostedCloudSurfaceDevice } from "../lib/launchFlags";
 
 // Auto-connect probe budget. Matches the manual switch modal (4000ms) — the
 // automatic path used to run at 3000ms, so the path the user lands on by
@@ -1362,7 +1363,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (devicesRes.ok) {
         const data = await devicesRes.json();
         const rawAll = data.devices || data || [];
-        const raw = rawAll;
+        // Product boundary, not a presentation preference: iPhone/iPad,
+        // CarPlay, and the paired watch bridge must never receive legacy Cloud
+        // Workspace devices. User-owned VPS/BYO/self-hosted machines remain.
+        const raw = rawAll.filter((d: any) => !isHostedCloudSurfaceDevice(d));
         appLog("info", `Found ${raw.length} device(s) for ${user?.email || user?.id || "unknown-user"}`);
         setDeviceListError(null);
         const connectedDeviceId = quicClient.isConnected ? activeDevice?.id : null;

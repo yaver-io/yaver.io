@@ -114,6 +114,30 @@ func TestAbuseGuardDeviceConcurrency(t *testing.T) {
 	}
 }
 
+func TestAbuseGuardFreeConcurrencyReservesPaidHeadroom(t *testing.T) {
+	cfg := defaultAbuseGuardConfig()
+	cfg.MaxConcurrentHTTP = 3
+	cfg.MaxConcurrentFreeHTTP = 2
+	g := newAbuseGuard(cfg)
+
+	if !g.tryEnterFreeHTTP() || !g.tryEnterFreeHTTP() {
+		t.Fatal("free requests should fill their configured share")
+	}
+	if g.tryEnterFreeHTTP() {
+		t.Fatal("third free request must be denied to reserve paid headroom")
+	}
+	if !g.tryEnterHTTP() || !g.tryEnterHTTP() || !g.tryEnterHTTP() {
+		t.Fatal("global capacity remains independently available")
+	}
+	if g.tryEnterHTTP() {
+		t.Fatal("global HTTP ceiling must still apply")
+	}
+	g.leaveFreeHTTP()
+	if !g.tryEnterFreeHTTP() {
+		t.Fatal("free capacity must return after request completion")
+	}
+}
+
 func TestDefaultBodyCapKeepsHermesBytecodeReloadHeadroom(t *testing.T) {
 	cfg := defaultAbuseGuardConfig()
 	if cfg.MaxRequestBodyBytes < 32<<20 {

@@ -1603,7 +1603,7 @@ export default defineSchema({
   // Managed relay servers (provisioned on Hetzner)
   managedRelays: defineTable({
     userId: v.id("users"),
-    // Optional: owner-dev relays (the /billing/yaver-cloud/dev-relay path)
+    // Optional: owner-dev relays (the /billing/relay-pro/dev-activate path)
     // have NO subscription row — they exist so the owner can exercise the
     // full Relay Pro provision/deprovision lifecycle on the real Hetzner
     // account before LemonSqueezy billing is live. Paid rows always carry it.
@@ -1648,7 +1648,34 @@ export default defineSchema({
     errorMessage: v.optional(v.string()),
   }).index("by_user", ["userId"])
     .index("by_subscription", ["subscriptionId"])
+    .index("by_shared_host", ["sharedHostKey"])
     .index("by_status", ["status"]),
+
+  // One small control-plane row per physical Relay Pro pool host. Placement
+  // uses this indexed ledger instead of scanning every managedRelays tenant
+  // row, so adding the next customer stays O(1) as the subscriber table grows.
+  relayPoolHosts: defineTable({
+    hostKey: v.string(),
+    region: v.string(),
+    // Pinned nodes predate or anchor the paid fleet and must never be deleted
+    // because a subscription ends. Hybrid nodes can serve free and Pro; tier
+    // remains an auth/QoS entitlement, never a tenant-isolation boundary.
+    pinned: v.optional(v.boolean()),
+    hybrid: v.optional(v.boolean()),
+    hostname: v.optional(v.string()),
+    placementStatus: v.string(), // "available" | "full" | "closed"
+    lifecycleStatus: v.string(), // "provisioning" | "active" | "draining" | "error" | "deleted"
+    tenantCount: v.number(),
+    capacity: v.number(),
+    serverId: v.optional(v.string()),
+    serverIp: v.optional(v.string()),
+    serverIpv6: v.optional(v.string()),
+    provisionLeaseUntil: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_host_key", ["hostKey"])
+    .index("by_region_placement", ["region", "placementStatus"]),
 
   // Teams (shared machines, centralized billing)
   teams: defineTable({

@@ -93,8 +93,17 @@ Targets:
   npm          CLI npm release via `yaver deploy npm`
   cli          Alias for npm
   feedback-sdk Publish the React Native feedback SDK to npm
+  relay <host> Deploy the relay binary atomically to one verified Yaver relay
   desktop      Signed macOS/Windows + Linux GUI release via protected gui/v* tag
   gui          Alias for desktop
+  desktop-windows
+               Build and locally verify the signed Windows Store EXE; no upload
+  desktop-windows-publish <signed-installer.exe>
+               Publish the direct-download full-node EXE (not the Store package)
+  desktop-windows-store-package
+               Dispatch the x64 full-node AppX build on GitHub (never submits)
+  desktop-windows-store-status
+               Read the existing Yaver MSIX Partner Center application; no mutation
   desktop-mas  Build + locally verify the sandboxed macOS App Store package
   desktop-testflight
                Build, validate, and upload macOS desktop to TestFlight
@@ -258,6 +267,14 @@ case "$target" in
     require_deploy_boundary
     run "$ROOT/scripts/publish-feedback-rn.sh"
     ;;
+  relay)
+    require_deploy_boundary
+    if [ "${1:-}" = "" ]; then
+      echo "ERROR: relay deploy requires the verified Yaver relay host or IP." >&2
+      exit 2
+    fi
+    run "$ROOT/relay/deploy/up.sh" ${pass_args[@]+"${pass_args[@]}"}
+    ;;
   desktop|gui)
     require_deploy_boundary
     gui_version="$(node -e "console.log(require('./versions.json').gui)")"
@@ -276,11 +293,41 @@ case "$target" in
       exit 2
     fi
     gui_tag="gui/v${gui_version}"
-    if git ls-remote --exit-code --tags origin "refs/tags/$gui_tag" >/dev/null 2>&1; then
+    if git remote get-url origin >/dev/null 2>&1; then
+      release_remote="origin"
+    elif git remote get-url github >/dev/null 2>&1; then
+      release_remote="github"
+    else
+      echo "ERROR: no origin or github release remote is configured." >&2
+      exit 2
+    fi
+    if git ls-remote --exit-code --tags "$release_remote" "refs/tags/$gui_tag" >/dev/null 2>&1; then
       echo "ERROR: remote tag $gui_tag already exists; versions are immutable." >&2
       exit 2
     fi
-    run git push origin "HEAD:refs/tags/$gui_tag"
+    run git push "$release_remote" "HEAD:refs/tags/$gui_tag"
+    ;;
+  desktop-windows)
+    require_deploy_boundary
+    run "$ROOT/scripts/build-windows-store.sh"
+    ;;
+  desktop-windows-publish)
+    require_deploy_boundary
+    gui_version="$(node -e "console.log(require('./versions.json').gui)")"
+    installer="${pass_args[0]:-}"
+    if [ -z "$installer" ]; then
+      echo "ERROR: desktop-windows-publish requires the exact signed installer path." >&2
+      exit 2
+    fi
+    run "$ROOT/scripts/publish-windows-store-package.sh" "$gui_version" "$installer"
+    ;;
+  desktop-windows-store-package)
+    require_deploy_boundary
+    run gh workflow run microsoft-store-release.yml --repo yaver-io/yaver.io
+    ;;
+  desktop-windows-store-status)
+    require_deploy_boundary
+    run node "$ROOT/scripts/microsoft-store-appx-submission.mjs" status
     ;;
   desktop-mas)
     require_deploy_boundary

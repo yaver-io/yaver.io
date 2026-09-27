@@ -5,8 +5,8 @@
 // and one tap resolves a reachable address and selects it. Typing a LAN IP by
 // hand (AddBoxView) stays as the fallback for an off-account / LAN-only box.
 //
-// Managed, parked boxes appear too, with Wake — a scale-to-zero machine should
-// be reachable from the sofa without walking to a computer.
+// Yaver-hosted Cloud Workspace rows are filtered at the registry boundary.
+// User-owned Macs, PCs and VPS nodes remain available here.
 
 import SwiftUI
 
@@ -65,13 +65,9 @@ struct MachinePickerView: View {
         }
         .alert(item: $removalCandidate) { device in
             Alert(
-                title: Text(device.hosting == "yaver-hosted"
-                            ? "Decommission \(device.displayName)?"
-                            : "Remove \(device.displayName)?"),
-                message: Text(device.hosting == "yaver-hosted"
-                              ? "This cancels linked billing and permanently deletes the Yaver cloud resources. No snapshot is kept."
-                              : "It disappears from every Yaver surface immediately. If it is repaired or reset, pairing Yaver again recreates it."),
-                primaryButton: .destructive(Text(device.hosting == "yaver-hosted" ? "Decommission" : "Remove")) {
+                title: Text("Remove \(device.displayName)?"),
+                message: Text("It disappears from every Yaver surface immediately. If it is repaired or reset, pairing Yaver again recreates it."),
+                primaryButton: .destructive(Text("Remove")) {
                     Task { await remove(device) }
                 },
                 secondaryButton: .cancel()
@@ -113,8 +109,7 @@ struct MachinePickerView: View {
                             Button(role: .destructive) {
                                 removalCandidate = d
                             } label: {
-                                Label(d.hosting == "yaver-hosted" ? "Decommission box" : "Remove from Yaver",
-                                      systemImage: "trash")
+                                Label("Remove from Yaver", systemImage: "trash")
                             }
                         }
                         .accessibilityIdentifier("devices.machine.\(d.deviceId)")
@@ -140,7 +135,7 @@ struct MachinePickerView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(store.selectedBox == nil ? "Choose where the TV connects" : "Connected to \(store.selectedBox?.name ?? "a machine")")
                     .font(.system(size: 28, weight: .bold))
-                Text("Your machines connect directly when possible and use your relay as fallback. Parked managed machines show Wake.")
+                Text("Your machines connect directly when possible and use your relay as fallback.")
                     .font(.system(size: 17))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -291,17 +286,10 @@ struct MachinePickerView: View {
         error = nil
         defer { removing = nil }
         do {
-            if device.hosting == "yaver-hosted" {
-                guard let machineId = device.machineId, !machineId.isEmpty else {
-                    throw AgentError(message: "This cloud box is missing its provider identity. Open Cloud Workspace to decommission it.")
-                }
-                try await MachineRegistry.decommissionCloudMachine(machineId: machineId, token: store.token)
-            } else {
-                // Companion tokens may unregister the account row, but must
-                // never invoke the destructive local-machine removal route.
-                // The box can be removed from Yaver even while it is offline.
-                try await MachineRegistry.removeDevice(deviceId: device.deviceId, token: store.token)
-            }
+            // Companion tokens may unregister the account row, but must never
+            // invoke the destructive local-machine removal route. Hosted rows
+            // never reach this Apple surface.
+            try await MachineRegistry.removeDevice(deviceId: device.deviceId, token: store.token)
             devices.removeAll { $0.deviceId == device.deviceId }
             if let cached = store.boxes.first(where: { $0.id == device.deviceId }) {
                 store.removeBox(cached)

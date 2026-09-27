@@ -28,6 +28,7 @@ import {
   type PlacementTaskKind,
 } from "./taskPlacementClassifier";
 import { activeDeviceRows } from "./deviceRemoval";
+import { cloudWorkspacePublicEnabled } from "./productAvailability";
 
 const lanes = v.union(
   v.literal("phone_sandbox"),
@@ -447,7 +448,8 @@ async function decidePlacement(
   const plan = sub?.plan as string | undefined;
   const ownerDev = await isOwnerDev(ctx, userId);
   const subscriptionProduct = subscriptionProductForPlacement(plan, sub?.status);
-  const hasCloudWorkspace = subscriptionProduct === "cloud-workspace";
+  const cloudWorkspaceEnabled = cloudWorkspacePublicEnabled();
+  const hasCloudWorkspace = cloudWorkspaceEnabled && subscriptionProduct === "cloud-workspace";
   const hasRelayPro = subscriptionProduct === "relay-pro";
   const entitlement = ownerDev
     ? "owner-dev"
@@ -516,7 +518,7 @@ async function decidePlacement(
     }, args.kind);
   }
 
-  if ((hasCloudWorkspace || ownerDev) && (args.forceCloud || needsBuild || resourceClass !== "relay-source")) {
+  if (cloudWorkspaceEnabled && (hasCloudWorkspace || ownerDev) && (args.forceCloud || needsBuild || resourceClass !== "relay-source")) {
     const cloud = await candidateCloudMachine(ctx, userId, resourceClass);
     const lane: Lane = resourceClass === "build"
       ? "cloud_build"
@@ -544,11 +546,13 @@ async function decidePlacement(
     resourceClass,
     entitlement,
     status: "planned",
-    reason: args.forceCloud && !hasCloudWorkspace && !ownerDev
+    reason: args.forceCloud && !cloudWorkspaceEnabled
+      ? "Cloud Workspace is not offered; choose an owned machine or VPS"
+      : args.forceCloud && !hasCloudWorkspace && !ownerDev
       ? "Cloud Workspace was requested but this account does not have a Cloud Workspace subscription"
       : needsBuild
-        ? "build/deploy needs an owned machine or Cloud Workspace"
-      : "no suitable online owned machine, relay lane, or Cloud Workspace entitlement found",
+        ? "build/deploy needs an online owned machine or VPS"
+      : "no suitable online owned machine or relay lane found",
     wakeRequired: false,
   }, args.kind);
 }

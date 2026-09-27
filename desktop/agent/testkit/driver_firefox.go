@@ -41,6 +41,22 @@ type FirefoxDriver struct {
 	client    *http.Client
 }
 
+// Launch satisfies WebDriver. Firefox/Safari constructors own the driver
+// process and their session factories own session creation, so Launch is a
+// real readiness check rather than a second launch attempt.
+func (d *FirefoxDriver) Launch(ctx context.Context) error {
+	if d == nil || d.cmd == nil || d.cmd.Process == nil {
+		return fmt.Errorf("webdriver process is not running")
+	}
+	if !d.ping() {
+		return fmt.Errorf("webdriver process is not answering")
+	}
+	if d.sessionID == "" {
+		return fmt.Errorf("webdriver session has not been created")
+	}
+	return nil
+}
+
 // NewFirefoxDriver locates geckodriver on PATH and starts it on a
 // random local port. Returns an error if the binary is missing — the
 // caller should hint the dev to run `yaver install firefox` (which
@@ -51,7 +67,10 @@ func NewFirefoxDriver(ctx context.Context) (*FirefoxDriver, error) {
 		return nil, fmt.Errorf("geckodriver not found — install firefox or geckodriver (`yaver install firefox`)")
 	}
 	port := pickFreePort()
-	cmd := exec.CommandContext(ctx, bin, "--port", fmt.Sprintf("%d", port), "--log", "fatal")
+	// The caller's context bounds startup only. Driver.Close owns the process
+	// lifetime; CommandContext would kill a healthy geckodriver as soon as the
+	// startup context is cancelled after this function returns.
+	cmd := exec.Command(bin, "--port", fmt.Sprintf("%d", port), "--log", "fatal")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -173,6 +192,77 @@ func (d *FirefoxDriver) SendKeys(ctx context.Context, selector, text string) err
 	})
 	return err
 }
+
+// Fill is the backend-neutral WebDriver spelling used by the agent.
+func (d *FirefoxDriver) Fill(ctx context.Context, selector, value string) error {
+	return d.SendKeys(ctx, selector, value)
+}
+
+// VisibleText returns rendered element text through the W3C element endpoint.
+func (d *FirefoxDriver) VisibleText(ctx context.Context, selector string) (string, error) {
+	if strings.TrimSpace(selector) == "" {
+		selector = "body"
+	}
+	id, err := d.findElement(ctx, selector)
+	if err != nil {
+		return "", err
+	}
+	resp, err := d.get(ctx, "/session/"+d.sessionID+"/element/"+id+"/text")
+	if err != nil {
+		return "", err
+	}
+	return resp.Value.String, nil
+}
+
+// Snapshot provides the same compact interactable map as Chrome/Selenium.
+// It deliberately executes one bounded DOM query instead of returning the
+// full page source to the model.
+func (d *FirefoxDriver) Snapshot(ctx context.Context) (Snapshot, error) {
+	value, err := d.ExecuteScript(ctx, seleniumSnapshotScript(), nil)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	var snap Snapshot
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		return Snapshot{}, fmt.Errorf("decode webdriver snapshot: %w", err)
+	}
+	return snap, nil
+}
+
+func (d *FirefoxDriver) ExecuteScript(ctx context.Context, script string, args []interface{}) (interface{}, error) {
+	if args == nil {
+		args = []interface{}{}
+	}
+	buf, _ := json.Marshal(map[string]interface{}{"script": script, "args": args})
+	req, err := http.NewRequestWithContext(ctx, "POST", d.baseURL+"/session/"+d.sessionID+"/execute/sync", bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("webdriver execute %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	var envelope struct {
+		Value interface{} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	return envelope.Value, nil
+}
+
+func (d *FirefoxDriver) Console() []ConsoleMsg { return nil }
+func (d *FirefoxDriver) Network() []NetEvent   { return nil }
 
 // Screenshot returns a PNG byte slice for the current viewport.
 func (d *FirefoxDriver) Screenshot(ctx context.Context) ([]byte, error) {

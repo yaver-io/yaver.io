@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "product": "Yaver",
+  "applicationStatus": "submitted_awaiting_review",
+  "referenceSurface": "tvos",
+  "claimsPlayStationSupport": false,
+  "experience": {
+    "authentication": ["device_code", "secure_token_storage", "remote_revoke"],
+    "chat": ["new_task", "same_conversation_follow_up", "live_progress", "cancel"],
+    "voice": {
+      "input": ["push_to_talk", "platform_stt", "cloud_stt_with_consent", "text_fallback"],
+      "output": ["platform_tts", "cloud_tts_with_consent", "visual_fallback", "stop", "replay"],
+      "hotMic": false,
+      "transcriptVisibleBeforeSend": true
+    },
+    "render": {
+      "sources": ["browser_remote", "hermes_native_remote", "verified_browser_artifact"],
+      "preferredTransport": "webrtc_h264",
+      "fallbackTransport": "authenticated_frame_stream",
+      "controlTransport": "authenticated_http_single_writer_lease",
+      "executesHermesBundleOnConsole": false,
+      "embedsThirdPartyWebAppOnConsole": false
+    }
+  },
+  "sourceEvidence": {
+    "voiceOutput": "tvos/YaverTV/Speech.swift",
+    "voiceInput": "tvos/YaverTV/Views/TaskComposerView.swift",
+    "chatContinuity": "tvos/YaverTV/TVChatPlan.swift",
+    "renderViewer": "tvos/YaverTV/Views/RemoteRuntimeWebRTCView.swift",
+    "browserFrames": "tvos/YaverTV/Views/WebPreviewStreamView.swift",
+    "verifiedTask": "docs/architecture/VERIFIED_TASK_ARCHITECTURE.md"
+  },
+  "releaseGates": {
+    "partnerApproval": false,
+    "officialSdkAccess": false,
+    "sonyCategoryAndDistributionApproval": false,
+    "titleIdsAssigned": false,
+    "officialHardwareTested": false,
+    "controllerAndTextEntryCertified": false,
+    "voicePrivacyCertified": false,
+    "networkAndSuspendResumeCertified": false,
+    "storeAssetsAndAgeRatingApproved": false
+  }
+}

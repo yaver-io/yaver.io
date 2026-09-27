@@ -14,8 +14,8 @@ export type RenderCapabilityFailure = {
   capability: RemotelessCapability;
   title: string;
   message: string;
-  action: { label: string; route: "/devices" | "/cloud-onboarding" };
-  alternativeAction?: { label: string; route: "/devices" | "/cloud-onboarding" };
+  action: { label: string; route: "/devices" };
+  alternativeAction?: { label: string; route: "/devices" };
 };
 
 export function remoteRenderRequiredFailure(

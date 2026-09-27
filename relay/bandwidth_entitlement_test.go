@@ -47,6 +47,18 @@ func TestResolvedEntitlementStillApplies(t *testing.T) {
 	}
 }
 
+func TestUsageRecordWithoutResolvedPlanDoesNotDowngradePaidAccount(t *testing.T) {
+	bm := newTestBandwidthManager()
+	bm.ApplyEntitlement("box", deviceEntitlement{Known: true, IsPaid: true})
+	// A cookie/subresource lane records bytes without resolving a plan. That is
+	// not evidence that the account became free.
+	used := int64(bm.config.FreeDeviceLimitMB)*1024*1024*int64(bm.config.RelaxMultiplier) + 1
+	bm.RecordBytes("box", 0, used, false)
+	if err := bm.CheckAllowed("box", 1); err != nil {
+		t.Fatalf("an unknowing usage record downgraded the paid tier: %v", err)
+	}
+}
+
 // The owner's exemption belongs to the OWNER, so it must reach every device
 // that owner has — including one whose own requests never resolved a plan
 // (a box reached only through cookie-authorized preview subresources).

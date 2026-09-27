@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { selectRunner, selectProvider, isWorkKindEnabled, type CompanyAIOptions } from './policy';
 import { buildCandidates } from './connect';
 import { createRemoteDesktopAPI } from './remote-desktop';
+import { YaverReleaseClient } from './release';
 import { Fleet, Machine, Selection, serviceCmd, pickAgentRunner, terminalWsUrl, type ExecResult, type MachineInfo } from './fleet';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -193,6 +194,24 @@ test('Remote Desktop SDK preserves the agent consent error', async () => {
     { status: 403 },
   ));
   await assert.rejects(() => api.frame(), /explicit consent choice/);
+});
+
+test('Release SDK plans before mutation and forwards only explicit confirmation', async () => {
+  const calls: Array<{ path: string; init?: RequestInit }> = [];
+  const releases = new YaverReleaseClient(async <T>(path: string, init?: RequestInit) => {
+    calls.push({ path, init });
+    if (path.startsWith('/publish/plan')) {
+      return { project: 'talos', target: { id: 'microsoft-submit' }, confirmation: 'microsoft-submit' } as T;
+    }
+    return { id: 'run-1', status: 'running', targetId: 'microsoft-submit' } as T;
+  });
+  const plan = await releases.plan('/workspace/talos', 'microsoft-submit');
+  assert.equal(plan.confirmation, 'microsoft-submit');
+  await releases.start({ dir: '/workspace/talos', target: 'microsoft-submit', confirmation: plan.confirmation });
+  assert.match(calls[0].path, /target=microsoft-submit/);
+  assert.deepEqual(JSON.parse(String(calls[1].init?.body)), {
+    dir: '/workspace/talos', target: 'microsoft-submit', confirmation: 'microsoft-submit',
+  });
 });
 
 // --- Fleet: the concurrent merge is the subtle part, so pin it network-free ---

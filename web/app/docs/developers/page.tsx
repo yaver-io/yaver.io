@@ -362,11 +362,12 @@ export default function DevelopersPage() {
           </Prose>
           <Prose>
             <strong className="text-surface-200">Platform support boundary:</strong>{" "}
-            native Linux and macOS are the primary always-on agent targets. WSL is supported for
-            headless auth, MCP, and the React Native Hermes loop into the Yaver mobile app, but it
-            does not get the same native auto-start and reboot-persistence guarantees as a real
-            Linux or macOS host. Yaver can install a WSL startup helper, but that is still a helper
-            path rather than native systemd support.
+            native Linux and macOS are the established always-on agent targets. The native Windows
+            x64 desktop app embeds the same agent for coding tasks and browser previews, while WSL2
+            remains the full Linux-toolchain path for Hermes/mobile workflows that are unavailable
+            on native Windows. Windows remote-box availability starts only after an interactive user
+            signs in and enables it; neither the desktop app nor the WSL startup helper is an NT
+            service or a cold-boot guarantee.
           </Prose>
         </section>
 
@@ -1893,9 +1894,10 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             What&apos;s Stored in Convex
           </SectionHeading>
           <Prose>
-            Convex is purely for auth and device registry. No task data, no
-            code, no AI output, no logs are stored. Everything AI-related flows
-            peer-to-peer between mobile and desktop agent.
+            Convex stores control-plane records such as identity, devices,
+            entitlements, settings, task coordination, and bounded usage or
+            lifecycle metadata. Source trees and runner processes remain on the
+            machine executing them; inspect the schema below for the exact fields.
           </Prose>
           <div className="space-y-4">
             <div className="card">
@@ -2004,10 +2006,10 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               Privacy guarantee
             </h4>
             <p className="text-sm leading-relaxed text-surface-400">
-              No task data, no source code, no AI output, no chat logs are ever
-              stored in Convex or on the relay server. The backend is purely for
-              auth, device discovery, and usage analytics. All AI interaction
-              flows peer-to-peer between your phone and your dev machine.
+              Source trees and raw runner sessions are not hosted in Convex.
+              Convex does store the control-plane rows shown above. Relay
+              processes are designed not to persist proxied bodies, but an HTTP
+              relay terminates client TLS and handles those bodies in memory.
             </p>
           </div>
         </section>
@@ -2018,8 +2020,10 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             Relay Server Protocol
           </SectionHeading>
           <Prose>
-            The relay server is a pass-through QUIC proxy that enables NAT
-            traversal. It stores nothing and sees encrypted traffic only.
+            The relay server enables NAT traversal. The agent-to-relay leg uses
+            QUIC/TLS and the browser/mobile-to-relay leg uses HTTPS; for HTTP
+            proxying the relay terminates client TLS and forwards the envelope
+            in memory. It is not end-to-end opaque to the relay process.
           </Prose>
 
           <div className="mb-8">

@@ -31,6 +31,8 @@ struct RegisteredDevice: Decodable, Identifiable {
     let managed: Bool?
     let hosting: String?
     let machineId: String?
+    let deviceKind: String?
+    let cloudWorkspaceId: String?
     let lastHeartbeat: Double? // ms epoch
     let runners: [RegisteredRunner]?
     let installedRunnerIds: [String]?
@@ -41,7 +43,7 @@ struct RegisteredDevice: Decodable, Identifiable {
     var id: String { deviceId }
 
     /// Stable machine name from the agent (for example
-    /// `ubuntu-4gb-hel1-1`). Aliases are account-local labels and must not
+    /// `linux-build-box`). Aliases are account-local labels and must not
     /// replace this identity on a TV: doing so made the same box look like a
     /// different machine than it did in WebUI.
     var realName: String {
@@ -81,7 +83,17 @@ struct RegisteredDevice: Decodable, Identifiable {
         return ranked
     }
 
-    var wakeable: Bool { (managed ?? false) && (machineId?.isEmpty == false) }
+    /// Hosted compute is not a customer-facing Apple product in the Relay Pro
+    /// release. Keep decoding its legacy registry fields so old rows cannot
+    /// break the payload, but never admit those rows to an Apple UI.
+    var isHostedCloudSurfaceDevice: Bool {
+        hosting == "yaver-hosted"
+            || cloudWorkspaceId?.isEmpty == false
+            || deviceKind == "cloud-runner"
+            || (managed == true && machineId?.isEmpty == false)
+    }
+
+    var wakeable: Bool { false }
     var port: Int { quicPort ?? Backend.agentPort }
 }
 
@@ -274,20 +286,13 @@ enum MachineRegistry {
         guard (200..<300).contains(http.statusCode) else {
             throw AgentError(message: "Couldn't load your machines (\(http.statusCode)).")
         }
-        return (try JSONDecoder().decode(DeviceList.self, from: data)).devices
+        return appleVisibleDevices((try JSONDecoder().decode(DeviceList.self, from: data)).devices)
     }
 
     /// Account removal for BYO/self-hosted devices. The shared backend
     /// tombstones the row, revokes old sessions, and hides it on every surface.
     static func removeDevice(deviceId: String, token: String) async throws {
         try await postRemoval(path: "devices/remove", token: token, body: ["deviceId": deviceId])
-    }
-
-    /// Provider-aware removal for Yaver-hosted boxes. This cancels linked
-    /// billing and schedules the full cloud-resource purge without a snapshot.
-    static func decommissionCloudMachine(machineId: String, token: String) async throws {
-        try await postRemoval(path: "billing/yaver-cloud/dev-deprovision",
-                              token: token, body: ["machineId": machineId])
     }
 
     private static func postRemoval(path: String, token: String, body: [String: Any]) async throws {
@@ -538,4 +543,11 @@ enum MachineRegistry {
         }
         return nil
     }
+}
+
+/// One fail-closed filter shared by tvOS and visionOS (which compiles this
+/// source directly). BYO/self-hosted machines and user-owned VPS nodes remain
+/// visible; only Yaver-hosted Cloud Workspace rows are suppressed.
+func appleVisibleDevices(_ devices: [RegisteredDevice]) -> [RegisteredDevice] {
+    devices.filter { !$0.isHostedCloudSurfaceDevice }
 }

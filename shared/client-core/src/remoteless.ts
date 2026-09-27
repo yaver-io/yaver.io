@@ -16,8 +16,8 @@ export type RemotelessCapabilityResult = {
   code: string;
   summary: string;
   detail: string;
-  route: { label: string; path: "/devices" | "/cloud-onboarding" };
-  alternateRoute?: { label: string; path: "/devices" | "/cloud-onboarding" };
+  route: { label: string; path: "/devices" };
+  alternateRoute?: { label: string; path: "/devices" };
 };
 
 export type ExecutionCandidate = {
@@ -72,10 +72,10 @@ export function remotelessCapability(capability: RemotelessCapability, surface: 
     capability, support, code: `remoteless.${capability}.unavailable`,
     summary: `${label} needs another execution target`,
     detail: capability === "flutter-render"
-      ? `The ${host} can display an already-built Flutter web artifact, but Yaver's remoteless runtime has no Flutter SDK, shell, dev server, or simulator. Build and serve it on your primary/secondary device or Cloud Workspace.`
-      : `Yaver's remoteless runtime on this ${host} cannot provide ${label}: it has no general shell, package manager, persistent process host, simulator, native SDK, or container runtime. Use an eligible primary/secondary device or Cloud Workspace.`,
+      ? `The ${host} can display an already-built Flutter web artifact, but Yaver's remoteless runtime has no Flutter SDK, shell, dev server, or simulator. Build and serve it on your own capable machine or VPS.`
+      : `Yaver's remoteless runtime on this ${host} cannot provide ${label}: it has no general shell, package manager, persistent process host, simulator, native SDK, or container runtime. Use your own capable machine or VPS.`,
     route: { label: "Choose a capable device", path: "/devices" },
-    alternateRoute: { label: "Use Cloud Workspace", path: "/cloud-onboarding" },
+    alternateRoute: { label: "Choose a machine", path: "/devices" },
   };
 }
 

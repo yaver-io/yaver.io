@@ -5,10 +5,15 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 export const getByUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
-    return await ctx.db
+    const rows = await ctx.db
       .query("managedRelays")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+      .collect();
+    return rows.sort((a, b) => {
+      const aLive = a.status !== "stopped" && a.status !== "error" ? 1 : 0;
+      const bLive = b.status !== "stopped" && b.status !== "error" ? 1 : 0;
+      return bLive - aLive || (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt);
+    })[0] ?? null;
   },
 });
 
@@ -16,10 +21,15 @@ export const getByUser = internalQuery({
 export const getByUserInternal = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
-    return await ctx.db
+    const rows = await ctx.db
       .query("managedRelays")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+      .collect();
+    return rows.sort((a, b) => {
+      const aLive = a.status !== "stopped" && a.status !== "error" ? 1 : 0;
+      const bLive = b.status !== "stopped" && b.status !== "error" ? 1 : 0;
+      return bLive - aLive || (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt);
+    })[0] ?? null;
   },
 });
 
@@ -46,7 +56,7 @@ export const getById = internalQuery({
 export const create = internalMutation({
   args: {
     userId: v.id("users"),
-    // Optional for the owner-dev path (/billing/yaver-cloud/dev-relay) —
+    // Optional for the owner-dev path (/billing/relay-pro/dev-activate) —
     // a dev relay is provisioned on the owner's real Hetzner account
     // WITHOUT a LemonSqueezy subscription; canProvisionManaged's owner
     // bypass is what authorises the spend. Paid relays always pass it.
@@ -56,11 +66,23 @@ export const create = internalMutation({
   },
   handler: async (ctx, args) => {
     // Check if user already has a relay
-    const existing = await ctx.db
+    const existingRows = await ctx.db
       .query("managedRelays")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .first();
+      .collect();
+    const existing = existingRows
+      .filter((row) => row.status !== "stopped" && row.status !== "error")
+      .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0];
     if (existing && existing.status !== "stopped" && existing.status !== "error") {
+      // A resubscribe gets a new subscription row. Relink the reusable relay
+      // so cancellation/refund of the current purchase can always find and
+      // deprovision its resource.
+      if (String(existing.subscriptionId || "") !== String(args.subscriptionId || "")) {
+        await ctx.db.patch(existing._id, {
+          subscriptionId: args.subscriptionId,
+          updatedAt: Date.now(),
+        });
+      }
       return existing._id;
     }
 
@@ -89,7 +111,9 @@ export const updateProvisioned = internalMutation({
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.relayId, {
-      status: "active",
+      // Provider inventory exists, but paid delivery is not active until the
+      // HTTPS operation succeeds in provisionRelay.healthCheck.
+      status: "provisioning",
       hetznerServerId: args.hetznerServerId,
       serverIp: args.serverIp,
       serverIpv6: args.serverIpv6,
@@ -139,6 +163,11 @@ export const setStatus = internalMutation({
 export const recordHealthCheck = internalMutation({
   args: { relayId: v.id("managedRelays") },
   handler: async (ctx, { relayId }) => {
-    await ctx.db.patch(relayId, { lastHealthCheck: Date.now() });
+    await ctx.db.patch(relayId, {
+      status: "active",
+      lastHealthCheck: Date.now(),
+      errorMessage: undefined,
+      updatedAt: Date.now(),
+    });
   },
 });

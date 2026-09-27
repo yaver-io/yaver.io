@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { validateSessionInternal, randomHex } from "./auth";
 import { isOwner } from "./ownerAllowlist";
 import { sanitizeRuntimeGitRemote } from "./runtimeGitRemote";
+import { subscriptionHasServiceAccess } from "./billingWebhook";
 
 // Shared validator for the per-subsystem managed toggle. Each field
 // accepts boolean (true=Yaver-managed, false=self-hosted) or null
@@ -711,7 +712,7 @@ export async function relayEntitlementForUser(ctx: any, userId: any): Promise<{
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .collect();
   const active = subscriptions
-    .filter((s: any) => s.status === "active" || s.status === "past_due")
+    .filter((s: any) => subscriptionHasServiceAccess(s.status, s.currentPeriodEnd))
     .sort((a: any, b: any) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
   const cloud = active.find((s: any) => {
     const plan = String(s.plan || "");
@@ -1492,10 +1493,9 @@ export const seedDefaults = internalMutation({
  * already writes); relayPassword stays on the box + the managedRelays
  * row. Pass undefined for either field to leave it untouched (e.g. on
  * decommission, clear by passing the platform default back in).
- * NOTE Phase 2D gap (main.go:2492-2503): the agent currently drops
- * userSettings.RelayUrl that doesn't match a platformConfig entry —
- * fix is to synthesize a RelayServerInfo from the URL. Until that
- * ships in a `cli/v*` release, OTHER devices won't actually use this.
+ * The agent synthesizes RelayServerInfo for URLs that do not appear in the
+ * platform relay list, so account devices can consume a newly provisioned
+ * Relay Pro endpoint without a platform-wide config entry.
  */
 export const setRelayForUser = internalMutation({
   args: {
@@ -1549,6 +1549,23 @@ export const clearRelayForUser = internalMutation({
       relayUrl: undefined,
       relayPassword: undefined,
     });
+  },
+});
+
+/** Clear a managed Relay Pro pointer only when it still names the relay being
+ * deprovisioned. Never erase a self-hosted relay the user selected later. */
+export const clearRelayForUserIfMatches = internalMutation({
+  args: { userId: v.id("users"), relayUrl: v.string() },
+  handler: async (ctx, { userId, relayUrl }) => {
+    const existing = await ctx.db
+      .query("userSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+    if (!existing) return false;
+    const normalize = (value: string | undefined) => String(value || "").replace(/\/+$/, "");
+    if (normalize(existing.relayUrl) !== normalize(relayUrl)) return false;
+    await ctx.db.patch(existing._id, { relayUrl: undefined, relayPassword: undefined });
+    return true;
   },
 });
 

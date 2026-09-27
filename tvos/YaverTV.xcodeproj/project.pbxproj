@@ -831,7 +831,7 @@
 			repositoryURL = "https://github.com/livekit/webrtc-xcframework.git";
 			requirement = {
 				kind = exactVersion;
-				version = 144.7559.13;
+				version = 144.7559.15;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

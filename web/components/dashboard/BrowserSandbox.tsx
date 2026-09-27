@@ -220,7 +220,7 @@ export default function BrowserSandbox() {
     if (!selected) return;
     const baseUrl = getYaverCloudBaseUrl();
     if (!baseUrl) {
-      showNotice("error", "No Yaver Cloud URL configured for this build.");
+      showNotice("error", "The legacy hosted target is unavailable. Choose your own machine or VPS.");
       return;
     }
     setDeploying(true);

@@ -24,11 +24,7 @@ import RunnerAuthModal from "../src/components/RunnerAuthModal";
 import { OpenCodeConfigModal } from "../src/components/OpenCodeConfigModal";
 import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
-import { isCloudPreviewUser } from "../src/lib/cloudPreview";
-import { HIDE_PAID_UI } from "../src/lib/launchFlags";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
-import { getManagedSubscription } from "../src/lib/subscription";
-import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { connectionManager } from "../src/lib/connectionManager";
 import { workspaceClientRoute } from "../src/lib/workspaceClientRoute";
 import { quicClient, type MobileWorkspaceStatus, type RunnerInfo as DiscoveredRunnerInfo } from "../src/lib/quic";
@@ -49,7 +45,7 @@ import {
   managedGitMirrorAt,
 } from "../src/lib/phoneProjects";
 
-type StartMode = "this-phone" | "current-agent" | "dev-hw" | "yaver-cloud";
+type StartMode = "this-phone" | "current-agent" | "dev-hw";
 type GitMode = "yaver-managed" | "skip" | "providers-now";
 type CodingMode = "phone" | "runner";
 type MobileAiProvider = "openai" | "glm";
@@ -175,8 +171,6 @@ function buildSurveyParagraph(answers: SurveyAnswers): string {
   return lines.length > 0 ? `[Survey]\n${lines.join("\n")}\n` : "";
 }
 
-const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
-
 function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
   return all.filter(
     (d) =>
@@ -194,7 +188,7 @@ export default function PhoneProjectsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const {
     connectionStatus,
     connectedDeviceIds,
@@ -209,12 +203,6 @@ export default function PhoneProjectsScreen() {
     setPrimaryRunnerForDevice,
   } = useDevice();
   const connected = connectionStatus === "connected";
-  const canUseCloudPreview = isCloudPreviewUser(user?.email);
-  const [hasManagedCloud, setHasManagedCloud] = useState(false);
-  // HN-LAUNCH-HIDE-PAID: hide the managed "Yaver Cloud" start-mode option
-  // (Yaver-billed box). Flip HIDE_PAID_UI in src/lib/launchFlags.ts to restore.
-  const canUseYaverCloud = !HIDE_PAID_UI && (canUseCloudPreview || hasManagedCloud);
-
   const [projects, setProjects] = useState<PhoneProject[]>([]);
   const [templates, setTemplates] = useState<PhoneTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -338,9 +326,7 @@ export default function PhoneProjectsScreen() {
   const runSetup = useCallback(() => {
     if (setupRanRef.current) return;
     setupRanRef.current = true;
-    const runtimeLabel =
-      startMode === "yaver-cloud" ? "Connecting Yaver Cloud"
-      : "Connecting remote dev runner";
+    const runtimeLabel = "Connecting remote dev runner";
     setSetupSteps([
       { key: "ai", label: "Verifying remote OpenCode provider", status: "pending" },
       { key: "runtime", label: runtimeLabel, status: "pending" },
@@ -717,25 +703,6 @@ export default function PhoneProjectsScreen() {
     };
   }, [token]);
   useEffect(() => {
-    let cancelled = false;
-    if (!token) {
-      setHasManagedCloud(false);
-      return;
-    }
-    void (async () => {
-      const summary = await getManagedSubscription(token);
-      if (cancelled || !summary) return;
-      const hasMachine = Array.isArray(summary.machines)
-        && summary.machines.some((machine) => machine.status !== "stopped");
-      const hasSubscription = !!summary.subscription;
-      setHasManagedCloud(hasMachine || hasSubscription);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  useEffect(() => {
     if (!connected && startMode === "dev-hw" && devMachines.length === 0) {
       setStartMode("current-agent");
     }
@@ -900,7 +867,7 @@ export default function PhoneProjectsScreen() {
       );
       return;
     }
-    if (codingMode === "runner" && startMode !== "yaver-cloud" && !connected) {
+    if (codingMode === "runner" && !connected) {
       Alert.alert("Connect a runner", "Remote coding needs a connected Yaver runner.");
       return;
     }
@@ -1010,16 +977,6 @@ export default function PhoneProjectsScreen() {
         createdTarget = target;
         p = await createPhoneProjectAt(target, spec);
         await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, selectedDevMachine.name);
-      } else {
-        const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
-        const target: PhonePushTarget = {
-          kind: "yaver-cloud",
-          cloudBaseUrl: YAVER_CLOUD_BASE,
-          cloudAuthToken,
-        };
-        createdTarget = target;
-        p = await createPhoneProjectAt(target, spec);
-        await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, "Yaver Cloud");
       }
 
       if (!p) throw new Error("target returned no project");
@@ -1458,13 +1415,6 @@ export default function PhoneProjectsScreen() {
                             : "Pick a Mac, Linux box, or Pi",
                         }]
                       : []),
-                    ...(canUseYaverCloud
-                      ? [{
-                          id: "yaver-cloud" as StartMode,
-                          label: "Yaver Cloud",
-                          sub: "Managed machine. No local computer needed.",
-                        }]
-                      : []),
                   ]
                 ).map((opt) => (
                   <Pressable
@@ -1492,9 +1442,7 @@ export default function PhoneProjectsScreen() {
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Yaver Serverless</Text>
                     <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 4 }]}>
                       <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
-                        {startMode === "yaver-cloud"
-                          ? "Yaver Cloud selected · SQLite-first"
-                          : startMode === "dev-hw"
+                        {startMode === "dev-hw"
                             ? selectedDevMachine
                               ? "Online box selected · SQLite-first"
                               : "Pick an online box"
@@ -1503,9 +1451,7 @@ export default function PhoneProjectsScreen() {
                               : "No machine connected"}
                       </Text>
                       <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                        {startMode === "yaver-cloud"
-                          ? "Yaver Serverless will create this portable workspace on a managed cloud machine."
-                          : startMode === "dev-hw"
+                        {startMode === "dev-hw"
                             ? selectedDevMachine
                               ? `${selectedDevMachine.name} will own this portable Yaver Serverless workspace.`
                               : "Choose which online box should own this workspace."
@@ -2202,7 +2148,6 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       templates,
       step,
       startMode,
-      canUseYaverCloud,
       codingMode,
       openAiKey,
       activeDevice,
@@ -2257,7 +2202,7 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
     const nameOk = name.trim().length > 0;
     const normalizedRunner = runner === "claude-code" ? "claude" : runner;
     const selectedRunnerReady = !!workspaceStatus?.runners.find((item) => item.id === normalizedRunner)?.ready;
-    const placementOk = step !== 1 || startMode === "yaver-cloud" || (
+    const placementOk = step !== 1 || (
       !!selectedRunnerDevice && !!runner && selectedRunnerReady && !!model
     );
     const descOk = prompt.trim().length > 0 || importedConversation.trim().length > 0;

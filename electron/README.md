@@ -259,17 +259,19 @@ npm run dist:linux  # AppImage
 Per-platform icons are generated once (`scripts/build-icons.sh`): `icon.icns`
 (mac), `icon.ico` (win, multi-size), `icon.png` (linux) from the canonical
 `web/public/icon-512.png`. CI (`.github/workflows/release-gui.yml`, tag
-`gui/v*`) fetches the agent binary, runs `npm test`, builds all three
-macOS and Linux platforms, and cuts a GitHub release whose asset names match the
+`gui/v*`) fetches the agent binary, runs `npm test`, builds macOS and Linux,
+and cuts a GitHub release whose asset names match the
 [yaver.io/download](https://yaver.io/download) landing page
 (`yaver-gui-<version>-mac-<arm64|x64>.dmg` /
 `-win-x64-setup.exe` / `-linux-<arm64|x64>.AppImage`).
 
-The Windows packaging/signature steps exist but are not currently reachable
-from the release matrix while the Authenticode identity is unavailable; the
-download page remains pinned to the last signed Windows GUI. Do not describe a
-new Windows build as shipped until a `windows-latest` matrix row and valid
-publisher credentials operation-prove the signed installer and embedded agent.
+The Windows Store candidate uses the local release Mac's non-exportable
+SimplySign identity through `./deploy/deploy.sh desktop-windows`. The build
+certificate-pins the embedded agent and outer installer; a clean Windows VM
+then verifies every installed PE and performs silent install/uninstall. Hosted
+CI never substitutes unsigned bytes. Do not describe a new Windows build as
+shipped until the same candidate passes that preflight and Windows App
+Certification Kit.
 
 ## Known limitations
 

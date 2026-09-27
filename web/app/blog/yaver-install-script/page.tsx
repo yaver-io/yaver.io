@@ -201,8 +201,8 @@ yaver launch ssh user@nas     # adopt an existing Linux box`}
             </pre>
             <p className="mt-3">
               See{" "}
-              <Link className="underline hover:text-surface-100" href="/blog/yaver-cloud-image">
-                the cloud-image tutorial
+              <Link className="underline hover:text-surface-100" href="/docs/self-hosting">
+                the self-hosting guide
               </Link>{" "}
               for the full first-launch walkthrough.
             </p>

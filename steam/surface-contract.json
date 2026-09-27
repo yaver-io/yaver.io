@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "product": "Yaver",
+  "surface": "steam_desktop_and_deck",
+  "features": {
+    "chat": true,
+    "pushToTalkStt": true,
+    "ttsWithStopAndReplay": true,
+    "browserRemoteRender": true,
+    "verifiedBrowserArtifactPlayback": true,
+    "hermesNativeRemoteRender": true,
+    "controllerFirst": true,
+    "hotMic": false
+  },
+  "renderPolicy": {
+    "executesUntrustedHermesInSteamShell": false,
+    "usesAuthenticatedRemoteRuntime": true
+  },
+  "evidence": [
+    "electron/src/main.js",
+    "mobile/src/_core/endpoints.ts",
+    "desktop/agent/voice_http.go",
+    "desktop/agent/remote_runtime_webrtc.go",
+    "desktop/agent/mcp_mobile_hermes_doctor.go"
+  ],
+  "retailGates": [
+    "steam_app_and_depot_ids",
+    "signed_native_depots",
+    "steam_deck_controller_navigation",
+    "deck_text_and_push_to_talk",
+    "voice_privacy_and_permissions",
+    "suspend_resume_and_offline",
+    "browser_and_hermes_render_closed_loop",
+    "verified_browser_artifact_closed_loop",
+    "steam_owned_updates"
+  ]
+}

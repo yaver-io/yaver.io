@@ -97,6 +97,17 @@ test("summarizeForReadback clamps long bodies hard", () => {
   assert.ok(spoken.length <= READBACK_MAX_CHARS);
 });
 
+test("summarizeForReadback speaks browser verification and hands video to the phone", () => {
+  const spoken = summarizeForReadback({
+    id: "t",
+    status: "completed",
+    verification: { status: "passed", passed: 3, total: 3, videoClipId: "clip-1" },
+  });
+  assert.match(spoken, /Browser verified, 3 of 3 checks passed/);
+  assert.match(spoken, /recording is ready on your phone/);
+  assert.ok(spoken.length <= READBACK_MAX_CHARS);
+});
+
 // ── title ────────────────────────────────────────────────────────────
 
 test("titleFromTranscript truncates politely", () => {

@@ -1,0 +1,15 @@
+"appbuild"
+{
+  "appid" "__APP_ID__"
+  "desc" "Yaver signed desktop release"
+  "buildoutput" "output"
+  "contentroot" "__CONTENT_ROOT__"
+  "setlive" ""
+  "preview" "0"
+  "depots"
+  {
+    "__DEPOT_WINDOWS__" "depot_windows.vdf"
+    "__DEPOT_MACOS__"   "depot_macos.vdf"
+    "__DEPOT_LINUX__"   "depot_linux.vdf"
+  }
+}

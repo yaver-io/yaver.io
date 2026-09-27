@@ -80,7 +80,7 @@ test("healable causes are NOT declared terminal", () => {
 
 test("bandwidth cap: parses the relay's real format, names the reset + unmetered paths", () => {
   const bwSrc = readFileSync(join(repoRoot, "relay/bandwidth.go"), "utf8");
-  assert.match(bwSrc, /bandwidth limit exceeded: %dMB used of %dMB daily limit/, "relay bandwidth string changed — update relayDeny.ts");
+  assert.match(bwSrc, /bandwidth limit exceeded: %dMB used of %dMB daily account limit/, "relay bandwidth string changed — update relayDeny.ts");
 
   const card = classifyRelayLimit("bandwidth limit exceeded: 120MB used of 100MB daily limit (device abcd1234)");
   assert.ok(card);
@@ -117,6 +117,14 @@ test("free-tier rate limit: the relay's exact string gets its own card", () => {
   const generic = classifyRelayLimit("rate limit exceeded");
   assert.ok(generic);
   assert.equal(generic!.kind, "rate-limit");
+});
+
+test("free capacity reservation names the busy lane and an immediate route", () => {
+  const card = classifyRelayLimit("relay.free_capacity_busy: free relay is busy");
+  assert.equal(card?.kind, "free-capacity");
+  assert.match(card?.title ?? "", /Free relay is busy/);
+  assert.match(card?.detail ?? "", /Retry shortly/);
+  assert.match(card?.detail ?? "", /self-hosted relay/);
 });
 
 test("non-limit errors yield no card", () => {

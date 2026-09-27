@@ -382,7 +382,7 @@ export function placementLaneLabel(lane?: string | null): string | null {
     case "owned_machine":
       return "Your machine";
     case "cloud_standard":
-      return "Cloud workspace";
+      return "Legacy hosted target";
     case "cloud_heavy":
       return "Heavy workspace";
     case "cloud_build":
