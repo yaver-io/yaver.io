@@ -239,18 +239,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # darwin builds MUST use CGO_ENABLED=1: the macOS ghost
+          # (screen capture / input injection / AX tree) lives behind
+          # `darwin && cgo` build tags. With CGO_ENABLED=0 the shipped
+          # agent compiles the unsupported stubs, so Remote Desktop,
+          # `ghost_*`, `desktop_voice` and the `desktop-screen` target
+          # silently do nothing on every Mac that installed from npm —
+          # the inventory said yes while the operation said no. The
+          # darwin rows run on a macOS runner, so cgo is native and the
+          # sign+notarize steps below are unaffected.
+          #   The `cgo` field is intentionally a string: CGO_ENABLED is
+          #   "0"/"1", not a boolean, and YAML would coerce `0` to int.
           - goos: darwin
             goarch: arm64
             runner: macos-latest
+            cgo: "1"
           - goos: darwin
             goarch: amd64
             runner: macos-latest
+            cgo: "1"
           - goos: linux
             goarch: arm64
             runner: ubuntu-latest
+            cgo: "0"
           - goos: linux
             goarch: amd64
             runner: ubuntu-latest
+            cgo: "0"
     runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.validate.outputs.version }}
@@ -266,7 +281,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           cd desktop/agent
           BINARY_NAME="yaver-${{ matrix.goos }}-${{ matrix.goarch }}"

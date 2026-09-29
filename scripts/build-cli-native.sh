@@ -57,8 +57,15 @@ for t in "${TARGETS[@]}"; do
   GOOS_="$1"; GOARCH_="$2"
   BIN="yaver-${GOOS_}-${GOARCH_}"
   [ "$GOOS_" = "windows" ] && BIN="${BIN}.exe"
-  printf '  %-22s ' "${GOOS_}/${GOARCH_}"
-  CGO_ENABLED=0 GOOS="$GOOS_" GOARCH="$GOARCH_" \
+  # darwin REQUIRES cgo: ghost's macOS screen/input/AX tree are tagged
+  # `darwin && cgo`. With CGO_ENABLED=0 the released Mac agent silently
+  # ships the unsupported stubs, so every desktop feature (Remote Desktop,
+  # ghost_*, desktop_voice, desktop-screen) is dead while every doc says it
+  # works. This script runs on a Mac, so cgo is native — no cross-toolchain.
+  # Linux/Windows stay CGO_ENABLED=0 (their ghost is pure Go).
+  CGO_="0"; [ "$GOOS_" = "darwin" ] && CGO_="1"
+  printf '  %-22s ' "${GOOS_}/${GOARCH_} (cgo=$CGO_)"
+  CGO_ENABLED="$CGO_" GOOS="$GOOS_" GOARCH="$GOARCH_" \
     go build -trimpath -ldflags "$LDFLAGS" -o "$OUT/$BIN" .
   echo "ok"
 done
