@@ -148,3 +148,6 @@ mobile/.tmp/
 # (machine.md / publish.yaml / services.yaml) is unaffected.
 .yaver/results/
 .yaver/tests/
+
+# local scratch media (never part of a release)
+/tmp/
