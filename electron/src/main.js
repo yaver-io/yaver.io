@@ -21,7 +21,7 @@
  *     window that survives relay flapping.
  */
 
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, shell, session, nativeImage, powerSaveBlocker } = require("electron");
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, shell, session, nativeImage, powerSaveBlocker, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -37,6 +37,7 @@ const {
   needsMasJitlessWorkaround,
 } = require("./desktop-runtime-policy");
 const { stripAuthFromUrl, applyKnownAuthHeaders } = require("./auth-interceptor");
+const { uninstallPlan, executeUninstallPlan } = require("./desktop-uninstall");
 const { DesktopLog } = require("./desktop-log");
 const {
   MAX_TRANSIENT_LOAD_RETRIES,
@@ -589,6 +590,71 @@ ipcMain.handle("yaver:open-diagnostic-logs", () => {
   return { ok: true };
 });
 
+function currentUninstallPlan() {
+  return uninstallPlan({
+    platform: process.platform,
+    execPath: process.execPath,
+    appImage: process.env.APPIMAGE,
+    storeManaged,
+    storeName,
+  });
+}
+
+/**
+ * Owner-initiated uninstall. The renderer can request it but never supplies a
+ * path: the plan is derived from the running process. A Store-managed build
+ * and a deb/rpm install are named, never faked. `~/.yaver` agent data and any
+ * project checkout are deliberately left in place.
+ */
+async function performUninstallRequest() {
+  const plan = currentUninstallPlan();
+  desktopLog.write("info", "uninstall_requested", `supported=${plan.supported} action=${plan.action}`);
+  if (mainWindow && !mainWindow.isDestroyed()) showWindow();
+  if (!plan.supported) {
+    await dialog.showMessageBox(mainWindow || undefined, {
+      type: "info",
+      buttons: ["OK"],
+      title: "Uninstall Yaver",
+      message: "Yaver cannot uninstall itself here",
+      detail: plan.detail,
+    });
+    return { ok: false, requiresUserAction: true, detail: plan.detail };
+  }
+  const confirm = await dialog.showMessageBox(mainWindow || undefined, {
+    type: "warning",
+    buttons: ["Cancel", "Uninstall Yaver"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: "Uninstall Yaver",
+    message: "Uninstall Yaver from this computer?",
+    detail: `${plan.detail}\n\nYour ~/.yaver agent data and project files are NOT removed.`,
+  });
+  if (confirm.response !== 1) return { ok: false, cancelled: true };
+
+  // Stop only the child agent we supervise; never kill an adopted service.
+  if (agentManager) {
+    try { await agentManager.stop(); } catch { /* best-effort */ }
+    agentManager = null;
+  }
+  const result = await executeUninstallPlan(plan, {
+    trash: (target) => shell.trashItem(target),
+    runDetached: (file, args) => spawnDetached(file, args),
+  });
+  desktopLog.write(result.ok ? "info" : "error", "uninstall_result", result.ok ? plan.action : result.error);
+  if (result.ok) {
+    // The NSIS uninstaller removes the running files; quit so it can. macOS
+    // Trash and Linux AppImage removal are already complete.
+    setTimeout(() => {
+      isQuitting = true;
+      app.quit();
+    }, plan.action === "run-uninstaller" ? 2500 : 400);
+  }
+  return { ok: result.ok, action: plan.action, detail: plan.detail, error: result.error };
+}
+
+ipcMain.handle("yaver:uninstall-app", () => performUninstallRequest());
+
 ipcMain.handle("yaver:run-desktop-connectivity-diagnostics", async () => {
   const report = await runDesktopConnectivityDiagnostics({
     platform: process.platform,
@@ -691,22 +757,30 @@ ipcMain.handle("yaver:open-system-rdp", async (_event, rawHost) => {
   return { ok: true };
 });
 
-ipcMain.handle("yaver:get-desktop-status", () => ({
-  surface: "desktop-gui",
-  localDeviceId: localAgentDeviceId() || null,
-  appVersion: app.getVersion(),
-  distribution: distributionChannel,
-  agent: { state: agentStatus, detail: agentStatusDetail, port: storeClientOnly ? null : 18080 },
-  keepAwake: settings.keepAwake,
-  launchAtLogin: settings.launchAtLogin,
-  loginItemSupported: !storeManaged && isLoginItemSupported(),
-  updates: {
-    enabled: storeManaged ? true : settings.automaticUpdates,
-    managedByStore: storeManaged,
-    ...updateStatus,
-  },
-  logs: { path: desktopLog.filePath, maxBytes: desktopLog.maxBytes, maxFiles: desktopLog.maxFiles },
-}));
+ipcMain.handle("yaver:get-desktop-status", () => {
+  const plan = currentUninstallPlan();
+  return {
+    surface: "desktop-gui",
+    localDeviceId: localAgentDeviceId() || null,
+    appVersion: app.getVersion(),
+    distribution: distributionChannel,
+    agent: { state: agentStatus, detail: agentStatusDetail, port: storeClientOnly ? null : 18080 },
+    keepAwake: settings.keepAwake,
+    launchAtLogin: settings.launchAtLogin,
+    loginItemSupported: !storeManaged && isLoginItemSupported(),
+    updates: {
+      enabled: storeManaged ? true : settings.automaticUpdates,
+      managedByStore: storeManaged,
+      ...updateStatus,
+    },
+    uninstall: {
+      supported: plan.supported,
+      action: plan.action,
+      detail: plan.detail,
+    },
+    logs: { path: desktopLog.filePath, maxBytes: desktopLog.maxBytes, maxFiles: desktopLog.maxFiles },
+  };
+});
 
 ipcMain.on("yaver:get-app-version", (event) => {
   event.returnValue = app.getVersion();
@@ -771,14 +845,22 @@ async function createWindow() {
     if (!launchHidden) mainWindow.show();
   });
 
-  // External links → system browser; anything else denied.
+  // External links → system browser; allowed app/auth popups → a hardened
+  // in-app child window. The old handler DENIED every window.open() that
+  // targeted an allowed app URL (previews, runner OAuth, feedback) and only
+  // opened the ones it did not recognise — so "Open preview" / "Sign in" did
+  // nothing at all in the GUI while working in a normal browser. A browser has
+  // real tabs; the desktop shell has to provide the equivalent.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     try {
       const parsed = new URL(target);
       if (parsed.protocol === "https:" || parsed.protocol === "http:") {
-        // Keep in-window only the sign-in/app surface and the auth-provider
-        // redirects; everything else is a browser tab.
-        if (!isAllowedAppUrl(target)) shell.openExternal(target);
+        if (isAllowedAppUrl(target)) {
+          void createAppChildWindow(target);
+          return { action: "deny" };
+        }
+        // Never hand a token-bearing URL to the OS browser.
+        shell.openExternal(safeExternalUrl(target));
       }
     } catch {
       /* ignore malformed */
@@ -799,13 +881,7 @@ async function createWindow() {
         return;
       }
       // Never hand a token-bearing URL to the OS browser (audit pass-2 M3).
-      let externalUrl = target;
-      try {
-        externalUrl = stripAuthFromUrl(target).url;
-      } catch {
-        /* keep original */
-      }
-      shell.openExternal(externalUrl);
+      shell.openExternal(safeExternalUrl(target));
     } catch {
       /* malformed URL — leave the navigation prevented */
     }
@@ -926,6 +1002,83 @@ async function createWindow() {
         mainWindow.webContents.forcefullyCrashRenderer();
       }
     }, 600);
+  }
+}
+
+/** Strip ?token=/?__rp= from a URL before it is handed to the OS browser. */
+function safeExternalUrl(target) {
+  try {
+    return stripAuthFromUrl(target).url;
+  } catch {
+    return target;
+  }
+}
+
+/**
+ * Hardened in-app popup for allowed app/auth URLs (previews, runner OAuth,
+ * feedback). A browser has real tabs; the desktop shell provides the
+ * equivalent instead of silently dropping `window.open()`. Same security
+ * posture as the main window: sandbox, context isolation, no node, and the
+ * same navigation allowlist. Declared after createWindow so the unit test
+ * that slices the MAIN window options still finds `mainWindow = new
+ * BrowserWindow` first; function declarations hoist, so the call site works.
+ */
+async function createAppChildWindow(target) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const child = new BrowserWindow({
+    width: 1120,
+    height: 780,
+    show: false,
+    parent: mainWindow,
+    backgroundColor: "#0a0a0c",
+    title: "Yaver",
+    icon: path.join(__dirname, "..", "assets", "icon.png"),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: false,
+    },
+  });
+  child.once("ready-to-show", () => {
+    if (!child.isDestroyed()) child.show();
+  });
+  child.webContents.setWindowOpenHandler(({ url: next }) => {
+    try {
+      const parsed = new URL(next);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        if (isAllowedAppUrl(next)) {
+          void createAppChildWindow(next);
+          return { action: "deny" };
+        }
+        shell.openExternal(safeExternalUrl(next));
+      }
+    } catch {
+      /* ignore malformed */
+    }
+    return { action: "deny" };
+  });
+  child.webContents.on("will-navigate", (event, next) => {
+    if (isAllowedAppUrl(next)) return;
+    event.preventDefault();
+    try {
+      const parsed = new URL(next);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return;
+      if (APP_ORIGINS.has(parsed.origin)) {
+        void child.loadURL(`${parsed.origin}/auth?return=/dashboard`);
+        return;
+      }
+      shell.openExternal(safeExternalUrl(next));
+    } catch {
+      /* malformed URL — leave the navigation prevented */
+    }
+  });
+  try {
+    await child.loadURL(target);
+  } catch {
+    /* the child window surfaces its own load failure */
   }
 }
 
@@ -1109,6 +1262,10 @@ function rebuildTray() {
       },
     },
     { type: "separator" },
+    {
+      label: "Uninstall Yaver…",
+      click: () => { void performUninstallRequest(); },
+    },
     { label: "Quit Yaver", click: () => { isQuitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);

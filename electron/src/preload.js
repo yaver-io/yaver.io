@@ -164,6 +164,15 @@ if (trustedRenderer) contextBridge.exposeInMainWorld("yaver", Object.freeze({
   openDiagnosticLogs() {
     return ipcRenderer.invoke("yaver:open-diagnostic-logs");
   },
+  /**
+   * Ask the main process to uninstall Yaver from this computer. The renderer
+   * never supplies a path; the plan is derived from the running process and
+   * the user confirms in a native dialog. Store/package-manager builds return
+   * { requiresUserAction: true, detail } instead of pretending to act.
+   */
+  uninstallApp() {
+    return ipcRenderer.invoke("yaver:uninstall-app");
+  },
   onUpdateStatus(listener) {
     if (typeof listener !== "function") return () => {};
     const handler = (_event, status) => listener(status);

@@ -776,6 +776,90 @@ function RuntimeProjectDefaultsCard({ token, devices }: { token: string | null; 
   );
 }
 
+interface DesktopBridge {
+  surface?: string;
+  getDesktopStatus?: () => Promise<{
+    appVersion?: string;
+    distribution?: string;
+    uninstall?: { supported?: boolean; action?: string; detail?: string };
+  }>;
+  uninstallApp?: () => Promise<{ ok?: boolean; requiresUserAction?: boolean; cancelled?: boolean; detail?: string; error?: string }>;
+}
+
+function desktopBridge(): DesktopBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { yaver?: DesktopBridge }).yaver;
+}
+
+/**
+ * Desktop-only app card: install metadata + a real uninstall. The web
+ * Settings has no business uninstalling anything, so this renders only when
+ * the Electron preload bridge is present. The renderer never supplies a path —
+ * `uninstallApp()` asks the main process, which derives the plan from its own
+ * executable and confirms in a native dialog; Store/package-manager installs
+ * come back as `requiresUserAction` with the exact route instead of a fake.
+ */
+function DesktopAppCard() {
+  const [status, setStatus] = useState<{ appVersion?: string; distribution?: string; uninstall?: { supported?: boolean; action?: string; detail?: string } } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bridge = desktopBridge();
+    if (bridge?.surface !== "desktop-gui" || typeof bridge.getDesktopStatus !== "function") return;
+    let cancelled = false;
+    void bridge.getDesktopStatus().then((s) => { if (!cancelled) setStatus(s); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  if (desktopBridge()?.surface !== "desktop-gui") return null;
+
+  const run = async () => {
+    const bridge = desktopBridge();
+    if (typeof bridge?.uninstallApp !== "function") {
+      setMessage("This desktop build does not expose uninstall.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await bridge.uninstallApp();
+      if (result?.cancelled) setMessage(null);
+      else if (result?.ok) setMessage("Uninstalling Yaver…");
+      else setMessage(result?.error || result?.detail || "Uninstall did not run.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Uninstall failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const supported = status?.uninstall?.supported !== false;
+  return (
+    <div className="card mb-6" data-testid="desktop-app-section">
+      <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">Desktop app</h3>
+      <p className="mb-4 text-xs text-surface-500">
+        This window is the native Yaver desktop shell, and this computer is a Yaver node.
+        {status?.appVersion ? <> Version <span className="font-mono text-surface-300">{status.appVersion}</span>{status.distribution && status.distribution !== "direct" ? <> · {status.distribution}</> : null}.</> : null}
+      </p>
+      <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 p-3">
+        <div className="text-xs font-semibold text-rose-700 dark:text-rose-300">Uninstall Yaver</div>
+        <p className="mt-1 text-[11px] text-surface-500">
+          {status?.uninstall?.detail || "Removes the app from this computer. Your ~/.yaver agent data and project files are left in place."}
+        </p>
+        <button
+          onClick={() => void run()}
+          disabled={busy}
+          className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-500/20 disabled:opacity-40 dark:text-rose-300"
+        >
+          {busy ? "Working…" : supported ? "Uninstall Yaver…" : "Uninstall Yaver…"}
+        </button>
+        {message ? <p className="mt-2 text-[11px] text-surface-400">{message}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsView({ user, onLogout, onOpenTwoFactor }: SettingsViewProps) {
   const autoRenderVibing = useAutoRenderVibing();
   const [autoRenderError, setAutoRenderError] = useState<string | null>(null);
@@ -1250,6 +1334,8 @@ export default function SettingsView({ user, onLogout, onOpenTwoFactor }: Settin
       <PublisherSetupCard token={token} />
       <SourceCodeStatusCard devices={ownedDevices} />
       <RuntimeProjectDefaultsCard token={token} devices={ownedDevices} />
+
+      <DesktopAppCard />
 
       {ENABLE_RELAY_PRO_UI ? (
         <div className="mb-6">

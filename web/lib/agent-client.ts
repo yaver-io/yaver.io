@@ -5128,6 +5128,32 @@ export class AgentClient {
     const checkedAt = new Date().toISOString();
     const baseHeaders: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
 
+    // Same-origin relay proxy leg FIRST. When the dashboard is served from the
+    // host that owns /d/<id> (yaver.io), the Next proxy injects
+    // X-Relay-Password server-side and self-heals a rotated password via
+    // /settings/repair-relay. It is the only relay path that works when this
+    // browser holds the relay URL but NOT its per-user password (the plain
+    // `/config` read is unauthenticated and returns relays with no password) —
+    // the exact false negative that rendered "no relay, tunnel, or direct path
+    // answered" for a render box that IS reachable over the relay
+    // (2026-09-29, Ofis2 → ubuntu-4gb render probe).
+    if (opts.deviceId && this.sameOriginProxyUsable) {
+      const proxyUrl = `/d/${opts.deviceId}`;
+      const diag = await this.probeHealth(proxyUrl, baseHeaders, 8000, "relay", "same-origin-proxy");
+      diagnostics.push(diag);
+      if (diag.ok) {
+        const info = await this.probeInfoAt(proxyUrl, baseHeaders, 8000);
+        return {
+          ok: true,
+          path: "relay",
+          relayId: "same-origin-proxy",
+          checkedAt,
+          diagnostics,
+          info,
+        };
+      }
+    }
+
     if (opts.deviceId && this.relayServers.length > 0) {
       for (const relay of this.relayServers) {
         const relayHeaders: Record<string, string> = { ...baseHeaders };
@@ -5215,8 +5241,27 @@ export class AgentClient {
       // Strategy: relay-first (more reliable across networks),
       // with direct fallback for same-network connections.
 
+      // 0. Same-origin relay proxy first when the dashboard is served from the
+      //    /d/<id> proxy host: no CORS, and the Next proxy injects
+      //    X-Relay-Password server-side (self-healing a rotated password).
+      //    baseUrl then resolves to `${origin}/d/<id>` via _activeRelayUrl.
+      if (this.deviceId && this.sameOriginProxyUsable) {
+        const proxyBase = `${window.location.origin}/d/${this.deviceId}`;
+        const diag = await this.probeHealth(proxyBase, this.authHeaders, 8000, "relay", "same-origin-proxy");
+        diagnostics.push(diag);
+        if (diag.ok) {
+          this._activeRelayUrl = window.location.origin;
+          this.activeRelayPassword = null;
+          this._activeTunnelUrl = null;
+          connected = true;
+          console.log("[AgentClient] Relay connection succeeded via same-origin proxy");
+        } else {
+          console.log("[AgentClient] Same-origin proxy failed:", diag.error || diag.status);
+        }
+      }
+
       // 1. Try relay servers first (when deviceId and relays are available)
-      if (this.deviceId && this.relayServers.length > 0) {
+      if (!connected && this.deviceId && this.relayServers.length > 0) {
         for (const relay of this.relayServers) {
           const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
           const relayHeaders: Record<string, string> = { ...this.authHeaders };

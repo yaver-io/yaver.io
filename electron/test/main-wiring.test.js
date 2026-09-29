@@ -166,9 +166,12 @@ test("recovery page strips auth params from the browser-bound URL (M3)", () => {
 
 test("external navigation never opens a token-bearing URL (M3)", () => {
   const lock = main.slice(main.indexOf("const enforceNavigationLock"), main.indexOf("// Top-level navigations"));
-  assert.match(lock, /stripAuthFromUrl\(target\)\.url/);
-  assert.match(lock, /shell\.openExternal\(externalUrl\)/);
+  assert.match(lock, /safeExternalUrl\(target\)/);
   assert.doesNotMatch(lock, /shell\.openExternal\(target\)/);
+  // The stripping itself lives in the shared helper both the main lock and the
+  // child-window lock use.
+  const helper = main.slice(main.indexOf("function safeExternalUrl"), main.indexOf("async function createAppChildWindow"));
+  assert.match(helper, /stripAuthFromUrl\(target\)\.url/);
 });
 
 test("GUI_FAILURE_FIXTURE makes load and crash failures deterministic (DP9)", () => {
@@ -179,4 +182,36 @@ test("GUI_FAILURE_FIXTURE makes load and crash failures deterministic (DP9)", ()
   assert.match(windowCreate, /forcefullyCrashRenderer\(\)/);
   assert.match(main, /rendererRecoveryAttempts < 1/);
   assert.match(main, /if \(guiFailureFixture \|\| isQuitting \|\| rendererLoadRetryTimer\)/);
+});
+
+test("allowed app popups open in a hardened child window instead of being silently dropped", () => {
+  // Regression (2026-09-29): the handler denied EVERY window.open(); allowed
+  // app URLs (previews, runner OAuth, feedback) did nothing at all in the
+  // desktop shell while working in a plain browser tab.
+  const handler = main.slice(main.indexOf("setWindowOpenHandler"), main.indexOf("const enforceNavigationLock"));
+  assert.match(handler, /isAllowedAppUrl\(target\)/);
+  assert.match(handler, /createAppChildWindow\(target\)/);
+  assert.match(handler, /shell\.openExternal\(safeExternalUrl\(target\)\)/);
+  assert.ok(
+    main.indexOf("mainWindow = new BrowserWindow") < main.indexOf("async function createAppChildWindow"),
+    "the child-window helper must not precede the main window block",
+  );
+  const child = main.slice(main.indexOf("async function createAppChildWindow"), main.indexOf("function scheduleRendererLoadRetry"));
+  assert.match(child, /contextIsolation: true/);
+  assert.match(child, /nodeIntegration: false/);
+  assert.match(child, /sandbox: true/);
+  assert.match(child, /setWindowOpenHandler/);
+  assert.match(child, /will-navigate/);
+});
+
+test("desktop uninstall is plan-derived, user-confirmed, and honest for Store builds", () => {
+  assert.match(main, /yaver:uninstall-app/);
+  assert.match(main, /uninstallPlan\(\{/);
+  assert.match(main, /executeUninstallPlan\(plan/);
+  assert.match(main, /shell\.trashItem/);
+  assert.match(main, /buttons: \["Cancel", "Uninstall Yaver"\]/);
+  assert.match(main, /Uninstall Yaver…/);
+  // The renderer can request it but never supplies a path.
+  assert.match(preload, /uninstallApp\(\)/);
+  assert.match(preload, /yaver:uninstall-app/);
 });

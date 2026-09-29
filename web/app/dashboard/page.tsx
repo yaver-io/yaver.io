@@ -11,6 +11,7 @@ import {
 } from "@/lib/device-lifecycle";
 import { streamTaskOutputWithRecovery, type TaskStreamHealth } from "@/lib/taskStreamWithRecovery";
 import { StreamHealthNotice } from "@/components/dashboard/StreamHealthNotice";
+import NavIcon from "@/components/dashboard/NavIcon";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import RemoteDesktopModal from "@/components/dashboard/RemoteDesktopModal";
 import { agentClient, agentClientPool, type AgentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe, type TmuxSessionSummary, type McpServer, type ModelInfo, type TaskRunnerControlCatalog, type OpenCodeProviderSummary } from "@/lib/agent-client";
@@ -3595,14 +3596,14 @@ export default function DashboardPage() {
   // 2026-07-27): it's set-up-once plumbing, not a daily destination. The
   // "network" tab itself stays a valid DashboardTab \u2014 Settings and ?tab=
   // deep links still open it.
-  const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = ([
-    { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
-    { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
-    { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
-    { id: "git", label: "Source", icon: "\u2387" },
-    { id: "runtime", label: "Vibing", icon: "\u25A3" },
-    { id: "downloads", label: "Downloads", icon: "\u2B07" },
-  ] as { id: typeof activeTab; label: string; icon: string; badge?: number }[]).filter(
+  const tabs: { id: typeof activeTab; label: string; badge?: number }[] = ([
+    { id: "devices", label: "Devices" },
+    { id: "chat", label: "Chat" },
+    { id: "projects", label: "Projects" },
+    { id: "git", label: "Source" },
+    { id: "runtime", label: "Vibing" },
+    { id: "downloads", label: "Downloads" },
+  ] as { id: typeof activeTab; label: string; badge?: number }[]).filter(
     (t) =>
       isOwnerAccount || !OWNER_ONLY_TABS.has(t.id),
   );
@@ -3633,7 +3634,7 @@ export default function DashboardPage() {
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
               className={`flex items-center gap-1 px-3 py-2 text-[11px] whitespace-nowrap ${activeTab === t.id ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-400"}`}>
-              <span>{t.icon}</span>{t.label}
+              <NavIcon id={t.id} className="h-3.5 w-3.5 shrink-0" />{t.label}
               {t.badge != null && t.badge > 0 && <span className="ml-1 text-[9px] bg-indigo-500 text-white rounded-full px-1">{t.badge}</span>}
             </button>
           ))}
@@ -3664,11 +3665,11 @@ export default function DashboardPage() {
           {/* Nav */}
           <nav className="flex flex-col gap-[2px]">
 	            {([
-	              { id: "devices",  label: "Devices",  icon: "💻" },
-	              { id: "chat",     label: "Chat",     icon: "💬" },
-	              { id: "projects", label: "Projects", icon: "📁" },
-	              { id: "runtime", label: "Vibing", icon: "▣" },
-	              { id: "downloads", label: "Downloads", icon: "⬇" },
+	              { id: "devices",  label: "Devices" },
+	              { id: "chat",     label: "Chat" },
+	              { id: "projects", label: "Projects" },
+	              { id: "runtime", label: "Vibing" },
+	              { id: "downloads", label: "Downloads" },
 	            ] as const).map((it) => (
               <button
                 key={it.id}
@@ -3682,7 +3683,7 @@ export default function DashboardPage() {
                 {activeTab === it.id ? (
                   <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-brand" />
                 ) : null}
-                <span className="w-4 text-center text-[13px]">{it.icon}</span>
+                <NavIcon id={it.id} className="h-4 w-4 shrink-0" />
                 <span>{it.label}</span>
               </button>
             ))}

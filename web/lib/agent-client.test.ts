@@ -179,3 +179,52 @@ test("relative role-base URLs must resolve via fetch, never new URL()", () => {
   const absolute = new URL(`https://public.yaver.io${relative}/remote-runtime/capabilities`);
   assert.equal(absolute.pathname, "/d/6e8db080-a9d0-443c-a55b-b9c385522a97/remote-runtime/capabilities");
 });
+
+/**
+ * Regression guard (2026-09-29 "no relay, tunnel, or direct path answered" /
+ * "Runtime target probe failed" on a render box that IS reachable): the plain
+ * `/config` read is UNAUTHENTICATED and returns relays with NO password, so
+ * `this.relayServers` can be empty (or password-less) while the account relay
+ * works. probeDeviceStatus then skipped the relay leg entirely and blamed the
+ * box. The fix adds a same-origin `/d/<id>` probe FIRST, which the Next proxy
+ * authenticates server-side and self-heals. This pins that the probe succeeds
+ * with zero configured relay servers when the dashboard is on the proxy host.
+ */
+test("device probe reaches a box via the same-origin /d proxy with no relay list", async () => {
+  const g = globalThis as unknown as { window?: unknown; fetch: unknown };
+  const prevWindow = g.window;
+  const prevFetch = g.fetch;
+  const calls: string[] = [];
+  g.window = { location: { hostname: "yaver.io", protocol: "https:", origin: "https://yaver.io" } };
+  g.fetch = async (url: string) => {
+    calls.push(String(url));
+    const body = String(url).endsWith("/info") ? { version: "1.99.469" } : { ok: true };
+    return {
+      ok: true,
+      status: 200,
+      clone() { return this; },
+      async json() { return body; },
+      async text() { return JSON.stringify(body); },
+    };
+  };
+  try {
+    const client = new AgentClient();
+    assert.equal(client.configuredRelayServers.length, 0);
+    const probe = await client.probeDeviceStatus({
+      host: "203.0.113.9",
+      port: 18080,
+      token: "tok",
+      deviceId: "dev1",
+    });
+    assert.equal(probe.ok, true);
+    assert.equal(probe.path, "relay");
+    assert.equal(probe.relayId, "same-origin-proxy");
+    assert.ok(
+      calls.some((c) => c === "/d/dev1/health"),
+      `expected a same-origin proxy health probe, got ${JSON.stringify(calls)}`,
+    );
+  } finally {
+    g.window = prevWindow;
+    g.fetch = prevFetch;
+  }
+});
