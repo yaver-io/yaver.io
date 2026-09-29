@@ -1515,6 +1515,20 @@ export default function RuntimeLabView({
     w.__rvMounts = (w.__rvMounts || 0) + 1;
     return () => { w.__rvUnmounts = (w.__rvUnmounts || 0) + 1; };
   }, []);
+  // TEMP DIAGNOSTIC (remove after): expose the preview state each render.
+  useEffect(() => {
+    (window as unknown as { __rv?: unknown }).__rv = {
+      panelOpen: webPreviewPanelOpen,
+      url: webPreviewUrl ? webPreviewUrl.slice(0, 70) : null,
+      note: webPreviewNote,
+      busy: webPreviewBusy,
+      projects: projects.length,
+      selectedPath,
+      caps: caps ? true : false,
+      resets: (window as unknown as { __rvReset?: number }).__rvReset || 0,
+      t: Date.now(),
+    };
+  });
 
   const loadProjects = useCallback(async () => {
     setError(null);
