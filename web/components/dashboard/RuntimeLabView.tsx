@@ -3058,26 +3058,48 @@ export default function RuntimeLabView({
     setWebPreviewNote(null);
     setBuildProgress(null);
     setError(null);
+    // Named step narration (2026-09-29 UX audit): this used to relay only the
+    // success or the final error, so a stalled/failed open left the left pane
+    // empty with NO cause on screen. Every step now writes a visible note.
+    const step = (msg: string) => { setWebPreviewNote(msg); appendLog(`web ui: ${msg}`); };
     appendLog(`web ui ${selectedProject.name}`);
+    // Last-resort: render the web bundle that already exists on the box, so
+    // "Open preview" can never leave the pane empty and silent.
+    const useExistingBundle = async (why: string): Promise<boolean> => {
+      try {
+        const info = await agentClient.getWebBundleInfo();
+        const signed = signedBundlePreviewUrl(info?.bundleUrl) || agentClient.devWebBundleUrl;
+        if (info?.built && signed) {
+          setWebPreviewUrl(signed);
+          step(`Web UI bundle ready (existing bundle; ${why}).`);
+          return true;
+        }
+      } catch { /* fall through to the thrown error */ }
+      return false;
+    };
     try {
+      step("checking runner/render roles…");
       if (!(await ensureMachineRolesReady("web preview"))) return;
       const framework = browserPreviewFrameworkForProject(selectedProject);
       const staticBundleFramework = ["expo", "react-native"].includes(framework);
       if (staticBundleFramework) {
-        setWebPreviewNote(`Building ${selectedProject.name} web bundle...`);
+        step(`building ${selectedProject.name} web bundle (${framework})…`);
         const built = await agentClient.buildWebJSBundle({
           projectName: selectedProject.name,
           projectPath: selectedProject.path,
         });
-        if (!built.ok) throw new Error(built.error || "Could not build Web UI bundle.");
-        const signedUrl = agentClient.webBundlePreviewUrl(built.bundleUrl);
+        if (!built.ok) {
+          if (await useExistingBundle(`build failed: ${built.error || "unknown"}`)) return;
+          throw new Error(built.error || "Could not build Web UI bundle.");
+        }
+        const signedUrl = agentClient.webBundlePreviewUrl(built.bundleUrl) || agentClient.devWebBundleUrl;
         if (!signedUrl) throw new Error("No signed Web UI bundle URL is available.");
         setWebPreviewUrl(signedUrl);
-        setWebPreviewNote(`Web UI bundle ready: ${built.fileCount} files.`);
-        appendLog(`web ui ready ${signedUrl}`);
+        step(`Web UI bundle ready: ${built.fileCount} files.`);
         return;
       }
       const app = await monorepoWebAppName(selectedProject);
+      step(`starting dev server (${app || framework})…`);
       const response = await agentClient.startDevServer(app ? {
         app,
         root: selectedProject.path,
@@ -3093,29 +3115,32 @@ export default function RuntimeLabView({
         const existingSignedUrl = signedBundlePreviewUrl(response.bundleUrl);
         if (response.bundleReady && existingSignedUrl) {
           setWebPreviewUrl(existingSignedUrl);
-          setWebPreviewNote(response.bundleHint || "Web UI bundle ready.");
-          appendLog(`web ui ready ${existingSignedUrl}`);
+          step(response.bundleHint || "Web UI bundle ready.");
           return;
         }
+        step(`building ${selectedProject.name} web bundle…`);
         const built = await agentClient.buildWebJSBundle({
           projectName: selectedProject.name,
           projectPath: selectedProject.path,
         });
-        if (!built.ok) throw new Error(built.error || "Could not build Web UI bundle.");
-        const signedUrl = agentClient.webBundlePreviewUrl(built.bundleUrl);
+        if (!built.ok) {
+          if (await useExistingBundle(`build failed: ${built.error || "unknown"}`)) return;
+          throw new Error(built.error || "Could not build Web UI bundle.");
+        }
+        const signedUrl = agentClient.webBundlePreviewUrl(built.bundleUrl) || agentClient.devWebBundleUrl;
         if (!signedUrl) throw new Error("No signed Web UI bundle URL is available.");
         setWebPreviewUrl(signedUrl);
-        setWebPreviewNote(`Web UI bundle ready: ${built.fileCount} files.`);
-        appendLog(`web ui ready ${signedUrl}`);
+        step(`Web UI bundle ready: ${built.fileCount} files.`);
         return;
       }
+      step("waiting for the dev server to report its address…");
       const preview = await waitForDevPreviewUrl(response.bundleUrl);
       setWebPreviewUrl(preview.url);
-      setWebPreviewNote(response.bundleHint || preview.note);
-      appendLog(`web ui ready ${preview.url}`);
+      step(response.bundleHint || preview.note);
     } catch (err) {
+      if (await useExistingBundle("live preview could not start")) return;
       const message = err instanceof Error ? err.message : "Could not open Web UI.";
-      setWebPreviewNote(message);
+      setWebPreviewNote(`Open preview failed: ${message}`);
       setError(message);
       appendLog(`web ui failed: ${message}`);
     } finally {
