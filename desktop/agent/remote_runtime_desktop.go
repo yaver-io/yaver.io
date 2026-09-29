@@ -110,13 +110,35 @@ func desktopViewAllowed() error {
 // ---- runtimeTarget -------------------------------------------------------
 
 func (t desktopScreenTarget) Attach(context.Context) (string, error) {
-	if t.display != 0 {
-		return "", fmt.Errorf("desktop-screen: only the primary display (0) is supported; multi-monitor enumeration is not implemented in ghost yet")
+	if t.display < 0 {
+		return "", fmt.Errorf("desktop-screen: negative display index %d", t.display)
 	}
-	if err := desktopViewAllowed(); err != nil {
+	eng, err := desktopGhost()
+	if err != nil {
 		return "", err
 	}
-	if _, err := desktopGhost(); err != nil {
+	// ghost now enumerates every display, so validate the requested index and
+	// fail with the real count instead of silently streaming the wrong screen.
+	if disps, derr := eng.Screen.Displays(); derr == nil {
+		found := false
+		for _, d := range disps {
+			if d.Index == t.display {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("desktop-screen: display %d not found (%d active)", t.display, len(disps))
+		}
+	}
+	if t.display != 0 {
+		// Honest limit: the WebRTC path grabs the host screen with ffmpeg, whose
+		// per-display region selection is not implemented yet. Say so rather than
+		// silently streaming display 0. The still-image tools DO support other
+		// displays (ghost_screenshot / desktop_screenshot with display=N).
+		return "", fmt.Errorf("desktop-screen: only display 0 is streamed over WebRTC today; use desktop_screenshot with display=%d for a still frame", t.display)
+	}
+	if err := desktopViewAllowed(); err != nil {
 		return "", err
 	}
 	return desktopScreenTargetID, nil
@@ -348,6 +370,19 @@ func probeDesktopScreenTarget() RemoteRuntimeTarget {
 	}
 	if _, err := desktopGhost(); err != nil {
 		target.Reason = err.Error()
+		return target
+	}
+	// Permission truth as named checks, so a picker can show which grant is
+	// missing (and the fix) instead of a generic failure. On macOS an
+	// Accessibility-denied box can still be VIEWED, so screen-capture is the
+	// gate for Enabled and accessibility is reported as a control caveat.
+	perms := ghost.Preflight()
+	target.Checks = append(target.Checks,
+		RemoteRuntimeCheck{ID: "screen-capture", Label: "Screen capture permission", OK: perms.ScreenCapture, Reason: perms.ScreenCaptureReason},
+		RemoteRuntimeCheck{ID: "accessibility", Label: "Input (Accessibility) permission", OK: perms.Input, Reason: perms.InputReason},
+	)
+	if !perms.ScreenCapture {
+		target.Reason = perms.ScreenCaptureReason
 		return target
 	}
 	if ffmpegPath() == "" {

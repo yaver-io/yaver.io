@@ -89,8 +89,8 @@ func TestDesktopScreenAttachRejectsSecondaryDisplay(t *testing.T) {
 	tgt := desktopScreenTarget{display: 1}
 	if _, err := tgt.Attach(context.Background()); err == nil {
 		t.Fatal("expected display 1 to be rejected, got nil error")
-	} else if !strings.Contains(err.Error(), "primary display") {
-		t.Errorf("expected a primary-display error, got: %v", err)
+	} else if !strings.Contains(err.Error(), "display") {
+		t.Errorf("expected the error to name the display limit, got: %v", err)
 	}
 }
 

@@ -75,6 +75,7 @@ func rdPrimaryDisplay(eng *ghost.Engine) (ghost.Display, error) {
 
 func (s *HTTPServer) handleRemoteDesktopStatus(w http.ResponseWriter, r *http.Request) {
 	pol := loadRemoteDesktopPolicy()
+	perms := ghost.Preflight()
 	resp := map[string]interface{}{
 		"supported":           ghost.Supported(),
 		"viewEnabled":         pol.ViewEnabled,
@@ -87,6 +88,14 @@ func (s *HTTPServer) handleRemoteDesktopStatus(w http.ResponseWriter, r *http.Re
 		"fps":                 ghostStream.curFps(),
 		"streamUrl":           "/rd/stream",
 		"frameUrl":            "/rd/frame.jpg",
+		// Live OS permission truth. `controlReady` is false on a Mac whose
+		// Accessibility grant is missing even though the policy says control is
+		// enabled — the polling client can then show the named fix instead of a
+		// viewer that silently drops every click. Additive: older clients ignore
+		// both fields.
+		"permissions":  perms,
+		"controlReady": perms.Input,
+		"screenReady":  perms.ScreenCapture,
 	}
 	// Best-effort display enumeration so the client can size/scale. Don't fail
 	// status if the engine isn't constructable yet (e.g. missing OS perms) —
@@ -125,6 +134,11 @@ func (s *HTTPServer) handleRemoteDesktopPolicy(w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusForbidden, reason)
 		return
 	}
+	if ok, reason := rdControlPolicyUpdateEnforce(pol, remote, body.ControlEnabled); !ok {
+		appendRemoteDesktopAudit(rdAuditEntry{Action: "deny", Remote: remote, Note: reason})
+		jsonError(w, http.StatusForbidden, reason)
+		return
+	}
 	if body.ViewEnabled != nil {
 		pol.ViewEnabled = *body.ViewEnabled
 		if !remote {
@@ -133,6 +147,9 @@ func (s *HTTPServer) handleRemoteDesktopPolicy(w http.ResponseWriter, r *http.Re
 	}
 	if body.ControlEnabled != nil {
 		pol.ControlEnabled = *body.ControlEnabled
+		if !remote {
+			pol.ControlConsentSet = true
+		}
 	}
 	if body.AllowRemoteControl != nil {
 		pol.AllowRemoteControl = *body.AllowRemoteControl
@@ -154,6 +171,7 @@ func (s *HTTPServer) handleRemoteDesktopPolicy(w http.ResponseWriter, r *http.Re
 		"viewEnabled":        pol.ViewEnabled,
 		"viewConsentSet":     pol.ViewConsentSet,
 		"controlEnabled":     pol.ControlEnabled,
+		"controlConsentSet":  pol.ControlConsentSet,
 		"allowRemoteControl": pol.AllowRemoteControl,
 		"notifyOnControl":    pol.NotifyOnControl,
 	})

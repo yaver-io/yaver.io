@@ -52,8 +52,38 @@ func TestRDDefaultPolicy(t *testing.T) {
 	if p.ControlEnabled {
 		t.Error("control must default OFF — input injection is opt-in")
 	}
+	if p.ControlConsentSet {
+		t.Error("control consent must default OFF — a remote caller must not be able to self-grant")
+	}
 	if !p.AllowRemoteControl {
 		t.Error("remote control should default ON so web/mobile works once control is enabled")
+	}
+}
+
+// TestRDControlPolicyUpdateEnforce is the guard for the 2026-09-29 self-grant
+// hole: before it, handleRemoteDesktopPolicy wrote ControlEnabled with no
+// locality check, so an authenticated phone could enable control and
+// immediately drive the box. This proves the operation, not the inventory.
+func TestRDControlPolicyUpdateEnforce(t *testing.T) {
+	on := true
+	off := false
+	unset := RemoteDesktopPolicy{}
+	if ok, _ := rdControlPolicyUpdateEnforce(unset, false, &on); !ok {
+		t.Fatal("a local caller must be able to establish first control consent")
+	}
+	if ok, reason := rdControlPolicyUpdateEnforce(unset, true, &on); ok || reason == "" {
+		t.Fatalf("a remote caller must NOT be able to self-grant control (ok=%v reason=%q)", ok, reason)
+	}
+	if ok, _ := rdControlPolicyUpdateEnforce(unset, true, &off); !ok {
+		t.Fatal("a remote caller must be able to fail closed")
+	}
+	consented := RemoteDesktopPolicy{ControlConsentSet: true}
+	if ok, _ := rdControlPolicyUpdateEnforce(consented, true, &on); !ok {
+		t.Fatal("remote toggle should work after local control consent is recorded")
+	}
+	// A nil request (caller only touched other fields) must never be blocked.
+	if ok, _ := rdControlPolicyUpdateEnforce(unset, true, nil); !ok {
+		t.Fatal("a request that does not mention control must pass through")
 	}
 }
 

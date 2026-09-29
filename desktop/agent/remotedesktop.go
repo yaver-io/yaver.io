@@ -42,6 +42,13 @@ type RemoteDesktopPolicy struct {
 	// ControlEnabled gates mouse/keyboard injection. Default FALSE: watching
 	// is one thing, driving the box is another, so control is opt-in.
 	ControlEnabled bool `json:"controlEnabled"`
+	// ControlConsentSet distinguishes an explicit LOCAL control choice from a
+	// remote enable. Like ViewConsentSet, a remote caller cannot establish the
+	// first consent: it may only toggle control once someone on the box has
+	// turned it on at least once. Added 2026-09-29 to close the self-grant hole
+	// (remotedesktop_http.go used to write ControlEnabled with no locality
+	// gate, so a phone could enable and immediately drive the desktop).
+	ControlConsentSet bool `json:"controlConsentSet"`
 	// AllowRemoteControl decides whether a NON-loopback caller (a phone over
 	// the relay, the web dashboard) may inject input, vs control being
 	// restricted to a process on the box itself. Default true so the feature
@@ -149,6 +156,18 @@ func rdViewEnforce(pol RemoteDesktopPolicy) (bool, string) {
 func rdViewPolicyUpdateEnforce(pol RemoteDesktopPolicy, remote bool, requested *bool) (bool, string) {
 	if requested != nil && *requested && remote && !pol.ViewConsentSet {
 		return false, "first screen-view consent must be granted on the recorded machine"
+	}
+	return true, ""
+}
+
+// rdControlPolicyUpdateEnforce is the control-side twin of
+// rdViewPolicyUpdateEnforce. Injecting input is strictly more sensitive than
+// watching, so the same rule applies: a remote caller cannot establish first
+// consent. It MAY turn control off, and MAY toggle it on once someone on the
+// box has enabled it at least once (ControlConsentSet). Pure — unit-tested.
+func rdControlPolicyUpdateEnforce(pol RemoteDesktopPolicy, remote bool, requested *bool) (bool, string) {
+	if requested != nil && *requested && remote && !pol.ControlConsentSet {
+		return false, "remote control must be enabled once on the target machine before it can be toggled remotely (System Settings on the box, or the Yaver desktop app / a local request)"
 	}
 	return true, ""
 }
