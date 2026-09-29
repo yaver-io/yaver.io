@@ -3291,7 +3291,10 @@ export default function RuntimeLabView({
     setWebPreviewReloading(false);
     setWebPreviewNote(null);
     setBuildProgress(null);
-  }, []);
+    // Explicit close must WIN over the self-healing restore, or the pane would
+    // pop back open on the next render.
+    try { if (selectedProject?.path) sessionStorage.removeItem(`yaver.runtimePreview.${selectedProject.path}`); } catch { /* ignore */ }
+  }, [selectedProject?.path]);
 
   // Sticky browser-lane preview (2026-09-29 UX audit). The runtime view can
   // remount (device refresh, reconnect, project-catalogue reload), which reset
@@ -3304,22 +3307,23 @@ export default function RuntimeLabView({
     if (!path || !webPreviewUrl) return;
     try { sessionStorage.setItem(`yaver.runtimePreview.${path}`, webPreviewUrl); } catch { /* ignore */ }
   }, [selectedProject?.path, webPreviewUrl]);
-  const restoredPreviewForRef = useRef("");
   useEffect(() => {
     const path = selectedProject?.path;
-    if (!path || webPreviewUrl || webPreviewBusy) return;
-    if (restoredPreviewForRef.current === path) return;
-    restoredPreviewForRef.current = path;
-    try {
-      const saved = sessionStorage.getItem(`yaver.runtimePreview.${path}`);
-      if (saved) {
-        setWebPreviewUrl(saved);
-        setWebPreviewPanelOpen(true);
-        setWebPreviewNote("Restored last preview.");
-        appendLog(`web ui: restored ${saved}`);
-      }
-    } catch { /* ignore */ }
-  }, [appendLog, selectedProject?.path, webPreviewBusy, webPreviewUrl]);
+    if (!path) return;
+    let saved = "";
+    try { saved = sessionStorage.getItem(`yaver.runtimePreview.${path}`) || ""; } catch { /* ignore */ }
+    if (!saved || webPreviewUrl) return;
+    // Re-assert shortly after: a transient reset (remount / connection flap /
+    // catalogue refresh) can clear the preview right after it is set. Retrying
+    // until the URL sticks is what makes the left pane render reliably.
+    const timer = setTimeout(() => {
+      setWebPreviewUrl((prev) => prev || saved);
+      setWebPreviewPanelOpen(true);
+      setWebPreviewNote("Restored last preview.");
+      appendLog(`web ui: restored ${saved}`);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [appendLog, selectedProject?.path, webPreviewUrl]);
 
   const stopWebPreview = useCallback(async () => {
     if (webPreviewStopping) return;
