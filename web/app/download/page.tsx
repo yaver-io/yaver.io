@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { GUI_DOWNLOADS, WINDOWS_STORE_URL } from "@/lib/versions";
 
@@ -6,7 +5,7 @@ const card = "rounded-2xl border border-surface-800 bg-surface-900 p-6";
 const secondaryButton =
   "inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50";
 const primaryButton =
-  "inline-flex items-center justify-center rounded-xl bg-surface-50 px-4 py-2.5 text-sm font-semibold text-surface-950 transition hover:bg-white";
+  "inline-flex items-center justify-center rounded-xl bg-surface-50 px-4 py-2.5 text-sm font-semibold text-surface-950 transition-colors hover:bg-surface-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-surface-400";
 
 function PlatformCard({
   icon,
@@ -24,14 +23,16 @@ function PlatformCard({
   children?: React.ReactNode;
 }) {
   return (
-    <article className={`${card} flex min-h-64 flex-col`}>
+    <article className={`${card} flex h-full flex-col`}>
       <div className="text-3xl" aria-hidden="true">{icon}</div>
       <h3 className="mt-5 text-xl font-semibold text-surface-50">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-surface-400">{detail}</p>
       <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 text-xs text-surface-400">{children}</div>
-      <a href={href} className={`${primaryButton} mt-auto pt-2`}>
-        {action} →
-      </a>
+      <div className="mt-auto pt-6">
+        <a href={href} className={`${primaryButton} w-full`}>
+          {action} →
+        </a>
+      </div>
     </article>
   );
 }
@@ -53,19 +54,9 @@ export default function DownloadPage() {
   return (
     <main className="px-5 py-12 md:px-6 md:py-20">
       <div className="mx-auto max-w-5xl">
-        <header className="relative overflow-hidden rounded-2xl border border-surface-800 bg-surface-900 px-6 py-7 md:px-8">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(124,92,255,0.22),transparent_38%),radial-gradient(circle_at_bottom_left,rgba(52,211,153,0.10),transparent_34%)]" />
-          <div className="relative flex items-center gap-4">
-            <Image src="/icon-192.png" alt="Yaver" width={44} height={44} className="rounded-xl" />
-            <div>
-              <p className="text-sm font-medium text-violet-300">Yaver</p>
-              <h1 className="text-3xl font-semibold tracking-tight text-surface-50">Downloads</h1>
-              <p className="mt-1 text-sm text-surface-400">Choose your platform.</p>
-            </div>
-          </div>
-        </header>
+        <h1 className="sr-only">Yaver downloads</h1>
 
-        <section className="mt-12" aria-labelledby="desktop-downloads">
+        <section aria-labelledby="desktop-downloads">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-400">1 · Desktop</p>
           <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -159,17 +150,6 @@ export default function DownloadPage() {
           </article>
         </section>
 
-        <section className={`${card} mt-12`} aria-labelledby="raspberry-pi">
-          <div className="grid gap-7 md:grid-cols-[1fr_1.05fr] md:items-center">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-surface-500">Raspberry Pi</p>
-              <h2 id="raspberry-pi" className="mt-2 text-2xl font-semibold text-surface-50">Turn a Pi into a Yaver node</h2>
-              <p className="mt-3 text-sm leading-6 text-surface-400">Use Raspberry Pi OS 64-bit on Pi 4/5, install Node.js 18+, then run the same headless setup.</p>
-              <Link href="/manuals/raspberry-pi" className={`${secondaryButton} mt-5`}>Raspberry Pi guide</Link>
-            </div>
-            <CommandBlock commands={["npm install -g yaver-cli", "yaver auth --headless", "yaver serve --install-systemd"]} />
-          </div>
-        </section>
       </div>
     </main>
   );
