@@ -1498,6 +1498,17 @@ export default function RuntimeLabView({
     }
   }, [connectedDevice?.id, postRuntimeSettings, selectedProject]);
 
+  // Stable refs (2026-09-29): loadProjects' identity used to change on every
+  // render because `selectedPath`, `devices` and `machineRoles` were deps — and
+  // the load itself sets the selected path, so `useEffect(..., [loadProjects])`
+  // re-ran continuously ("projects loaded:" flood), re-selecting the project and
+  // tearing down the preview before it could paint. Read them from refs instead.
+  const selectedPathRef = useRef(selectedPath);
+  const devicesRef = useRef(devices);
+  const machineRolesRef = useRef(machineRoles);
+  useEffect(() => { selectedPathRef.current = selectedPath; }, [selectedPath]);
+  useEffect(() => { devicesRef.current = devices; }, [devices]);
+  useEffect(() => { machineRolesRef.current = machineRoles; }, [machineRoles]);
   const loadProjects = useCallback(async () => {
     setError(null);
     try {
@@ -1509,7 +1520,7 @@ export default function RuntimeLabView({
       // operation. A failed render inventory MUST NOT fall back to the
       // connected box: that recreates the false choice that produced
       // "sfmg / mobile" on a renderer that never had it.
-      const split = machineRolesSplitActive(machineRoles);
+      const split = machineRolesSplitActive(machineRolesRef.current);
       const [projectRows, repoRows, mobileRows, settings] = await Promise.all([
         split ? agentClient.listRenderProjects() : agentClient.listProjects(),
         agentClient.listWorkspaceRepos(split ? "render" : "connected"),
@@ -1540,7 +1551,7 @@ export default function RuntimeLabView({
       // remembered cross-surface project and finally the first project the
       // render machine actually returned. The picker remains available under
       // the composer ellipsis for explicit retargeting.
-      if (!rows.some((row) => row.path === selectedPath)) {
+      if (!rows.some((row) => row.path === selectedPathRef.current)) {
         const saved = connectedDevice?.id
           ? (settings?.defaultRuntimeProjectByDevice || []).find((row: RuntimeProjectPreference) => row.deviceId === connectedDevice.id)
           : undefined;
@@ -1549,19 +1560,19 @@ export default function RuntimeLabView({
       }
       appendLog(`projects loaded: ${rows.length}`);
     } catch (err) {
-      const split = machineRolesSplitActive(machineRoles);
+      const split = machineRolesSplitActive(machineRolesRef.current);
       if (split) {
         setProjects([]);
         setSelectedPath("");
-        const renderId = machineRoles?.renderDeviceId || machineRoles?.runnerDeviceId || "";
-        const renderName = (devices || []).find((device) => device.id === renderId)?.name || renderId.slice(0, 8) || "the renderer";
+        const renderId = machineRolesRef.current?.renderDeviceId || machineRolesRef.current?.runnerDeviceId || "";
+        const renderName = (devicesRef.current || []).find((device) => device.id === renderId)?.name || renderId.slice(0, 8) || "the renderer";
         const detail = err instanceof Error ? err.message : "Could not reach its project inventory.";
         setError(`Could not load projects from ${renderName}. No projects from another machine were substituted. ${detail}`);
       } else {
         setError(err instanceof Error ? err.message : "Could not load projects.");
       }
     }
-  }, [appendLog, connectedDevice?.id, devices, loadRuntimeSettings, machineRoles, seedRuntimeProjectCatalog, selectedPath, useLatestProject]);
+  }, [appendLog, connectedDevice?.id, loadRuntimeSettings, seedRuntimeProjectCatalog, useLatestProject]);
 
   const refreshRunners = useCallback(async () => {
     const deviceFallback = deviceRunnerFallback;
