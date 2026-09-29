@@ -204,6 +204,17 @@ test("allowed app popups open in a hardened child window instead of being silent
   assert.match(child, /will-navigate/);
 });
 
+test("keep-awake blocks display sleep and re-asserts on resume (Talos parity)", () => {
+  // Talos Desktop is a long-lived remote endpoint and blocks DISPLAY sleep, not
+  // only app-suspension (../talos/desktop-app/src/electron/services/
+  // agent-power-guard.ts). A screen-blank can let network power-saving drop the
+  // relay tunnel, so `prevent-app-suspension` alone is not enough.
+  assert.match(main, /powerSaveBlocker\.start\("prevent-display-sleep"\)/);
+  assert.doesNotMatch(main, /start\("prevent-app-suspension"\)/);
+  assert.match(main, /powerMonitor\.on\("resume"/);
+  assert.match(main, /reconcileKeepAwake\(\)/);
+});
+
 test("desktop uninstall is plan-derived, user-confirmed, and honest for Store builds", () => {
   assert.match(main, /yaver:uninstall-app/);
   assert.match(main, /uninstallPlan\(\{/);

@@ -21,7 +21,7 @@
  *     window that survives relay flapping.
  */
 
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, shell, session, nativeImage, powerSaveBlocker, dialog } = require("electron");
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, shell, session, nativeImage, powerSaveBlocker, powerMonitor, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -356,11 +356,19 @@ function reconcileAutomaticUpdates() {
 
 /** Keep the GUI/agent available without changing a global Windows power plan.
  * Electron's blocker is process-scoped and automatically disappears on crash
- * or quit; the tray checkbox gives the user an immediate opt-out. */
+ * or quit; the tray checkbox gives the user an immediate opt-out.
+ *
+ * Parity with the Talos desktop app (../talos/desktop-app/
+ * src/electron/services/power-management.ts + agent-power-guard.ts): a
+ * long-lived remote endpoint must block DISPLAY sleep too, not only
+ * app-suspension — `prevent-app-suspension` lets the screen blank and, on some
+ * machines, the radio/network power-saving kick in, so the box drops off the
+ * relay. We use `prevent-display-sleep` and re-assert it whenever the OS
+ * resumes, because a suspend cycle silently invalidates the assertion. */
 function reconcileKeepAwake() {
   if (settings.keepAwake) {
     if (keepAwakeBlockerId === null || !powerSaveBlocker.isStarted(keepAwakeBlockerId)) {
-      keepAwakeBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+      keepAwakeBlockerId = powerSaveBlocker.start("prevent-display-sleep");
     }
     return;
   }
@@ -1400,6 +1408,9 @@ if (!gotLock) {
     installAuthInterceptor();
     setMacDockIcon();
     if (!storeClientOnly) reconcileKeepAwake();
+    // A suspend/resume cycle invalidates the power-save blocker; re-assert it so
+    // the box stays awake and reachable (Talos parity).
+    powerMonitor.on("resume", () => { if (!storeClientOnly) reconcileKeepAwake(); });
     reconcileLaunchAtLogin();
     createTray();
     reconcileAutomaticUpdates();
