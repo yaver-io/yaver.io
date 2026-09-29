@@ -102,14 +102,24 @@ export function useAuth(): AuthState {
         });
 
         if (!res.ok) {
-          // Token invalid -- clear it. 401/403 means the server actively
-          // rejected the token (rotated / expired / revoked); flag it so
-          // the dashboard can say "your session expired" rather than
-          // logging the user out with no explanation.
-          localStorage.removeItem("yaver_auth_token");
-          clearAuthTokenCookies();
+          // Only a DEFINITIVE auth rejection (401/403) may destroy the session.
+          // A 429 (rate limit from a burst of validations) or a 5xx is a server
+          // condition, not a verdict on the credential — clearing the token
+          // there logged the user straight out (2026-09-29: every open of the
+          // Vibing tab bounced to /auth while /auth/validate returned non-OK).
+          // Keep the token, degrade, and let the next real request decide.
+          if (res.status === 401 || res.status === 403) {
+            localStorage.removeItem("yaver_auth_token");
+            clearAuthTokenCookies();
+            if (!cancelled) {
+              setSessionExpired(true);
+              setIsLoading(false);
+            }
+            return;
+          }
           if (!cancelled) {
-            if (res.status === 401 || res.status === 403) setSessionExpired(true);
+            syncAuthTokenCookie(storedToken);
+            setToken(storedToken);
             setIsLoading(false);
           }
           return;
