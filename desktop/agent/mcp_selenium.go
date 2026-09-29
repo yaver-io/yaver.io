@@ -307,8 +307,65 @@ func seleniumReadiness() map[string]interface{} {
 		"error":                errorText,
 		"install_hint":         "Install a Chrome-for-Testing ChromeDriver matching the installed browser's major.minor.build, or set SELENIUM_REMOTE_URL/YAVER_SELENIUM_REMOTE_URL.",
 		"fix_tool":             "selenium_fix",
-		"safety":               "Yaver Selenium uses normal browser automation only. It must not bypass CAPTCHA, auth, paywalls, rate limits, or site access controls.",
+		// Per-engine readiness, so `browser_open engine=safari|firefox` can be
+		// diagnosed up front with the exact fix instead of failing at session
+		// start. The W3C WebDriver lane reaches real Safari (safaridriver) and
+		// Firefox (geckodriver) — see testkit/driver_safari.go, driver_firefox.go.
+		"engines": map[string]interface{}{
+			"chrome": map[string]interface{}{
+				"browser": "chrome", "driver": "chromedriver", "ready": ready,
+				"path": chromedriver, "version": driverVersion,
+			},
+			"firefox": driverReadiness("firefox"),
+			"safari":  driverReadiness("safari"),
+		},
+		"safety": "Yaver Selenium uses normal browser automation only. It must not bypass CAPTCHA, auth, paywalls, rate limits, or site access controls.",
 	}
+}
+
+// driverReadiness reports whether the W3C WebDriver binary for a non-Chrome
+// browser is present, and names the exact fix when it is not. It is what turns
+// "browser_open safari failed" into an actionable route-to-fix instead of a
+// bare "safaridriver not found".
+func driverReadiness(browser string) map[string]interface{} {
+	switch browser {
+	case "firefox":
+		out := map[string]interface{}{"browser": "firefox", "driver": "geckodriver"}
+		bin, err := exec.LookPath("geckodriver")
+		if err != nil {
+			out["ready"] = false
+			out["error"] = "geckodriver is missing"
+			out["install_hint"] = "Install Firefox + geckodriver (macOS: brew install --cask firefox && brew install geckodriver; Debian/Ubuntu: apt install firefox-geckodriver), then retry browser_open engine=firefox."
+			return out
+		}
+		out["ready"] = true
+		out["path"] = bin
+		return out
+	case "safari":
+		out := map[string]interface{}{"browser": "safari", "driver": "safaridriver"}
+		if runtime.GOOS != "darwin" {
+			out["ready"] = false
+			out["error"] = "Safari automation requires macOS"
+			out["install_hint"] = "Use engine=chrome or engine=firefox on this OS; Safari only exists on macOS."
+			return out
+		}
+		bin := "/usr/bin/safaridriver"
+		if _, err := os.Stat(bin); err != nil {
+			if p, lerr := exec.LookPath("safaridriver"); lerr == nil {
+				bin = p
+			} else {
+				out["ready"] = false
+				out["error"] = "safaridriver not found"
+				out["install_hint"] = "safaridriver ships with macOS; update macOS/Safari, then run: sudo safaridriver --enable"
+				return out
+			}
+		}
+		out["ready"] = true
+		out["path"] = bin
+		out["enable_hint"] = "Run `sudo safaridriver --enable` once, then tick Safari → Develop → Allow Remote Automation. Safari has no headless mode."
+		return out
+	}
+	return map[string]interface{}{"browser": browser, "ready": false, "error": "unknown browser engine"}
 }
 
 type chromeForTestingBuilds struct {
@@ -883,6 +940,57 @@ func (m *seleniumMCPManager) text(sessionID, selector string) (map[string]interf
 		return nil, err
 	}
 	return map[string]interface{}{"ok": true, "session_id": sessionID, "selector": defaultString(selector, "body"), "text": truncate(text, 12000)}, nil
+}
+
+// attribute reads an element attribute through the WebDriver lane, so
+// browser_extract_attribute works on Firefox/Safari too, not just Chrome/CDP.
+// The selector + attribute are passed as script ARGUMENTS, never interpolated
+// into the JavaScript source.
+func (m *seleniumMCPManager) attribute(sessionID, selector, attr string) (string, error) {
+	res, err := m.execute(sessionID,
+		`const el = document.querySelector(arguments[0]); return el ? el.getAttribute(arguments[1]) : null;`,
+		selector, attr)
+	if err != nil {
+		return "", err
+	}
+	if res == nil {
+		return "", nil
+	}
+	if s, ok := res.(string); ok {
+		return s, nil
+	}
+	return fmt.Sprintf("%v", res), nil
+}
+
+// pageSourceDriver is the optional W3C page-source capability. FirefoxDriver
+// (and Safari, which reuses it) implements it; the CDP backend does not, so it
+// is asserted rather than added to the WebDriver interface.
+type pageSourceDriver interface {
+	PageSource(ctx context.Context) (string, error)
+}
+
+// dom returns the current document HTML for the WebDriver lane, preferring the
+// driver's PageSource and falling back to script execution.
+func (m *seleniumMCPManager) dom(sessionID string) (string, error) {
+	sess, err := m.get(sessionID)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if ps, ok := sess.Driver.(pageSourceDriver); ok {
+		if src, perr := ps.PageSource(ctx); perr == nil {
+			return truncate(src, 200000), nil
+		}
+	}
+	res, err := m.execute(sessionID, `return document.documentElement ? document.documentElement.outerHTML : "";`)
+	if err != nil {
+		return "", err
+	}
+	if s, ok := res.(string); ok {
+		return truncate(s, 200000), nil
+	}
+	return fmt.Sprintf("%v", res), nil
 }
 
 func (m *seleniumMCPManager) screenshot(sessionID string) (map[string]interface{}, error) {

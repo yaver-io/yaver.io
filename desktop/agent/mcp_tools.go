@@ -5390,6 +5390,20 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// are fetched live (cached) so the mobile/web client and the LLM see them.
 	tools = append(tools, externalMCPToolDefs()...)
 
+	// Computer use / desktop lane — named, image-first wrappers over the ghost
+	// ops verbs so a model can SEE the machine and drive it without knowing the
+	// ops_verbs protocol. Gated identically to the underlying verbs (--ghost).
+	// See mcp_desktop.go.
+	tools = append(tools, desktopMCPTools()...)
+
+	// Artifact return — get a produced file (PDF/.dwg/screenshot/build output)
+	// back to the caller. See mcp_artifact.go / ops_artifact.go.
+	tools = append(tools, artifactMCPTools()...)
+
+	// Single-machine browser agent — multi-step web tasks on THIS box.
+	// See mcp_browser_operator.go / ops_browser_operator.go.
+	tools = append(tools, browserOperatorMCPTools()...)
+
 	// Owner-only experimental hardware cells (robot/arm/circuit/printer/
 	// appletv/capture) are hidden from non-owners so the default product
 	// surface stays the AI coding/preview/deploy loop. See mcp_owner_gate.go.

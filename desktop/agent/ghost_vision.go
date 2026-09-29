@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/yaver-io/agent/ghost"
+	"github.com/yaver-io/agent/testkit"
 )
 
 type visionLocator struct {
@@ -44,28 +45,41 @@ const localOllamaV1 = "http://localhost:11434/v1"
 // This keeps the ghost provider-agnostic and lets a customer run fully local.
 func newVisionLocator(baseURL, apiKey, model string) (*visionLocator, error) {
 	if baseURL == "" {
-		baseURL = firstNonEmptyStr(
-			os.Getenv("GHOST_VISION_BASE_URL"),
-			os.Getenv("OPENAI_BASE_URL"),
-			localOllamaV1, // Yaver local AI infra fallback
-		)
+		baseURL = firstNonEmptyStr(os.Getenv("GHOST_VISION_BASE_URL"), os.Getenv("OPENAI_BASE_URL"))
 	}
 	if apiKey == "" {
 		apiKey = firstNonEmptyStr(os.Getenv("GHOST_VISION_API_KEY"), os.Getenv("OPENAI_API_KEY"))
 	}
 	if model == "" {
-		model = firstNonEmptyStr(
-			os.Getenv("GHOST_VISION_MODEL"),
-			os.Getenv("OPENAI_MODEL"),
-		)
-		if model == "" {
-			// Default per provider: a local vision model for Ollama, else a
-			// cheap cloud vision model.
-			if strings.Contains(baseURL, "11434") {
-				model = "llama3.2-vision"
-			} else {
-				model = "gpt-4o-mini"
+		model = firstNonEmptyStr(os.Getenv("GHOST_VISION_MODEL"), os.Getenv("OPENAI_MODEL"))
+	}
+	// Shared vision config is the SECOND resolution seam, so a provider set once
+	// (yaver set vision-key, or the web/mobile settings surfaces) enables BOTH
+	// vision_analyze_image and the ghost's grounding — the audit's "two config
+	// paths for the model that can see" gap. Only OpenAI-compatible providers
+	// are usable by the OpenAI-shaped chat call below; Anthropic's /v1/messages
+	// is intentionally skipped rather than silently mis-called.
+	if baseURL == "" {
+		if vc, ok := resolvedVisionConfig("", model); ok &&
+			(vc.Provider == testkit.VisionProviderOpenAI || vc.Provider == testkit.VisionProviderMistral) {
+			baseURL = strings.TrimSuffix(vc.Endpoint, "/chat/completions")
+			if apiKey == "" {
+				apiKey = vc.APIKey
 			}
+			if model == "" {
+				model = vc.Model
+			}
+		}
+	}
+	// On-prem default: Yaver's local Ollama, so a fully local box still grounds.
+	if baseURL == "" {
+		baseURL = localOllamaV1
+	}
+	if model == "" {
+		if strings.Contains(baseURL, "11434") {
+			model = "llama3.2-vision"
+		} else {
+			model = "gpt-4o-mini"
 		}
 	}
 	if baseURL == "" {
@@ -100,21 +114,61 @@ func (v *visionLocator) Locate(ctx context.Context, screenshotPNG []byte, instru
 	if cfg, _, err := image.DecodeConfig(bytes.NewReader(screenshotPNG)); err == nil {
 		dims = fmt.Sprintf("\nThe screenshot is %dx%d pixels; x,y must be within 0..%d and 0..%d from the top-left.", cfg.Width, cfg.Height, cfg.Width, cfg.Height)
 	}
-	body := map[string]any{
-		"model":       v.model,
-		"temperature": 0,
-		"messages": []any{
-			map[string]any{"role": "system", "content": ghostVisionSystemPrompt},
-			map[string]any{"role": "user", "content": []any{
-				map[string]any{"type": "text", "text": "Instruction: " + instruction + dims + "\nReturn the single next action as JSON."},
-				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64," + b64}},
-			}},
-		},
+	content, err := v.chat(ctx, []any{
+		map[string]any{"role": "system", "content": ghostVisionSystemPrompt},
+		map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": "Instruction: " + instruction + dims + "\nReturn the single next action as JSON."},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64," + b64}},
+		}},
+	})
+	if err != nil {
+		return ghost.Action{}, err
 	}
+	return parseGhostAction(content)
+}
+
+const ghostVerifySystemPrompt = `You are a strict UI verifier. You are given a goal and a textual dump of the current UI's accessibility tree (role:name lines). Decide whether the goal is ALREADY satisfied by what the tree shows right now.
+Reply with ONLY a compact JSON object, no prose, no markdown:
+{"done":true|false,"reason":"short"}
+Be strict: if the tree does not clearly show the goal achieved, return done=false. Do not assume an action worked just because it was attempted.`
+
+// VerifyGoal is the grounded completion check ghost.RunLoop's Verify hook calls:
+// given the goal and the current UI text (the accessibility tree), decide
+// whether the goal is already satisfied. Text, not pixels — cheap, tree-first,
+// and usable by text-only runners as well as vision ones.
+func (v *visionLocator) VerifyGoal(ctx context.Context, goal, uiState string) (bool, string, error) {
+	content, err := v.chat(ctx, []any{
+		map[string]any{"role": "system", "content": ghostVerifySystemPrompt},
+		map[string]any{"role": "user", "content": "Goal: " + goal + "\n\nCurrent UI (accessibility tree):\n" + uiState + "\n\nReturn JSON only."},
+	})
+	if err != nil {
+		return false, "", err
+	}
+	s := strings.TrimSpace(content)
+	if i := strings.Index(s, "{"); i >= 0 {
+		if j := strings.LastIndex(s, "}"); j >= i {
+			s = s[i : j+1]
+		}
+	}
+	var out struct {
+		Done   bool   `json:"done"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return false, "", fmt.Errorf("verifier returned non-JSON: %q", content)
+	}
+	return out.Done, out.Reason, nil
+}
+
+// chat performs one OpenAI-compatible chat completion and returns the first
+// choice's text content. Shared by the locator (image message) and the verifier
+// (text message) so both use the same provider, key and timeout.
+func (v *visionLocator) chat(ctx context.Context, messages []any) (string, error) {
+	body := map[string]any{"model": v.model, "temperature": 0, "messages": messages}
 	buf, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, "POST", v.baseURL+"/chat/completions", bytes.NewReader(buf))
 	if err != nil {
-		return ghost.Action{}, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if v.apiKey != "" {
@@ -123,7 +177,7 @@ func (v *visionLocator) Locate(ctx context.Context, screenshotPNG []byte, instru
 	client := &http.Client{Timeout: 90 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return ghost.Action{}, fmt.Errorf("vision request failed: %w", err)
+		return "", fmt.Errorf("vision request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -137,15 +191,15 @@ func (v *visionLocator) Locate(ctx context.Context, screenshotPNG []byte, instru
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return ghost.Action{}, fmt.Errorf("vision decode failed: %w", err)
+		return "", fmt.Errorf("vision decode failed: %w", err)
 	}
 	if out.Error != nil {
-		return ghost.Action{}, fmt.Errorf("vision error: %s", out.Error.Message)
+		return "", fmt.Errorf("vision error: %s", out.Error.Message)
 	}
 	if len(out.Choices) == 0 {
-		return ghost.Action{}, fmt.Errorf("vision returned no choices")
+		return "", fmt.Errorf("vision returned no choices")
 	}
-	return parseGhostAction(out.Choices[0].Message.Content)
+	return out.Choices[0].Message.Content, nil
 }
 
 // parseGhostAction tolerates models that wrap JSON in prose or code fences.

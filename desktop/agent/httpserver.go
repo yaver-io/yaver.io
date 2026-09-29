@@ -14329,6 +14329,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		body, _ := json.MarshalIndent(out, "", "  ")
 		return mcpToolResult(string(body))
 
+	// --- Computer use: named desktop tools (mcp_desktop.go). Thin adapters over
+	// the ghost ops verbs, so discoverability changes but no gate does. ---
+	case "desktop_screenshot", "desktop_act", "desktop_elements", "desktop_operator":
+		return s.handleDesktopMCPTool(call.Name, call.Arguments)
+
+	// --- Artifact return: get a produced file back to the caller. ---
+	case "artifact_fetch":
+		return s.handleArtifactMCP(call.Arguments)
+
+	// --- Single-machine browser agent (ops_browser_operator.go). ---
+	case "browser_operator":
+		return s.handleBrowserOperatorMCP(call.Arguments)
+
 	// robot_camera — first-class image tool so a HOST Claude Code / Codex can
 	// SEE a remote cell's camera (the `ops` path flattens results to text, which
 	// would hide the image). Thin adapter over the robot_snapshot verb: it reuses
@@ -17446,9 +17459,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(text)
 
 	case "browser_extract_attribute":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 			Selector  string `json:"selector"`
@@ -17458,6 +17468,18 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.SessionID == "" || args.Selector == "" || args.Attribute == "" {
 			return mcpToolError("session_id, selector, and attribute are required")
 		}
+		// Same session_id contract regardless of engine: a Firefox/Safari
+		// (WebDriver) session is served by the selenium lane.
+		if seleniumMCP.has(args.SessionID) {
+			value, err := seleniumMCP.attribute(args.SessionID, args.Selector, args.Attribute)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_extract_attribute: %v", err))
+			}
+			return mcpToolResult(value)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
 		value, err := s.browserMgr.ExtractAttribute(args.SessionID, args.Selector, args.Attribute)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("browser_extract_attribute: %v", err))
@@ -17465,15 +17487,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(value)
 
 	case "browser_get_dom":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID string `json:"session_id"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			return mcpToolError("session_id is required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			htmlContent, err := seleniumMCP.dom(args.SessionID)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_get_dom: %v", err))
+			}
+			return mcpToolResult(htmlContent)
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
 		}
 		htmlContent, err := s.browserMgr.GetDOM(args.SessionID)
 		if err != nil {
@@ -17507,9 +17536,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(map[string]interface{}{"ok": true, "session_id": args.SessionID, "url": url, "dom": htmlContent})
 
 	case "browser_evaluate":
-		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available.")
-		}
 		var args struct {
 			SessionID  string `json:"session_id"`
 			JavaScript string `json:"javascript"`
@@ -17517,6 +17543,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" || args.JavaScript == "" {
 			return mcpToolError("session_id and javascript are required")
+		}
+		if seleniumMCP.has(args.SessionID) {
+			evalResult, err := seleniumMCP.execute(args.SessionID, args.JavaScript)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("browser_evaluate: %v", err))
+			}
+			data, _ := json.Marshal(evalResult)
+			return mcpToolResult(string(data))
+		}
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
 		}
 		evalResult, err := s.browserMgr.Evaluate(args.SessionID, args.JavaScript)
 		if err != nil {

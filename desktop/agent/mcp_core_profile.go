@@ -72,7 +72,7 @@ var peripheralToolFamilies = map[string]bool{
 	"whois": true,
 
 	// Enterprise monitoring / misc peripheral
-	"screenlog": true, "ghost": true, "uptime": true, "analytics": true, "mail": true,
+	"screenlog": true, "ghost": true, "desktop": true, "uptime": true, "analytics": true, "mail": true,
 	"mock": true,
 }
 
