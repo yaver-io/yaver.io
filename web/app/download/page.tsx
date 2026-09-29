@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { GUI_DOWNLOADS } from "@/lib/versions";
+import { GUI_DOWNLOADS, WINDOWS_STORE_URL } from "@/lib/versions";
 
 const card = "rounded-2xl border border-surface-800 bg-surface-900 p-6";
 const secondaryButton =
@@ -83,7 +83,15 @@ export default function DownloadPage() {
             <PlatformCard icon="" title="macOS" detail="Signed and notarized DMG for Apple Silicon." href={GUI_DOWNLOADS.macArm64}>
               <a href={GUI_DOWNLOADS.macX64} className="underline hover:text-surface-50">Intel DMG</a>
             </PlatformCard>
-            <PlatformCard icon="⊞" title="Windows" detail="Signed, standard-user installer for Windows x64." href={GUI_DOWNLOADS.winX64} />
+            <PlatformCard
+              icon="⊞"
+              title="Windows"
+              detail="Install from Microsoft Store for managed updates, or download the signed standard-user installer for Windows x64."
+              href={WINDOWS_STORE_URL}
+              action="Open Microsoft Store"
+            >
+              <a href={GUI_DOWNLOADS.winX64} className="underline hover:text-surface-50">Signed x64 installer (.exe)</a>
+            </PlatformCard>
             <PlatformCard icon="🐧" title="Linux" detail="Ubuntu/Debian x64 package. Installs with apt and appears in your app launcher." href={GUI_DOWNLOADS.debX64} action="Download .deb">
               <a href={GUI_DOWNLOADS.linuxX64} className="underline hover:text-surface-50">x64 AppImage</a>
               <a href={GUI_DOWNLOADS.debArm64} className="underline hover:text-surface-50">arm64 .deb</a>

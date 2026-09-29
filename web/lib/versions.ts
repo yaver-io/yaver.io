@@ -13,6 +13,7 @@
  */
 export const GUI_VERSION = "0.1.12";
 export const GUI_WINDOWS_VERSION = "0.1.2";
+export const WINDOWS_STORE_URL = "https://apps.microsoft.com/detail/9NCMRQ0SXCS9";
 // Public pages use stable same-origin routes that resolve only an asset which
 // actually exists in a published GitHub GUI release. This prevents a source
 // version bump from turning every landing-page button into a 404 before the

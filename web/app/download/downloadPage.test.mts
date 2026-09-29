@@ -15,9 +15,16 @@ test("download page leads with desktop, then mobile, then CLI, then Raspberry Pi
 test("download page exposes the friend path without the old installation wall", () => {
   assert.match(source, /Download APK/);
   assert.match(source, /Download \.deb/);
+  assert.match(source, /Open Microsoft Store/);
+  assert.match(source, /Signed x64 installer \(\.exe\)/);
   assert.match(source, /Already use OpenCode with DeepSeek/);
   assert.doesNotMatch(source, /One install path\. npm\./);
   assert.doesNotMatch(source, /Why one path:/);
+});
+
+test("Windows offers the released Microsoft Store app and the signed installer", () => {
+  assert.match(source, /href=\{WINDOWS_STORE_URL\}/);
+  assert.match(source, /href=\{GUI_DOWNLOADS\.winX64\}/);
 });
 
 test("download page uses a compact, non-redundant heading", () => {

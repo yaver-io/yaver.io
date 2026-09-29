@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
-import { GUI_DOWNLOADS } from "@/lib/versions";
+import { GUI_DOWNLOADS, WINDOWS_STORE_URL } from "@/lib/versions";
 
 // Canonical definitional one-liner — picked up by AI search
 // (ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Framed
@@ -334,7 +334,8 @@ export default function HomePage() {
               {[
                 { name: "macOS (Apple Silicon)", href: GUI_DOWNLOADS.macArm64, note: "Signed + notarized DMG · arm64" },
                 { name: "macOS (Intel)", href: GUI_DOWNLOADS.macX64, note: "Signed + notarized DMG · x64" },
-                { name: "Windows", href: GUI_DOWNLOADS.winX64, note: "Signed installer · x64" },
+                { name: "Windows (Microsoft Store)", href: WINDOWS_STORE_URL, note: "Store install · managed updates" },
+                { name: "Windows (.exe)", href: GUI_DOWNLOADS.winX64, note: "Signed installer · x64" },
                 { name: "Linux", href: GUI_DOWNLOADS.linuxX64, note: "AppImage · x64" },
                 { name: "Linux ARM", href: GUI_DOWNLOADS.linuxArm64, note: "AppImage · arm64" },
               ].map((d) => (

@@ -639,10 +639,10 @@ changing those.
 
 **`npm install -g yaver-cli`** remains the supported standalone agent path on
 macOS (Apple Silicon + Intel), Linux (x64 + arm64, including Raspberry Pi / ARM
-cloud), and Windows via WSL2. The native Windows x64 desktop source lane embeds
-the same Go agent and produces a signed per-user EXE candidate; it is not a
-publicly supported Store install until that exact candidate passes the clean
-Windows VM/WACK gates and is released through Partner Center.
+cloud), and Windows via WSL2. The native Windows x64 desktop app embeds the same
+Go agent and is released through Microsoft Store (Store ID `9NCMRQ0SXCS9`),
+with a separately signed per-user EXE available as a direct-download
+alternative.
 
 The npm package detects the platform and downloads the matching, signed +
 notarized agent binary into `~/.yaver/bin/<version>/<platform>/yaver`. macOS
