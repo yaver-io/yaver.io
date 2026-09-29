@@ -48,6 +48,15 @@ func (s *x11Screen) Capture(display int) (image.Image, error) {
 	if display != 0 {
 		return nil, fmt.Errorf("ghost: only the root display (0) is captured on X11: %w", ErrUnsupported)
 	}
+	// Wayland has no readable X11 root: an XWayland root connects and GetImage
+	// succeeds, but it contains no native-Wayland client pixels, so the capture
+	// would look like a blank/partial desktop — a false green. Refuse loudly
+	// with the reason (Wayland-only sessions) rather than returning a blank.
+	// XWayland sessions (DISPLAY + WAYLAND_DISPLAY) still capture X11 clients;
+	// the caveat is reported by platformPreflight(), not refused here.
+	if st := platformPreflight(); !st.ScreenCapture {
+		return nil, fmt.Errorf("ghost: %s", st.ScreenCaptureReason)
+	}
 	reply, err := xproto.GetImage(
 		s.conn,
 		xproto.ImageFormatZPixmap,

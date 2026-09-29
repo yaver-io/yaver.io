@@ -98,31 +98,49 @@ func macButton(b Button) C.int {
 }
 
 func (macInput) Move(x, y int) error {
+	if err := macInputPreflight(); err != nil {
+		return err
+	}
 	C.ghost_move(C.double(x), C.double(y))
 	return nil
 }
 
 func (macInput) Click(b Button, x, y int) error {
+	if err := macInputPreflight(); err != nil {
+		return err
+	}
 	C.ghost_click(C.double(x), C.double(y), macButton(b), 1)
 	return nil
 }
 
 func (macInput) DoubleClick(b Button, x, y int) error {
+	if err := macInputPreflight(); err != nil {
+		return err
+	}
 	C.ghost_click(C.double(x), C.double(y), macButton(b), 2)
 	return nil
 }
 
 func (macInput) Drag(b Button, x1, y1, x2, y2 int) error {
+	if err := macInputPreflight(); err != nil {
+		return err
+	}
 	C.ghost_drag(C.double(x1), C.double(y1), C.double(x2), C.double(y2), macButton(b))
 	return nil
 }
 
 func (macInput) Scroll(dx, dy int) error {
+	if err := macInputPreflight(); err != nil {
+		return err
+	}
 	C.ghost_scroll(C.int(dx), C.int(dy))
 	return nil
 }
 
 func (macInput) TypeText(s string) error {
+	if err := macInputPreflight(); err != nil {
+		return err
+	}
 	for _, r := range s {
 		u := utf16.Encode([]rune{r})
 		if len(u) == 0 {
@@ -136,6 +154,9 @@ func (macInput) TypeText(s string) error {
 func (macInput) KeyCombo(keys ...string) error {
 	if len(keys) == 0 {
 		return nil
+	}
+	if err := macInputPreflight(); err != nil {
+		return err
 	}
 	var flags C.uint64_t
 	keycode := -1

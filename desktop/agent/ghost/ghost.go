@@ -162,3 +162,37 @@ func New() (*Engine, error) {
 // Supported reports whether this OS has a working ghost (screen+input) build.
 // Used by capability advertisement without constructing a full Engine.
 func Supported() bool { return platformSupported }
+
+// PermissionStatus is the live, per-process capability state of the ghost
+// primitives. It exists so a surface can name the cause AND the fix instead of
+// reporting a silent success or a bare "capture failed".
+//
+// The motivating defect (2026-07-29, cross-checked 2026-09-29): on macOS, every
+// macInput method returned nil unconditionally because the CoreGraphics helpers
+// are void — so a TCC-denied Mac answered POST /rd/input {"ok":true,"applied":N}
+// while injecting nothing. That is the exact "inventory says yes, the operation
+// says no" shape this package is supposed to avoid. `Input:false` here is the
+// signal that turns that into a named error with a route to the fix.
+//
+// A zero value means "unknown / not built for this platform" (see Platform).
+type PermissionStatus struct {
+	// ScreenCapture is true when this process may read screen pixels.
+	ScreenCapture bool `json:"screenCapture"`
+	// Input is true when this process may inject mouse/keyboard events.
+	Input bool `json:"input"`
+	// ScreenCaptureReason explains a false ScreenCapture in the user's terms,
+	// naming the specific grant to make.
+	ScreenCaptureReason string `json:"screenCaptureReason,omitempty"`
+	// InputReason explains a false Input in the user's terms, naming the
+	// specific grant to make.
+	InputReason string `json:"inputReason,omitempty"`
+	// Platform is runtime.GOOS, so a surface can render OS-specific help.
+	Platform string `json:"platform,omitempty"`
+}
+
+// Preflight returns the current permission/capability state for this process.
+// It performs cheap OS probes (macOS: AXIsProcessTrusted +
+// CGPreflightScreenCaptureAccess) and is safe to call on every request. It is
+// deliberately NOT cached: a user who grants permission and relaunches must see
+// the change, and a user who revokes it must stop being told "ok".
+func Preflight() PermissionStatus { return platformPreflight() }

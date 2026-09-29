@@ -134,6 +134,12 @@ func walkAX(el unsafe.Pointer, depth int) Node {
 }
 
 func (macTree) ElementTree(window string) (Node, error) {
+	// A denied Mac returns "no focused application" from axFocusedApp, which is
+	// misleading — the real cause is the missing Accessibility grant. Probe the
+	// operation first so the message names it (and the fix) explicitly.
+	if err := macInputPreflight(); err != nil {
+		return Node{}, err
+	}
 	app := C.axFocusedApp()
 	if app == nil {
 		return Node{}, fmt.Errorf("ghost: no focused application (grant Accessibility permission to the host)")
@@ -143,6 +149,9 @@ func (macTree) ElementTree(window string) (Node, error) {
 }
 
 func (macTree) Windows() ([]Node, error) {
+	if err := macInputPreflight(); err != nil {
+		return nil, err
+	}
 	app := C.axFocusedApp()
 	if app == nil {
 		return nil, ErrUnsupported
