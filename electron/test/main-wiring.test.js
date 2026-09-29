@@ -204,6 +204,16 @@ test("allowed app popups open in a hardened child window instead of being silent
   assert.match(child, /will-navigate/);
 });
 
+test("in-page lock only judges the main frame so a preview iframe cannot eject the app", () => {
+  // The browser-lane preview's injected rebase script does history.replaceState
+  // inside a subframe; without an isMainFrame guard the shell judged that
+  // against the top-level allowlist and loadURL('/auth?return=/dashboard'),
+  // ejecting a valid signed-in session the moment Vibing opened.
+  const lock = main.slice(main.indexOf('"did-navigate-in-page"', main.indexOf("async function createWindow")) - 40, main.indexOf('"did-finish-load"'));
+  assert.match(lock, /did-navigate-in-page", \(_event, target, isMainFrame\)/);
+  assert.match(lock, /if \(!isMainFrame\) return;/);
+});
+
 test("keep-awake blocks display sleep and re-asserts on resume (Talos parity)", () => {
   // Talos Desktop is a long-lived remote endpoint and blocks DISPLAY sleep, not
   // only app-suspension (../talos/desktop-app/src/electron/services/

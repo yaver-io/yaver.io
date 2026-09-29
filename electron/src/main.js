@@ -911,7 +911,18 @@ async function createWindow() {
   // (The decision lives in navigation-policy.js and is unit-tested; the
   // historical wiring bug — a missing `isAllowedAppPath` import — silently
   // no-oped this guard and let marketing pages render in-window.)
-  mainWindow.webContents.on("did-navigate-in-page", (_event, target) => {
+  //
+  // MAIN FRAME ONLY (2026-09-29): the signature is (event, url, isMainFrame,…)
+  // and this handler ignored isMainFrame, so an in-page navigation INSIDE a
+  // subframe was judged against the top-level allowlist. The browser-lane
+  // preview's injected rebase script does history.replaceState() to a
+  // non-allowlisted path, which made the shell loadURL('/auth?return=/dashboard')
+  // — opening the Vibing tab ejected a perfectly valid signed-in session to
+  // /auth. The browser and mobile builds have no such lock, which is why Vibing
+  // worked there and not in the desktop app. Subframes are never the window's
+  // own navigation; ignore them.
+  mainWindow.webContents.on("did-navigate-in-page", (_event, target, isMainFrame) => {
+    if (!isMainFrame) return;
     const decision = inPageNavigationDecision(target);
     if (decision.allow) return;
     if (decision.bounce) {
