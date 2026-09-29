@@ -3848,17 +3848,17 @@ export default function RuntimeLabView({
           </div>
         ) : null}
 
-        {caps ? (
+        {caps || webPreviewPanelOpen ? (
           <div className="space-y-3">
             {(() => {
-              const enabledTargets = caps.targets.filter((target) => target.enabled);
+              const enabledTargets = caps?.targets.filter((target) => target.enabled) ?? [];
               const groupedTargets = enabledTargets.reduce<Record<string, RemoteRuntimeTarget[]>>((acc, target) => {
                 const group = runtimeTargetGroup(target);
                 acc[group] = [...(acc[group] ?? []), target];
                 return acc;
               }, {});
-              const unavailableTargets = caps.targets.filter((target) => !target.enabled);
-              const primaryTargets = caps.targets.filter(isPrimaryRuntimeTarget);
+              const unavailableTargets = (caps?.targets ?? []).filter((target) => !target.enabled);
+              const primaryTargets = (caps?.targets ?? []).filter(isPrimaryRuntimeTarget);
               const groupOrder: ReturnType<typeof runtimeTargetGroup>[] = ["browser", "simulator", "container", "device", "advanced"];
               // Whole card is clickable (same handler as Open); the visible
               // button stays for affordance + keyboard access and stops
