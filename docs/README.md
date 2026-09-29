@@ -42,6 +42,8 @@ Markdown can drift. Before relying on a route, command, field, or version from a
 ## Planning And Audits
 
 - [Planning index](planning/)
+- [Computer-use roadmap — never open the laptop](planning/computer-use-roadmap-2026-09-29.md)
+- [Computer-use deep audit — operate your whole computer without opening it](audits/computer-use-without-opening-the-computer-deep-audit-2026-09-29.md)
 - [Handoffs](handoffs/)
 - [Development notes](development/)
 - [Testing notes](testing/)
