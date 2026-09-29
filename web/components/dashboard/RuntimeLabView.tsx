@@ -1509,27 +1509,6 @@ export default function RuntimeLabView({
   useEffect(() => { selectedPathRef.current = selectedPath; }, [selectedPath]);
   useEffect(() => { devicesRef.current = devices; }, [devices]);
   useEffect(() => { machineRolesRef.current = machineRoles; }, [machineRoles]);
-  // TEMP DIAGNOSTIC (remove after): count mounts to locate the remount loop.
-  useEffect(() => {
-    const w = window as unknown as { __rvMounts?: number; __rvUnmounts?: number };
-    w.__rvMounts = (w.__rvMounts || 0) + 1;
-    return () => { w.__rvUnmounts = (w.__rvUnmounts || 0) + 1; };
-  }, []);
-  // TEMP DIAGNOSTIC (remove after): expose the preview state each render.
-  useEffect(() => {
-    (window as unknown as { __rv?: unknown }).__rv = {
-      panelOpen: webPreviewPanelOpen,
-      url: webPreviewUrl ? webPreviewUrl.slice(0, 70) : null,
-      note: webPreviewNote,
-      busy: webPreviewBusy,
-      projects: projects.length,
-      selectedPath,
-      caps: caps ? true : false,
-      resets: (window as unknown as { __rvReset?: number }).__rvReset || 0,
-      t: Date.now(),
-    };
-  });
-
   const loadProjects = useCallback(async () => {
     setError(null);
     try {
