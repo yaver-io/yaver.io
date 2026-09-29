@@ -349,7 +349,7 @@ final class VibingPlanTests: XCTestCase {
             "id": "opencode", "name": "OpenCode", "installed": true,
             "ready": true, "isDefault": true,
             "models": [{
-              "id": "deepseek/deepseek-v4-flash",
+              "id": "deepseek/deepseek-flash",
               "name": "DeepSeek V4 Flash",
               "provider": "deepseek",
               "isDefault": true
@@ -362,7 +362,7 @@ final class VibingPlanTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AgentRunnerList.self, from: data)
         XCTAssertEqual(decoded.default, "opencode")
         XCTAssertEqual(decoded.runners.first?.displayName, "OpenCode")
-        XCTAssertEqual(decoded.runners.first?.models.first?.id, "deepseek/deepseek-v4-flash")
+        XCTAssertEqual(decoded.runners.first?.models.first?.id, "deepseek/deepseek-flash")
         XCTAssertEqual(decoded.runners.first?.models.first?.isDefault, true)
     }
 

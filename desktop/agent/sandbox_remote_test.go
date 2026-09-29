@@ -11,13 +11,13 @@ import (
 
 func TestOpenCodeSandboxArgsPreserveSelectedDeepSeekModelAndMode(t *testing.T) {
 	got := openCodeSandboxArgs(sandboxRunnerSelection{
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-flash",
 		Mode:     "build",
 		Provider: "deepseek",
 	}, "audit the todo app", "/tmp/project")
 	want := []string{
 		"run",
-		"--model", "deepseek/deepseek-v4-flash",
+		"--model", "deepseek/deepseek-flash",
 		"--agent", "build",
 		"--dangerously-skip-permissions",
 		"audit the todo app",

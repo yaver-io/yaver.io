@@ -10,7 +10,7 @@ func TestYaverBuiltinRunnerModelDefaults(t *testing.T) {
 	if got := defaults["codex"]; got.Model != "gpt-5.6-sol" || got.ReasoningEffort != "medium" {
 		t.Fatalf("codex default = %#v", got)
 	}
-	if got := defaults["opencode"]; got.Model != "deepseek/deepseek-v4-flash" || got.ReasoningEffort != "" {
+	if got := defaults["opencode"]; got.Model != "deepseek/deepseek-flash" || got.ReasoningEffort != "" {
 		t.Fatalf("opencode default = %#v; reasoning must stay omitted when the CLI exposes none", got)
 	}
 }

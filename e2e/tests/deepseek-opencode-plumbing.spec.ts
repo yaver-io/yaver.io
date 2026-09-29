@@ -21,9 +21,9 @@ import { expect, test, type Page } from "@playwright/test";
  *               provider = DeepSeek, model = DeepSeek V4 Flash (deepseek-v4-flash).
  *   2. NTH    — switching the provider select to GLM (zai-coding-plan) flips
  *               the Convex per-device pref AND the box's opencode.json, and
- *               switching BACK to DeepSeek restores deepseek/deepseek-v4-flash.
+ *               switching BACK to DeepSeek restores deepseek/deepseek-flash.
  *   3. RUN    — a task dispatched to the box with NO explicit runner/model
- *               resolves opencode + deepseek/deepseek-v4-flash and COMPLETES.
+ *               resolves opencode + deepseek/deepseek-flash and COMPLETES.
  *   4. AUDIT  — the runner argv observed on the box includes the dangerous
  *               flag (--dangerously-skip-permissions) and the deepseek model.
  *
@@ -170,17 +170,17 @@ test.describe("deepseek opencode plumbing closed loop", () => {
     pref = await boxPrimaryPref();
     expect(pref.runner, "pref runner after restore").toBe("opencode");
     expect(pref.provider, "pref provider after restore").toBe("deepseek");
-    expect(pref.model, "pref model after restore").toBe("deepseek/deepseek-v4-flash");
+    expect(pref.model, "pref model after restore").toBe("deepseek/deepseek-flash");
 
     const boxCfg = await boxOpenCodeState();
-    expect(boxCfg.model, "box opencode.json default model").toBe("deepseek/deepseek-v4-flash");
+    expect(boxCfg.model, "box opencode.json default model").toBe("deepseek/deepseek-flash");
     expect(boxCfg.hasDeepseek, "box opencode.json must have provider.deepseek").toBe(true);
     expect(boxCfg.permission, "box opencode.json dangerous default").toBe("allow");
 
     // 4. RUN: dispatch a task with NO runner/model → must complete on deepseek.
     const run = await boxHelloTask();
     expect(run.status, `task on the box must complete (saw ${run.status})`).toBe("completed");
-    expect(run.model, "task model must be deepseek/deepseek-v4-flash").toBe("deepseek/deepseek-v4-flash");
+    expect(run.model, "task model must be deepseek/deepseek-flash").toBe("deepseek/deepseek-flash");
     expect(run.result, "task must answer the hello prompt").toContain("hello from deepseek flash");
 
     // 5. AUDIT: the running agent binary on the box must embed the dangerous

@@ -238,7 +238,7 @@ try {
     console.log("live Mobile Workspace old-agent recovery route passed");
   } else {
     await page.getByText(/OpenCode · (Preferred|Recommended)/).waitFor({ timeout: 30_000 });
-    await page.getByText("deepseek/deepseek-v4-flash", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.getByText("deepseek/deepseek-flash", { exact: true }).waitFor({ timeout: 30_000 });
 
     // Next runs the real remote provider probe before persisting the selected
     // device, runner, model, mode, and provider as the task defaults.

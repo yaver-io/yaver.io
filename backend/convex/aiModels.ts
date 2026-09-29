@@ -93,9 +93,9 @@ export const PREDEFINED_MODELS = [
   // user-provided keys. Keep these labels short because the product should
   // show only the inference source, not cloud-internal routing detail.
   {
-    modelId: "deepseek/deepseek-v4-flash",
+    modelId: "deepseek/deepseek-flash",
     runnerId: "opencode",
-    name: "DeepSeek V4 Flash",
+    name: "DeepSeek V4.1 Flash",
     description: "Fast coding default through the user's DeepSeek provider",
     providerId: "deepseek",
     providerName: "DeepSeek",

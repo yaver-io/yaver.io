@@ -58,7 +58,7 @@ but it does not prove task/render interaction until an actual UI arc exists.
 Target machine: the owned device named `ubuntu-4gb-hel1-1`.
 Target project: `sfmg`.
 Runner: OpenCode.
-Measured model: `deepseek/deepseek-v4-flash`.
+Measured model: `deepseek/deepseek-flash`.
 
 The task completed and the lightweight Chromium loop measured a transition to
 `rgb(211, 47, 47)` on web and RN-web device contexts. The TV, watch, and vision

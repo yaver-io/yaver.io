@@ -24,7 +24,7 @@ func TestOpenCodeCatalogReadsOpenCodeModelsCacheOnDemand(t *testing.T) {
     "api": "https://api.deepseek.com",
     "doc": "https://api-docs.deepseek.com/",
     "models": {
-      "deepseek-v4-flash": {"id":"deepseek-v4-flash","name":"DeepSeek V4 Flash","description":"Fast"},
+      "deepseek-flash": {"id":"deepseek-flash","name":"DeepSeek Flash","description":"Fast"},
       "deepseek-v4-pro": {"id":"deepseek-v4-pro","name":"DeepSeek V4 Pro","description":"Pro"},
       "deepseek/deepseek-v4-vision": {"id":"deepseek/deepseek-v4-vision","name":"DeepSeek V4 Vision","description":"Vision"}
     }
@@ -49,7 +49,7 @@ func TestOpenCodeCatalogReadsOpenCodeModelsCacheOnDemand(t *testing.T) {
 	if len(detail) != 1 || len(detail[0].Models) != 3 {
 		t.Fatalf("unexpected provider detail: %#v", detail)
 	}
-	if got := detail[0].Models[0].ID; got != "deepseek/deepseek-v4-flash" {
+	if got := detail[0].Models[0].ID; got != "deepseek/deepseek-flash" {
 		t.Fatalf("first model = %q", got)
 	}
 	for _, model := range detail[0].Models {
@@ -65,7 +65,7 @@ func TestOpenCodeCatalogReadsOpenCodeModelsCacheOnDemand(t *testing.T) {
 func TestProbeOpenCodeModelsUsesInstalledCLICatalog(t *testing.T) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "opencode")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' 'deepseek/deepseek-v4-flash' 'anthropic/claude-sonnet-4-6' 'not-a-model'\n"), 0o700); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' 'deepseek/deepseek-flash' 'anthropic/claude-sonnet-4-6' 'not-a-model'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)

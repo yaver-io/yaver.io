@@ -3376,7 +3376,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{
 					"device":   map[string]interface{}{"type": "string", "description": "Owned device ID, unique prefix, name, or alias."},
 					"runner":   map[string]interface{}{"type": "string", "enum": []string{"claude", "claude-code", "codex", "opencode"}},
-					"model":    map[string]interface{}{"type": "string", "description": "Optional model, for example deepseek/deepseek-v4-flash."},
+					"model":    map[string]interface{}{"type": "string", "description": "Optional model, for example deepseek/deepseek-flash."},
 					"mode":     map[string]interface{}{"type": "string", "description": "Optional OpenCode mode."},
 					"provider": map[string]interface{}{"type": "string", "description": "Optional OpenCode provider, for example deepseek."},
 				},

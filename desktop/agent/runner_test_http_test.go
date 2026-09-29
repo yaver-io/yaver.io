@@ -29,7 +29,7 @@ func TestRunRunnerProbeOpenCodeUsesMobileWorkspaceLauncher(t *testing.T) {
 
 	out, err := runRunnerProbe(RunnerConfig{
 		RunnerID: "opencode",
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-flash",
 	}, "opencode", "prove provider auth", 2*time.Second)
 	if err != nil {
 		t.Fatalf("runRunnerProbe failed: %v", err)
@@ -37,7 +37,7 @@ func TestRunRunnerProbeOpenCodeUsesMobileWorkspaceLauncher(t *testing.T) {
 	if out != "provider verified" {
 		t.Fatalf("output = %q", out)
 	}
-	if gotSelection.Model != "deepseek/deepseek-v4-flash" || gotSelection.Provider != "deepseek" || gotSelection.Mode != "build" {
+	if gotSelection.Model != "deepseek/deepseek-flash" || gotSelection.Provider != "deepseek" || gotSelection.Mode != "build" {
 		t.Fatalf("selection = %+v", gotSelection)
 	}
 	if !gotSelection.SkipYaverMCP {
@@ -73,7 +73,7 @@ func TestLiveMobileWorkspaceOpenCodeDeepSeek(t *testing.T) {
 	}
 	out, err := runRunnerProbe(RunnerConfig{
 		RunnerID: "opencode",
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-flash",
 	}, "opencode", "Reply with exactly YAVER_DEEPSEEK_OK and nothing else.", 75*time.Second)
 	if err != nil {
 		t.Fatalf("live OpenCode + DeepSeek probe failed: %v; output=%q", err, out)

@@ -33,12 +33,12 @@ assert.match(
 const backendDefaults = source("backend/convex/modelDefaults.ts");
 assert.match(backendDefaults, /claude:\s*\{ model: "claude-opus-4-8" \}/);
 assert.match(backendDefaults, /codex:\s*\{ model: "gpt-5\.6-sol", reasoningEffort: "medium" \}/);
-assert.match(backendDefaults, /opencode:\s*\{ model: "deepseek\/deepseek-v4-flash" \}/);
+assert.match(backendDefaults, /opencode:\s*\{ model: "deepseek\/deepseek-flash" \}/);
 
 const agentDefaults = source("desktop/agent/runner_model_defaults.go");
 assert.match(agentDefaults, /"claude":\s*\{Model: "claude-opus-4-8"\}/);
 assert.match(agentDefaults, /"codex":\s*\{Model: "gpt-5\.6-sol", ReasoningEffort: "medium"\}/);
-assert.match(agentDefaults, /"opencode":\s*\{Model: "deepseek\/deepseek-v4-flash"\}/);
+assert.match(agentDefaults, /"opencode":\s*\{Model: "deepseek\/deepseek-flash"\}/);
 
 const mobileResolution = source("mobile/src/lib/remoteCodingSelection.ts");
 assert.match(

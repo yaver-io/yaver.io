@@ -21,8 +21,8 @@ func TestGetRunnerConfigRemoteless(t *testing.T) {
 	if rc.Command != "opencode" {
 		t.Fatalf("interim backend must use the opencode binary, got %q", rc.Command)
 	}
-	if rc.Model != "deepseek/deepseek-v4-flash" {
-		t.Fatalf("expected default model deepseek/deepseek-v4-flash, got %q", rc.Model)
+	if rc.Model != "deepseek/deepseek-flash" {
+		t.Fatalf("expected default model deepseek/deepseek-flash, got %q", rc.Model)
 	}
 	if !IsSupportedRunner("remoteless") {
 		t.Fatalf("remoteless must be in supportedRunnerIDs")
@@ -46,7 +46,7 @@ func TestRunnerModelCompatibleRemoteless(t *testing.T) {
 		model string
 		want  bool
 	}{
-		{"deepseek/deepseek-v4-flash", true},
+		{"deepseek/deepseek-flash", true},
 		{"deepseek/deepseek-chat", true},
 		{"gpt-5.4", false}, // cross-runner stale-model footgun must be caught
 		{"", true},         // empty = runner default
@@ -103,7 +103,7 @@ func TestRemotelessCredentialSourceOpenCodeConfig(t *testing.T) {
       }
     }
   },
-  "model": "deepseek/deepseek-v4-flash"
+  "model": "deepseek/deepseek-flash"
 }`
 	if err := os.WriteFile(filepath.Join(workDir, "opencode.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatalf("write opencode.json: %v", err)

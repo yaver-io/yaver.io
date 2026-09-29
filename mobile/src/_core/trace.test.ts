@@ -23,7 +23,7 @@ const ok = (c: unknown, label: string) => eq(Boolean(c), true, label);
     agentVersion: "1.99.409",
     device: "ubuntu-4gb-hel1-1 (2ed7da41…)",
     relay: "public-free",
-    task: { id: "abc123", status: "failed", runner: "opencode", model: "deepseek/deepseek-v4-flash", title: "build" },
+    task: { id: "abc123", status: "failed", runner: "opencode", model: "deepseek/deepseek-flash", title: "build" },
     error: "flutter exited before becoming ready",
     raw: "the raw failure bytes",
     logTail: "line1\nline2",

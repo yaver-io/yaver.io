@@ -28,7 +28,7 @@ func TestEnsureOpenCodeMCPConfigPreservesRunnerSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := map[string]any{
-		"model":        "deepseek/deepseek-v4-flash",
+		"model":        "deepseek/deepseek-flash",
 		"defaultAgent": "build",
 		"provider": map[string]any{
 			"deepseek": map[string]any{"options": map[string]any{"baseURL": "https://example.invalid/v1"}},

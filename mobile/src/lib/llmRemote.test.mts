@@ -43,17 +43,17 @@ test("leaves runner/model empty so the box can resolve its saved primary", async
 });
 
 test("forwards an explicit OpenCode DeepSeek selection without exposing credentials", async () => {
-  const rec = recorder(() => ({ ok: true, edits: [], runner: "opencode", model: "deepseek/deepseek-v4-flash" }));
+  const rec = recorder(() => ({ ok: true, edits: [], runner: "opencode", model: "deepseek/deepseek-flash" }));
 	const provider = createRemoteProvider({
 		dispatch: rec.dispatch,
 		runner: "opencode",
-    model: "deepseek/deepseek-v4-flash",
+    model: "deepseek/deepseek-flash",
     mode: "build",
     provider: "deepseek",
   });
 	await provider.editFiles(baseReq);
 	assert.equal(rec.calls[0].runner, "opencode");
-  assert.equal(rec.calls[0].model, "deepseek/deepseek-v4-flash");
+  assert.equal(rec.calls[0].model, "deepseek/deepseek-flash");
   assert.equal(rec.calls[0].mode, "build");
   assert.equal(rec.calls[0].provider, "deepseek");
   assert.equal(JSON.stringify(rec.calls[0]).includes("apiKey"), false);

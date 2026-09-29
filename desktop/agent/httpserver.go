@@ -3508,7 +3508,7 @@ func fallbackRunnerModels(runnerID string) []runnerModelInfo {
 			// DeviceContext.DEFAULT_MODEL_BY_RUNNER.opencode. The runner
 			// resolves provider/model against its own opencode.json; the
 			// deepseek provider ships in the probed catalogue.
-			{ID: yaverDefaultModelForRunner("opencode"), Name: "DeepSeek V4 Flash", Provider: "deepseek", Source: "builtin", IsDefault: true},
+			{ID: yaverDefaultModelForRunner("opencode"), Name: "DeepSeek V4.1 Flash", Provider: "deepseek", Source: "builtin", IsDefault: true},
 			{ID: "zai-coding-plan/glm-4.7", Name: "GLM 4.7 Coding Plan (z.ai)", Provider: "zai-coding-plan", Source: "builtin", IsDefault: false},
 			{ID: "zai/glm-4.7", Name: "GLM 4.7 (z.ai)", Provider: "zai", Source: "builtin", IsDefault: false},
 			{ID: "openrouter/z-ai/glm-4.7", Name: "GLM 4.7 (OpenRouter)", Provider: "openrouter", Source: "builtin", IsDefault: false},

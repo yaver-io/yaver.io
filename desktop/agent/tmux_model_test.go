@@ -26,7 +26,7 @@ func TestExtractReasoningEffortFromArgv(t *testing.T) {
 		"codex -c model_reasoning_effort=xhigh":           "xhigh",
 		"claude --effort max":                             "max",
 		"opencode --reasoning-effort=medium":              "medium",
-		"opencode run --model deepseek/deepseek-v4-flash": "",
+		"opencode run --model deepseek/deepseek-flash": "",
 		"codex --model gpt-5.6-sol":                       "",
 		"just a shell":                                    "",
 	}

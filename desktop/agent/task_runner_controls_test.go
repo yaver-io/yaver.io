@@ -183,8 +183,8 @@ func TestRunnerControlModelsTreatsRemotelessAsOpenCodeBacked(t *testing.T) {
 	if source != "builtin" || len(models) == 0 {
 		t.Fatalf("source=%q models=%#v, want OpenCode-backed fallback catalog", source, models)
 	}
-	if models[0].ID != "deepseek/deepseek-v4-flash" {
-		t.Fatalf("default model = %q, want deepseek/deepseek-v4-flash", models[0].ID)
+	if models[0].ID != "deepseek/deepseek-flash" {
+		t.Fatalf("default model = %q, want deepseek/deepseek-flash", models[0].ID)
 	}
 }
 

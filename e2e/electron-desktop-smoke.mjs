@@ -318,7 +318,7 @@ try {
     }
     const helloShot = join(artifactDir, "desktop-hello.png");
     await page.screenshot({ path: helloShot, fullPage: true });
-    helloResult = { ok: true, marker, model: "deepseek/deepseek-v4-flash", screenshot: helloShot };
+    helloResult = { ok: true, marker, model: "deepseek/deepseek-flash", screenshot: helloShot };
   }
 
   const screenshot = join(artifactDir, "desktop-dashboard.png");

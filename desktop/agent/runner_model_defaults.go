@@ -25,7 +25,7 @@ func builtinRunnerModelDefaults() map[string]RunnerModelDefault {
 	return map[string]RunnerModelDefault{
 		"claude":   {Model: "claude-opus-4-8"},
 		"codex":    {Model: "gpt-5.6-sol", ReasoningEffort: "medium"},
-		"opencode": {Model: "deepseek/deepseek-v4-flash"},
+		"opencode": {Model: "deepseek/deepseek-flash"},
 	}
 }
 

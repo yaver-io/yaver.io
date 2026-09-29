@@ -59,7 +59,7 @@ func TestDiagnoseOpenCode401UsesProviderConfigNeverBrowserAuth(t *testing.T) {
 		ID:       "task_opencode_key",
 		Status:   TaskStatusFailed,
 		RunnerID: "opencode",
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-flash",
 		Output:   "API Error: 401 Unauthorized",
 	}, time.Now())
 	if got == nil {

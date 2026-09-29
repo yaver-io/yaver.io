@@ -1370,8 +1370,8 @@ export const providerPresets: Array<{
     id: "deepseek",
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
-    model: "deepseek/deepseek-v4-flash",
-    hint: "DeepSeek V4 Flash — Hetzner/OpenCode varsayılanı. API key from platform.deepseek.com.",
+    model: "deepseek/deepseek-flash",
+    hint: "DeepSeek V4.1 Flash — Hetzner/OpenCode varsayılanı. API key from platform.deepseek.com.",
   },
 ];
 

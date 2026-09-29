@@ -132,13 +132,13 @@ func TestApplyResumeRunnerSelectionForwardsTypedModelControl(t *testing.T) {
 		},
 		{
 			name: "opencode provider model", runnerID: "opencode",
-			args: []string{"run", "next", "--session", "session-3"}, model: "deepseek/deepseek-v4-flash",
-			want: []string{"run --model deepseek/deepseek-v4-flash", "--session session-3"},
+			args: []string{"run", "next", "--session", "session-3"}, model: "deepseek/deepseek-flash",
+			want: []string{"run --model deepseek/deepseek-flash", "--session session-3"},
 		},
 		{
 			name: "remoteless uses opencode provider model", runnerID: "remoteless",
-			args: []string{"run", "next", "--session", "session-4"}, model: "deepseek/deepseek-v4-flash",
-			want: []string{"run --model deepseek/deepseek-v4-flash", "--session session-4"},
+			args: []string{"run", "next", "--session", "session-4"}, model: "deepseek/deepseek-flash",
+			want: []string{"run --model deepseek/deepseek-flash", "--session session-4"},
 		},
 	}
 	for _, tc := range tests {

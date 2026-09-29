@@ -111,7 +111,7 @@ func buildMobileWorkspaceStatus(runners []runnerAuthStatusRow, onboarding machin
 		}
 	}
 
-	model := firstNonEmpty(strings.TrimSpace(openCode.BuildModel), strings.TrimSpace(openCode.Model), "deepseek/deepseek-v4-flash")
+	model := firstNonEmpty(strings.TrimSpace(openCode.BuildModel), strings.TrimSpace(openCode.Model), "deepseek/deepseek-flash")
 	provider := ""
 	if slash := strings.Index(model, "/"); slash > 0 {
 		provider = model[:slash]

@@ -53,9 +53,9 @@ work from a watch, by construction, because they call the same endpoints.
 
 **A0. Interim — register `remoteless` as a first-class runner id (P0)**
 - `builtinRunners["remoteless"]` in `desktop/agent/tasks.go` → `opencode run
-  --dangerously-skip-permissions {prompt}` with `Model: "deepseek/deepseek-v4-flash"`, so the
+  --dangerously-skip-permissions {prompt}` with `Model: "deepseek/deepseek-flash"`, so the
   existing model splice in `startProcess` (`tasks.go:2943-2971`) injects `--model
-  deepseek/deepseek-v4-flash` after `run`.
+  deepseek/deepseek-flash` after `run`.
 - The id is a **stable lane contract**: the backend currently resolves to opencode+deepseek, and
   later swaps to an in-process Go loop (A1) without touching callers. `LoadRunnersFromBackend`
   (`tasks.go:376-381`) keeps the local builtin because the id is in `supportedRunnerIDs`.

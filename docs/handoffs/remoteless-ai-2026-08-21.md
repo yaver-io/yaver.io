@@ -25,7 +25,7 @@ Make any owned remote box usable/fixable from every surface (electron, mobile, t
 ## What P0 did (all in `desktop/agent/`, all verified)
 
 - `tasks.go`
-  - `builtinRunners["remoteless"]` → `opencode run --dangerously-skip-permissions {prompt}` + `Model: "deepseek/deepseek-v4-flash"`. The id is the **stable lane contract** (backend later swaps to an in-process Go loop without touching callers).
+  - `builtinRunners["remoteless"]` → `opencode run --dangerously-skip-permissions {prompt}` + `Model: "deepseek/deepseek-flash"`. The id is the **stable lane contract** (backend later swaps to an in-process Go loop without touching callers).
   - `supportedRunnerIDs` += `"remoteless"` (last — a working subscription binary still wins the default fallback).
   - `runnerModelCompatible` `case "opencode","remoteless"` (provider/model split).
   - `startProcess` model splice: `case "opencode","remoteless"` → `insertRunnerFlagAfter(args,"run","--model",...)`.

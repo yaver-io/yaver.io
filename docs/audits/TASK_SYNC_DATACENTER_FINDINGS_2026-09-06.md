@@ -7,7 +7,7 @@
   Yaver Tasks. Discovery reported `gpt-5.6-sol` and the `high`, `medium`, and
   `low` reasoning levels.
 - Exiting one pane changed exactly its corresponding Task to `stopped`.
-- A real OpenCode session reported `deepseek/deepseek-v4-flash`; reasoning was
+- A real OpenCode session reported `deepseek/deepseek-flash`; reasoning was
   omitted because that runner did not provide it.
 - A guarded disposable Task was observed as `running` in both the local ledger
   and production snapshot, then `stopped` in both, then absent from both after

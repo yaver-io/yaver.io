@@ -27,7 +27,7 @@ Everything below was exercised on real boxes this session.
 | Wake (resume) | `POST /billing/yaver-cloud/start` → auto-retry on the volume-release race → **active in ~4.5 min**, `wakeOutcome: ready` |
 | Projects after wake | `/projects` shows the git-backed workspace (`/root/Workspace/yaver.io → github.com/kivanccakmak/yaver.io`) — **identical before and after sleep** |
 | Git integration after wake | `git credential fill` resolves github+gitlab; **GitHub private repos accessible** (API probe) |
-| API keys after wake | opencode `deepseek/deepseek-v4-flash` → **PONG** (auth.json + provider config survive on the volume) |
+| API keys after wake | opencode `deepseek/deepseek-flash` → **PONG** (auth.json + provider config survive on the volume) |
 | Removal | `POST /billing/yaver-cloud/dev-deprovision` (the web Delete route) → server 404, **volumes NONE, servers NONE, DNS gone, device rows NONE** |
 | Web UI controls | `ManagedCloudPanel.tsx`: ⏸ Pause (active) / ▶ Resume (paused) / Delete — all wired to the correct owner-gated routes with confirm dialogs |
 | Wallet | $24.50 prepaid balance unused — no billing mechanics in the owner path |

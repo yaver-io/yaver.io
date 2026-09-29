@@ -204,7 +204,7 @@ func TestCreatePhoneProject_FromPromptUsesGeneratedSpec(t *testing.T) {
 	old := runPhonePromptGenerator
 	t.Cleanup(func() { runPhonePromptGenerator = old })
 	runPhonePromptGenerator = func(spec AIGeneratorSpec) (string, error) {
-		if spec.Runner != "opencode" || spec.Model != "deepseek/deepseek-v4-flash" || spec.Mode != "build" {
+		if spec.Runner != "opencode" || spec.Model != "deepseek/deepseek-flash" || spec.Mode != "build" {
 			t.Fatalf("generator selection drifted: runner=%q model=%q mode=%q", spec.Runner, spec.Model, spec.Mode)
 		}
 		return `{
@@ -256,7 +256,7 @@ func TestCreatePhoneProject_FromPromptUsesGeneratedSpec(t *testing.T) {
 		Name:   "prompt-app",
 		Prompt: "todo app with login",
 		Runner: "opencode",
-		Model:  "deepseek/deepseek-v4-flash",
+		Model:  "deepseek/deepseek-flash",
 		Mode:   "build",
 	})
 	if err != nil {

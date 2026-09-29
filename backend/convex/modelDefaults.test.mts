@@ -13,7 +13,7 @@ test("Convex defaults match the Yaver runner contract", () => {
   assert.deepEqual(YAVER_MODEL_DEFAULTS, {
     claude: { model: "claude-opus-4-8" },
     codex: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
-    opencode: { model: "deepseek/deepseek-v4-flash" },
+    opencode: { model: "deepseek/deepseek-flash" },
   });
 });
 
@@ -43,9 +43,9 @@ test("Convex seeds the first-class DeepSeek OpenCode choices", () => {
       isDefault: "isDefault" in model ? model.isDefault === true : false,
     }));
   assert.deepEqual(deepseek, [
-    { model: "deepseek/deepseek-v4-flash", lifecycle: "active", isDefault: true },
+    { model: "deepseek/deepseek-flash", lifecycle: "active", isDefault: true },
     { model: "deepseek/deepseek-v4-pro", lifecycle: "active", isDefault: false },
-    { model: "deepseek/deepseek-v4-flash-vision-exp", lifecycle: "active", isDefault: false },
+    { model: "deepseek/deepseek-flash-vision-exp", lifecycle: "active", isDefault: false },
     { model: "deepseek/deepseek-chat", lifecycle: "legacy", isDefault: false },
   ]);
 });
@@ -57,7 +57,7 @@ test("stored Convex defaults override bootstrap values and invalid fields fail c
   })), {
     claude: { model: "claude-opus-4-8" },
     codex: { model: "future-codex", reasoningEffort: "xhigh" },
-    opencode: { model: "deepseek/deepseek-v4-flash" },
+    opencode: { model: "deepseek/deepseek-flash" },
   });
 });
 

@@ -17,7 +17,7 @@ class RunnerPreferenceContractTest {
             .put(JSONObject()
                 .put("deviceId", "box-2")
                 .put("runnerId", "opencode")
-                .put("model", "deepseek/deepseek-v4-flash")
+                .put("model", "deepseek/deepseek-flash")
                 .put("provider", "deepseek")
                 .put("mode", "build"))
 
@@ -34,7 +34,7 @@ class RunnerPreferenceContractTest {
         val body = runnerPreferenceSettingsPatch(
             deviceId = "box-1",
             runnerId = "opencode",
-            model = "deepseek/deepseek-v4-flash",
+            model = "deepseek/deepseek-flash",
             reasoningEffort = null,
             provider = "deepseek",
         )
@@ -42,7 +42,7 @@ class RunnerPreferenceContractTest {
         assertEquals("box-1", row.getString("deviceId"))
         assertEquals("opencode", row.getString("runnerId"))
         assertEquals("deepseek", row.getString("provider"))
-        assertEquals("deepseek/deepseek-v4-flash", row.getString("model"))
+        assertEquals("deepseek/deepseek-flash", row.getString("model"))
         assertFalse(row.has("box-1"))
     }
 }

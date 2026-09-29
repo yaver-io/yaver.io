@@ -17,9 +17,9 @@ func TestMobileWorkspaceStatusCarriesFirstClassRoutes(t *testing.T) {
 			{ID: "github", Name: "GitHub", Configured: true, Ready: true},
 			{ID: "gitlab", Name: "GitLab"},
 		}},
-		OpenCodeConfigSummary{Model: "deepseek/deepseek-v4-flash"},
+		OpenCodeConfigSummary{Model: "deepseek/deepseek-flash"},
 	)
-	if !status.Ready || status.OpenCode.Model != "deepseek/deepseek-v4-flash" || !status.OpenCode.Ready {
+	if !status.Ready || status.OpenCode.Model != "deepseek/deepseek-flash" || !status.OpenCode.Ready {
 		t.Fatalf("unexpected ready status: %+v", status)
 	}
 	if status.Runners[1].Action == nil || status.Runners[1].Action.Path != "/runner-auth/browser/start" {

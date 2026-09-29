@@ -3502,6 +3502,22 @@ export default function RuntimeLabView({
           >
             {busy ? "Loading targets..." : "Load Targets"}
           </button>
+          {/* Plug-and-play primary action (2026-09-29 UX audit). Starting the
+              browser lane used to require "Load Targets" and then finding an
+              "Open" card inside the Targets panel — which is not even rendered
+              until targets load, so the left preview pane stayed empty and the
+              user saw only chrome + error banners. Selecting a project + render
+              machine is already the explicit intent, so the lane opens from a
+              single visible button on the same row. */}
+          <button
+            type="button"
+            disabled={!selectedProject || !connectedDevice?.id || webPreviewBusy}
+            onClick={() => void openWebUI()}
+            title="Open the browser lane preview for the selected project on the render machine"
+            className="inline-flex h-10 shrink-0 items-center rounded-md bg-[#7c5cff] px-3 text-xs font-semibold text-white hover:bg-[#6a4ae6] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {webPreviewBusy ? "Opening preview…" : "Open preview"}
+          </button>
           <button
             type="button"
             disabled={!connectedDevice?.id || !selectedProject || runtimeProjectSaving || selectedProjectIsSavedDefault}
