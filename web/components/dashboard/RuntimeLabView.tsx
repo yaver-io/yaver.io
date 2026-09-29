@@ -3063,6 +3063,14 @@ export default function RuntimeLabView({
     // empty with NO cause on screen. Every step now writes a visible note.
     const step = (msg: string) => { setWebPreviewNote(msg); appendLog(`web ui: ${msg}`); };
     appendLog(`web ui ${selectedProject.name}`);
+    const previewKey = `yaver.runtimePreview.${selectedProject.path}`;
+    const applyPreviewUrl = (url: string) => {
+      setWebPreviewUrl(url);
+      // Persist at COMPUTE time: the runtime view can unmount before the next
+      // render (connection/catalogue refresh), which would drop this setState
+      // and leave the left pane blank. The restore effect reads this on mount.
+      try { sessionStorage.setItem(previewKey, url); } catch { /* ignore */ }
+    };
     // Last-resort: render the web bundle that already exists on the box, so
     // "Open preview" can never leave the pane empty and silent.
     const useExistingBundle = async (why: string): Promise<boolean> => {
@@ -3070,7 +3078,7 @@ export default function RuntimeLabView({
         const info = await agentClient.getWebBundleInfo();
         const signed = signedBundlePreviewUrl(info?.bundleUrl) || agentClient.devWebBundleUrl;
         if (info?.built && signed) {
-          setWebPreviewUrl(signed);
+          applyPreviewUrl(signed);
           step(`Web UI bundle ready (existing bundle; ${why}).`);
           return true;
         }
@@ -3094,7 +3102,7 @@ export default function RuntimeLabView({
         }
         const signedUrl = agentClient.webBundlePreviewUrl(built.bundleUrl) || agentClient.devWebBundleUrl;
         if (!signedUrl) throw new Error("No signed Web UI bundle URL is available.");
-        setWebPreviewUrl(signedUrl);
+        applyPreviewUrl(signedUrl);
         step(`Web UI bundle ready: ${built.fileCount} files.`);
         return;
       }
@@ -3114,7 +3122,7 @@ export default function RuntimeLabView({
       if (response.mode === "static-bundle") {
         const existingSignedUrl = signedBundlePreviewUrl(response.bundleUrl);
         if (response.bundleReady && existingSignedUrl) {
-          setWebPreviewUrl(existingSignedUrl);
+          applyPreviewUrl(existingSignedUrl);
           step(response.bundleHint || "Web UI bundle ready.");
           return;
         }
@@ -3129,13 +3137,13 @@ export default function RuntimeLabView({
         }
         const signedUrl = agentClient.webBundlePreviewUrl(built.bundleUrl) || agentClient.devWebBundleUrl;
         if (!signedUrl) throw new Error("No signed Web UI bundle URL is available.");
-        setWebPreviewUrl(signedUrl);
+        applyPreviewUrl(signedUrl);
         step(`Web UI bundle ready: ${built.fileCount} files.`);
         return;
       }
       step("waiting for the dev server to report its address…");
       const preview = await waitForDevPreviewUrl(response.bundleUrl);
-      setWebPreviewUrl(preview.url);
+      applyPreviewUrl(preview.url);
       step(response.bundleHint || preview.note);
     } catch (err) {
       if (await useExistingBundle("live preview could not start")) return;
