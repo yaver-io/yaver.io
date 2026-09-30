@@ -67,7 +67,10 @@ function uninstallPlan({
 
   if (platform === "darwin") {
     // execPath: /Applications/Yaver.app/Contents/MacOS/Yaver → three levels up.
-    const bundle = path.resolve(execPath, "..", "..", "..");
+    // path.posix regardless of the host: this plan describes a macOS path, and a
+    // Windows runner's path.resolve() would turn it into D:\Applications\Yaver.app
+    // (caught by the Microsoft Store contract job, 2026-09-30).
+    const bundle = path.posix.resolve(execPath, "..", "..", "..");
     if (!bundle.endsWith(".app") || !pathExists(bundle, exists)) {
       return {
         supported: false,
