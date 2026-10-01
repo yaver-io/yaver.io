@@ -423,11 +423,15 @@ final class YaverStore: ObservableObject {
         // that process but must never migrate into Keychain: doing so left the
         // next normal simulator launch signed in as the synthetic test fixture.
         let argumentDomain = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        let hasLaunchTokenOverride = argumentDomain["yaver.tv.token"] != nil
         let launchToken = argumentDomain["yaver.tv.token"] as? String ?? ""
         suppressMachinePersistence = argumentDomain["yaver.tv.boxes"] != nil
             || argumentDomain["yaver.tv.selectedBox"] != nil
         let keychainToken = TokenStore.load()
-        if !launchToken.isEmpty {
+        if hasLaunchTokenOverride {
+            // An explicitly empty argument is the UI suite's signed-out
+            // fixture. It must override a token left in the simulator
+            // Keychain by a preceding successful-login test.
             token = launchToken
         } else if !keychainToken.isEmpty {
             token = keychainToken

@@ -12,7 +12,22 @@ enum Backend {
     // Public Convex deployment origin. Mirrors mobile/src/_core/constants.ts
     // CONVEX_SITE_URL — not a secret (it's the public backend host); bump here
     // and in the mobile constant together if the deployment ever moves.
-    static let convexSiteURL = URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
+    static var convexSiteURL: URL {
+        #if DEBUG
+        // The argument-domain override lets the tvOS UI suite exercise the
+        // production HTTP path against a real loopback server. Apple TV users
+        // cannot set process launch arguments. Compile the seam out of release
+        // builds as well, so no persisted preference can ever redirect account
+        // credentials away from Yaver's public deployment.
+        if let raw = UserDefaults.standard.string(forKey: "yaver.tv.backendURL"),
+           let override = URL(string: raw),
+           let scheme = override.scheme,
+           scheme == "http" || scheme == "https" {
+            return override
+        }
+        #endif
+        return URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
+    }
     static let webBaseURL = URL(string: "https://yaver.io")!
     static let agentPort = 18080
 
@@ -350,6 +365,11 @@ enum EmailAuth {
         var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("auth/login"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        // A focused button that changes to "Signing in…" and then waits for
+        // URLSession's long default timeout still reads as unresponsive from a
+        // couch. Bound the operation and return control with a named error.
+        req.timeoutInterval = 15
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
             "password": password,

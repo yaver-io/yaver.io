@@ -27,6 +27,7 @@ struct SignInView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var emailBusy = false
+    @State private var emailError: String?
     @FocusState private var emailFocused: Bool
     @FocusState private var passwordFocused: Bool
     // LAN approval (2026-08-13): an authenticated surface on the same network
@@ -77,6 +78,7 @@ struct SignInView: View {
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .background(.gray.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
                     .focused($emailFocused)
+                    .accessibilityIdentifier("signin.email")
                 SecureField("Password", text: $password)
                     .textFieldStyle(.plain)
                     .font(.system(size: 20))
@@ -84,13 +86,29 @@ struct SignInView: View {
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .background(.gray.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
                     .focused($passwordFocused)
-                Button(emailBusy ? "Signing in…" : "Sign in with email") {
-                    handleEmailSignIn()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(emailBusy || email.trimmingCharacters(in: .whitespaces).isEmpty || password.isEmpty)
+                    .submitLabel(.go)
+                    .onSubmit { handleEmailSignIn() }
+                    .accessibilityIdentifier("signin.password")
+                TVEmailSubmitButton(
+                    title: emailBusy ? "Signing in…" : "Sign in with email",
+                    isEnabled: !emailBusy && !email.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty,
+                    action: handleEmailSignIn
+                )
+                .frame(width: 310, height: 72, alignment: .leading)
 
-                Divider().padding(.vertical, 16)
+                if emailBusy {
+                    Label("Contacting Yaver…", systemImage: "lock.shield")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("signin.email-progress")
+                } else if let emailError {
+                    Text(emailError)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("signin.email-error")
+                }
+
+                Divider().padding(.vertical, 10)
 
                 Text("2 · Scan with the Yaver app")
                     .font(.system(size: 18, weight: .semibold))
@@ -277,7 +295,7 @@ struct SignInView: View {
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanEmail.isEmpty, !password.isEmpty, !emailBusy else { return }
         emailBusy = true
-        error = nil
+        emailError = nil
         emailFocused = false
         passwordFocused = false
         Task {
@@ -290,7 +308,7 @@ struct SignInView: View {
             } catch {
                 // Includes 2FA ("use the QR"), invalid creds, lockout, and the
                 // server's 403 allowlist message verbatim.
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.emailError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
         }
     }
@@ -431,5 +449,57 @@ struct SignInView: View {
         guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 12, y: 12)),
               let cg = context.createCGImage(output, from: output.extent) else { return nil }
         return UIImage(cgImage: cg)
+    }
+}
+
+/// UIKit owns the Select-press delivery for the primary login action.
+///
+/// App Review reproduced a focused SwiftUI Button that did not invoke its
+/// action on tvOS 27. The text fields and surrounding layout remain SwiftUI,
+/// but this one release-critical action uses tvOS's native focusable UIButton
+/// so a painted focus ring and a delivered press cannot diverge.
+private struct TVEmailSubmitButton: UIViewRepresentable {
+    let title: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func activate() {
+            action()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .system)
+        button.accessibilityIdentifier = "signin.email-submit"
+        button.addTarget(context.coordinator, action: #selector(Coordinator.activate), for: .primaryActionTriggered)
+        return button
+    }
+
+    func updateUIView(_ button: UIButton, context: Context) {
+        context.coordinator.action = action
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = title
+        configuration.cornerStyle = .capsule
+        configuration.baseForegroundColor = .black
+        configuration.baseBackgroundColor = UIColor(red: 0.78, green: 0.84, blue: 0.96, alpha: 1)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 24, bottom: 14, trailing: 24)
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 27, weight: .medium)
+            return outgoing
+        }
+        button.configuration = configuration
+        button.isEnabled = isEnabled
     }
 }

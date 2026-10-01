@@ -42,6 +42,7 @@
 		95EC8FC56B71667C9E11BE83 /* TaskRuntimePlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEBBF88FEFA5E078BA41AB0E /* TaskRuntimePlanTests.swift */; };
 		9D0BB56F661FC19E222F21AC /* TVChatPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9E917EDECD2B19968A57D16 /* TVChatPlan.swift */; };
 		A2031FCCF6C82A44E0A3478B /* TVWebPreviewLoopTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925084532D186202A5CA57D2 /* TVWebPreviewLoopTests.swift */; };
+		A42FFE523F9F8963EE67AB2F /* TVEmailSignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFDB79BFE45112FD1EEB7595 /* TVEmailSignInTests.swift */; };
 		A43C8F3FEA5811AC5A281823 /* Sodium in Frameworks */ = {isa = PBXBuildFile; productRef = EAC99382A0736A789A83F5E0 /* Sodium */; };
 		A652521801330E483E8F0DEE /* FailureSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9383688971427E7DF15B2D1C /* FailureSignals.swift */; };
 		A7B9CB81DB7E411F73C9F730 /* TVChatNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E6E50DABA5FE87AF986E197 /* TVChatNavigationTests.swift */; };
@@ -155,6 +156,7 @@
 		F305D583F562FDFA98285065 /* YaverTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YaverTV.entitlements; sourceTree = "<group>"; };
 		F656E1723EA3FA1FA0C7CE46 /* RemoteRuntimeWebRTCView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRuntimeWebRTCView.swift; sourceTree = "<group>"; };
 		F9153BD847AA22692E65287D /* CredentialHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialHandoff.swift; sourceTree = "<group>"; };
+		FFDB79BFE45112FD1EEB7595 /* TVEmailSignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVEmailSignInTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -211,6 +213,7 @@
 			isa = PBXGroup;
 			children = (
 				5E6E50DABA5FE87AF986E197 /* TVChatNavigationTests.swift */,
+				FFDB79BFE45112FD1EEB7595 /* TVEmailSignInTests.swift */,
 				925084532D186202A5CA57D2 /* TVWebPreviewLoopTests.swift */,
 			);
 			path = YaverTVUITests;
@@ -509,6 +512,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A7B9CB81DB7E411F73C9F730 /* TVChatNavigationTests.swift in Sources */,
+				A42FFE523F9F8963EE67AB2F /* TVEmailSignInTests.swift in Sources */,
 				A2031FCCF6C82A44E0A3478B /* TVWebPreviewLoopTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
