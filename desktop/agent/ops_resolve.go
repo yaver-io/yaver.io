@@ -34,7 +34,10 @@ func resolvePrimaryDeviceID(ctx context.Context, s *HTTPServer) (string, error) 
 // agent-side flows need them — keep the struct narrow so unrelated
 // shape changes don't require recompiling the parser.
 type userSettingsRow struct {
-	PrimaryDeviceID       string `json:"primaryDeviceId"`
+	PrimaryDeviceID       string   `json:"primaryDeviceId"`
+	WorkerDeviceIDs       []string `json:"workerDeviceIds"`
+	ShowWorkerDevices     bool     `json:"showWorkerDevices"`
+	OpportunisticFleet    *bool    `json:"opportunisticFleet"`
 	PrimaryRunnerByDevice []struct {
 		DeviceID string `json:"deviceId"`
 		RunnerID string `json:"runnerId"`
@@ -80,6 +83,9 @@ func fetchUserSettings(ctx context.Context, s *HTTPServer) (*userSettingsRow, er
 	convex := ""
 	if s != nil {
 		convex = s.convexURL
+	}
+	if convex == "" {
+		convex = strings.TrimSpace(cfg.ConvexSiteURL)
 	}
 	if convex == "" {
 		convex = defaultConvexSiteURL

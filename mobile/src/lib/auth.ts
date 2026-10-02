@@ -761,6 +761,13 @@ export interface UserSettings {
    * Send `null` to clear; omit to leave untouched. Single-device users
    * auto-connect regardless of this field. */
   primaryDeviceId?: string | null;
+  /** Explicit worker nodes eligible for opportunistic execution. The selected
+   * primaryDeviceId is the master and is never duplicated in this list. */
+  workerDeviceIds?: string[];
+  /** Progressive disclosure only: workers remain usable by explicit target. */
+  showWorkerDevices?: boolean;
+  /** Allow master/MCP planners to place unpinned work on ready workers. */
+  opportunisticFleet?: boolean;
   /** Optional secondary elevated device. When primary is offline, the
    * mobile auto-connect falls back to secondary before showing the
    * picker. Same semantics as primaryDeviceId on the wire. */

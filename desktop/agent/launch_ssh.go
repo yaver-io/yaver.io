@@ -107,9 +107,9 @@ echo "[yaver-launch-ssh] yaver running in tmux session 'yaver' — attach with: 
 	}
 	fmt.Println("  Install complete.")
 
-	fmt.Println("Waiting for the box to consume device-code...")
-	if _, err := pollDeviceForOnline(ctx, dc); err != nil {
-		return fmt.Errorf("box never came online: %w (debug: ssh %s 'tmux attach -t yaver')", err, opts.SSHTarget)
+	fmt.Println("Waiting for the box's agent to become operational...")
+	if err := pollSSHAgentReady(ctx, opts.SSHTarget); err != nil {
+		return fmt.Errorf("box agent never became operational: %w (debug: ssh %s 'tmux attach -t yaver')", err, opts.SSHTarget)
 	}
 	fmt.Println("  Box is online and authenticated as your user.")
 
@@ -126,6 +126,32 @@ echo "[yaver-launch-ssh] yaver running in tmux session 'yaver' — attach with: 
 	fmt.Printf("  Attach:   ssh %s -t 'tmux attach -t yaver'\n", opts.SSHTarget)
 	fmt.Printf("  Status:   yaver devices  (the box appears as a fresh device row)\n")
 	return nil
+}
+
+// pollSSHAgentReady probes the operation launchSSH promises: the target's
+// agent must answer /health with lifecycle.usable=true. It deliberately does
+// NOT poll the one-shot device-code endpoint. That endpoint returns the token
+// to its first poller, so the launcher used to steal the token from the remote
+// background waiter and then report success while the box stayed in bootstrap
+// mode forever.
+func pollSSHAgentReady(ctx context.Context, target string) error {
+	const probe = `body="$(curl -fsS --max-time 4 http://127.0.0.1:18080/health 2>/dev/null || true)"
+printf '%s' "$body" | grep -Eq '"usable"[[:space:]]*:[[:space:]]*true'`
+	for {
+		cmd := exec.CommandContext(ctx, "ssh",
+			"-o", "BatchMode=yes",
+			"-o", "ConnectTimeout=8",
+			"-o", "StrictHostKeyChecking=accept-new",
+			target, probe)
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // launchSSHProbe verifies the target accepts an SSH connection without

@@ -135,11 +135,21 @@ func proxyToDeviceAs(ctx context.Context, toolName, deviceID, method, path strin
 	if method == "" {
 		method = http.MethodPost
 	}
+	idempotencyKey := ""
+	if method == http.MethodPost && path == "/tasks" {
+		idempotencyKey = "remote-task:" + newSigNonce()
+	}
 	for i := range candidates {
 		if candidates[i].Headers == nil {
 			candidates[i].Headers = map[string]string{}
 		}
 		candidates[i].Headers["X-Yaver-Proxied-Tool"] = toolName
+		if idempotencyKey != "" {
+			// One logical task may traverse several candidate transports. Keep the
+			// key identical across every attempt so a slow first response cannot
+			// create multiple paid model turns on the target.
+			candidates[i].Headers["Idempotency-Key"] = idempotencyKey
+		}
 	}
 	_, status, raw, err := doRemoteAgentRequest(ctx, candidates, token, method, path, bodyJSON, 120*time.Second)
 	if err != nil {

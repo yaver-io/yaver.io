@@ -56,6 +56,7 @@ import { SYSTEM_CONTEXT_END_MARKERS, containsYaverFraming } from "../../src/lib/
 import EmptyState from "../../src/components/EmptyState";
 import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTargetWizard";
+import { fleetMetadataForTask } from "../../src/lib/fleetTaskMetadata";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import type { ThemeColors } from "../../src/constants/colors";
 import { AnsiConsoleText } from "../../src/components/AnsiConsoleText";
@@ -1259,6 +1260,7 @@ function TaskCardInner({
   const c = useColors();
   const { isDark } = useTheme();
   const signal = agentSignalFromTask(item);
+  const fleetMetadata = fleetMetadataForTask(item);
   const statusColor = agentStateColor(signal.state, c);
   const isRunning = item.status === "running" || item.status === "queued";
   const enter = useRef(new Animated.Value(0)).current;
@@ -1446,6 +1448,12 @@ function TaskCardInner({
                 <Text style={[s.metaPillText, { color: "#06b6d4" }]}>{`chain ${(item.chainOrder ?? 0) + 1}`}</Text>
               </View>
             )}
+            {fleetMetadata ? (
+              <View style={[s.metaPill, { backgroundColor: fleetMetadata.role === "master" ? "#6366f112" : "#06b6d412", borderColor: fleetMetadata.role === "master" ? "#6366f144" : "#06b6d444" }]}
+                accessibilityLabel={`Fleet role ${fleetMetadata.label}`}>
+                <Text style={[s.metaPillText, { color: fleetMetadata.role === "master" ? "#818cf8" : "#06b6d4" }]}>{fleetMetadata.label}</Text>
+              </View>
+            ) : null}
           </View>
           {/* Device + model on the right of the card header. Both come from
               the task's authoritative fields, so a task that ran on a
@@ -9200,6 +9208,15 @@ export default function TasksScreen() {
                   } : null,
                 ]}
               >
+                {fleetMetadataForTask(selectedTask) ? (
+                  <View style={[s.fleetDetailBanner, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]}
+                    accessibilityLabel={`Fleet task ${fleetMetadataForTask(selectedTask)?.label}`}>
+                    <View style={[s.metaPill, { backgroundColor: fleetMetadataForTask(selectedTask)?.role === "master" ? "#6366f112" : "#06b6d412", borderColor: fleetMetadataForTask(selectedTask)?.role === "master" ? "#6366f144" : "#06b6d444" }] }>
+                      <Text style={[s.metaPillText, { color: fleetMetadataForTask(selectedTask)?.role === "master" ? "#818cf8" : "#06b6d4" }]}>{fleetMetadataForTask(selectedTask)?.label}</Text>
+                    </View>
+                    <Text style={[s.fleetDetailText, { color: c.textSecondary }]} numberOfLines={1}>{fleetMetadataForTask(selectedTask)?.detail}</Text>
+                  </View>
+                ) : null}
                 {/* TaskHeader collapses the legacy 3-row stack
                     (Back/title/Stop, status/Logs, device) into a
                     2-row design. Title slot is intentionally empty:
@@ -10394,6 +10411,8 @@ const s = StyleSheet.create({
   statusText: { fontSize: 11, fontWeight: "700" },
   metaPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
   metaPillText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.3 },
+  fleetDetailBanner: { flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, paddingHorizontal: 16, paddingVertical: 8 },
+  fleetDetailText: { flex: 1, fontSize: 11 },
   taskHeaderMeta: { alignItems: "flex-end", gap: 6, maxWidth: 132, marginLeft: 8 },
   ipPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, maxWidth: 132 },
   ipPillText: { fontSize: 11, fontWeight: "500" },

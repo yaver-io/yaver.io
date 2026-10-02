@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -195,6 +196,11 @@ type HTTPServer struct {
 
 	// Cache validated tokens (token -> cachedTokenInfo) to avoid repeated Convex calls
 	tokenCache sync.Map
+	// taskCreateReplay makes POST /tasks safe across transport fallback. A
+	// controller may retry the same request over Tailscale, LAN, then relay when
+	// runner startup takes longer than one transport budget. Without a stable
+	// idempotency key every retry starts another paid model turn.
+	taskCreateReplay sync.Map // idempotency key -> *idempotentHTTPReplay
 
 	// IP allowlist — if non-empty, only these CIDRs can access the agent
 	allowedCIDRs []*net.IPNet
@@ -3899,13 +3905,98 @@ func (s *HTTPServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.listTasks(w, r)
 	case http.MethodPost:
-		s.createTask(w, r)
+		key := strings.TrimSpace(firstNonEmpty(r.Header.Get("Idempotency-Key"), r.Header.Get("X-Yaver-Idempotency-Key")))
+		if key == "" {
+			s.createTask(w, r)
+			return
+		}
+		// Scope caller-controlled keys to the authenticated principal. The
+		// bearer itself never enters the map/logs, and two authorized sessions
+		// cannot deliberately replay each other's task response by choosing the
+		// same public idempotency string.
+		replayScope := sha256.Sum256([]byte(r.Header.Get("Authorization") + "\x00" + key))
+		s.serveIdempotentTaskCreate(w, r, fmt.Sprintf("%x", replayScope))
 	case http.MethodDelete:
 		count := s.taskMgr.DeleteAllTasks()
 		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted": count})
 	default:
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+const taskCreateReplayTTL = 10 * time.Minute
+
+type idempotentHTTPReplay struct {
+	done      chan struct{}
+	status    int
+	header    http.Header
+	body      []byte
+	createdAt time.Time
+}
+
+type captureResponseWriter struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (w *captureResponseWriter) Header() http.Header { return w.header }
+func (w *captureResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+func (w *captureResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(p)
+}
+
+func (s *HTTPServer) serveIdempotentTaskCreate(w http.ResponseWriter, r *http.Request, key string) {
+	s.serveIdempotentTaskCreateWith(w, r, key, s.createTask)
+}
+
+func (s *HTTPServer) serveIdempotentTaskCreateWith(w http.ResponseWriter, r *http.Request, key string, create http.HandlerFunc) {
+	entry := &idempotentHTTPReplay{done: make(chan struct{}), createdAt: time.Now()}
+	actual, loaded := s.taskCreateReplay.LoadOrStore(key, entry)
+	entry = actual.(*idempotentHTTPReplay)
+	if !loaded {
+		// Transport timeouts cancel the inbound request context. Task creation is
+		// already accepted at this point, so finish it once and cache the response
+		// for the next candidate instead of cancelling and charging for a retry.
+		recorder := &captureResponseWriter{header: make(http.Header)}
+		detachedCtx, cancel := context.WithTimeout(context.Background(), taskCreateReplayTTL)
+		defer cancel()
+		detached := r.Clone(detachedCtx)
+		create(recorder, detached)
+		entry.status = recorder.status
+		if entry.status == 0 {
+			entry.status = http.StatusOK
+		}
+		entry.header = recorder.header.Clone()
+		entry.body = append([]byte(nil), recorder.body.Bytes()...)
+		close(entry.done)
+		time.AfterFunc(taskCreateReplayTTL, func() {
+			if current, ok := s.taskCreateReplay.Load(key); ok && current == entry {
+				s.taskCreateReplay.Delete(key)
+			}
+		})
+	} else {
+		select {
+		case <-entry.done:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	for name, values := range entry.header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+	w.Header().Set("X-Yaver-Idempotent-Replay", fmt.Sprintf("%t", loaded))
+	w.WriteHeader(entry.status)
+	_, _ = w.Write(entry.body)
 }
 
 // listTasksDefaultLimit bounds the response when the caller does not ask for a
@@ -4144,6 +4235,7 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 		DiffShortstat:    task.DiffShortstat,
 		FeedbackID:       task.FeedbackID,
 		AskFreely:        task.AskFreely,
+		SliceContract:    task.SliceContract,
 	}
 	capTaskTranscript(&info)
 	s.enrichTaskInfoVideo(&info, r)
@@ -6506,7 +6598,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		switch call.Name {
 		case "create_task", "yaver_ask", "list_tasks", "get_task", "stop_task",
 			"continue_task", "fork_task", "get_info", "get_system_info",
-			"list_runners", "switch_runner", "agent_graph_start", "code_mesh_start",
+			"list_runners", "switch_runner", "agent_graph_start", "agent_fleet_run", "code_mesh_start",
 			"publish_plan", "publish_config_get", "list_directory", "tmux_list_sessions",
 			"git_sync_remote", "yaver_doctor", "development_doctor", "yaver_status",
 			"yaver_ping", "mobile_hermes_doctor", "pipeline_list", "session_list":
@@ -7209,8 +7301,42 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if len(machines) == 0 {
 			return mcpToolResult("No machines found.")
 		}
+		prefs := loadAgentFleetPreferences()
+		showWorkers := false
+		if settings, err := fetchUserSettings(context.Background(), s); err == nil && settings != nil {
+			showWorkers = settings.ShowWorkerDevices
+		}
+		readyNodes := 0
+		for _, machine := range machines {
+			if machine.IsOnline && machine.Capabilities != nil {
+				for _, runner := range machine.Capabilities.Runners {
+					if runner.Ready {
+						readyNodes++
+						break
+					}
+				}
+			}
+		}
 		var sb strings.Builder
+		if prefs != nil && prefs.ControllerDeviceID != "" {
+			sb.WriteString(fmt.Sprintf("Fleet: %d node(s) ready · master selected · %d worker(s)%s\n",
+				readyNodes, len(prefs.WorkerDeviceIDs), map[bool]string{true: " shown", false: " hidden (enable Show workers to list them)"}[showWorkers]))
+		} else {
+			sb.WriteString(fmt.Sprintf("Fleet: %d node(s) ready · no master selected; ready workers can still be targeted explicitly.\n", readyNodes))
+		}
 		for _, m := range machines {
+			roles := make([]string, 0, 2)
+			if prefs != nil {
+				if prefs.isController(m) {
+					roles = append(roles, "master")
+				}
+				if prefs.isWorker(m) {
+					roles = append(roles, "worker")
+				}
+				if prefs.ControllerDeviceID != "" && !showWorkers && !prefs.isController(m) {
+					continue
+				}
+			}
 			status := "offline"
 			if m.IsOnline {
 				status = "online"
@@ -7220,6 +7346,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				scope = "local"
 			}
 			sb.WriteString(fmt.Sprintf("- %s (%s) [%s, %s]", m.Name, m.DeviceID, scope, status))
+			if len(roles) > 0 {
+				sb.WriteString(" role=" + strings.Join(roles, ","))
+			}
 			if m.Provider != "" {
 				sb.WriteString(fmt.Sprintf(" provider=%s", m.Provider))
 			}
@@ -7266,6 +7395,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			AllowedDevices  []string               `json:"allowed_devices"`
 			AllowedRunners  []string               `json:"allowed_runners"`
 			HybridDegree    int                    `json:"hybrid_degree"`
+			MasterRunner    string                 `json:"master_runner"`
+			MasterModel     string                 `json:"master_model"`
+			WorkerRunner    string                 `json:"worker_runner"`
+			WorkerModel     string                 `json:"worker_model"`
 			Nodes           []mcpAgentGraphNodeArg `json:"nodes"`
 		}
 		json.Unmarshal(call.Arguments, &args)
@@ -7292,6 +7425,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			AllowedDevices:  args.AllowedDevices,
 			AllowedRunners:  args.AllowedRunners,
 			HybridDegree:    args.HybridDegree,
+			MasterRunner:    args.MasterRunner,
+			MasterModel:     args.MasterModel,
+			WorkerRunner:    args.WorkerRunner,
+			WorkerModel:     args.WorkerModel,
 			Nodes:           nodes,
 		}
 		run, err := s.agentGraphMgr.CreateRun(req)
@@ -7308,6 +7445,66 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(fmt.Sprintf("Agent graph started.\nGraph ID: %s\nName: %s\nMachine pool: %s\nNodes: %d", run.ID, run.Name, pool, len(run.Nodes)))
 
+	case "agent_fleet_run":
+		if s.agentGraphMgr == nil {
+			return mcpToolError("agent graphs unavailable")
+		}
+		var args struct {
+			Name            string   `json:"name"`
+			WorkDir         string   `json:"work_dir"`
+			Prompt          string   `json:"prompt"`
+			MasterRunner    string   `json:"master_runner"`
+			MasterModel     string   `json:"master_model"`
+			WorkerRunner    string   `json:"worker_runner"`
+			WorkerModel     string   `json:"worker_model"`
+			MaxParallel     int      `json:"max_parallel"`
+			PreferredDevice string   `json:"preferred_device"`
+			AllowedDevices  []string `json:"allowed_devices"`
+		}
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("invalid fleet run arguments")
+		}
+		if strings.TrimSpace(args.Prompt) == "" {
+			return mcpToolError("prompt is required")
+		}
+		workDir := strings.TrimSpace(args.WorkDir)
+		if workDir == "" {
+			workDir = s.taskMgr.workDir
+		}
+		workerRunner := strings.TrimSpace(args.WorkerRunner)
+		if workerRunner == "" {
+			workerRunner = "opencode"
+		}
+		run, err := s.agentGraphMgr.CreateRun(AgentGraphCreateRequest{
+			Name: args.Name, WorkDir: workDir, Prompt: args.Prompt, Template: "fleet",
+			MasterRunner: args.MasterRunner, MasterModel: args.MasterModel,
+			WorkerRunner: workerRunner, WorkerModel: args.WorkerModel,
+			MaxParallel: args.MaxParallel, PreferredDevice: args.PreferredDevice,
+			AllowedDevices: args.AllowedDevices,
+		})
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("start fleet run: %v", err))
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Master/worker fleet run started.\nGraph ID: %s\nName: %s\n", run.ID, run.Name))
+		sb.WriteString(fmt.Sprintf("Worker runner: %s", workerRunner))
+		if args.WorkerModel != "" {
+			sb.WriteString(" / " + args.WorkerModel)
+		}
+		sb.WriteString("\nMaster and worker may share one device; runner processes remain separate.\nNodes:\n")
+		for _, node := range run.Nodes {
+			placement := "auto"
+			if node.Placement != nil {
+				placement = node.Placement.DeviceNameOrID()
+				if node.Placement.Runner != "" {
+					placement += " / " + node.Placement.Runner
+				}
+			}
+			sb.WriteString(fmt.Sprintf("  • %s [%s] @ %s\n", node.Spec.Title, node.Spec.OrchestrationRole, placement))
+		}
+		sb.WriteString("Use agent_graph_show with graph_id=" + run.ID + " to follow the reports and final verdict.")
+		return mcpToolResult(strings.TrimSpace(sb.String()))
+
 	case "agent_graph_list":
 		if s.agentGraphMgr == nil {
 			return mcpToolError("agent graphs unavailable")
@@ -7321,6 +7518,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			sb.WriteString(fmt.Sprintf("- %s [%s] %s nodes=%d parallel=%d\n", run.ID, run.Status, run.Name, len(run.Nodes), run.MaxParallel))
 			for _, node := range run.Nodes {
 				sb.WriteString(fmt.Sprintf("  • %s [%s]", node.Spec.Title, node.Status))
+				if node.Spec.OrchestrationRole != "" {
+					sb.WriteString(" role=" + node.Spec.OrchestrationRole)
+				}
 				if node.Placement != nil {
 					sb.WriteString(fmt.Sprintf(" @ %s", node.Placement.DeviceNameOrID()))
 					if node.Placement.Runner != "" {
@@ -7356,6 +7556,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		sb.WriteString("\nNodes:\n")
 		for _, node := range run.Nodes {
 			sb.WriteString(fmt.Sprintf("- %s (%s) [%s]\n", node.Spec.Title, node.Spec.Kind, node.Status))
+			if node.Spec.OrchestrationRole != "" {
+				sb.WriteString(fmt.Sprintf("  role: %s\n", node.Spec.OrchestrationRole))
+			}
 			if len(node.Spec.ResourceModes) > 0 {
 				sb.WriteString(fmt.Sprintf("  resources: %s\n", strings.Join(node.Spec.ResourceModes, ", ")))
 			}
@@ -18469,6 +18672,8 @@ type mcpAgentGraphNodeArg struct {
 	BuildPointsCompat        float64  `json:"buildPoints"`
 	VerifyPoints             float64  `json:"verify_points"`
 	VerifyPointsCompat       float64  `json:"verifyPoints"`
+	OrchestrationRole        string   `json:"orchestration_role"`
+	OrchestrationRoleCompat  string   `json:"orchestrationRole"`
 }
 
 func buildAgentGraphNodesFromMCP(args []mcpAgentGraphNodeArg) ([]AgentGraphNodeSpec, error) {
@@ -18515,6 +18720,7 @@ func buildAgentGraphNodesFromMCP(args []mcpAgentGraphNodeArg) ([]AgentGraphNodeS
 			DesignPoints:       firstPositiveFloat(arg.DesignPoints, arg.DesignPointsCompat),
 			BuildPoints:        firstPositiveFloat(arg.BuildPoints, arg.BuildPointsCompat),
 			VerifyPoints:       firstPositiveFloat(arg.VerifyPoints, arg.VerifyPointsCompat),
+			OrchestrationRole:  firstNonEmpty(arg.OrchestrationRole, arg.OrchestrationRoleCompat),
 		}
 		nodes = append(nodes, node)
 	}

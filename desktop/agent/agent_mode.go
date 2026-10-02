@@ -77,6 +77,13 @@ type AgentGraphNodeSpec struct {
 	DesignPoints       float64       `json:"designPoints,omitempty"`
 	BuildPoints        float64       `json:"buildPoints,omitempty"`
 	VerifyPoints       float64       `json:"verifyPoints,omitempty"`
+	// OrchestrationRole is a logical process role, not a hardware identity.
+	// The same device may run a master node through Codex/Claude and a worker
+	// node through OpenCode in sequence.
+	OrchestrationRole string `json:"orchestrationRole,omitempty"` // master | worker
+	// WorkspaceGroup lets a strictly ordered workflow reuse one isolated
+	// worktree so a local master can validate the worker's actual edits.
+	WorkspaceGroup string `json:"workspaceGroup,omitempty"`
 	// AskMode runs this node as a grounded read-only question-answer (deep
 	// repo analysis, file:line cites, explain-first with a confirm gate)
 	// instead of a work run. Set by the "ask" template for the graph-based
@@ -129,6 +136,10 @@ type AgentGraphCreateRequest struct {
 	// slices spread across the selected lanes — coherence work stays on the flat
 	// subscription plans, parallel overflow spills to the cheap glm apikey lane.
 	HybridDegree int                  `json:"hybridDegree,omitempty"`
+	MasterRunner string               `json:"masterRunner,omitempty"`
+	MasterModel  string               `json:"masterModel,omitempty"`
+	WorkerRunner string               `json:"workerRunner,omitempty"`
+	WorkerModel  string               `json:"workerModel,omitempty"`
 	Nodes        []AgentGraphNodeSpec `json:"nodes,omitempty"`
 }
 
@@ -265,7 +276,12 @@ func (gm *AgentGraphManager) CreateRun(req AgentGraphCreateRequest) (*AgentGraph
 	if req.MaxParallel > 6 {
 		req.MaxParallel = 6
 	}
-	normalized, err := normalizeAgentNodes(req.WorkDir, req.Runner, req.Model, req.AllowedRunners, nodes)
+	// When the graph may use the fleet, leave an automatic runner unresolved
+	// until after a machine is selected. Resolving it here probes only the
+	// controller's PATH and used to overwrite each worker's saved OpenCode/model
+	// preference before placement even began.
+	deferRunnerSelection := !graphPlacementLocalOnly(req, nodes)
+	normalized, err := normalizeAgentNodes(req.WorkDir, req.Runner, req.Model, req.AllowedRunners, nodes, deferRunnerSelection)
 	if err != nil {
 		return nil, err
 	}
@@ -321,6 +337,32 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 		template = "full"
 	}
 	switch template {
+	case "fleet", "master-worker", "orchestrated":
+		workerRunner := strings.TrimSpace(req.WorkerRunner)
+		if workerRunner == "" {
+			workerRunner = "opencode"
+		}
+		return []AgentGraphNodeSpec{
+			{
+				ID: "master-plan", Title: "Master Architecture And Plan", Kind: AgentNodeChat,
+				Prompt:  "Act as the master architect. Inspect the real repository and produce the technical architecture, implementation roadmap, risk analysis, and testing strategy for the task. Name concrete files and interfaces. Split the work into a bounded worker contract with acceptance criteria. Do not implement yet. End with a compact MASTER_PLAN report that a worker agent can execute.\n\nTask:\n" + prompt,
+				WorkDir: workDir, Project: project, Runner: req.MasterRunner, Model: req.MasterModel,
+				OrchestrationRole: "master", WorkspaceGroup: "fleet-main", Toughness: 0.9, DesignPoints: 1.0,
+			},
+			{
+				ID: "worker-implement", Title: "OpenCode Worker Implement And Report", Kind: AgentNodeChat,
+				Prompt:  "Act as the implementation worker. Follow the upstream MASTER_PLAN, but verify every assumption against the current code. Implement the bounded slice, iterating through the relevant tests and fixing failures you cause. Never push, deploy, or broaden scope. End with a concise WORKER_REPORT containing: files changed, behavior implemented, commands/tests run with outcomes, deviations from plan, unresolved risks, git base/head or dirty-state identity, diff stat and key bounded hunks, and exact evidence the master should validate.\n\nTask:\n" + prompt,
+				WorkDir: workDir, Project: project, Runner: workerRunner, Model: req.WorkerModel,
+				DependsOn: []string{"master-plan"}, OrchestrationRole: "worker", WorkspaceGroup: "fleet-main", Toughness: 1.0, BuildPoints: 1.0,
+				ResourceModes: []string{"build"},
+			},
+			{
+				ID: "master-validate", Title: "Master Validate And Synthesize", Kind: AgentNodeChat,
+				Prompt:  "Act as the master reviewer. Validate the implementation independently against the repository, the original MASTER_PLAN, and the worker's summarized WORKER_REPORT. Inspect the actual diff; rerun the highest-value tests; check correctness, security, regressions, scope, and whether the testing strategy was satisfied. Do not trust a reported success without operational evidence. If the worker ran on another device and its patch/commit is not materialized in this worktree, explicitly say validation is report-only and never claim the remote diff or tests were independently verified. Fix only small integration defects if safe; otherwise name the exact route to remediation. Return a final VALIDATION_REPORT with verdict (accepted, accepted_with_followups, or rejected), evidence, remaining risks, and next actions. Never push or deploy.\n\nTask:\n" + prompt,
+				WorkDir: workDir, Project: project, Runner: req.MasterRunner, Model: req.MasterModel,
+				DependsOn: []string{"worker-implement", "master-plan"}, OrchestrationRole: "master", WorkspaceGroup: "fleet-main", Toughness: 0.9, VerifyPoints: 1.0,
+			},
+		}
 	case "ask", "ask-deep", "question":
 		// Graph-based escalation for a broad / architectural QUESTION: a
 		// read-only investigate → answer → verify chain. Every node is
@@ -459,11 +501,19 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 	}
 }
 
-func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, defaultAllowedRunners []string, nodes []AgentGraphNodeSpec) ([]AgentGraphNodeSpec, error) {
+func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, defaultAllowedRunners []string, nodes []AgentGraphNodeSpec, deferRunnerSelection ...bool) ([]AgentGraphNodeSpec, error) {
 	out := make([]AgentGraphNodeSpec, 0, len(nodes))
 	seen := map[string]bool{}
 	for i, node := range nodes {
 		node.ID = strings.TrimSpace(node.ID)
+		node.OrchestrationRole = strings.ToLower(strings.TrimSpace(node.OrchestrationRole))
+		if node.OrchestrationRole != "" && node.OrchestrationRole != "master" && node.OrchestrationRole != "worker" {
+			return nil, fmt.Errorf("node %s has invalid orchestration role %q", node.ID, node.OrchestrationRole)
+		}
+		node.WorkspaceGroup = strings.TrimSpace(node.WorkspaceGroup)
+		if node.WorkspaceGroup != "" && !isSafeGraphNodeID(node.WorkspaceGroup) {
+			return nil, fmt.Errorf("node %s has invalid workspace group %q", node.ID, node.WorkspaceGroup)
+		}
 		if node.ID == "" {
 			node.ID = fmt.Sprintf("node-%d", i+1)
 		}
@@ -492,7 +542,14 @@ func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, def
 		if node.Title == "" {
 			node.Title = strings.Title(string(node.Kind))
 		}
-		node = applyAgentNodeExecutionPolicy(node)
+		if len(deferRunnerSelection) == 0 || !deferRunnerSelection[0] || strings.TrimSpace(node.Runner) != "" {
+			node = applyAgentNodeExecutionPolicy(node)
+		} else {
+			node.ResourceModes = normalizeGraphResourceModes(node.ResourceModes)
+			if node.Toughness <= 0 {
+				node.Toughness = 0.6
+			}
+		}
 		out = append(out, node)
 	}
 	return out, nil
@@ -887,6 +944,7 @@ func (gm *AgentGraphManager) executeNode(ctx context.Context, runID, nodeID stri
 	if node == nil {
 		return
 	}
+	node = graphNodeWithDependencyContext(run, node)
 
 	var summary string
 	var err error
@@ -923,6 +981,68 @@ func (gm *AgentGraphManager) executeNode(ctx context.Context, runID, nodeID stri
 		break
 	}
 	_ = gm.saveLocked()
+}
+
+const graphDependencyContextLimit = 24 * 1024
+
+// graphNodeWithDependencyContext carries completed parent results into a child
+// prompt. The dependency DAG previously controlled timing only: "implement"
+// never saw "plan", and "verify" never saw the implementation result. Keep the
+// handoff bounded because runner output is untrusted in size and already has a
+// separate raw evidence lane.
+func graphNodeWithDependencyContext(run *AgentGraphRun, node *AgentGraphNodeState) *AgentGraphNodeState {
+	if run == nil || node == nil || len(node.Spec.DependsOn) == 0 {
+		return node
+	}
+	byID := map[string]*AgentGraphNodeState{}
+	for _, candidate := range run.Nodes {
+		byID[candidate.Spec.ID] = candidate
+	}
+	var contextText strings.Builder
+	perDependencyLimit := graphDependencyContextLimit / len(node.Spec.DependsOn)
+	if perDependencyLimit < 1024 {
+		perDependencyLimit = 1024
+	}
+	for _, dependencyID := range node.Spec.DependsOn {
+		parent := byID[dependencyID]
+		if parent == nil || strings.TrimSpace(parent.Summary) == "" {
+			continue
+		}
+		summary := strings.TrimSpace(parent.Summary)
+		if len(summary) > perDependencyLimit {
+			summary = strings.ToValidUTF8(summary[:perDependencyLimit], "") + "\n[parent report truncated]"
+		}
+		if contextText.Len() == 0 {
+			contextText.WriteString("\n\n[Upstream agent results — treat these as evidence, verify against the working tree]\n")
+		}
+		contextText.WriteString("\n## ")
+		contextText.WriteString(firstGraphNonEmpty(parent.Spec.Title, dependencyID))
+		if parent.Placement != nil {
+			contextText.WriteString(" @ ")
+			contextText.WriteString(parent.Placement.DeviceNameOrID())
+			if parent.Placement.Runner != "" {
+				contextText.WriteString(" / ")
+				contextText.WriteString(parent.Placement.Runner)
+			}
+		}
+		contextText.WriteString("\n")
+		contextText.WriteString(summary)
+		contextText.WriteString("\n")
+		if contextText.Len() >= graphDependencyContextLimit {
+			break
+		}
+	}
+	if contextText.Len() == 0 {
+		return node
+	}
+	contextValue := contextText.String()
+	if len(contextValue) > graphDependencyContextLimit {
+		contextValue = strings.ToValidUTF8(contextValue[:graphDependencyContextLimit], "") + "\n[upstream context truncated]\n"
+	}
+	copyNode := *node
+	copyNode.Spec = node.Spec
+	copyNode.Spec.Prompt = strings.TrimSpace(node.Spec.Prompt) + contextValue
+	return &copyNode
 }
 
 func (gm *AgentGraphManager) executeChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
@@ -1305,7 +1425,11 @@ func runAgentMode(args []string) {
 		prompt := fs.String("prompt", "", "top-level user goal")
 		runner := fs.String("runner", "", "default runner")
 		model := fs.String("model", "", "default model")
-		template := fs.String("template", "full", "full")
+		template := fs.String("template", "full", "graph template: fleet|full|ask|audit")
+		masterRunner := fs.String("master-runner", "", "fleet master planner/reviewer runner")
+		masterModel := fs.String("master-model", "", "fleet master model")
+		workerRunner := fs.String("worker-runner", "", "fleet worker runner (default opencode)")
+		workerModel := fs.String("worker-model", "", "fleet worker model")
 		maxParallel := fs.Int("max-parallel", 2, "max concurrent ready nodes")
 		_ = fs.Parse(args[1:])
 		if strings.TrimSpace(*prompt) == "" {
@@ -1313,13 +1437,17 @@ func runAgentMode(args []string) {
 			os.Exit(1)
 		}
 		run, err := globalAgentGraphMgr.CreateRun(AgentGraphCreateRequest{
-			Name:        *name,
-			WorkDir:     *workDir,
-			Prompt:      *prompt,
-			Runner:      *runner,
-			Model:       *model,
-			Template:    *template,
-			MaxParallel: *maxParallel,
+			Name:         *name,
+			WorkDir:      *workDir,
+			Prompt:       *prompt,
+			Runner:       *runner,
+			Model:        *model,
+			Template:     *template,
+			MaxParallel:  *maxParallel,
+			MasterRunner: *masterRunner,
+			MasterModel:  *masterModel,
+			WorkerRunner: *workerRunner,
+			WorkerModel:  *workerModel,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "agent run: %v\n", err)
@@ -1370,7 +1498,11 @@ func runAgentModeViaDaemon(args []string) {
 		prompt := fs.String("prompt", "", "top-level user goal")
 		runner := fs.String("runner", "", "default runner")
 		model := fs.String("model", "", "default model")
-		template := fs.String("template", "full", "graph template: full|ask|audit")
+		template := fs.String("template", "full", "graph template: fleet|full|ask|audit")
+		masterRunner := fs.String("master-runner", "", "fleet master planner/reviewer runner")
+		masterModel := fs.String("master-model", "", "fleet master model")
+		workerRunner := fs.String("worker-runner", "", "fleet worker runner (default opencode)")
+		workerModel := fs.String("worker-model", "", "fleet worker model")
 		maxParallel := fs.Int("max-parallel", 2, "max concurrent ready nodes")
 		_ = fs.Parse(args[1:])
 		if strings.TrimSpace(*prompt) == "" {
@@ -1378,13 +1510,17 @@ func runAgentModeViaDaemon(args []string) {
 			os.Exit(1)
 		}
 		resp, err := localAgentRequest("POST", "/agent/graphs", map[string]interface{}{
-			"name":        *name,
-			"workDir":     *workDir,
-			"prompt":      *prompt,
-			"runner":      *runner,
-			"model":       *model,
-			"template":    *template,
-			"maxParallel": *maxParallel,
+			"name":         *name,
+			"workDir":      *workDir,
+			"prompt":       *prompt,
+			"runner":       *runner,
+			"model":        *model,
+			"template":     *template,
+			"maxParallel":  *maxParallel,
+			"masterRunner": *masterRunner,
+			"masterModel":  *masterModel,
+			"workerRunner": *workerRunner,
+			"workerModel":  *workerModel,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "agent run: %v\n", err)
@@ -1401,7 +1537,7 @@ func printAgentUsage() {
 	fmt.Print(`Yaver agent mode — dependency-aware graph orchestration for chat / autoideas.
 
 Usage:
-  yaver agent run --work-dir <path> --prompt "<goal>" [--template full] [--runner codex] [--max-parallel 2]
+  yaver agent run --work-dir <path> --prompt "<goal>" [--template fleet] [--master-runner codex] [--worker-runner opencode]
   yaver agent mesh-smoke [--device <id-or-name>]
   yaver agent list
   yaver agent show <id>

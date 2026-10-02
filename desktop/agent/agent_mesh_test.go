@@ -193,6 +193,33 @@ func TestAllowedDevicesMatchesMachineNameAndPrefix(t *testing.T) {
 	}
 }
 
+func TestExplicitWorkerPinOverridesAutomaticFleetDisclosure(t *testing.T) {
+	worker := MachineInfo{DeviceID: "pi-worker", Name: "worker-pi", IsOnline: true}
+	req := AgentGraphCreateRequest{AllowedDevices: []string{"worker-pi"}}
+	prefs := &agentFleetPreferences{
+		ControllerDeviceID: "mac-master",
+		WorkerDeviceIDs:    map[string]bool{"pi-worker": true},
+		Opportunistic:      false,
+	}
+	if !fleetMachineEligible(prefs, req, nil, worker) {
+		t.Fatal("explicit graph worker must remain eligible when opportunistic placement is disabled")
+	}
+	if fleetMachineEligible(prefs, AgentGraphCreateRequest{}, nil, worker) {
+		t.Fatal("an unpinned worker must not bypass automatic fleet policy")
+	}
+}
+
+func TestWorkerOnlyFleetRemainsUsableWithoutMaster(t *testing.T) {
+	worker := MachineInfo{DeviceID: "pi-worker", Name: "worker-pi", IsOnline: true}
+	prefs := &agentFleetPreferences{
+		WorkerDeviceIDs: map[string]bool{"pi-worker": true},
+		Opportunistic:   false,
+	}
+	if !fleetMachineEligible(prefs, AgentGraphCreateRequest{}, nil, worker) {
+		t.Fatal("worker-only fleet must remain usable without a master")
+	}
+}
+
 func TestMeshPolicySerializesClaude(t *testing.T) {
 	state := &meshPolicyState{
 		machines: map[string]MachineInfo{
@@ -222,5 +249,120 @@ func TestMeshPolicySerializesClaude(t *testing.T) {
 	state.Reserve(first)
 	if state.CanStart(second) {
 		t.Fatalf("expected second claude node to be blocked by policy")
+	}
+}
+
+func TestMeshPolicyAllowsOpenCodeAcrossIndependentWorkers(t *testing.T) {
+	state := &meshPolicyState{
+		machines: map[string]MachineInfo{
+			"pi-1": {DeviceID: "pi-1", Capabilities: &MachineCapabilities{LowPower: true, MaxTaskSlots: 1}},
+			"pi-2": {DeviceID: "pi-2", Capabilities: &MachineCapabilities{LowPower: true, MaxTaskSlots: 1}},
+		},
+		machineUse:       map[string]int{},
+		runnerGlobal:     map[string]int{},
+		machineRunnerUse: map[string]int{},
+	}
+	first := &AgentGraphNodeState{Placement: &AgentNodePlacement{DeviceID: "pi-1", Runner: "opencode"}}
+	second := &AgentGraphNodeState{Placement: &AgentNodePlacement{DeviceID: "pi-2", Runner: "opencode"}}
+	if !state.CanStart(first) {
+		t.Fatal("first OpenCode worker should start")
+	}
+	state.Reserve(first)
+	if !state.CanStart(second) {
+		t.Fatal("a low-power worker's per-machine OpenCode cap must not serialize the whole fleet")
+	}
+}
+
+func TestFleetPreferencesChoosePerMachineRunnerAndModel(t *testing.T) {
+	machine := MachineInfo{
+		DeviceID: "pi-worker",
+		Name:     "pi-worker",
+		IsOnline: true,
+		Capabilities: &MachineCapabilities{Runners: []MachineRunnerCapability{
+			{ID: "opencode", Ready: true},
+			{ID: "codex", Ready: true},
+		}},
+	}
+	state := &meshPlannerState{
+		machines:           map[string]MachineInfo{machine.DeviceID: machine},
+		machineAssignments: map[string]int{},
+		runnerAssignments:  map[string]int{},
+		fleetPreferences: &agentFleetPreferences{ByDevice: map[string]primaryRunnerPreference{
+			"pi-worker": {RunnerID: "opencode", Model: "deepseek-v4.1-flash", Provider: "deepseek"},
+		}},
+	}
+	node := AgentGraphNodeSpec{ID: "worker", Kind: AgentNodeChat, BuildPoints: 1}
+	placement := chooseNodePlacement(AgentGraphCreateRequest{}, node, []MachineInfo{machine}, state)
+	if placement.Runner != "opencode" {
+		t.Fatalf("saved worker runner = %q, want opencode", placement.Runner)
+	}
+	if placement.Model != "deepseek-v4.1-flash" {
+		t.Fatalf("saved worker model = %q, want deepseek-v4.1-flash", placement.Model)
+	}
+}
+
+func TestFleetControllerPreferredForPlanAndReview(t *testing.T) {
+	machines := []MachineInfo{
+		{DeviceID: "mac-controller", Name: "mac-controller", IsOnline: true, Capabilities: &MachineCapabilities{Runners: []MachineRunnerCapability{{ID: "codex", Ready: true}}}},
+		{DeviceID: "pi-worker", Name: "pi-worker", IsOnline: true, Capabilities: &MachineCapabilities{Runners: []MachineRunnerCapability{{ID: "opencode", Ready: true}}}},
+	}
+	state := &meshPlannerState{
+		machines:           map[string]MachineInfo{"mac-controller": machines[0], "pi-worker": machines[1]},
+		machineAssignments: map[string]int{},
+		runnerAssignments:  map[string]int{},
+		fleetPreferences: &agentFleetPreferences{
+			ControllerDeviceID: "mac-controller",
+			ByDevice: map[string]primaryRunnerPreference{
+				"mac-controller": {RunnerID: "codex", Model: "gpt-controller"},
+				"pi-worker":      {RunnerID: "opencode", Model: "cheap-worker"},
+			},
+		},
+	}
+	for _, node := range []AgentGraphNodeSpec{
+		{ID: "plan", Kind: AgentNodeChat, DesignPoints: 1},
+		{ID: "review", Kind: AgentNodeChat, VerifyPoints: 1},
+	} {
+		placement := chooseNodePlacement(AgentGraphCreateRequest{}, node, machines, state)
+		if placement.DeviceID != "mac-controller" {
+			t.Fatalf("%s placed on %q, want saved controller", node.ID, placement.DeviceID)
+		}
+	}
+}
+
+func TestMasterAndOpenCodeWorkerCanShareOneDevice(t *testing.T) {
+	machine := MachineInfo{
+		DeviceID: "one-box", Name: "one-box", IsOnline: true,
+		Capabilities: &MachineCapabilities{Runners: []MachineRunnerCapability{
+			{ID: "codex", Ready: true}, {ID: "opencode", Ready: true},
+		}},
+	}
+	state := &meshPlannerState{
+		machines: map[string]MachineInfo{"one-box": machine}, machineAssignments: map[string]int{},
+		runnerAssignments: map[string]int{}, machineRunnerAssignments: map[string]int{},
+		fleetPreferences: &agentFleetPreferences{ControllerDeviceID: "one-box", WorkerDeviceIDs: map[string]bool{}, ByDevice: map[string]primaryRunnerPreference{}},
+	}
+	master := chooseNodePlacement(AgentGraphCreateRequest{}, AgentGraphNodeSpec{ID: "plan", Kind: AgentNodeChat, Runner: "codex", OrchestrationRole: "master"}, []MachineInfo{machine}, state)
+	worker := chooseNodePlacement(AgentGraphCreateRequest{}, AgentGraphNodeSpec{ID: "build", Kind: AgentNodeChat, Runner: "opencode", OrchestrationRole: "worker"}, []MachineInfo{machine}, state)
+	if master.DeviceID != "one-box" || worker.DeviceID != "one-box" {
+		t.Fatalf("placements master=%q worker=%q, want same device", master.DeviceID, worker.DeviceID)
+	}
+	if master.Runner != "codex" || worker.Runner != "opencode" {
+		t.Fatalf("runners master=%q worker=%q", master.Runner, worker.Runner)
+	}
+}
+
+func TestWorkerRolePrefersEnabledWorkerOverController(t *testing.T) {
+	machines := []MachineInfo{
+		{DeviceID: "master-box", Name: "master-box", IsOnline: true, Capabilities: &MachineCapabilities{Runners: []MachineRunnerCapability{{ID: "opencode", Ready: true}}}},
+		{DeviceID: "worker-box", Name: "worker-box", IsOnline: true, Capabilities: &MachineCapabilities{Runners: []MachineRunnerCapability{{ID: "opencode", Ready: true}}}},
+	}
+	state := &meshPlannerState{
+		machines:           map[string]MachineInfo{"master-box": machines[0], "worker-box": machines[1]},
+		machineAssignments: map[string]int{}, runnerAssignments: map[string]int{}, machineRunnerAssignments: map[string]int{},
+		fleetPreferences: &agentFleetPreferences{ControllerDeviceID: "master-box", WorkerDeviceIDs: map[string]bool{"worker-box": true}, ByDevice: map[string]primaryRunnerPreference{}},
+	}
+	placement := chooseNodePlacement(AgentGraphCreateRequest{}, AgentGraphNodeSpec{ID: "build", Kind: AgentNodeChat, Runner: "opencode", OrchestrationRole: "worker"}, machines, state)
+	if placement.DeviceID != "worker-box" {
+		t.Fatalf("worker placed on %q, want enabled worker", placement.DeviceID)
 	}
 }

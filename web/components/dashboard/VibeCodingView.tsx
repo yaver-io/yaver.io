@@ -91,6 +91,14 @@ export function stripAnsi(s: string): string {
   return s.replace(ANSI_ESC_RE, "").replace(BARE_CSI_RE, "");
 }
 
+function fleetTaskLabel(task?: Task | null): string | null {
+  const role = task?.sliceContract?.orchestrationRole;
+  if (role !== "master" && role !== "worker") return null;
+  const stage = task?.sliceContract?.orchestrationStage;
+  const stageLabel = stage === "architecture" ? "Architecture" : stage === "implementation" ? "Implementation" : stage === "validation" ? "Validation" : "Orchestration";
+  return `${role === "master" ? "Master" : "Worker"} · ${stageLabel}`;
+}
+
 function inferTaskPlacementKind(text: string): TaskPlacementKind {
   const lower = String(text || "").toLowerCase();
   if (/\b(deploy|publish|release|ship)\b/.test(lower)) return "deploy";
@@ -568,7 +576,7 @@ export default function VibeCodingView({
   const [activeGraphRunId, setActiveGraphRunId] = useState<string | null>(null);
   const [graphRun, setGraphRun] = useState<AgentGraphRun | null>(null);
   const [graphNodeOutput, setGraphNodeOutput] = useState("");
-  // Cost mode for multi-step graph runs: 0 = single-model (default, your plan),
+  // Cost mode for multi-step graph runs: 0 = saved per-machine fleet policy,
   // 2 = duo (Claude Code + GLM), 3 = trio (Claude Code + Codex + GLM). Spreads
   // independent slices across the lanes — coherence stays on the flat
   // subscription plans, parallel overflow spills to the cheap GLM apikey lane.
@@ -1568,8 +1576,11 @@ export default function VibeCodingView({
         name: "ask",
         workDir: selectedProject.path,
         prompt: goalPrompt,
-        runner: selectedRunner || undefined,
-        model: selectedModel || undefined,
+        // Graph placement must remain machine-specific. Passing the currently
+        // connected box's picker values here used to force that one runner/model
+        // onto every remote node and bypass Convex primaryRunnerByDevice.
+        runner: undefined,
+        model: undefined,
         template: "ask",
         hybridDegree: hybridDegree || undefined,
       });
@@ -3494,6 +3505,11 @@ export default function VibeCodingView({
                     <div className="mt-1 text-[11px] text-surface-500">
                       {task.status} · {new Date(task.updatedAt).toLocaleTimeString()}
                     </div>
+                    {fleetTaskLabel(task) ? (
+                      <div className="mt-2 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">
+                        {fleetTaskLabel(task)}
+                      </div>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -3511,9 +3527,9 @@ export default function VibeCodingView({
                 {!activeGraphRunId ? (
                   <div
                     className="flex items-center gap-0.5 rounded-md border border-surface-700 bg-surface-950 p-0.5"
-                    title="Cost mode for multi-step (deep ask / graph) runs. Single = your subscription plan only. Duo = Claude Code + GLM. Trio = Claude Code + Codex + GLM. Coherence-critical work stays on the flat subscription plans; parallel overflow spills to the cheap GLM apikey lane."
+                    title="Cost mode for multi-step graph runs. Fleet uses each machine's saved runner/model and your primary machine for planning/review. Duo and Trio are legacy fixed-lane presets."
                   >
-                    {([[0, "Single"], [2, "Duo"], [3, "Trio"]] as [number, string][]).map(([deg, label]) => (
+                    {([[0, "Fleet"], [2, "Duo"], [3, "Trio"]] as [number, string][]).map(([deg, label]) => (
                       <button
                         key={deg}
                         type="button"
@@ -3573,6 +3589,11 @@ export default function VibeCodingView({
                       placementLaneLabel(activeTask?.placementLane),
                       activeTask?.placementCreditLabel,
                     ].filter(Boolean).join(" · ")}
+                  </span>
+                ) : null}
+                {!activeGraphRunId && fleetTaskLabel(activeTask) ? (
+                  <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-300" title="Fleet orchestration role and stage">
+                    {fleetTaskLabel(activeTask)}
                   </span>
                 ) : null}
               </div>
@@ -4198,6 +4219,11 @@ function DeepAskGraphPanel({ run, liveOutput }: { run: AgentGraphRun | null; liv
             <div className="flex items-center gap-2">
               <span className={`text-sm ${v.color} ${isRunning ? "animate-pulse" : ""}`}>{v.icon}</span>
               <span className="text-sm font-semibold text-surface-100 flex-1">{node.spec.title}</span>
+              {node.spec.orchestrationRole ? (
+                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">
+                  {node.spec.orchestrationRole === "master" ? "Master" : "Worker"} · {node.spec.id === "master-plan" ? "Architecture" : node.spec.id === "worker-implement" ? "Implementation" : "Validation"}
+                </span>
+              ) : null}
               <StatusPill>{node.status}</StatusPill>
             </div>
             {body ? (

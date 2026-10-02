@@ -1,5 +1,17 @@
 # Yaver as a Plug-in Tool for Existing Coding Agents
 
+> The multi-machine implementation has moved beyond parts of this historical
+> checklist. For the current controller/worker graph audit, safety gates, Git
+> synchronization design, client-surface contract, and five-node roadmap, see
+> [`DISTRIBUTED_AGENT_FLEET.md`](DISTRIBUTED_AGENT_FLEET.md). Code remains the
+> source of truth.
+
+The opinionated MCP entry point is `agent_fleet_run`: master architecture,
+roadmap, risks, and testing strategy → OpenCode worker implementation plus a
+structured report → master validation. Master and worker may be different
+machines or different runner processes on the same computer; OpenCode is the
+default worker runner.
+
 This doc specs Yaver's plug-in mode, where Yaver acts as an MCP tool server
 for an existing Claude Code / Codex / Cursor / Windsurf / Zed install. In
 this mode the coding agent drives and Yaver provides capabilities (builds,

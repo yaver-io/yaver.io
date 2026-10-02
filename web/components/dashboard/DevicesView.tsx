@@ -2228,9 +2228,18 @@ function usePrimaryDeviceId(token: string | null | undefined): {
   setPrimaryDevice: (id: string | null) => Promise<void>;
   secondaryDeviceId: string | null;
   setSecondaryDevice: (id: string | null) => Promise<void>;
+  workerDeviceIds: string[];
+  setWorkerDevice: (id: string, enabled: boolean) => Promise<void>;
+  showWorkerDevices: boolean;
+  setShowWorkerDevices: (enabled: boolean) => Promise<void>;
+  opportunisticFleet: boolean;
+  setOpportunisticFleet: (enabled: boolean) => Promise<void>;
 } {
   const [primaryDeviceId, setPrimaryDeviceId] = useState<string | null>(null);
   const [secondaryDeviceId, setSecondaryDeviceId] = useState<string | null>(null);
+  const [workerDeviceIds, setWorkerDeviceIds] = useState<string[]>([]);
+  const [showWorkerDevices, setShowWorkerDevicesState] = useState(false);
+  const [opportunisticFleet, setOpportunisticFleetState] = useState(true);
 
   useEffect(() => {
     if (!token) return;
@@ -2245,6 +2254,9 @@ function usePrimaryDeviceId(token: string | null | undefined): {
         if (!cancelled) {
           setPrimaryDeviceId(data?.settings?.primaryDeviceId ?? null);
           setSecondaryDeviceId(data?.settings?.secondaryDeviceId ?? null);
+          setWorkerDeviceIds(Array.isArray(data?.settings?.workerDeviceIds) ? data.settings.workerDeviceIds : []);
+          setShowWorkerDevicesState(data?.settings?.showWorkerDevices === true);
+          setOpportunisticFleetState(data?.settings?.opportunisticFleet !== false);
         }
       } catch {
         // best-effort — UI falls back to "no primary"
@@ -2288,7 +2300,72 @@ function usePrimaryDeviceId(token: string | null | undefined): {
     }
   }, [token, secondaryDeviceId]);
 
-  return { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice };
+  const setWorkerDevice = useCallback(async (id: string, enabled: boolean) => {
+    if (!token) return;
+    const previous = workerDeviceIds;
+    const next = enabled
+      ? Array.from(new Set([...workerDeviceIds, id]))
+      : workerDeviceIds.filter((deviceId) => deviceId !== id);
+    setWorkerDeviceIds(next);
+    try {
+      const res = await fetch(`${CONVEX_URL}/settings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ workerDeviceIds: next }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (e) {
+      setWorkerDeviceIds(previous);
+      throw e;
+    }
+  }, [token, workerDeviceIds]);
+
+  const setShowWorkerDevices = useCallback(async (enabled: boolean) => {
+    if (!token) return;
+    const previous = showWorkerDevices;
+    setShowWorkerDevicesState(enabled);
+    try {
+      const res = await fetch(`${CONVEX_URL}/settings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ showWorkerDevices: enabled }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (e) {
+      setShowWorkerDevicesState(previous);
+      throw e;
+    }
+  }, [token, showWorkerDevices]);
+
+  const setOpportunisticFleet = useCallback(async (enabled: boolean) => {
+    if (!token) return;
+    const previous = opportunisticFleet;
+    setOpportunisticFleetState(enabled);
+    try {
+      const res = await fetch(`${CONVEX_URL}/settings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunisticFleet: enabled }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (e) {
+      setOpportunisticFleetState(previous);
+      throw e;
+    }
+  }, [token, opportunisticFleet]);
+
+  return {
+    primaryDeviceId,
+    setPrimaryDevice,
+    secondaryDeviceId,
+    setSecondaryDevice,
+    workerDeviceIds,
+    setWorkerDevice,
+    showWorkerDevices,
+    setShowWorkerDevices,
+    opportunisticFleet,
+    setOpportunisticFleet,
+  };
 }
 
 /**
@@ -3134,7 +3211,18 @@ export default function DevicesView({
   // Subscribed here (not per-iteration — hooks can't be) so a Ping landing on
   // any card re-renders the list and the connected card can pick up its RTT.
   const reachSampleVersion = useDeviceReachSampleVersion();
-  const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
+  const {
+    primaryDeviceId,
+    setPrimaryDevice,
+    secondaryDeviceId,
+    setSecondaryDevice,
+    workerDeviceIds,
+    setWorkerDevice,
+    showWorkerDevices,
+    setShowWorkerDevices,
+    opportunisticFleet,
+    setOpportunisticFleet,
+  } = usePrimaryDeviceId(token);
   // Hidden means absent, including background inventory calls and labels on
   // otherwise-normal device cards. Existing self-hosted/VPS devices remain.
   const cloudToken = ENABLE_CLOUD_WORKSPACE_UI ? token : null;
@@ -3337,7 +3425,10 @@ export default function DevicesView({
   // and public keys. Never re-collapse by hostname here: two real machines may
   // share a hostname, and an offline machine still needs a visible recovery
   // route. Only explicit local hiding (handled by useDevices) removes a row.
-  const renderedDevices = [...devices].sort(
+  const roleVisibleDevices = primaryDeviceId && !showWorkerDevices
+    ? devices.filter((device) => device.id === primaryDeviceId)
+    : devices;
+  const renderedDevices = [...roleVisibleDevices].sort(
     (a, b) =>
       roleRank(a.id) - roleRank(b.id) ||
       (a.alias || a.name || a.id).localeCompare(b.alias || b.name || b.id),
@@ -3347,6 +3438,17 @@ export default function DevicesView({
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-surface-50">Devices</h2>
         <div className="flex items-center gap-2">
+          {primaryDeviceId && devices.some((device) => device.id !== primaryDeviceId) ? (
+            <button
+              onClick={() => { void setShowWorkerDevices(!showWorkerDevices); }}
+              className="btn-secondary px-3 py-1.5 text-xs"
+              title="Workers stay available for explicit and opportunistic tasks; this only changes the list"
+            >
+              {showWorkerDevices
+                ? `Hide workers · ${devices.filter((device) => device.id !== primaryDeviceId && (device.online || device.workspaceLive)).length} ready`
+                : `Show workers · ${devices.filter((device) => device.id !== primaryDeviceId && (device.online || device.workspaceLive)).length}/${devices.filter((device) => device.id !== primaryDeviceId).length} ready`}
+            </button>
+          ) : null}
           <button
             onClick={() => { void handleRefresh(); }}
             disabled={refreshing}
@@ -3356,6 +3458,19 @@ export default function DevicesView({
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-surface-800 bg-surface-950/50 px-3 py-2 text-xs text-surface-400">
+        <span><span className="font-semibold text-surface-200">Fleet:</span> master coordinates; workers implement. One device may do both.</span>
+        <button
+          type="button"
+          onClick={() => { void setOpportunisticFleet(!opportunisticFleet); }}
+          className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${opportunisticFleet ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-300" : "border-surface-700 text-surface-400"}`}
+          role="switch"
+          aria-checked={opportunisticFleet}
+          title="Allow Yaver MCP and graph orchestration to use enabled worker devices automatically"
+        >
+          Automatic worker use · {opportunisticFleet ? "On" : "Off"}
+        </button>
       </div>
 
       {/* Freshness. Without this the page silently showed minute-old state:
@@ -3760,9 +3875,18 @@ export default function DevicesView({
                           <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                             <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
                           </svg>
-                          Primary
+                          Master
                         </span>
-                      ) : secondaryDeviceId === device.id ? (
+                      ) : null}
+                      {workerDeviceIds.includes(device.id) ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded border border-cyan-400/50 bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-700 dark:border-cyan-400/40 dark:bg-cyan-500/10 dark:text-cyan-300"
+                          title="Worker node eligible for opportunistic fleet tasks"
+                        >
+                          Worker
+                        </span>
+                      ) : null}
+                      {secondaryDeviceId === device.id && primaryDeviceId !== device.id ? (
                         <span
                           className="inline-flex items-center gap-1 rounded border border-violet-400/50 bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/10 dark:text-violet-300"
                           title="This is your fallback secondary device"
@@ -3772,6 +3896,16 @@ export default function DevicesView({
                           </svg>
                           Secondary
                         </span>
+                      ) : null}
+                      {token && (showWorkerDevices || primaryDeviceId === device.id) ? (
+                        <button
+                          type="button"
+                          onClick={() => { void setWorkerDevice(device.id, !workerDeviceIds.includes(device.id)); }}
+                          className="rounded border border-surface-600 px-1.5 py-0.5 text-[10px] font-semibold text-surface-300 hover:border-cyan-400 hover:text-cyan-200"
+                          title={workerDeviceIds.includes(device.id) ? "Remove this device from automatic fleet placement" : "Allow the master to place eligible work on this device"}
+                        >
+                          {workerDeviceIds.includes(device.id) ? "Worker enabled" : "Enable worker"}
+                        </button>
                       ) : null}
                       {/* Resource-pressure chip: the box says "I'm starving"
                           BEFORE it goes dark. Both 2026-07-27 box-deaths were

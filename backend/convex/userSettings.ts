@@ -899,6 +899,27 @@ async function normalizeOwnedDeviceId(
   return next;
 }
 
+async function normalizeOwnedDeviceIds(
+  ctx: any,
+  userId: string,
+  deviceIds: string[] | undefined,
+): Promise<string[] | undefined> {
+  if (deviceIds === undefined) return undefined;
+  if (deviceIds.length > 64) throw new Error("workerDeviceIds is limited to 64 devices");
+  const unique = [...new Set(deviceIds.map((id) => id.trim()).filter(Boolean))];
+  for (const deviceId of unique) {
+    if (deviceId.length > 128) throw new Error("worker device id is too long");
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q: any) => q.eq("deviceId", deviceId))
+      .first();
+    if (!device || device.userId !== userId || device.removed) {
+      throw new Error("workerDeviceIds must contain only the caller's devices");
+    }
+  }
+  return unique;
+}
+
 async function patchOwnedDeviceRuntimeProjectCache(
   ctx: any,
   userId: any,
@@ -1009,6 +1030,9 @@ export const set = internalMutation({
     moreOptionalTools: v.optional(v.array(v.string())),
     // null sentinel = clear the preference; undefined = leave untouched.
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    workerDeviceIds: v.optional(v.array(v.string())),
+    showWorkerDevices: v.optional(v.boolean()),
+    opportunisticFleet: v.optional(v.boolean()),
     secondaryDeviceId: v.optional(v.union(v.string(), v.null())),
     // Set or clear the primary runner for a single device. The whole
     // primaryRunnerByDevice list lives on the userSettings row, but
@@ -1066,6 +1090,7 @@ export const set = internalMutation({
       args.secondaryDeviceId,
       "secondaryDeviceId",
     );
+    const normalizedWorkerDeviceIds = await normalizeOwnedDeviceIds(ctx, args.userId, args.workerDeviceIds);
     const existing = await ctx.db
       .query("userSettings")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
@@ -1102,6 +1127,11 @@ export const set = internalMutation({
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
+    if (args.workerDeviceIds !== undefined) {
+      patch.workerDeviceIds = normalizedWorkerDeviceIds;
+    }
+    if (args.showWorkerDevices !== undefined) patch.showWorkerDevices = args.showWorkerDevices;
+    if (args.opportunisticFleet !== undefined) patch.opportunisticFleet = args.opportunisticFleet;
     if (args.secondaryDeviceId !== undefined) {
       patch.secondaryDeviceId = normalizedSecondaryDeviceId;
     }
@@ -1271,6 +1301,9 @@ export const setByToken = mutation({
     connectionMode: v.optional(v.string()),
     moreOptionalTools: v.optional(v.array(v.string())),
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    workerDeviceIds: v.optional(v.array(v.string())),
+    showWorkerDevices: v.optional(v.boolean()),
+    opportunisticFleet: v.optional(v.boolean()),
     secondaryDeviceId: v.optional(v.union(v.string(), v.null())),
     primaryRunnerForDevice: v.optional(
       v.object({
@@ -1314,6 +1347,7 @@ export const setByToken = mutation({
       args.secondaryDeviceId,
       "secondaryDeviceId",
     );
+    const normalizedWorkerDeviceIds = await normalizeOwnedDeviceIds(ctx, userId, args.workerDeviceIds);
     const existing = await ctx.db
       .query("userSettings")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -1350,6 +1384,11 @@ export const setByToken = mutation({
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
+    if (args.workerDeviceIds !== undefined) {
+      patch.workerDeviceIds = normalizedWorkerDeviceIds;
+    }
+    if (args.showWorkerDevices !== undefined) patch.showWorkerDevices = args.showWorkerDevices;
+    if (args.opportunisticFleet !== undefined) patch.opportunisticFleet = args.opportunisticFleet;
     if (args.secondaryDeviceId !== undefined) {
       patch.secondaryDeviceId = normalizedSecondaryDeviceId;
     }

@@ -29,3 +29,20 @@ test("legacy verbosity rows remain schema-readable until production migration", 
   const schema = readFileSync(join(import.meta.dirname, "schema.ts"), "utf8");
   assert.match(schema, /verbosity: v\.optional\(v\.number\(\)\)/);
 });
+
+test("fleet roles are ownership checked and one device may be both master and worker", () => {
+  const schema = readFileSync(join(import.meta.dirname, "schema.ts"), "utf8");
+  const http = readFileSync(join(import.meta.dirname, "http.ts"), "utf8");
+  assert.match(schema, /workerDeviceIds: v\.optional\(v\.array\(v\.string\(\)\)\)/);
+  assert.match(schema, /showWorkerDevices: v\.optional\(v\.boolean\(\)\)/);
+  assert.match(schema, /opportunisticFleet: v\.optional\(v\.boolean\(\)\)/);
+  assert.match(source, /normalizeOwnedDeviceIds/);
+  assert.match(source, /deviceIds\.length > 64/);
+  assert.match(source, /deviceId\.length > 128/);
+  assert.match(source, /device\.userId !== userId \|\| device\.removed/);
+  assert.doesNotMatch(source, /filter\(\(id\) => id !== effectivePrimaryDeviceId\)/);
+  assert.match(source, /patch\.workerDeviceIds = normalizedWorkerDeviceIds/);
+  assert.match(http, /workerDeviceIds: body\.workerDeviceIds/);
+  assert.match(http, /showWorkerDevices: body\.showWorkerDevices/);
+  assert.match(http, /opportunisticFleet: body\.opportunisticFleet/);
+});

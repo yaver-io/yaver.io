@@ -79,12 +79,30 @@ fun MachinePickerScreen(store: TvStore, nav: NavHostController) {
                 BackBar(title = "Devices", subtitle = "Choose where the TV connects", onBack = { nav.popBackStack() })
             }
             TvTextButton(label = "Refresh", onClick = { scope.launch { reload() } })
+            if (settings?.primaryDeviceId != null && (devices.size + boxes.size) > 1) {
+                TvTextButton(
+                    label = if (settings?.showWorkerDevices == true) {
+                        "Hide workers · ${devices.count { it.deviceId != settings?.primaryDeviceId && it.isOnline }} ready"
+                    } else {
+                        "Show workers · ${devices.count { it.deviceId != settings?.primaryDeviceId && it.isOnline }}/${devices.count { it.deviceId != settings?.primaryDeviceId }} ready"
+                    },
+                    onClick = {
+                        scope.launch {
+                            MachineRegistry.writeSetting(
+                                token,
+                                org.json.JSONObject().put("showWorkerDevices", settings?.showWorkerDevices != true),
+                            )
+                            reload()
+                        }
+                    },
+                )
+            }
             TvTextButton(label = "Type an address", onClick = { nav.navigate(Routes.ADD_BOX) })
         }
 
         error?.let { ErrorPanel(message = it, onRetry = { scope.launch { reload() } }) }
 
-        val rows = devices.ifEmpty {
+        val allRows = devices.ifEmpty {
             boxes.map { b ->
                 RegisteredDevice(
                     deviceId = b.id,
@@ -94,6 +112,9 @@ fun MachinePickerScreen(store: TvStore, nav: NavHostController) {
                 )
             }
         }
+        val rows = if (settings?.primaryDeviceId != null && settings?.showWorkerDevices != true) {
+            allRows.filter { it.deviceId == settings?.primaryDeviceId }
+        } else allRows
 
         if (!loading && rows.isEmpty()) {
             Text(

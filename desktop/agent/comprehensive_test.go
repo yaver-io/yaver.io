@@ -590,6 +590,25 @@ func TestMCPAgentGraphStartAndList(t *testing.T) {
 	if !strings.Contains(listText, "@ ") {
 		t.Fatalf("expected node placement output, got: %s", listText)
 	}
+
+	fleetResp := doMCPRequest(t, baseURL, token, fmt.Sprintf(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{
+		"name":"agent_fleet_run","arguments":{
+			"work_dir":%q,
+			"prompt":"Implement the bounded fleet feature",
+			"master_runner":"dummy",
+			"worker_runner":"opencode",
+			"worker_model":"deepseek/deepseek-flash",
+			"allowed_devices":["local"]
+		}
+	}}`, workDir))
+	fleetResult := fleetResp["result"].(map[string]interface{})
+	fleetContent := fleetResult["content"].([]interface{})
+	fleetText := fleetContent[0].(map[string]interface{})["text"].(string)
+	for _, want := range []string{"Master/worker fleet run started.", "Worker runner: opencode / deepseek/deepseek-flash", "Master and worker may share one device", "[master]", "[worker]"} {
+		if !strings.Contains(fleetText, want) {
+			t.Fatalf("fleet response missing %q: %s", want, fleetText)
+		}
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════

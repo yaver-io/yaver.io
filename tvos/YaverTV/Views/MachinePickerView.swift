@@ -56,6 +56,20 @@ struct MachinePickerView: View {
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink("Type an address", destination: AddBoxView())
                 }
+                if store.primaryDeviceId != nil && devices.contains(where: { $0.deviceId != store.primaryDeviceId }) {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(store.showWorkerDevices
+                               ? "Hide workers · \(devices.filter { $0.deviceId != store.primaryDeviceId && isLive($0) }.count) ready"
+                               : "Show workers · \(devices.filter { $0.deviceId != store.primaryDeviceId && isLive($0) }.count)/\(devices.filter { $0.deviceId != store.primaryDeviceId }.count) ready") {
+                            let next = !store.showWorkerDevices
+                            store.showWorkerDevices = next
+                            Task {
+                                guard !store.token.isEmpty else { return }
+                                try? await MachineRegistry.saveShowWorkerDevices(token: store.token, enabled: next)
+                            }
+                        }
+                    }
+                }
             }
         }
         .task { await load() }
@@ -158,7 +172,10 @@ struct MachinePickerView: View {
 
     // Reachable + fresh first; parked/managed next; stale/offline last.
     private var sortedDevices: [RegisteredDevice] {
-        devices.sorted { a, b in
+        let visible = store.primaryDeviceId != nil && !store.showWorkerDevices
+            ? devices.filter { $0.deviceId == store.primaryDeviceId }
+            : devices
+        return visible.sorted { a, b in
             let (la, lb) = (isLive(a), isLive(b))
             if la != lb { return la }
             return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending

@@ -158,7 +158,7 @@ export default function CarVoiceCodingScreen() {
   // runner machine — a hands-free surface shouldn't demand a picker tap
   // when the account already names its default runner. Spoken switches and
   // manual picks still override.
-  const roleRunnerId = (deviceCtx as any).machineRoles?.runnerDeviceId as string | undefined;
+  const roleRunnerId = ((deviceCtx as any).machineRoles?.runnerDeviceId || deviceCtx.primaryDeviceId) as string | undefined;
   useEffect(() => {
     if (deviceId || !roleRunnerId) return;
     if (devices.some((d: any) => (d.id || d.deviceId) === roleRunnerId)) {

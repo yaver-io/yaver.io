@@ -204,6 +204,9 @@ enum MachineRegistry {
         /// Explicit auto-connect order shared with mobile/web.
         let primaryDeviceId: String?
         let secondaryDeviceId: String?
+        let workerDeviceIds: [String]?
+        let showWorkerDevices: Bool?
+        let opportunisticFleet: Bool?
         /// Per-device default coding runner shared with mobile/web.
         let primaryRunnerByDevice: [PrimaryRunnerPref]?
         /// Runner/render machine split rows (same Convex rows the web edits).
@@ -346,6 +349,7 @@ enum MachineRegistry {
         return (try? JSONDecoder().decode(UserSettingsEnvelope.self, from: data).settings)
             ?? UserSettings(relayUrl: nil, relayPassword: nil,
                             primaryDeviceId: nil, secondaryDeviceId: nil,
+                            workerDeviceIds: nil, showWorkerDevices: nil, opportunisticFleet: nil,
                             primaryRunnerByDevice: nil,
                             machineRolesByProject: nil,
                             connectionMode: nil, defaultRuntimeProjectByDevice: nil,
@@ -419,6 +423,10 @@ enum MachineRegistry {
     /// an optimistic value that never reached the shared mobile/web row.
     static func savePrimaryDevice(token: String, deviceId: String?) async throws {
         try await postSettingsChecked(token: token, body: ["primaryDeviceId": deviceId ?? NSNull()])
+    }
+
+    static func saveShowWorkerDevices(token: String, enabled: Bool) async throws {
+        try await postSettingsChecked(token: token, body: ["showWorkerDevices": enabled])
     }
 
     static func savePrimaryRunner(token: String, deviceId: String, runnerId: String?) async throws {

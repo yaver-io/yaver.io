@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func initGraphSliceRepo(t *testing.T) string {
@@ -54,6 +55,61 @@ func TestPrepareGraphNodeSliceLocalGitRepoUsesWorktree(t *testing.T) {
 	}
 	if contract.EffectiveWorkDir != workDir {
 		t.Fatalf("effective work dir mismatch: %+v", contract)
+	}
+}
+
+func TestBuildGraphSliceContractCarriesFleetRoleAndStage(t *testing.T) {
+	contract := buildGraphSliceContract("fleet-1", AgentGraphNodeSpec{
+		ID: "worker-implement", OrchestrationRole: "worker",
+	}, &AgentNodePlacement{DeviceID: "pi-1", DeviceName: "Raspberry Pi"}, "", "remote-repo-contract")
+	if contract.OrchestrationRole != "worker" || contract.OrchestrationStage != "implementation" {
+		t.Fatalf("fleet metadata = %+v", contract)
+	}
+	if contract.RunID != "fleet-1" || contract.NodeID != "worker-implement" {
+		t.Fatalf("graph identity = %+v", contract)
+	}
+}
+
+func TestListTasksCarriesFleetMetadataToClientSurfaces(t *testing.T) {
+	tm := &TaskManager{tasks: map[string]*Task{
+		"worker-task": {
+			ID: "worker-task", Title: "Implement", Status: TaskStatusRunning, CreatedAt: time.Now(),
+			SliceContract: &TaskSliceContract{RunID: "fleet-1", NodeID: "worker-implement", OrchestrationRole: "worker", OrchestrationStage: "implementation"},
+		},
+	}}
+	rows := tm.ListTasks()
+	if len(rows) != 1 || rows[0].SliceContract == nil {
+		t.Fatalf("task list dropped fleet contract: %+v", rows)
+	}
+	if rows[0].SliceContract.OrchestrationRole != "worker" || rows[0].SliceContract.OrchestrationStage != "implementation" {
+		t.Fatalf("task list fleet metadata = %+v", rows[0].SliceContract)
+	}
+}
+
+func TestPrepareGraphNodeSliceSharedChainPreservesWorkerEditsForMaster(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := initGraphSliceRepo(t)
+	worker := AgentGraphNodeSpec{ID: "worker", WorkDir: repo, WorkspaceGroup: "fleet-main"}
+	workerDir, _, err := prepareGraphNodeSlice(context.Background(), "run-shared", worker, &AgentNodePlacement{DeviceID: "local"})
+	if err != nil {
+		t.Fatalf("prepare worker slice: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workerDir, "worker-change.txt"), []byte("evidence\n"), 0o644); err != nil {
+		t.Fatalf("write worker evidence: %v", err)
+	}
+	master := AgentGraphNodeSpec{ID: "validate", WorkDir: repo, WorkspaceGroup: "fleet-main"}
+	masterDir, contract, err := prepareGraphNodeSlice(context.Background(), "run-shared", master, &AgentNodePlacement{DeviceID: "local"})
+	if err != nil {
+		t.Fatalf("prepare master slice: %v", err)
+	}
+	if masterDir != workerDir {
+		t.Fatalf("master dir = %q, worker dir = %q", masterDir, workerDir)
+	}
+	if _, err := os.Stat(filepath.Join(masterDir, "worker-change.txt")); err != nil {
+		t.Fatalf("master cannot inspect worker change: %v", err)
+	}
+	if contract.IsolationMode != "git-worktree-shared-chain" {
+		t.Fatalf("isolation mode = %q", contract.IsolationMode)
 	}
 }
 

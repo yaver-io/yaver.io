@@ -870,6 +870,15 @@ export interface DeviceState {
   /** Persist the secondary device. Pass null to clear. Same sync
    *  semantics as setPrimaryDevice. */
   setSecondaryDevice: (deviceId: string | null) => Promise<void>;
+  /** Explicit worker nodes eligible for opportunistic placement. */
+  workerDeviceIds: string[];
+  setWorkerDevice: (deviceId: string, enabled: boolean) => Promise<void>;
+  /** Account-level progressive-disclosure preference for device lists. */
+  showWorkerDevices: boolean;
+  setShowWorkerDevices: (enabled: boolean) => Promise<void>;
+  /** Allow graph/MCP orchestration to place eligible work on enabled workers. */
+  opportunisticFleet: boolean;
+  setOpportunisticFleet: (enabled: boolean) => Promise<void>;
   /** Phone-scoped execution choice. Remote remains the default; local-only is
    *  entered only through the explicit “No remote box” action. */
   codingMode: MobileExecutionMode;
@@ -1064,6 +1073,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // is offline; otherwise functions identically to primary (yaver ssh
   // secondary, tight watchdog threshold, etc).
   const [secondaryDeviceId, setSecondaryDeviceIdState] = useState<string | null>(null);
+  const [workerDeviceIds, setWorkerDeviceIdsState] = useState<string[]>([]);
+  const [showWorkerDevices, setShowWorkerDevicesState] = useState(false);
+  const [opportunisticFleet, setOpportunisticFleetState] = useState(true);
   // Per-device primary coding agent. Keyed by deviceId → runnerId.
   // Loaded from userSettings.primaryRunnerByDevice on mount, persisted
   // through saveUserSettings({primaryRunnerForDevice: …}). Empty for
@@ -1818,6 +1830,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     if (!token) throw new Error("Not signed in");
     // Optimistic local update so the UI reflects the choice immediately.
     setPrimaryDeviceIdState(deviceId);
+    if (deviceId) setWorkerDeviceIdsState((current) => current.filter((id) => id !== deviceId));
     try {
       // `null` sentinel tells Convex to clear the preference; omitting the
       // field leaves it untouched, which is the wrong semantics here.
@@ -1841,6 +1854,45 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       throw e;
     }
   }, [token]);
+
+  const setWorkerDevice = useCallback(async (deviceId: string, enabled: boolean) => {
+    if (!token) return;
+    const previous = workerDeviceIds;
+    const next = enabled
+      ? Array.from(new Set([...workerDeviceIds, deviceId]))
+      : workerDeviceIds.filter((id) => id !== deviceId);
+    setWorkerDeviceIdsState(next);
+    try {
+      await saveUserSettings(token, { workerDeviceIds: next });
+    } catch (e) {
+      setWorkerDeviceIdsState(previous);
+      throw e;
+    }
+  }, [token, workerDeviceIds]);
+
+  const setShowWorkerDevices = useCallback(async (enabled: boolean) => {
+    if (!token) return;
+    const previous = showWorkerDevices;
+    setShowWorkerDevicesState(enabled);
+    try {
+      await saveUserSettings(token, { showWorkerDevices: enabled });
+    } catch (e) {
+      setShowWorkerDevicesState(previous);
+      throw e;
+    }
+  }, [token, showWorkerDevices]);
+
+  const setOpportunisticFleet = useCallback(async (enabled: boolean) => {
+    if (!token) return;
+    const previous = opportunisticFleet;
+    setOpportunisticFleetState(enabled);
+    try {
+      await saveUserSettings(token, { opportunisticFleet: enabled });
+    } catch (e) {
+      setOpportunisticFleetState(previous);
+      throw e;
+    }
+  }, [token, opportunisticFleet]);
 
   const setPrimaryRunnerForDevice = useCallback(
     async (deviceId: string, runnerId: string | null, model?: string | null, mode?: string | null, provider?: string | null, reasoningEffort?: string | null) => {
@@ -2855,6 +2907,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           setSecondaryDeviceIdState(settings.secondaryDeviceId ?? null);
           appLog("info", `[settings] secondaryDeviceId=${settings.secondaryDeviceId ?? "(none)"}`);
         }
+        if (Array.isArray(settings.workerDeviceIds)) {
+          setWorkerDeviceIdsState(settings.workerDeviceIds);
+        }
+        setShowWorkerDevicesState(settings.showWorkerDevices === true);
+        setOpportunisticFleetState(settings.opportunisticFleet !== false);
 
         // Multi-target mode is a UI preference that follows the user
         // across phones, so it lives on userSettings. undefined → off.
@@ -4372,6 +4429,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setPrimaryDevice,
       secondaryDeviceId,
       setSecondaryDevice,
+      workerDeviceIds,
+      setWorkerDevice,
+      showWorkerDevices,
+      setShowWorkerDevices,
+      opportunisticFleet,
+      setOpportunisticFleet,
       codingMode,
       codingModeReady,
       setCodingMode,
@@ -4394,7 +4457,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, codingMode, codingModeReady, setCodingMode, autoConnecting, autoConnectTarget, autoConnectStage, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryReasoningEffortByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, machineRoles, setMachineRolesFavorite, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, workerDeviceIds, setWorkerDevice, showWorkerDevices, setShowWorkerDevices, opportunisticFleet, setOpportunisticFleet, codingMode, codingModeReady, setCodingMode, autoConnecting, autoConnectTarget, autoConnectStage, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryReasoningEffortByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, machineRoles, setMachineRolesFavorite, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

@@ -262,6 +262,7 @@ function DeviceCard({
   authExpired,
   isStale,
   isPrimary,
+  isWorker,
   isSecondary,
   isPooledConnected,
   defaultRunner,
@@ -271,6 +272,7 @@ function DeviceCard({
   onSetSecondary,
   onUnsetSecondary,
   onSetPrimary,
+  onToggleWorker,
   token,
   forceDetailsOpen,
   onOpenDetails,
@@ -284,6 +286,7 @@ function DeviceCard({
   // button instead of the old green/red flicker.
   isStale: boolean;
   isPrimary: boolean;
+  isWorker?: boolean;
   // Optional secondary slot. Same elevated treatment as primary
   // for the watchdog + auto-connect. Renders ☆ instead of ★.
   isSecondary?: boolean;
@@ -309,6 +312,7 @@ function DeviceCard({
   onSetSecondary?: () => void;
   onUnsetSecondary?: () => void;
   onSetPrimary?: () => void;
+  onToggleWorker?: () => void;
   token: string | null;
   // When true (set by DevicesScreen via openDetails query param —
   // e.g. the "Open recovery" alert from DeviceContext fires
@@ -752,7 +756,8 @@ function DeviceCard({
             {device.hosting === "yaver-hosted" ? <StatusChip tone="blue" label="YAVER-HOSTED" isDark={isDark} /> : null}
             {device.hosting === "byo" ? <StatusChip tone="amber" label="BYO" isDark={isDark} /> : null}
             {device.hosting === "self-hosted" ? <StatusChip tone="slate" label="SELF-HOSTED" isDark={isDark} /> : null}
-            {isPrimary ? <StatusChip tone="indigo" label="PRIMARY ★" isDark={isDark} /> : null}
+            {isPrimary ? <StatusChip tone="indigo" label="MASTER ★" isDark={isDark} /> : null}
+            {isWorker ? <StatusChip tone="blue" label="WORKER" isDark={isDark} /> : null}
             {!isPrimary && isSecondary ? <StatusChip tone="violet" label="SECONDARY ☆" isDark={isDark} /> : null}
             {defaultRunner ? <StatusChip tone="violet" label={`★ ${labelForRunnerId(defaultRunner)}`} isDark={isDark} /> : null}
             {recovering ? (
@@ -893,6 +898,16 @@ function DeviceCard({
               onPress={onSetPrimary}
             >
               <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>★ Make Primary</Text>
+            </Pressable>
+          ) : null}
+          {onToggleWorker ? (
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.accent + "55" }]}
+              onPress={onToggleWorker}
+              accessibilityRole="button"
+              accessibilityLabel={isWorker ? `Disable worker role for ${device.name}` : `Enable worker role for ${device.name} with OpenCode as the default`}
+            >
+              <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>{isWorker ? "Disable Worker" : "Enable Worker · OpenCode"}</Text>
             </Pressable>
           ) : null}
           {/* Up/down for a Yaver-hosted (managed) box. Resume when paused/stopped,
@@ -1070,6 +1085,12 @@ export default function DevicesScreen() {
     unreachableDeviceIds,
     primaryDeviceId,
     setPrimaryDevice,
+    workerDeviceIds,
+    setWorkerDevice,
+    showWorkerDevices,
+    setShowWorkerDevices,
+    opportunisticFleet,
+    setOpportunisticFleet,
     secondaryDeviceId,
     setSecondaryDevice,
     codingMode,
@@ -1228,6 +1249,9 @@ export default function DevicesScreen() {
     if (ra !== rb) return ra - rb;
     return 0;
   });
+  const roleVisibleDevices = primaryDeviceId && !showWorkerDevices
+    ? displayDevices.filter((device) => device.id === primaryDeviceId)
+    : displayDevices;
 
   const handleAdoptBootstrap = useCallback(
     async (dev: DiscoveredDevice) => {
@@ -1420,7 +1444,7 @@ export default function DevicesScreen() {
         )}
 
         <FlatList
-          data={displayDevices}
+          data={roleVisibleDevices}
           keyExtractor={(item) => item.id}
           // FlatList needs to remount when numColumns changes; use the
           // count itself as the key so portrait↔landscape rotations
@@ -1433,6 +1457,37 @@ export default function DevicesScreen() {
           onRefresh={refreshDevices}
           ListHeaderComponent={(
             <>
+              <View style={{ backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 12 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "800" }}>Fleet roles</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 }}>
+                  Master coordinates. Enabled workers run bounded tasks; OpenCode is the default worker runner. One device may do both.
+                </Text>
+                <Pressable
+                  onPress={() => { void setOpportunisticFleet(!opportunisticFleet); }}
+                  style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: opportunisticFleet ? c.accent : c.border, backgroundColor: opportunisticFleet ? c.accentSoft : c.bgInput, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginTop: 9 }}
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: opportunisticFleet }}
+                  accessibilityLabel="Use enabled worker devices automatically"
+                >
+                  <Text style={{ color: opportunisticFleet ? c.accent : c.textMuted, fontSize: 11, fontWeight: "700" }}>
+                    {opportunisticFleet ? "Automatic worker use · On" : "Automatic worker use · Off"}
+                  </Text>
+                </Pressable>
+                {primaryDeviceId && devices.some((device) => device.id !== primaryDeviceId) ? (
+                  <Pressable
+                    onPress={() => { void setShowWorkerDevices(!showWorkerDevices); }}
+                    style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: c.border, backgroundColor: c.bgInput, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginTop: 7 }}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: showWorkerDevices }}
+                  >
+                    <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: "700" }}>
+                      {showWorkerDevices
+                        ? "Hide worker devices"
+                        : `Show worker devices · ${devices.filter((device) => device.id !== primaryDeviceId && device.online).length}/${devices.filter((device) => device.id !== primaryDeviceId).length} ready`}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
               {user?.isOwner === true ? <Pressable
                 testID="devices-remoteless-card"
                 disabled={!codingModeReady}
@@ -1523,12 +1578,18 @@ export default function DevicesScreen() {
               connectionStatus={connectionStatus}
               isStale={unreachableDeviceIds.includes(item.id)}
               isPrimary={primaryDeviceId === item.id}
+              isWorker={workerDeviceIds.includes(item.id)}
               isSecondary={secondaryDeviceId === item.id}
               isPooledConnected={connectedSet.has(item.id)}
               defaultRunner={primaryRunnerByDevice[item.id] || ""}
               onSelect={() => selectDevice(item)}
               onSetPrimary={() => {
                 void setPrimaryDevice(item.id).catch((e: any) =>
+                  Alert.alert("Error", e?.message || "Failed"),
+                );
+              }}
+              onToggleWorker={() => {
+                void setWorkerDevice(item.id, !workerDeviceIds.includes(item.id)).catch((e: any) =>
                   Alert.alert("Error", e?.message || "Failed"),
                 );
               }}

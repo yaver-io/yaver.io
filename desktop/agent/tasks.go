@@ -757,7 +757,7 @@ func (tm *TaskManager) GetRunnerInfos() []RunnerInfo {
 		if !ok {
 			return
 		}
-		if _, err := exec.LookPath(cfg.Command); err != nil {
+		if resolveRunnerBinary(cfg.Command) == "" {
 			info.Installed = false
 			return
 		}
@@ -814,7 +814,7 @@ func (tm *TaskManager) GetRunnerInfos() []RunnerInfo {
 		if !ok {
 			continue
 		}
-		if _, err := exec.LookPath(cfg.Command); err != nil {
+		if resolveRunnerBinary(cfg.Command) == "" {
 			continue
 		}
 		healthStatus := "ready"
@@ -1026,16 +1026,18 @@ type ImageAttachment struct {
 // TaskSliceContract describes the repo/workdir isolation policy for one task slice.
 // It is metadata only and must never contain raw secrets such as API keys.
 type TaskSliceContract struct {
-	RunID            string `json:"runId,omitempty"`
-	NodeID           string `json:"nodeId,omitempty"`
-	DeviceID         string `json:"deviceId,omitempty"`
-	DeviceName       string `json:"deviceName,omitempty"`
-	SourceWorkDir    string `json:"sourceWorkDir,omitempty"`
-	EffectiveWorkDir string `json:"effectiveWorkDir,omitempty"`
-	GitRemote        string `json:"gitRemote,omitempty"`
-	GitBranch        string `json:"gitBranch,omitempty"`
-	GitCommit        string `json:"gitCommit,omitempty"`
-	IsolationMode    string `json:"isolationMode,omitempty"`
+	RunID              string `json:"runId,omitempty"`
+	NodeID             string `json:"nodeId,omitempty"`
+	OrchestrationRole  string `json:"orchestrationRole,omitempty"`
+	OrchestrationStage string `json:"orchestrationStage,omitempty"`
+	DeviceID           string `json:"deviceId,omitempty"`
+	DeviceName         string `json:"deviceName,omitempty"`
+	SourceWorkDir      string `json:"sourceWorkDir,omitempty"`
+	EffectiveWorkDir   string `json:"effectiveWorkDir,omitempty"`
+	GitRemote          string `json:"gitRemote,omitempty"`
+	GitBranch          string `json:"gitBranch,omitempty"`
+	GitCommit          string `json:"gitCommit,omitempty"`
+	IsolationMode      string `json:"isolationMode,omitempty"`
 }
 
 type TaskCreateOptions struct {
@@ -1874,6 +1876,7 @@ type TaskInfo struct {
 	DiffShortstat       string                 `json:"diffShortstat,omitempty"`
 	FeedbackID          string                 `json:"feedbackId,omitempty"`
 	AskFreely           bool                   `json:"askFreely,omitempty"`
+	SliceContract       *TaskSliceContract     `json:"sliceContract,omitempty"`
 	Placement           *TaskPlacementMetadata `json:"placement,omitempty"`
 }
 
@@ -2225,14 +2228,16 @@ func (tm *TaskManager) persistAsync() {
 // CheckRunner verifies that the configured runner binary exists and is callable.
 // Returns nil if the runner is healthy, or an error with a user-friendly message.
 func (tm *TaskManager) CheckRunner() error {
-	// 1. Check if the binary exists in PATH.
+	// 1. Check if the binary exists in PATH or a supported per-user install
+	// directory. OpenCode's own installer uses ~/.opencode/bin, which is often
+	// absent from systemd's PATH even though the runner is fully usable.
 	// Under the Android proot sandbox the runner lives INSIDE the rootfs, not on
 	// the host PATH, so a host LookPath would always miss. Skip it and let the
 	// (sandbox-wrapped) version check below be the authority.
 	if _, active := sandboxConfigFromEnv(); !active {
-		path, err := exec.LookPath(tm.runner.Command)
-		if err != nil {
-			return fmt.Errorf("%s not found in PATH — install it first (https://docs.anthropic.com/en/docs/claude-code)", tm.runner.Command)
+		path := resolveRunnerBinary(tm.runner.Command)
+		if path == "" {
+			return fmt.Errorf("%s not found in PATH or common locations — install it first", tm.runner.Command)
 		}
 		log.Printf("[runner-check] Found %s at %s", tm.runner.Command, path)
 	}
@@ -2241,7 +2246,11 @@ func (tm *TaskManager) CheckRunner() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, tm.runner.Command, "--version")
+	command := resolveRunnerBinary(tm.runner.Command)
+	if command == "" {
+		command = tm.runner.Command
+	}
+	cmd := exec.CommandContext(ctx, command, "--version")
 	// Use same env setup as startProcess
 	home, _ := os.UserHomeDir()
 	if home != "" {
@@ -2834,6 +2843,7 @@ func commonExtraPaths() string {
 		return ""
 	}
 	paths := []string{
+		filepath.Join(home, ".opencode", "bin"),
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, ".cargo", "bin"),
 		filepath.Join(home, "go", "bin"),
@@ -5679,6 +5689,7 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			DiffShortstat:    t.DiffShortstat,
 			FeedbackID:       t.FeedbackID,
 			AskFreely:        t.AskFreely,
+			SliceContract:    t.SliceContract,
 			Placement:        t.Placement,
 		})
 	}

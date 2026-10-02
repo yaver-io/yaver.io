@@ -44,6 +44,9 @@ final class YaverStore: ObservableObject {
     // key off the config, never a per-surface copy). Nil = single-box.
     @Published var machineRoles: MachineRegistry.MachineRolesRow?
     @Published var primaryDeviceId: String?
+    @Published var workerDeviceIds: [String] = []
+    @Published var showWorkerDevices = false
+    @Published var opportunisticFleet = true
     /// deviceId → display name, cached from the registry fetches so the split
     /// badge can name boxes without a second network call.
     @Published var deviceNamesById: [String: String] = [:]
@@ -260,7 +263,12 @@ final class YaverStore: ObservableObject {
     }
 
     func adoptSettings(_ settings: MachineRegistry.UserSettings?, devices: [RegisteredDevice] = []) {
-        if let settings { primaryDeviceId = settings.primaryDeviceId }
+        if let settings {
+            primaryDeviceId = settings.primaryDeviceId
+            workerDeviceIds = settings.workerDeviceIds ?? []
+            showWorkerDevices = settings.showWorkerDevices == true
+            opportunisticFleet = settings.opportunisticFleet ?? true
+        }
         if let theme = settings?.appearanceThemeBySurface?
             .last(where: { $0.surface == appearanceSurface })?.theme,
            theme == "light" || theme == "dark" {

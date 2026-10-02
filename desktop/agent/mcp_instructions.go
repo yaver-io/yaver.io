@@ -124,6 +124,15 @@ Existing app integration:
   the actual project. Use verify=web when a browser bundle is part of the
   requested surface.
 
+Fleet coding:
+
+  For substantial coding work, prefer agent_fleet_run. It makes the master
+  produce architecture, roadmap, risks, and a testing strategy; runs an
+  OpenCode worker by default; then returns to the master for independent
+  validation of the worker report and available diff evidence. Master and
+  worker may be separate runner processes on the same computer. Poll with
+  agent_graph_show. The workflow never authorizes push or deploy.
+
 OpenRouter inside an app:
 
   For a generated Expo + Convex starter, call yaver_openrouter_integrate at

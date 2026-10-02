@@ -66,3 +66,32 @@ func TestBuildAgentGraphTemplateFullUsesChatNodes(t *testing.T) {
 		t.Fatalf("expected verify to depend on implement, got %#v", nodes[2].DependsOn)
 	}
 }
+
+func TestBuildAgentGraphTemplateFleetUsesMasterOpenCodeMasterContract(t *testing.T) {
+	nodes := buildAgentGraphTemplate(AgentGraphCreateRequest{
+		WorkDir: "/tmp/example", Prompt: "Build the feature", Template: "fleet",
+		MasterRunner: "codex", MasterModel: "master-model", WorkerModel: "deepseek/deepseek-flash",
+	})
+	if len(nodes) != 3 {
+		t.Fatalf("fleet nodes = %d, want 3", len(nodes))
+	}
+	if nodes[0].OrchestrationRole != "master" || nodes[0].Runner != "codex" || nodes[0].DesignPoints != 1 {
+		t.Fatalf("master plan node = %#v", nodes[0])
+	}
+	if nodes[1].OrchestrationRole != "worker" || nodes[1].Runner != "opencode" || nodes[1].Model != "deepseek/deepseek-flash" {
+		t.Fatalf("worker node = %#v", nodes[1])
+	}
+	if !strings.Contains(nodes[1].Prompt, "WORKER_REPORT") || !strings.Contains(nodes[1].Prompt, "iterating through the relevant tests") {
+		t.Fatalf("worker prompt lacks iteration/report contract: %s", nodes[1].Prompt)
+	}
+	if nodes[2].OrchestrationRole != "master" || len(nodes[2].DependsOn) != 2 || !strings.Contains(nodes[2].Prompt, "VALIDATION_REPORT") {
+		t.Fatalf("master validation node = %#v", nodes[2])
+	}
+}
+
+func TestNormalizeAgentNodesRejectsUnknownOrchestrationRole(t *testing.T) {
+	_, err := normalizeAgentNodes(t.TempDir(), "", "", nil, []AgentGraphNodeSpec{{ID: "bad", Kind: AgentNodeChat, OrchestrationRole: "boss"}})
+	if err == nil || !strings.Contains(err.Error(), "invalid orchestration role") {
+		t.Fatalf("error = %v, want invalid orchestration role", err)
+	}
+}

@@ -1090,12 +1090,18 @@ func remoteAgentJSONForDevice(ctx context.Context, deviceHint, method, path stri
 		}
 		bodyJSON = data
 	}
+	idempotencyKey := ""
+	if method == http.MethodPost && path == "/tasks" {
+		idempotencyKey = "remote-task:" + newSigNonce()
+		applyRemoteTaskIdempotency(candidates, idempotencyKey)
+	}
 	_, status, raw, err := doRemoteAgentRequest(ctx, candidates, token, method, path, bodyJSON, 60*time.Second)
 	if err != nil && staleRelayPasswordTransportError(err) && repairRelayPasswordForRemoteHTTP(ctx) {
 		candidates, token, err = resolveRemoteAgentCandidates(deviceHint)
 		if err != nil {
 			return err
 		}
+		applyRemoteTaskIdempotency(candidates, idempotencyKey)
 		_, status, raw, err = doRemoteAgentRequest(ctx, candidates, token, method, path, bodyJSON, 60*time.Second)
 	}
 	if err != nil {
@@ -1106,6 +1112,7 @@ func remoteAgentJSONForDevice(ctx context.Context, deviceHint, method, path stri
 		if err != nil {
 			return err
 		}
+		applyRemoteTaskIdempotency(candidates, idempotencyKey)
 		_, status, raw, err = doRemoteAgentRequest(ctx, candidates, token, method, path, bodyJSON, 60*time.Second)
 		if err != nil {
 			return err
@@ -1122,6 +1129,18 @@ func remoteAgentJSONForDevice(ctx context.Context, deviceHint, method, path stri
 		return nil
 	}
 	return json.Unmarshal(raw, out)
+}
+
+func applyRemoteTaskIdempotency(candidates []RemoteAgentCandidate, key string) {
+	if key == "" {
+		return
+	}
+	for i := range candidates {
+		if candidates[i].Headers == nil {
+			candidates[i].Headers = map[string]string{}
+		}
+		candidates[i].Headers["Idempotency-Key"] = key
+	}
 }
 
 // staleRelayPasswordHTTP is the status-gated form of the ONE classifier.

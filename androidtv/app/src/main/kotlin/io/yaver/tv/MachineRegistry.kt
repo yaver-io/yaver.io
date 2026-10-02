@@ -93,6 +93,11 @@ object MachineRegistry {
                 relayPassword = s.optString("relayPassword").ifEmpty { null },
                 primaryDeviceId = s.optString("primaryDeviceId").ifEmpty { null },
                 secondaryDeviceId = s.optString("secondaryDeviceId").ifEmpty { null },
+                workerDeviceIds = s.optJSONArray("workerDeviceIds")?.let { rows ->
+                    (0 until rows.length()).mapNotNull { i -> rows.optString(i).takeIf(String::isNotEmpty) }
+                } ?: emptyList(),
+                showWorkerDevices = s.optBoolean("showWorkerDevices", false),
+                opportunisticFleet = if (s.has("opportunisticFleet")) s.optBoolean("opportunisticFleet") else true,
                 primaryRunnerByDevice = preferences.runners.takeIf { it.isNotEmpty() },
                 primaryModelByDevice = preferences.models.takeIf { it.isNotEmpty() },
                 primaryReasoningEffortByDevice = preferences.reasoningEfforts.takeIf { it.isNotEmpty() },

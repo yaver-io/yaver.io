@@ -1038,6 +1038,14 @@ export default defineSchema({
     // Value is devices.deviceId (uuid), not an Id<"devices">, so the
     // pref survives a device record being deleted and re-created.
     primaryDeviceId: v.optional(v.string()),
+    // Fleet roles: primaryDeviceId is the single user-selected master;
+    // workerDeviceIds are eligible execution nodes. A device may be in both so
+    // Codex/Claude can coordinate OpenCode locally on one machine.
+    // showWorkerDevices controls
+    // progressive disclosure across clients, not authorization or routing.
+    workerDeviceIds: v.optional(v.array(v.string())),
+    showWorkerDevices: v.optional(v.boolean()),
+    opportunisticFleet: v.optional(v.boolean()),
     // Optional second elevated device. Surfaced via `yaver secondary
     // {set,unset,status}`, `yaver ssh secondary`, the mobile + web
     // pickers, and the watchdog (gets the same tight 90s staleness

@@ -5260,6 +5260,9 @@ http.route({
         moreOptionalTools: body.moreOptionalTools,
         // Client sends null to clear the preference, undefined to leave untouched.
         primaryDeviceId: body.primaryDeviceId,
+        workerDeviceIds: body.workerDeviceIds,
+        showWorkerDevices: body.showWorkerDevices,
+        opportunisticFleet: body.opportunisticFleet,
         secondaryDeviceId: body.secondaryDeviceId,
         // Per-device coding agent — forwarded to the mutation's
         // primaryRunnerByDevice merge logic. Without this forward the

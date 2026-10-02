@@ -227,7 +227,7 @@ run small models or background jobs while their user sleeps.
 
 | Capability | Tools |
 |---|---|
-| **Agent graph (distributed inference fabric)** | `agent_graph_list`, `agent_graph_show`, `agent_graph_start`, `agent_graph_stop`, `agent_machine_inventory` |
+| **Agent graph (distributed inference fabric)** | `agent_fleet_run`, `agent_graph_list`, `agent_graph_show`, `agent_graph_start`, `agent_graph_stop`, `agent_machine_inventory` |
 | **Edge profiles (phone capabilities)** | `edgeProfile` on every device record — surfaced via `mobile_api_devices` |
 | **Model hosting** | `models_list`, `models_pull`, `models_recommend`, `models_remove`, `models_run`, `models_serve`, `models_ps`, `models_status` |
 | **Ollama / local inference** | `copilot_complete`, `copilot_models` (Qwen / DeepSeek / …) |

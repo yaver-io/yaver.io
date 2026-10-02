@@ -227,6 +227,7 @@ export interface Task {
    *  Vibing surface can render Install + streamed retry instead of prose. */
   capabilityGap?: unknown;
   failure?: TaskFailureWire | null;
+  sliceContract?: TaskSliceContract;
 }
 
 export interface TaskExecutionIdentity {
@@ -1679,6 +1680,8 @@ export interface AgentNodePlacement {
 export interface TaskSliceContract {
   runId?: string;
   nodeId?: string;
+  orchestrationRole?: "master" | "worker";
+  orchestrationStage?: "architecture" | "implementation" | "validation" | string;
   deviceId?: string;
   deviceName?: string;
   sourceWorkDir?: string;
@@ -1701,6 +1704,8 @@ export interface AgentGraphNode {
     preferredDevice?: string;
     allowedRunners?: string[];
     workDir?: string;
+    orchestrationRole?: "master" | "worker";
+    workspaceGroup?: string;
   };
   status: "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
   taskId?: string;
@@ -3928,12 +3933,16 @@ export class AgentClient {
     prompt: string;
     runner?: string;
     model?: string;
-    template?: "full" | "ship" | "ask";
+    template?: "full" | "ship" | "ask" | "fleet";
+    masterRunner?: string;
+    masterModel?: string;
+    workerRunner?: string;
+    workerModel?: string;
     maxParallel?: number;
     preferredDevice?: string;
     allowedDevices?: string[];
     allowedRunners?: string[];
-    // Cost-aware duo/trio routing: 0/undefined = default (single-model),
+    // Cost-aware routing: 0/undefined = saved per-machine fleet defaults,
     // 2 = duo (claude-code + glm), 3 = trio (claude-code + codex + glm).
     hybridDegree?: number;
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
@@ -3946,6 +3955,10 @@ export class AgentClient {
         workDir: params.workDir,
         prompt: params.prompt,
         runner: params.runner ?? "",
+        masterRunner: params.masterRunner ?? "",
+        masterModel: params.masterModel ?? "",
+        workerRunner: params.workerRunner ?? "",
+        workerModel: params.workerModel ?? "",
         model: params.model ?? "",
         template: params.template ?? "full",
         maxParallel: params.maxParallel ?? 2,

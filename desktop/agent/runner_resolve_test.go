@@ -98,6 +98,7 @@ func TestRunnerCandidatePaths_IncludesWellKnownDirs(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 	got := runnerCandidatePaths("claude")
 	wantSubstrings := []string{
+		filepath.Join(tmpHome, ".opencode", "bin", "claude"),
 		filepath.Join(tmpHome, ".npm-global", "bin", "claude"),
 		filepath.Join(tmpHome, ".bun", "bin", "claude"),
 		filepath.Join(tmpHome, ".local", "bin", "claude"),

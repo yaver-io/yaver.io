@@ -120,6 +120,7 @@ func runnerCandidatePathsFor(goos, name, home string, getenv func(string) string
 	dirs := []string{}
 	if home != "" {
 		dirs = append(dirs,
+			filepath.Join(home, ".opencode", "bin"),
 			filepath.Join(home, ".npm-global", "bin"),
 			filepath.Join(home, ".local", "bin"),
 			filepath.Join(home, ".bun", "bin"),

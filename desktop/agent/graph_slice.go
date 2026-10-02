@@ -25,7 +25,7 @@ func currentGitBranch(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func ensureGraphNodeWorktree(ctx context.Context, srcRepo, runID, nodeID string) (string, error) {
+func ensureGraphNodeWorktree(ctx context.Context, srcRepo, runID, nodeID string, preserveExisting bool) (string, error) {
 	if srcRepo == "" {
 		return "", fmt.Errorf("source repo required")
 	}
@@ -59,6 +59,9 @@ func ensureGraphNodeWorktree(ctx context.Context, srcRepo, runID, nodeID string)
 		}
 		return wtPath, nil
 	}
+	if preserveExisting {
+		return wtPath, nil
+	}
 	_ = exec.CommandContext(ctx, "git", "-C", wtPath, "reset", "--hard").Run()
 	_ = exec.CommandContext(ctx, "git", "-C", wtPath, "clean", "-fd").Run()
 	_ = exec.CommandContext(ctx, "git", "-C", wtPath, "fetch", "origin").Run()
@@ -74,14 +77,16 @@ func ensureGraphNodeWorktree(ctx context.Context, srcRepo, runID, nodeID string)
 func buildGraphSliceContract(runID string, spec AgentGraphNodeSpec, placement *AgentNodePlacement, effectiveWorkDir, isolationMode string) *TaskSliceContract {
 	remote, branch, commit := getGitInfo(spec.WorkDir)
 	contract := &TaskSliceContract{
-		RunID:            runID,
-		NodeID:           spec.ID,
-		SourceWorkDir:    spec.WorkDir,
-		EffectiveWorkDir: effectiveWorkDir,
-		GitRemote:        remote,
-		GitBranch:        branch,
-		GitCommit:        commit,
-		IsolationMode:    isolationMode,
+		RunID:              runID,
+		NodeID:             spec.ID,
+		OrchestrationRole:  spec.OrchestrationRole,
+		OrchestrationStage: graphNodeOrchestrationStage(spec),
+		SourceWorkDir:      spec.WorkDir,
+		EffectiveWorkDir:   effectiveWorkDir,
+		GitRemote:          remote,
+		GitBranch:          branch,
+		GitCommit:          commit,
+		IsolationMode:      isolationMode,
 	}
 	if placement != nil {
 		contract.DeviceID = placement.DeviceID
@@ -90,17 +95,39 @@ func buildGraphSliceContract(runID string, spec AgentGraphNodeSpec, placement *A
 	return contract
 }
 
+func graphNodeOrchestrationStage(spec AgentGraphNodeSpec) string {
+	switch strings.TrimSpace(spec.ID) {
+	case "master-plan":
+		return "architecture"
+	case "worker-implement":
+		return "implementation"
+	case "master-validate":
+		return "validation"
+	default:
+		return ""
+	}
+}
+
 func prepareGraphNodeSlice(ctx context.Context, runID string, spec AgentGraphNodeSpec, placement *AgentNodePlacement) (string, *TaskSliceContract, error) {
 	workDir := spec.WorkDir
 	isolationMode := "shared-workdir"
 	isLocal := placement == nil || placement.DeviceID == "" || placement.DeviceID == "local"
 	if isLocal && looksLikeGitRepo(spec.WorkDir) {
-		wtPath, err := ensureGraphNodeWorktree(ctx, spec.WorkDir, runID, spec.ID)
+		workspaceID := spec.ID
+		preserveExisting := false
+		if strings.TrimSpace(spec.WorkspaceGroup) != "" {
+			workspaceID = strings.TrimSpace(spec.WorkspaceGroup)
+			preserveExisting = true
+		}
+		wtPath, err := ensureGraphNodeWorktree(ctx, spec.WorkDir, runID, workspaceID, preserveExisting)
 		if err != nil {
 			return "", nil, err
 		}
 		workDir = wtPath
 		isolationMode = "git-worktree"
+		if preserveExisting {
+			isolationMode = "git-worktree-shared-chain"
+		}
 	} else if !isLocal {
 		// The source host's absolute path will not exist on a remote
 		// machine; sending it would either fail or silently cwd into an

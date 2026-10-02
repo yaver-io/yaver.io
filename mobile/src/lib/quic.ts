@@ -606,6 +606,7 @@ export interface Task {
   projectName?: string;
   source?: string;        // Task origin: "mobile", "mcp", "cli", "vibing", "vibing-cache", "todolist"
   workDir?: string;       // Per-task working directory reported by the agent.
+  sliceContract?: TaskSliceContract;
   /** Phone-local checkout slug for boxless coding tasks. Never an absolute path. */
   localCheckoutId?: string;
   turns?: ConversationTurn[];  // Full conversation history (detail only)
@@ -878,6 +879,8 @@ export interface AgentGraphNode {
     preferredDevice?: string;
     allowedDevices?: string[];
     allowedRunners?: string[];
+    orchestrationRole?: "master" | "worker";
+    workspaceGroup?: string;
   };
   status: AgentNodeStatus;
   taskId?: string;
@@ -917,6 +920,8 @@ export interface AgentNodePlacement {
 export interface TaskSliceContract {
   runId?: string;
   nodeId?: string;
+  orchestrationRole?: "master" | "worker";
+  orchestrationStage?: "architecture" | "implementation" | "validation" | string;
   deviceId?: string;
   deviceName?: string;
   sourceWorkDir?: string;
@@ -12550,12 +12555,16 @@ export class QuicClient {
     prompt: string;
     runner?: string;
     model?: string;
-    template?: "full" | "ship";
+    template?: "full" | "ship" | "fleet";
+    masterRunner?: string;
+    masterModel?: string;
+    workerRunner?: string;
+    workerModel?: string;
     maxParallel?: number;
     preferredDevice?: string;
     allowedDevices?: string[];
     allowedRunners?: string[];
-    // Cost-aware duo/trio routing: 0/undefined = single-model (your plan),
+    // Cost-aware routing: 0/undefined = saved per-machine fleet defaults,
     // 2 = duo (claude-code + glm), 3 = trio (claude-code + codex + glm).
     hybridDegree?: number;
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
@@ -12568,6 +12577,10 @@ export class QuicClient {
           workDir: params.workDir,
           prompt: params.prompt,
           runner: params.runner ?? "",
+          masterRunner: params.masterRunner ?? "",
+          masterModel: params.masterModel ?? "",
+          workerRunner: params.workerRunner ?? "",
+          workerModel: params.workerModel ?? "",
           model: params.model ?? "",
           template: params.template ?? "full",
           maxParallel: params.maxParallel ?? 2,

@@ -425,6 +425,8 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     connectedDeviceIds,
     primaryDeviceId,
     secondaryDeviceId,
+    showWorkerDevices,
+    setShowWorkerDevices,
     codingMode,
     setCodingMode,
     setMachineRolesFavorite,
@@ -436,8 +438,12 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
 
   const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
   const eligibleDevices = React.useMemo(
-    () =>
-      eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id).sort((a, b) => {
+    () => {
+      const eligible = eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id);
+      const visible = primaryDeviceId && !showWorkerDevices
+        ? eligible.filter((device) => device.id === primaryDeviceId)
+        : eligible;
+      return visible.sort((a, b) => {
         const rank = (device: Device) => {
           if (device.id === primaryDeviceId) return 0;
           if (device.id === secondaryDeviceId) return 1;
@@ -447,8 +453,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
         const delta = rank(a) - rank(b);
         if (delta !== 0) return delta;
         return a.name.localeCompare(b.name);
-      }),
-    [devices, connectedSet, activeDevice?.id, primaryDeviceId, secondaryDeviceId],
+      });
+    },
+    [devices, connectedSet, activeDevice?.id, primaryDeviceId, secondaryDeviceId, showWorkerDevices],
   );
 
   // Parked/managed machines — not devices, so they never surface in the
@@ -967,6 +974,28 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                 ? "Remote boxes support builds, shells, tests, and live reload. No remote box keeps coding and Git work on this phone with DeepSeek; it is never selected by default."
                 : "Choose the remote box that should run this work."}
             </Text>
+
+            {primaryDeviceId && devices.some((device) => device.id !== primaryDeviceId) ? (
+              <Pressable
+                onPress={() => { void setShowWorkerDevices(!showWorkerDevices); }}
+                style={({ pressed }) => ({
+                  alignSelf: "flex-start",
+                  borderWidth: 1,
+                  borderColor: c.border,
+                  borderRadius: 999,
+                  paddingHorizontal: 12,
+                  paddingVertical: 7,
+                  marginBottom: 14,
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "700" }}>
+                  {showWorkerDevices
+                    ? `Hide worker nodes · ${devices.filter((device) => device.id !== primaryDeviceId && device.online).length} ready`
+                    : `Show worker nodes · ${devices.filter((device) => device.id !== primaryDeviceId && device.online).length}/${devices.filter((device) => device.id !== primaryDeviceId).length} ready`}
+                </Text>
+              </Pressable>
+            ) : null}
 
             {remotelessEnabled ? <Pressable
               onPress={() => {
