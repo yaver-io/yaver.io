@@ -50,5 +50,15 @@ class UploadPlayStoreTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     MODULE.parse_version_code_hints(value, count)
 
+    def test_highest_remote_version_code_unions_bundles_and_tracks(self):
+        bundles = [{"versionCode": 317}]
+        tracks = [{"releases": [{"versionCodes": [316, 318]}]}]
+        self.assertEqual(
+            MODULE.highest_remote_version_code(bundles, tracks), 318
+        )
+
+    def test_highest_remote_version_code_handles_empty_inventory(self):
+        self.assertEqual(MODULE.highest_remote_version_code([], []), 0)
+
 if __name__ == "__main__":
     unittest.main()

@@ -223,7 +223,15 @@ try:
         packageName="io.yaver.mobile",
         editId=edit_id,
     ).execute().get("bundles", [])
-    max_version = max((int(bundle["versionCode"]) for bundle in bundles), default=0)
+    tracks = service.edits().tracks().list(
+        packageName="io.yaver.mobile",
+        editId=edit_id,
+    ).execute().get("tracks", [])
+    codes = [int(bundle["versionCode"]) for bundle in bundles]
+    for track in tracks:
+        for release in track.get("releases", []):
+            codes.extend(int(code) for code in release.get("versionCodes", []))
+    max_version = max(codes, default=0)
     print(max_version)
 finally:
     service.edits().delete(packageName="io.yaver.mobile", editId=edit_id).execute()

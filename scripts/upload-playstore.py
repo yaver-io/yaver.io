@@ -62,12 +62,33 @@ def next_version_code(package: str, floor: int):
         bundles = service.edits().bundles().list(
             packageName=package, editId=edit_id
         ).execute().get("bundles", [])
-        remote_max = max(
-            (int(bundle["versionCode"]) for bundle in bundles), default=0
-        )
+        tracks = service.edits().tracks().list(
+            packageName=package, editId=edit_id
+        ).execute().get("tracks", [])
+        remote_max = highest_remote_version_code(bundles, tracks)
     finally:
         service.edits().delete(packageName=package, editId=edit_id).execute()
     print(max(floor, remote_max + 1), flush=True)
+
+
+def highest_remote_version_code(bundles, tracks):
+    """Return the highest code reserved by either Play inventory surface.
+
+    Play's bundle and track inventories can temporarily disagree. A code seen
+    by either is permanently unavailable, so release preflights must union the
+    two instead of treating tracks as a fallback only when bundles.list fails.
+    """
+    codes = []
+    for bundle in bundles or []:
+        code = bundle.get("versionCode")
+        if isinstance(code, int):
+            codes.append(code)
+    for track in tracks or []:
+        for release in track.get("releases", []):
+            for code in release.get("versionCodes", []):
+                if isinstance(code, int):
+                    codes.append(code)
+    return max(codes, default=0)
 
 def extract_aab_version_code(aab_path: str):
     """Best-effort versionCode for a build, read from the AAB's own manifest.
@@ -206,27 +227,25 @@ def main():
         bundles = service.edits().bundles().list(
             packageName=PACKAGE, editId=edit_id
         ).execute().get("bundles", [])
-        for bundle in bundles:
-            code = bundle.get("versionCode")
-            if isinstance(code, int) and code > highest:
-                highest = code
     except Exception as exc:
         print(
             f"note: Play bundle inventory unavailable ({exc}); "
-            "falling back to track inventory.",
+            "continuing with track inventory.",
             flush=True,
         )
-        try:
-            tracks = service.edits().tracks().list(
-                packageName=PACKAGE, editId=edit_id
-            ).execute().get("tracks", [])
-            for tr in tracks:
-                for rel in tr.get("releases", []):
-                    for code in rel.get("versionCodes", []):
-                        if isinstance(code, int) and code > highest:
-                            highest = code
-        except Exception:
-            highest = 0
+        bundles = []
+    try:
+        tracks = service.edits().tracks().list(
+            packageName=PACKAGE, editId=edit_id
+        ).execute().get("tracks", [])
+    except Exception as exc:
+        print(
+            f"note: Play track inventory unavailable ({exc}); "
+            "continuing with bundle inventory.",
+            flush=True,
+        )
+        tracks = []
+    highest = highest_remote_version_code(bundles, tracks)
 
     if highest:
         for index, aab_path in enumerate(AAB_PATHS):
