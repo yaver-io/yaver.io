@@ -77,7 +77,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # macos-latest moved to macOS 26 and electron-builder 26.15.3 can
+          # fail while unlocking its temporary signing keychain there. Keep
+          # the signed arm64 release lane on the proven macOS 15 image.
+          - os: macos-15
             platform: mac
             arch: arm64
           - os: macos-15-intel

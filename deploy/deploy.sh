@@ -277,6 +277,7 @@ case "$target" in
     ;;
   desktop|gui)
     require_deploy_boundary
+    run node "$ROOT/scripts/test-release-desktop-contract.mjs"
     gui_version="$(node -e "console.log(require('./versions.json').gui)")"
     package_version="$(node -e "console.log(require('./electron/package.json').version)")"
     if [ "$gui_version" != "$package_version" ]; then
