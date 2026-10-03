@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/host"
@@ -32,7 +33,16 @@ type MachineInfo struct {
 	CurrentWorkDir string               `json:"currentWorkDir,omitempty"`
 	Capabilities   *MachineCapabilities `json:"capabilities,omitempty"`
 	GeoRegion      string               `json:"geoRegion,omitempty"` // coarse egress region only: eu|us|ap|...
-
+	ConnectionKind string               `json:"connectionKind,omitempty"`
+	FleetWorker    bool                 `json:"fleetWorker,omitempty"`
+	// YaverAuthRequired is false only for the SSH-only worker lane. Its
+	// authority is the master's configured OS-level SSH access, not a bearer
+	// token or a public/relay listener.
+	YaverAuthRequired bool   `json:"yaverAuthRequired"`
+	PreferredRunner   string `json:"preferredRunner,omitempty"`
+	PreferredModel    string `json:"preferredModel,omitempty"`
+	StatusReason      string `json:"statusReason,omitempty"`
+	Remedy            string `json:"remedy,omitempty"`
 }
 
 type MachineRunnerCapability struct {
@@ -91,16 +101,41 @@ func listAllMachines(ctx context.Context) []MachineInfo {
 					continue
 				}
 				out = append(out, MachineInfo{
-					DeviceID:  d.DeviceID,
-					Name:      d.Name,
-					Platform:  d.Platform,
-					IsOnline:  d.IsOnline,
-					QuicHost:  d.QuicHost,
-					QuicPort:  d.QuicPort,
-					GeoRegion: d.GeoRegion,
-					Provider:  providerFromHint(d.Platform, d.QuicHost),
+					DeviceID:          d.DeviceID,
+					Name:              d.Name,
+					Platform:          d.Platform,
+					IsOnline:          d.IsOnline,
+					QuicHost:          d.QuicHost,
+					QuicPort:          d.QuicPort,
+					GeoRegion:         d.GeoRegion,
+					Provider:          providerFromHint(d.Platform, d.QuicHost),
+					ConnectionKind:    "yaver",
+					YaverAuthRequired: true,
 				})
 			}
+		}
+	}
+	// SSH-only workers are master-local configuration. They intentionally do
+	// not become Convex devices and therefore never appear in listDevices.
+	if err == nil && cfg != nil {
+		workers := make([]SSHTarget, 0, len(cfg.SSHTargets))
+		for _, target := range cfg.SSHTargets {
+			if target.FleetWorker {
+				workers = append(workers, target)
+			}
+		}
+		if len(workers) > 0 {
+			rows := make([]MachineInfo, len(workers))
+			var wg sync.WaitGroup
+			for i := range workers {
+				wg.Add(1)
+				go func(index int) {
+					defer wg.Done()
+					rows[index] = probeSSHFleetWorker(ctx, workers[index])
+				}(i)
+			}
+			wg.Wait()
+			out = append(out, rows...)
 		}
 	}
 	enrichMachinesWithCapabilities(ctx, out)
@@ -120,20 +155,22 @@ func selfMachine(ctx context.Context) MachineInfo {
 		uptime = info.Uptime
 	}
 	return MachineInfo{
-		DeviceID:       "local",
-		Name:           name,
-		Hostname:       hostname,
-		Platform:       platform,
-		OS:             runtime.GOOS,
-		Arch:           runtime.GOARCH,
-		IsLocal:        true,
-		IsOnline:       true,
-		Uptime:         uptime,
-		Provider:       detectSelfProvider(),
-		Cost:           "$0",
-		CurrentWorkDir: localCurrentWorkDir(),
-		Capabilities:   detectMachineCapabilities(localCurrentWorkDir()),
-		GeoRegion:      cachedEgressRegion(),
+		DeviceID:          "local",
+		Name:              name,
+		Hostname:          hostname,
+		Platform:          platform,
+		OS:                runtime.GOOS,
+		Arch:              runtime.GOARCH,
+		IsLocal:           true,
+		IsOnline:          true,
+		Uptime:            uptime,
+		Provider:          detectSelfProvider(),
+		Cost:              "$0",
+		CurrentWorkDir:    localCurrentWorkDir(),
+		Capabilities:      detectMachineCapabilities(localCurrentWorkDir()),
+		GeoRegion:         cachedEgressRegion(),
+		ConnectionKind:    "local",
+		YaverAuthRequired: true,
 	}
 }
 
@@ -344,6 +381,9 @@ func enrichMachinesWithCapabilities(ctx context.Context, machines []MachineInfo)
 	}
 	for i := range machines {
 		if machines[i].IsLocal {
+			continue
+		}
+		if machines[i].ConnectionKind == "ssh" {
 			continue
 		}
 		if !machines[i].IsOnline {

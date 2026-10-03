@@ -38,9 +38,11 @@ type Config struct {
 	// is offline. Maps a name/alias → how to reach it over plain SSH
 	// (user@host:port + optional identity file). Auto-populated (host only)
 	// from the account's device rows when authed, and user-editable via
-	// `yaver ssh add <name> <user@host[:port]> [--identity <key>]`.
-	// Passwords are NOT stored here in plaintext — use an SSH key /
-	// ssh-agent (identity_file), the secure path magara already uses.
+	// `yaver ssh add <name> <user@host[:port]> [--identity <key>]`. Targets
+	// explicitly marked `--worker --work-dir <remote-path>` also form the
+	// master's private SSH-only fleet; they never become Convex device rows.
+	// Legacy targets may contain a plaintext password for sshpass. FleetWorker
+	// rejects that mode: use an SSH key / ssh-agent (identity_file).
 	SSHTargets []SSHTarget `json:"ssh_targets,omitempty"`
 	WebBaseURL string      `json:"web_base_url,omitempty"`
 	// VisionKeys holds vision-LLM provider API keys, keyed by provider

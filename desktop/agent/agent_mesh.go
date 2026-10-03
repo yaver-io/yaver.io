@@ -179,11 +179,11 @@ func planGraphPlacements(req AgentGraphCreateRequest, nodes []AgentGraphNodeSpec
 
 func fleetMachineEligible(prefs *agentFleetPreferences, req AgentGraphCreateRequest, nodes []AgentGraphNodeSpec, machine MachineInfo) bool {
 	if prefs == nil {
-		return true
+		return !machine.FleetWorker || machine.IsOnline || graphExplicitlyAllowsMachine(req, nodes, machine)
 	}
 	// A worker-only fleet stays usable even without an elected master. Once a
 	// master exists, Opportunistic controls automatic worker placement.
-	automaticWorker := prefs.isWorker(machine) && (prefs.ControllerDeviceID == "" || prefs.Opportunistic)
+	automaticWorker := (prefs.isWorker(machine) || (machine.FleetWorker && machine.IsOnline)) && (prefs.ControllerDeviceID == "" || prefs.Opportunistic)
 	return prefs.isController(machine) || automaticWorker || graphExplicitlyAllowsMachine(req, nodes, machine)
 }
 
@@ -433,9 +433,13 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 			reasons = append(reasons, "saved fleet controller available")
 		}
 	}
-	if state != nil && node.OrchestrationRole == "worker" && state.fleetPreferences.isWorker(m) {
+	if state != nil && node.OrchestrationRole == "worker" && (state.fleetPreferences.isWorker(m) || m.FleetWorker) {
 		score += 480
-		reasons = append(reasons, "worker agent role prefers enabled worker node")
+		if m.ConnectionKind == "ssh" {
+			reasons = append(reasons, "worker role uses the master's configured SSH-only worker")
+		} else {
+			reasons = append(reasons, "worker agent role prefers enabled worker node")
+		}
 	}
 	if state != nil && node.OrchestrationRole == "worker" && state.fleetPreferences.isController(m) {
 		// Deliberately no penalty: a single computer may host both the master
@@ -598,6 +602,12 @@ func chooseCandidateRunnerWithState(req AgentGraphCreateRequest, node AgentGraph
 			readyRunner(m.Capabilities, preferred) {
 			return preferred
 		}
+	}
+	if preferred := normalizedPlacementRunner(m.PreferredRunner); preferred != "" &&
+		(len(node.AllowedRunners) == 0 || stringSliceContainsNormalized(node.AllowedRunners, preferred)) &&
+		(len(req.AllowedRunners) == 0 || stringSliceContainsNormalized(req.AllowedRunners, preferred)) &&
+		readyRunner(m.Capabilities, preferred) {
+		return preferred
 	}
 	candidates := inferPreferredRunnerCandidates(node)
 	if sticky := normalizedPlacementRunner(node.PriorRunner); sticky != "" && !stringSliceContainsNormalized(candidates, sticky) {
@@ -766,6 +776,9 @@ func choosePlacementModelForMachine(node AgentGraphNodeSpec, runner string, mach
 		if normalizedPlacementRunner(pref.RunnerID) == normalizedPlacementRunner(runner) && strings.TrimSpace(pref.Model) != "" {
 			return strings.TrimSpace(pref.Model)
 		}
+	}
+	if normalizedPlacementRunner(machine.PreferredRunner) == normalizedPlacementRunner(runner) && strings.TrimSpace(machine.PreferredModel) != "" {
+		return strings.TrimSpace(machine.PreferredModel)
 	}
 	return choosePlacementModel(node, runner)
 }

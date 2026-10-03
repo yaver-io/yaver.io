@@ -27,6 +27,13 @@ type SSHTarget struct {
 	User         string `json:"user,omitempty"`
 	Port         int    `json:"port,omitempty"`
 	IdentityFile string `json:"identity_file,omitempty"`
+	// FleetWorker opts this target into the master's local fleet inventory.
+	// It is reached only through SSH and needs no Yaver account token, Convex
+	// device row, relay registration, or listening agent port.
+	FleetWorker bool   `json:"fleet_worker,omitempty"`
+	WorkDir     string `json:"work_dir,omitempty"`
+	Runner      string `json:"runner,omitempty"`
+	Model       string `json:"model,omitempty"`
 	// Password is OPTIONAL and discouraged (plaintext in local config). Only
 	// used when set AND `sshpass` is installed; the secure path is a key via
 	// IdentityFile / ssh-agent. Kept so the data model is "aware" of it.
@@ -213,28 +220,78 @@ func runSSHTargetSubcommand(args []string) bool {
 		runSSHProfileSubcommand(args[1:])
 		return true
 	case "add":
-		// yaver ssh add <name> <user@host[:port]> [--identity <key>] [--password <pw>]
+		// yaver ssh add <name> <user@host[:port]> [--identity <key>]
+		//   [--worker --work-dir <absolute-path> --runner opencode --model <id>]
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: yaver ssh add <name> <user@host[:port]> [--identity <key>] [--password <pw>]")
+			fmt.Fprintln(os.Stderr, "usage: yaver ssh add <name> <user@host[:port]> [--identity <key>] [--worker --work-dir <absolute-path> --runner <id> --model <id>]")
 			os.Exit(2)
 		}
 		name := args[1]
 		user, host, port := parseUserHostPort(args[2])
 		t := SSHTarget{Name: name, Host: host, User: user, Port: port}
-		for i := 3; i < len(args)-1; i++ {
+		for i := 3; i < len(args); i++ {
 			switch args[i] {
+			case "--worker":
+				t.FleetWorker = true
 			case "--identity", "-i":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --identity requires a value")
+					os.Exit(2)
+				}
 				t.IdentityFile = args[i+1]
 				i++
 			case "--password":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --password requires a value")
+					os.Exit(2)
+				}
 				t.Password = args[i+1]
 				i++
+			case "--work-dir":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --work-dir requires a value")
+					os.Exit(2)
+				}
+				t.WorkDir = strings.TrimSpace(args[i+1])
+				i++
+			case "--runner":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --runner requires a value")
+					os.Exit(2)
+				}
+				t.Runner = normalizeRunnerID(args[i+1])
+				i++
+			case "--model":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --model requires a value")
+					os.Exit(2)
+				}
+				t.Model = strings.TrimSpace(args[i+1])
+				i++
 			case "--port", "-p":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --port requires a value")
+					os.Exit(2)
+				}
 				if p, err := strconv.Atoi(args[i+1]); err == nil {
 					t.Port = p
+				} else {
+					fmt.Fprintln(os.Stderr, "yaver ssh add: --port must be numeric")
+					os.Exit(2)
 				}
 				i++
+			default:
+				fmt.Fprintf(os.Stderr, "yaver ssh add: unknown option %s\n", args[i])
+				os.Exit(2)
 			}
+		}
+		if t.FleetWorker && strings.TrimSpace(t.WorkDir) == "" {
+			fmt.Fprintln(os.Stderr, "yaver ssh add: --worker requires --work-dir on the remote machine")
+			os.Exit(2)
+		}
+		if t.FleetWorker && strings.TrimSpace(t.Password) != "" {
+			fmt.Fprintln(os.Stderr, "yaver ssh add: fleet workers require SSH keys or ssh-agent; --password is not accepted")
+			os.Exit(2)
 		}
 		if t.Host == "" {
 			fmt.Fprintln(os.Stderr, "yaver ssh add: a host is required (user@host)")
@@ -274,6 +331,10 @@ func runSSHTargetSubcommand(args []string) bool {
 				extra += " (key)"
 			}
 			fmt.Printf("  %-20s %s%s\n", t.Name, dest, extra)
+			if t.FleetWorker {
+				fmt.Printf("    fleet worker · cwd=%s · runner=%s\n",
+					t.WorkDir, firstNonEmpty(t.Runner, "opencode"))
+			}
 		}
 		return true
 	case "rm", "remove":

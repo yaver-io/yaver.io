@@ -44,6 +44,7 @@ and the [plugin quickstart](https://developers.openai.com/plugins/quickstart).
 |---|---|---|
 | Same-owner machine inventory and capability probes | `console_machines.go`, `/console/machines`, `/agent/capabilities` | Exists |
 | Cross-machine authenticated dispatch | `agent_mesh_remote.go`, remote `/tasks` calls | Exists |
+| SSH-only worker dispatch (no Yaver account session on worker) | `ssh_fleet_worker.go`, local `ssh_targets` config | Implemented for graph chat nodes; direct SSH only |
 | Dependency-aware graph scheduler | `agent_mode.go`, `/agent/graphs`, MCP `agent_graph_*` | Exists |
 | Machine balancing and task-slot caps | `agent_mesh.go` | Exists, heuristic |
 | Per-device runner/model/provider preference | Convex `userSettings.primaryRunnerByDevice` | Exists |
@@ -101,6 +102,23 @@ work and must not be implied by the UI before then.
 the caller's owner token/device authorization. A compromised relay or another
 relay tenant must not be able to dispatch work.
 
+An explicitly configured SSH-only worker is the narrow exception to the
+*Yaver-token mechanism*, not to authentication. The master must already have
+OS-level key/ssh-agent access recorded in its local SSH target book. The worker
+does not register with Convex, open an agent HTTP port, or join relay/mesh; the
+master invokes a bounded hidden CLI protocol over SSH and sends the task JSON on
+stdin. SSH authenticates the OS principal. This lane deliberately rejects
+password-backed fleet configuration and never turns the elected controller role
+into ambient authority over arbitrary Yaver devices.
+
+For Git repositories, implementation runs in an isolated worker worktree at the
+controller's exact base commit. The worker returns a bounded binary Git patch,
+including new non-ignored files; the controller verifies the base and
+materializes it into the graph's shared integration worktree before master
+validation. Commit drift, an unavailable base, an oversized patch, or an apply
+conflict is a named failure—Yaver never presents report-only output as an
+independently validated remote implementation.
+
 ## Control and data planes
 
 ### Convex control plane
@@ -132,6 +150,12 @@ nodes and the isolated shared-chain worktree.
 There is intentionally no second `agentFleetPolicy` source of truth. Future
 role allowlists and Git policy should extend these rows or use a clearly scoped
 project policy, not duplicate controller/worker identity under new names.
+
+SSH-only workers are different: their host, OS user, identity file, remote work
+directory, runner and model are private master-local configuration under
+`~/.yaver/config.json`. Absolute paths and SSH topology must not be copied into
+Convex. Their inventory IDs use `ssh:<local-name>` and are valid only through
+the master that owns that local target book.
 
 ### Machine-local data plane
 

@@ -973,6 +973,13 @@ export interface MachineInfo {
   provider?: string;
   currentWorkDir?: string;
   capabilities?: MachineCapabilities;
+  connectionKind?: "local" | "yaver" | "ssh" | string;
+  fleetWorker?: boolean;
+  yaverAuthRequired?: boolean;
+  preferredRunner?: string;
+  preferredModel?: string;
+  statusReason?: string;
+  remedy?: string;
 }
 
 /**
@@ -7119,6 +7126,17 @@ export class QuicClient {
     if (path) p.set('path', path);
     const res = await this.fetchWithTimeout(`${this.baseUrl}/shared-storage/list?${p}`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`shared storage list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async sharedStorageSearch(query: string, opts: { id?: string; path?: string; limit?: number } = {}): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ q: query });
+    if (opts.id) p.set('id', opts.id);
+    if (opts.path) p.set('path', opts.path);
+    if (opts.limit) p.set('limit', String(opts.limit));
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/shared-storage/search?${p}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`shared storage search: HTTP ${res.status}`);
     return res.json();
   }
 

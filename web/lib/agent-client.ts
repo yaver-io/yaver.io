@@ -1762,6 +1762,13 @@ export interface MachineInfo {
   provider?: string;
   currentWorkDir?: string;
   capabilities?: MachineCapabilities;
+  connectionKind?: "local" | "yaver" | "ssh" | string;
+  fleetWorker?: boolean;
+  yaverAuthRequired?: boolean;
+  preferredRunner?: string;
+  preferredModel?: string;
+  statusReason?: string;
+  remedy?: string;
 }
 
 export interface InfraNetworkInterface {

@@ -270,7 +270,7 @@ function SharedTab() {
     if (!q.trim() || !activeId) return;
     try {
       const out = await agentClient.sharedStorageSearch(q.trim(), { id: activeId, limit: 50 });
-      const raw: unknown[] = Array.isArray(out?.matches) ? out.matches : Array.isArray(out?.results) ? out.results : [];
+      const raw: unknown[] = Array.isArray(out?.hits) ? out.hits : [];
       const hits: FileEntry[] = raw
         .map((v): FileEntry | null => {
           if (v && typeof v === "object") {

@@ -64,7 +64,10 @@ export default function AgentModeScreen() {
       setRuns(graphs);
       const installed = availableRunners.filter((r) => r.installed);
       setRunners(installed);
-      setMachines((machineInventory.machines || []).filter((m) => m.isOnline));
+      // Keep failed SSH probes visible: their statusReason/remedy is the route
+      // back to a usable worker. Registered devices retain the compact online
+      // list used before the SSH lane existed.
+      setMachines((machineInventory.machines || []).filter((m) => m.isOnline || m.connectionKind === "ssh"));
     } finally {
       setRefreshing(false);
     }
@@ -241,17 +244,23 @@ export default function AgentModeScreen() {
                 {machines.slice(0, 6).map((m) => (
                   <Pressable
                     key={m.deviceId}
-                    onPress={() => setSelectedDevices((current) => current.includes(m.deviceId) ? current.filter((id) => id !== m.deviceId) : [...current, m.deviceId])}
-                    style={[styles.segment, { borderColor: c.border, backgroundColor: selectedDevices.includes(m.deviceId) ? c.accent : c.bg }]}
+                    onPress={() => {
+                      if (!m.isOnline) {
+                        Alert.alert(m.statusReason || `${m.name} is unreachable`, m.remedy || "Check the SSH target and retry the probe.");
+                        return;
+                      }
+                      setSelectedDevices((current) => current.includes(m.deviceId) ? current.filter((id) => id !== m.deviceId) : [...current, m.deviceId]);
+                    }}
+                    style={[styles.segment, { opacity: m.isOnline ? 1 : 0.65, borderColor: !m.isOnline ? "#f59e0b" : c.border, backgroundColor: selectedDevices.includes(m.deviceId) ? c.accent : c.bg }]}
                   >
                     <Text style={{ color: selectedDevices.includes(m.deviceId) ? "#fff" : c.textPrimary, fontWeight: "600" }}>
-                      {m.name}
+                      {m.connectionKind === "ssh" ? `SSH · ${m.name}${m.isOnline ? "" : " · Fix"}` : m.name}
                     </Text>
                   </Pressable>
                 ))}
               </View>
               <Text style={[styles.helper, { color: c.textSecondary }]}>
-                Select one or several machines. Yaver will load-balance across the selected pool, respect runner caps for Claude/Codex, and use machine signatures for TestFlight, Android, local-LLM, and deploy decisions.
+                Select one or several machines. SSH workers use the master&apos;s direct OS access and do not need a Yaver sign-in; registered devices keep normal same-owner Yaver auth. Yaver respects runner caps and measured capabilities on both lanes.
               </Text>
             </>
           )}

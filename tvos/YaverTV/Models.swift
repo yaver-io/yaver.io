@@ -75,6 +75,37 @@ struct DevServerStatus: Decodable {
     var workDir: String?
 }
 
+struct SharedStorageProfileSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let type: String
+    let available: Bool
+    let supportsBrowse: Bool
+    let supportsSearch: Bool
+}
+
+struct SharedStorageEntrySummary: Decodable, Identifiable, Hashable {
+    let name: String
+    let path: String
+    let isDir: Bool
+    let size: Int64
+    var id: String { path }
+}
+
+struct SharedStorageSearchHitSummary: Decodable, Identifiable, Hashable {
+    let profileId: String
+    let profileName: String
+    let path: String
+    let size: Int64?
+    let matchType: String
+    let snippet: String?
+    var id: String { "\(profileId):\(path):\(matchType)" }
+}
+
+struct SharedStorageProfilesEnvelope: Decodable { let profiles: [SharedStorageProfileSummary] }
+struct SharedStorageEntriesEnvelope: Decodable { let entries: [SharedStorageEntrySummary] }
+struct SharedStorageSearchEnvelope: Decodable { let hits: [SharedStorageSearchHitSummary] }
+
 struct VoiceRuntimeStatus: Decodable {
     var enabled: Bool?
     var sttProvider: String?

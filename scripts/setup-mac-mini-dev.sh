@@ -12,6 +12,8 @@
 #   CODEX_MODEL=gpt-5.5                 Codex default model written to config
 #   SKIP_XCODE_DOWNLOAD=1               Skip simulator runtime downloads
 #   REMOVE_GUI_EDITORS=1                brew-uninstall Cursor/VS Code if present
+#   HEADLESS_PERMANENT=1                Enable SSH, no-sleep power, and boot-before-login Yaver
+#   HEADLESS_KEYCHAIN=1                 Once-only local password entry for non-GUI codesign
 #   YAVER_PROJECTS="$HOME/Workspace/yaver.io $HOME/Workspace/talos"
 
 set -euo pipefail
@@ -20,6 +22,8 @@ CODEX_MODEL="${CODEX_MODEL:-gpt-5.5}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 SKIP_XCODE_DOWNLOAD="${SKIP_XCODE_DOWNLOAD:-0}"
 REMOVE_GUI_EDITORS="${REMOVE_GUI_EDITORS:-0}"
+HEADLESS_PERMANENT="${HEADLESS_PERMANENT:-0}"
+HEADLESS_KEYCHAIN="${HEADLESS_KEYCHAIN:-0}"
 YAVER_PROJECTS="${YAVER_PROJECTS:-$HOME/Workspace/yaver.io $HOME/Workspace/talos}"
 
 log() { printf '\n==> %s\n' "$*"; }
@@ -69,13 +73,20 @@ ensure_xcode() {
   fi
   local developer_dir
   developer_dir="$(xcode-select -p 2>/dev/null || true)"
-  if [[ "$developer_dir" != /Applications/Xcode.app/* ]]; then
-    if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
-      log "Selecting /Applications/Xcode.app"
-      sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-    else
+  if [[ "$developer_dir" != /Applications/Xcode*.app/Contents/Developer ]]; then
+    local xcode_app=""
+    local candidate
+    for candidate in /Applications/Xcode*.app; do
+      if [[ -d "$candidate/Contents/Developer" ]]; then
+        xcode_app="$candidate"
+        break
+      fi
+    done
+    if [[ -z "$xcode_app" ]]; then
       fail "full Xcode is required; current developer dir is '${developer_dir:-unset}'"
     fi
+    log "Selecting $xcode_app"
+    sudo xcode-select -s "$xcode_app/Contents/Developer"
   fi
   log "$(xcodebuild -version | tr '\n' ' ')"
   sudo xcodebuild -license accept >/dev/null 2>&1 || true
@@ -170,6 +181,62 @@ configure_yaver() {
   fi
 }
 
+configure_headless_permanence() {
+  if [[ "$HEADLESS_PERMANENT" != "1" ]]; then
+    return
+  fi
+
+  log "Configuring permanent headless-worker access"
+  sudo systemsetup -setremotelogin on
+  sudo systemsetup -setwakeonnetworkaccess on || warn "Could not enable wake for network access"
+  sudo pmset -a sleep 0 disksleep 0 autorestart 1
+  if pmset -g custom 2>/dev/null | grep -q 'powernap'; then
+    sudo pmset -a powernap 0
+  fi
+
+  local yaver_bin
+  yaver_bin="$(command -v yaver || true)"
+  [[ -n "$yaver_bin" ]] || fail "Yaver CLI is unavailable after installation"
+  # Preserve the invoking developer's home when root installs the system
+  # LaunchDaemon. The daemon must run as this user and use this user's vault,
+  # projects and logs—not /var/root.
+  sudo env HOME="$HOME" USER="$(id -un)" "$yaver_bin" serve --install-launchd-daemon
+}
+
+configure_headless_keychain() {
+  if [[ "$HEADLESS_KEYCHAIN" != "1" ]]; then
+    return
+  fi
+
+  local secrets_file="$HOME/.yaver/local-secrets.env"
+  if [[ -e "$secrets_file" ]]; then
+    warn "$secrets_file already exists; leaving its owner-managed secrets unchanged"
+    return
+  fi
+
+  log "Configuring once-only non-GUI keychain access"
+  local login_keychain="$HOME/Library/Keychains/login.keychain-db"
+  [[ -f "$login_keychain" ]] || fail "Login keychain not found at $login_keychain"
+  local login_password
+  read -r -s -p "macOS login password (stored locally owner-only for headless codesign): " login_password
+  printf '\n'
+  [[ -n "$login_password" ]] || fail "A non-empty login password is required"
+
+  security unlock-keychain -p "$login_password" "$login_keychain"
+  security set-keychain-settings "$login_keychain"
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$login_password" "$login_keychain"
+
+  umask 077
+  {
+    printf 'export YAVER_LOGIN_KEYCHAIN_PATH=%q\n' "$login_keychain"
+    printf 'export YAVER_LOGIN_PASSWORD=%q\n' "$login_password"
+    printf 'export YAVER_SUDO_PASSWORD=%q\n' "$login_password"
+  } > "$secrets_file"
+  chmod 600 "$secrets_file"
+  unset login_password
+  log "Wrote owner-only $secrets_file; it is local-only and must never be committed or synced"
+}
+
 remove_gui_editors_if_requested() {
   if [[ "$REMOVE_GUI_EDITORS" != "1" ]]; then
     return
@@ -238,6 +305,8 @@ warn "CarPlay uses the iOS simulator/runtime plus app entitlements; there is no 
 configure_codex
 configure_yaver
 remove_gui_editors_if_requested
+configure_headless_permanence
+configure_headless_keychain
 write_status_script
 
 log "Mac mini remote worker bootstrap complete"
@@ -246,3 +315,6 @@ printf '  yaver auth --headless\n'
 printf '  codex login --device-auth\n'
 printf '  yaver serve\n'
 printf '  yaver-mac-mini-status\n'
+if [[ "$HEADLESS_PERMANENT" != "1" ]]; then
+  printf '  HEADLESS_PERMANENT=1 HEADLESS_KEYCHAIN=1 bash /tmp/setup-mac-mini-dev.sh  # once, at the local screen\n'
+fi

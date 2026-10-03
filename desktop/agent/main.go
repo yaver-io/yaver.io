@@ -574,6 +574,11 @@ func main() {
 		// Never a shell: it reads $SSH_ORIGINAL_COMMAND, enforces a verb whitelist,
 		// and proxies one call to the local agent. See ssh_session_cmd.go.
 		os.Exit(runSSHSession(os.Args[2:]))
+	case "__ssh-worker":
+		// Internal stdin/stdout protocol used only inside an operator-configured
+		// SSH connection. It needs runner credentials on this OS account but no
+		// Yaver account session, listener, Convex row, or relay registration.
+		os.Exit(runSSHFleetWorker(os.Args[2:]))
 	case "config":
 		runConfig(os.Args[2:])
 	case "set":

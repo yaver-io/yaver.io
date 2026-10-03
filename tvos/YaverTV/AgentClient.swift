@@ -463,6 +463,39 @@ actor AgentClient {
         return try JSONDecoder().decode(AgentRunnerList.self, from: data)
     }
 
+    /// Same owner-authenticated shared-storage lane used by web and mobile.
+    /// S3 credentials remain on the selected agent; the TV only receives the
+    /// profile capability receipt and object metadata/search hits.
+    func sharedStorageProfiles() async throws -> [SharedStorageProfileSummary] {
+        let data = try await request("GET", path: "/shared-storage/profiles",
+                                     failure: "couldn't load shared storage")
+        return try JSONDecoder().decode(SharedStorageProfilesEnvelope.self, from: data).profiles
+    }
+
+    func sharedStorageEntries(profileId: String, path: String = "") async throws -> [SharedStorageEntrySummary] {
+        var components = URLComponents()
+        components.path = "/shared-storage/list"
+        components.queryItems = [URLQueryItem(name: "id", value: profileId)]
+        if !path.isEmpty { components.queryItems?.append(URLQueryItem(name: "path", value: path)) }
+        let data = try await request("GET", path: components.string ?? "/shared-storage/list",
+                                     failure: "couldn't browse shared storage")
+        return try JSONDecoder().decode(SharedStorageEntriesEnvelope.self, from: data).entries
+    }
+
+    func searchSharedStorage(profileId: String, query: String, path: String = "", limit: Int = 50) async throws -> [SharedStorageSearchHitSummary] {
+        var components = URLComponents()
+        components.path = "/shared-storage/search"
+        components.queryItems = [
+            URLQueryItem(name: "id", value: profileId),
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if !path.isEmpty { components.queryItems?.append(URLQueryItem(name: "path", value: path)) }
+        let data = try await request("GET", path: components.string ?? "/shared-storage/search",
+                                     failure: "shared-storage search failed")
+        return try JSONDecoder().decode(SharedStorageSearchEnvelope.self, from: data).hits
+    }
+
     /// Full task detail — transcript + result — for the native Chat view.
     func task(_ id: String) async throws -> TaskSummary {
         let data = try await request("GET", path: "/tasks/\(id)", failure: "couldn't load the conversation")

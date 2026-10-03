@@ -4009,6 +4009,9 @@ function describeMachineForPrompt(machine: MachineInfo | null): string[] {
   const readyRunners = (caps?.runners || []).filter((runner) => runner.ready).map((runner) => runner.name);
   return [
     `Execution machine: ${machine.name} (${machine.platform || machine.os || "unknown platform"})`,
+    machine.connectionKind === "ssh"
+      ? "Transport: direct SSH from the master; this worker has no Yaver account session or public Yaver listener."
+      : "",
     caps
       ? `Machine capabilities: iOS=${caps.supportsIos ? "yes" : "no"}, Android=${caps.supportsAndroid ? "yes" : "no"}, TestFlight=${caps.supportsTestFlight ? "yes" : "no"}, PlayStore=${caps.supportsPlayStore ? "yes" : "no"}, Docker=${caps.supportsDocker ? "yes" : "no"}`
       : "",

@@ -1147,6 +1147,9 @@ func (gm *AgentGraphManager) executeAutoIdeasNode(ctx context.Context, runID str
 }
 
 func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
+	if _, ok := sshFleetTargetName(node.Placement.DeviceID); ok {
+		return gm.executeSSHFleetChatNode(ctx, runID, node)
+	}
 	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
 	if err != nil {
 		return "", err
@@ -1207,6 +1210,49 @@ func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID st
 			}
 		}
 	}
+}
+
+func (gm *AgentGraphManager) executeSSHFleetChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
+	target, err := lookupSSHFleetTarget(node.Placement.DeviceID)
+	if err != nil {
+		return "", err
+	}
+	// prepareGraphNodeSlice still produces the immutable base/scope contract on
+	// the controller. The filesystem path itself is target-local and comes only
+	// from the explicitly configured SSH target; a controller path must never be
+	// assumed to exist on a different OS account.
+	_, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
+	if err != nil {
+		return "", err
+	}
+	contract.EffectiveWorkDir = strings.TrimSpace(target.WorkDir)
+	contract.IsolationMode = "remote-ssh-configured-workdir"
+	resp, err := executeSSHFleetRun(ctx, target, sshFleetRunRequest{
+		Title:         firstGraphNonEmpty(strings.TrimSpace(node.Spec.Title), strings.TrimSpace(node.Spec.Prompt), "SSH fleet task"),
+		Prompt:        firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title),
+		Runner:        firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner, target.Runner, "opencode"),
+		Model:         firstGraphNonEmpty(node.Placement.Model, node.Spec.Model, target.Model),
+		WorkDir:       target.WorkDir,
+		SliceContract: contract,
+	})
+	if err != nil {
+		return "", err
+	}
+	materializedAt, err := materializeSSHFleetPatch(ctx, node.Spec.WorkDir, runID, node.Spec.WorkspaceGroup, resp.BaseCommit, resp.Patch)
+	if err != nil {
+		return "", err
+	}
+	materializedNote := ""
+	if materializedAt != "" {
+		materializedNote = "\n\nSSH_WORKER_PATCH_MATERIALIZED: " + materializedAt
+	}
+	if strings.TrimSpace(resp.ResultText) != "" {
+		return strings.TrimSpace(resp.ResultText) + materializedNote, nil
+	}
+	if strings.TrimSpace(resp.Output) != "" {
+		return strings.TrimSpace(resp.Output) + materializedNote, nil
+	}
+	return "task completed" + materializedNote, nil
 }
 
 func (gm *AgentGraphManager) executeRemoteAutoIdeasNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {

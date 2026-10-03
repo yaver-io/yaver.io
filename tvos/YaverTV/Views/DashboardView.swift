@@ -9,6 +9,7 @@
 //   Chat     → TasksView          (tasks & vibes — the web/mobile chat)
 //   Vibing   → VibingView         (project → available target → live preview)
 //   Devices  → MachinePickerView  (your account's machines, switch/wake)
+//   Storage  → SharedStorageView (NAS / SMB / S3 / WebDAV browse + search)
 //   Settings → account defaults  (device · runner · project · MCP)
 //
 // The profile menu (top-right) owns the account-level actions: Sign out,
@@ -25,7 +26,7 @@ struct DashboardView: View {
     @FocusState private var dashboardFocus: DashboardDestination?
 
     private enum DashboardDestination: Hashable {
-        case chat, vibing, devices, settings, profile, machineSwitch
+        case chat, vibing, devices, storage, settings, profile, machineSwitch
     }
 
     /// Open the TV directly on a screen instead of the tile grid.
@@ -123,6 +124,11 @@ struct DashboardView: View {
                             }
                             .focused($dashboardFocus, equals: .devices)
                             .accessibilityIdentifier("dashboard.devices")
+                            NavigationLink(destination: SharedStorageView()) {
+                                Tile(icon: "externaldrive.fill", title: "Storage", outerWidth: 216)
+                            }
+                            .focused($dashboardFocus, equals: .storage)
+                            .accessibilityIdentifier("dashboard.storage")
                             NavigationLink(destination: TVSettingsView()) {
                                 Tile(icon: "gearshape.fill", title: "Settings", outerWidth: 216)
                             }

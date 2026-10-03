@@ -320,6 +320,7 @@ function SharedTab() {
   const [active, setActive] = useState<string | null>(null);
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -356,6 +357,26 @@ function SharedTab() {
   useEffect(() => {
     void loadDir();
   }, [loadDir]);
+
+  const search = useCallback(async () => {
+    if (!active || !query.trim()) return;
+    setLoading(true);
+    try {
+      setErr(null);
+      const data: any = await quicClient.sharedStorageSearch(query.trim(), { id: active, path, limit: 50 });
+      const raw: any[] = Array.isArray(data?.hits) ? data.hits : [];
+      setEntries(raw.map((hit) => ({
+        name: String(hit.path || "").split("/").filter(Boolean).pop() || String(hit.path || ""),
+        path: String(hit.path || ""),
+        isDir: false,
+        size: typeof hit.size === "number" ? hit.size : undefined,
+      })));
+    } catch (e: any) {
+      setErr(e?.message ?? "failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [active, path, query]);
 
   if (profiles.length === 0) {
     return (
@@ -401,6 +422,24 @@ function SharedTab() {
       <Text style={{ color: c.textMuted, marginBottom: 6, fontFamily: "monospace", fontSize: 11 }}>
         /{path || ""}
       </Text>
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          onSubmitEditing={() => void search()}
+          returnKeyType="search"
+          placeholder="Search names or text"
+          placeholderTextColor={c.textMuted}
+          style={[s.input, { flex: 1, color: c.textPrimary, borderColor: c.border }]}
+        />
+        <Pressable
+          onPress={() => void search()}
+          disabled={!query.trim() || loading}
+          style={{ opacity: !query.trim() || loading ? 0.5 : 1, backgroundColor: c.accent, borderRadius: 6, justifyContent: "center", paddingHorizontal: 14 }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "700" }}>Search</Text>
+        </Pressable>
+      </View>
       {loading ? (
         <ActivityIndicator color={c.accent} />
       ) : (
@@ -650,5 +689,12 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 6,
     marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
   },
 });

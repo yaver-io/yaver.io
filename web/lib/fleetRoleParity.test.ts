@@ -67,3 +67,19 @@ test("MCP reports fleet roles and respects worker disclosure", () => {
   assert.match(server, /role=" \+ strings\.Join\(roles/);
   assert.match(server, /Show workers to list them/);
 });
+
+test("SSH-only workers stay distinct from registered Yaver devices on fleet surfaces", () => {
+  const goInventory = read("desktop/agent/console_machines.go");
+  const goTransport = read("desktop/agent/ssh_fleet_worker.go");
+  const mobileAgent = read("mobile/app/(tabs)/agent.tsx");
+  const mobileWire = read("mobile/src/lib/quic.ts");
+  const webWire = read("web/lib/agent-client.ts");
+
+  assert.match(goInventory, /ConnectionKind\s+string\s+`json:"connectionKind,omitempty"`/);
+  assert.match(goTransport, /YaverAuthRequired:\s+false/);
+  assert.match(goTransport, /"yaver",\s+"__ssh-worker"/);
+  assert.match(mobileAgent, /connectionKind\s*===\s*"ssh"/);
+  assert.match(mobileAgent, /do not need a Yaver sign-in/);
+  assert.match(mobileWire, /connectionKind\?:\s*"local"\s*\|\s*"yaver"\s*\|\s*"ssh"/);
+  assert.match(webWire, /yaverAuthRequired\?:\s*boolean/);
+});

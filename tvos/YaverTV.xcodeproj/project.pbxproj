@@ -27,6 +27,7 @@
 		666A5E815C7F1592A0FF7AE2 /* DeviceCodeDeliveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71087255383CB959DB30A9E6 /* DeviceCodeDeliveryTests.swift */; };
 		6ADE17F0073254B1F4424366 /* RemoteRuntimeWebRTCView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F656E1723EA3FA1FA0C7CE46 /* RemoteRuntimeWebRTCView.swift */; };
 		6EEAC350F5A3D4E89CE1C473 /* DroidStreamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFF6CEE51B6A221D57E35F68 /* DroidStreamView.swift */; };
+		7351B37AC97FDE7A222C71CE /* SharedStorageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590AC723F5A43AA267CECC84 /* SharedStorageView.swift */; };
 		7379174AE578C3B3EE112B4E /* TVSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F5766C895CDA0075AE65E7 /* TVSettingsView.swift */; };
 		7BFF477EEDD5FEA7E3696C93 /* YaverNativeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35EB3210C08FB622ECCBF15C /* YaverNativeCatalog.swift */; };
 		7E0CEDAA389C30B231F33D93 /* MachinePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC389C91C8B5382905D6194B /* MachinePickerView.swift */; };
@@ -112,6 +113,7 @@
 		51EFCF4225A51F7B640FCFC8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		538F76DE5F0CE7ABB59354A3 /* BoxlessCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxlessCodeView.swift; sourceTree = "<group>"; };
 		568598E6E282524EB57B6DA5 /* ContinuityQRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuityQRScannerView.swift; sourceTree = "<group>"; };
+		590AC723F5A43AA267CECC84 /* SharedStorageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedStorageView.swift; sourceTree = "<group>"; };
 		59F5766C895CDA0075AE65E7 /* TVSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSettingsView.swift; sourceTree = "<group>"; };
 		5E6E50DABA5FE87AF986E197 /* TVChatNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVChatNavigationTests.swift; sourceTree = "<group>"; };
 		62AA4F93DB55D50601FA4253 /* Backend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backend.swift; sourceTree = "<group>"; };
@@ -242,6 +244,7 @@
 				E202BFD986DE7C7B55C7F3F4 /* RuntimeDashboardView.swift */,
 				6C07AC346E76881B8FBB7FA9 /* SecureHandoffView.swift */,
 				DB4A93B698F49F0230F8DABF /* SessionView.swift */,
+				590AC723F5A43AA267CECC84 /* SharedStorageView.swift */,
 				407EAB8C318A209F3AE94A17 /* SignInView.swift */,
 				10853B34BB3F067BDF0C02E9 /* TaskComposerView.swift */,
 				8FE9E4B8D55E6F9BE758452A /* TaskDetailView.swift */,
@@ -482,6 +485,7 @@
 				CE7533A3ED843557F0FE12E1 /* SecureHandoffView.swift in Sources */,
 				34141A6D2B59625100F05D4A /* SessionClient.swift in Sources */,
 				81DB028736C4430E2622C6F9 /* SessionView.swift in Sources */,
+				7351B37AC97FDE7A222C71CE /* SharedStorageView.swift in Sources */,
 				F6D6FD0612F8F2E9DD6D3A5C /* SignInView.swift in Sources */,
 				D299F8FE54C7BF349DB540D5 /* Speech.swift in Sources */,
 				9D0BB56F661FC19E222F21AC /* TVChatPlan.swift in Sources */,
