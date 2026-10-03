@@ -80,5 +80,6 @@ test("final package assertion requires the x64 native agent and rejects WSL payl
   assert.match(assertion, /\.vhdx/);
   assert.match(assertion, /privateNetworkClientServer/);
   assert.match(assertion, /ExpectedArchitecture = "x64"/);
+  assert.match(assertion, /Native command probes intentionally use non-zero exit codes[\s\S]*exit 0\s*$/);
   assert.doesNotMatch(builder, /assert-microsoft-store-package[\s\S]*LASTEXITCODE/);
 });

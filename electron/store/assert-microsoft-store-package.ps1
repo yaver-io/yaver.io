@@ -150,3 +150,9 @@ try {
 } finally {
   Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# Native command probes intentionally use non-zero exit codes to mean "not
+# present" (for example, schtasks /Query after the agent smoke test). PowerShell
+# otherwise leaks the last native exit code to the workflow even after every
+# assertion passed and the PASS report was written.
+exit 0
