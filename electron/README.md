@@ -265,13 +265,17 @@ and cuts a GitHub release whose asset names match the
 (`yaver-gui-<version>-mac-<arm64|x64>.dmg` /
 `-win-x64-setup.exe` / `-linux-<arm64|x64>.AppImage`).
 
-The Windows Store candidate uses the local release Mac's non-exportable
+The direct-download Windows candidate uses the local release Mac's non-exportable
 SimplySign identity through `./deploy/deploy.sh desktop-windows`. The build
 certificate-pins the embedded agent and outer installer; a clean Windows VM
 then verifies every installed PE and performs silent install/uninstall. Hosted
 CI never substitutes unsigned bytes. Do not describe a new Windows build as
 shipped until the same candidate passes that preflight and Windows App
 Certification Kit.
+
+The Microsoft Store AppX/MSIX lane is separate and is documented in
+`store/README.md`. Microsoft signs accepted Store packages; do not describe the
+SimplySign-signed NSIS installer as the Store candidate.
 
 ## Known limitations
 
