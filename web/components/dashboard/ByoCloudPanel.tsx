@@ -14,6 +14,16 @@ type Server = {
   IP?: string;
 };
 
+type ProviderActivity = {
+  id: number;
+  command: string;
+  status: string;
+  started?: string;
+  finished?: string;
+  progress?: number;
+  errorCode?: string;
+};
+
 /**
  * Desktop-shell-only Hetzner power control. Ordinary browsers do not render or
  * originate infrastructure actions. The provider credential remains in the
@@ -25,6 +35,8 @@ export default function ByoCloudPanel() {
   const [servers, setServers] = useState<Server[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [activityFor, setActivityFor] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ProviderActivity[]>([]);
 
   const loadAccounts = useCallback(async () => {
     if (!desktopShell) return;
@@ -85,6 +97,23 @@ export default function ByoCloudPanel() {
     }
   };
 
+  const loadActivity = async (server: Server) => {
+    const serverId = id(server);
+    if (!serverId) return;
+    setBusy(`activity:${serverId}`);
+    setMessage(null);
+    try {
+      const result = await agentClient.callOps("hetzner_power", { action: "activity", serverId });
+      if (!result.ok) throw new Error(result.error || "Hetzner activity lookup failed");
+      setActivityFor(serverId);
+      setActivity(Array.isArray(result.initial?.actions) ? result.initial.actions : []);
+    } catch {
+      setMessage("Could not load Hetzner control-plane activity from this trusted endpoint.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4">
       <div className="flex items-center justify-between gap-3">
@@ -115,10 +144,18 @@ export default function ByoCloudPanel() {
             const action = isOff ? "power_on" : "shutdown";
             const actionBusy = busy === `${action}:${serverId}`;
             return (
-              <div key={serverId} className="flex items-center gap-2 text-xs">
+              <div key={serverId} className="space-y-1">
+              <div className="flex items-center gap-2 text-xs">
                 <span className="flex-1 truncate font-mono text-surface-400">
                   {name(server)} · {status(server)} · {String(server.ip ?? server.IP ?? "")}
                 </span>
+                <button
+                  disabled={busy !== null}
+                  onClick={() => void loadActivity(server)}
+                  className="font-semibold text-sky-400 disabled:opacity-50"
+                >
+                  {busy === `activity:${serverId}` ? "…" : "Activity"}
+                </button>
                 <button
                   disabled={busy !== null}
                   onClick={() => void changePower(server, action)}
@@ -127,12 +164,22 @@ export default function ByoCloudPanel() {
                   {actionBusy ? "…" : isOff ? "Power on" : "Shut down"}
                 </button>
               </div>
+              {activityFor === serverId ? (
+                <div className="ml-2 border-l border-surface-700 pl-3 text-[11px] text-surface-500">
+                  {activity.length === 0 ? "No recent Hetzner actions." : activity.map((row) => (
+                    <div key={row.id} className="py-0.5 font-mono">
+                      {row.command} · {row.status}{row.errorCode ? ` · ${row.errorCode}` : ""}{row.started ? ` · ${new Date(row.started).toLocaleString()}` : ""}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              </div>
             );
           })}
         </div>
       )}
 
-      <p className="text-[11px] text-surface-500">A powered-off Hetzner server remains allocated and continues billing.</p>
+      <p className="text-[11px] text-surface-500">Activity is Hetzner API control-plane history, not guest OS or application logs. A powered-off Hetzner server remains allocated and continues billing.</p>
       {message ? <p className="text-xs text-surface-400">{message}</p> : null}
     </div>
   );

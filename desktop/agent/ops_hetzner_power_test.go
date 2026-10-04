@@ -57,6 +57,31 @@ func TestHetznerRenameUsesExactBoundedProviderUpdate(t *testing.T) {
 	}
 }
 
+func TestHetznerActivityIsReadOnlyAndRedactsProviderMessage(t *testing.T) {
+	originalBase := hetznerAPIBase
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/servers/123/actions" || r.URL.Query().Get("sort") != "started:desc" {
+			t.Fatalf("unexpected provider request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"actions":[{"id":91,"command":"shutdown_server","status":"error","started":"2026-10-04T20:00:00Z","progress":23,"error":{"code":"action_failed","message":"private server name"}}]}`))
+	}))
+	hetznerAPIBase = server.URL
+	t.Cleanup(func() { hetznerAPIBase = originalBase; server.Close() })
+
+	actions, err := hetznerServerActions("test-token", "123")
+	if err != nil || len(actions) != 1 {
+		t.Fatalf("activity lookup failed: %#v (%v)", actions, err)
+	}
+	encoded, _ := json.Marshal(actions)
+	if string(encoded) == "" || actions[0].ErrorCode != "action_failed" {
+		t.Fatalf("stable activity fields missing: %s", encoded)
+	}
+	if string(encoded) != "[{\"id\":91,\"command\":\"shutdown_server\",\"status\":\"error\",\"started\":\"2026-10-04T20:00:00Z\",\"progress\":23,\"errorCode\":\"action_failed\"}]" {
+		t.Fatalf("provider message leaked or activity shape drifted: %s", encoded)
+	}
+}
+
 func TestHetznerPowerVerbIsCompanionDiscoverableAndFailsClosedWithoutAccount(t *testing.T) {
 	originalManager := globalAccountsManager
 	globalAccountsManager = &AccountsManager{baseDir: t.TempDir()}

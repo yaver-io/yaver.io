@@ -16,12 +16,12 @@ const hetznerActionPollLimit = 45
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "hetzner_power",
-		Description: "List, rename, or change power state for existing servers in the owner's Hetzner account. The token stays in this endpoint's vault. action=list|rename|power_on|shutdown; mutations require confirm=true. No create, delete, resize, rebuild, console, or credential return capability.",
+		Description: "List servers, read provider activity, rename, or change power state for existing servers in the owner's Hetzner account. The token stays in this endpoint's vault. action=list|activity|rename|power_on|shutdown; mutations require confirm=true. Activity is Hetzner control-plane history, not guest OS logs. No create, delete, resize, rebuild, console, or credential return capability.",
 		Schema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"action":   map[string]interface{}{"type": "string", "enum": []string{"list", "rename", "power_on", "shutdown"}, "default": "list"},
-				"serverId": map[string]interface{}{"type": "string", "description": "Exact Hetzner numeric server id; required for mutations."},
+				"action":   map[string]interface{}{"type": "string", "enum": []string{"list", "activity", "rename", "power_on", "shutdown"}, "default": "list"},
+				"serverId": map[string]interface{}{"type": "string", "description": "Exact Hetzner numeric server id; required for activity and mutations."},
 				"name":     map[string]interface{}{"type": "string", "description": "New server name; required for rename."},
 				"confirm":  map[string]interface{}{"type": "boolean", "description": "Must be true for rename/power_on/shutdown."},
 			},
@@ -82,13 +82,20 @@ func opsHetznerPowerHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		}
 		return OpsResult{OK: true, Initial: map[string]interface{}{"servers": servers}}
 	}
-	if p.Action != "rename" && p.Action != "power_on" && p.Action != "shutdown" {
-		return OpsResult{OK: false, Code: "bad_payload", Error: "action must be list, rename, power_on, or shutdown"}
+	if p.Action != "activity" && p.Action != "rename" && p.Action != "power_on" && p.Action != "shutdown" {
+		return OpsResult{OK: false, Code: "bad_payload", Error: "action must be list, activity, rename, power_on, or shutdown"}
 	}
 	serverID := strings.TrimSpace(p.ServerID)
 	parsedID, parseErr := strconv.ParseUint(serverID, 10, 64)
 	if parseErr != nil || parsedID == 0 {
 		return OpsResult{OK: false, Code: "bad_payload", Error: "an exact numeric serverId is required"}
+	}
+	if p.Action == "activity" {
+		actions, actionsErr := hetznerServerActions(token, serverID)
+		if actionsErr != nil {
+			return OpsResult{OK: false, Code: "provider_error", Error: "Hetzner activity lookup failed"}
+		}
+		return OpsResult{OK: true, Initial: map[string]interface{}{"serverId": serverID, "actions": actions}}
 	}
 	if !p.Confirm {
 		return OpsResult{OK: false, Code: "confirmation_required", Error: "confirm=true is required for a Hetzner mutation"}
@@ -115,6 +122,58 @@ func opsHetznerPowerHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	return OpsResult{OK: true, Initial: map[string]interface{}{
 		"action": p.Action, "serverId": serverID, "verified": true,
 	}}
+}
+
+type hetznerActionSummary struct {
+	ID        int64  `json:"id"`
+	Command   string `json:"command"`
+	Status    string `json:"status"`
+	Started   string `json:"started,omitempty"`
+	Finished  string `json:"finished,omitempty"`
+	Progress  *int   `json:"progress,omitempty"`
+	ErrorCode string `json:"errorCode,omitempty"`
+}
+
+func hetznerServerActions(token, serverID string) ([]hetznerActionSummary, error) {
+	endpoint := fmt.Sprintf("%s/servers/%s/actions?sort=started:desc&per_page=20", hetznerAPIBase, url.PathEscape(serverID))
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil) //nolint:noctx
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Actions []struct {
+			ID       int64  `json:"id"`
+			Command  string `json:"command"`
+			Status   string `json:"status"`
+			Started  string `json:"started"`
+			Finished string `json:"finished"`
+			Progress *int   `json:"progress"`
+			Error    *struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		} `json:"actions"`
+	}
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&body); resp.StatusCode >= 400 || decodeErr != nil {
+		return nil, fmt.Errorf("provider rejected activity lookup")
+	}
+	result := make([]hetznerActionSummary, 0, len(body.Actions))
+	for _, action := range body.Actions {
+		if action.ID <= 0 {
+			continue
+		}
+		row := hetznerActionSummary{ID: action.ID, Command: action.Command, Status: action.Status, Started: action.Started, Finished: action.Finished, Progress: action.Progress}
+		if action.Error != nil {
+			row.ErrorCode = action.Error.Code
+		}
+		result = append(result, row)
+	}
+	return result, nil
 }
 
 func hetznerServerRename(token, serverID, name string) error {

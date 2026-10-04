@@ -12,7 +12,7 @@ test("surface matrix is exhaustive and makes unsupported releases explicit", asy
     "android_tv", "watchos", "wearos", "carplay", "android_auto", "browser_web",
     "xbox", "playstation", "meta_quest",
   ];
-  assert.deepEqual(matrix.allowedActions, ["list", "rename", "power_on", "shutdown"]);
+  assert.deepEqual(matrix.allowedActions, ["list", "activity", "rename", "power_on", "shutdown"]);
   assert.deepEqual(matrix.surfaces.map((row: any) => row.id).sort(), expected.sort());
   for (const row of matrix.surfaces) {
     assert.match(await read(row.evidence), /./, `${row.id} evidence is missing`);
@@ -25,9 +25,9 @@ test("surface matrix is exhaustive and makes unsupported releases explicit", asy
   }
 });
 
-test("shared Hetzner contract permits only list, rename, power-on, and graceful shutdown", async () => {
+test("shared Hetzner contract permits only list, activity, rename, power-on, and graceful shutdown", async () => {
   const schema = JSON.parse(await read("shared/zero-knowledge/hetzner-power.schema.json"));
-  assert.deepEqual(schema.properties.action.enum, ["list", "rename", "power_on", "shutdown"]);
+  assert.deepEqual(schema.properties.action.enum, ["list", "activity", "rename", "power_on", "shutdown"]);
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.properties.serverId.pattern, "^[1-9][0-9]*$");
   assert.doesNotMatch(JSON.stringify(schema), /delete|create|resize|rebuild|poweroff|reset/i);
