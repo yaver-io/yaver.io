@@ -2,7 +2,7 @@
   "schema_version": "2026-05-19",
   "name": "io.github.yaver-io/yaver",
   "title": "Yaver",
-  "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
+  "description": "Phone-first OpenCode MCP for trusted devices: run, build, deploy, and manage endpoint-local tools.",
   "website_url": "https://yaver.io/docs/mcp",
   "repository": "https://github.com/yaver-io/yaver.io",
   "registry_name": "io.github.yaver-io/yaver",

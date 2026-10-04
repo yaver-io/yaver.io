@@ -65,6 +65,20 @@ jq --arg v "$version" --arg name "$SERVER_NAME" --arg pkg "$NPM_PACKAGE" '
   | (.packages[] | select(.registryType == "npm" and .identifier == $pkg) | .version) = $v
 ' "$ROOT/server.json" > "$tmp"
 
+# The official registry caps its top-level description at 100 characters.
+# Validate before copying anything into the tracked discovery files so a
+# rejected publish cannot leave the checkout advertising a stale npm version.
+description_length="$(jq -r '.description | length' "$tmp")"
+if (( description_length > 100 )); then
+  echo "server.json description is ${description_length} characters; MCP Registry maximum is 100" >&2
+  exit 1
+fi
+
+echo
+echo "Checking npm propagation..."
+curl -fsSL "https://registry.npmjs.org/${NPM_PACKAGE}/${version}" >/dev/null
+echo "npm package is visible: ${NPM_PACKAGE}@${version}"
+
 echo "Prepared server.json for $SERVER_NAME@$version"
 jq '{name,title,version,description,packages:[.packages[] | {registryType,identifier,version,runtimeHint,transport}]}' "$tmp"
 
@@ -75,11 +89,6 @@ if [[ "$MODE" != "dry-run" ]]; then
 else
   echo "Dry run only: would sync web/public MCP discovery files after publishing metadata"
 fi
-
-echo
-echo "Checking npm propagation..."
-curl -fsSL "https://registry.npmjs.org/${NPM_PACKAGE}/${version}" >/dev/null
-echo "npm package is visible: ${NPM_PACKAGE}@${version}"
 
 case "$MODE" in
   dry-run)
