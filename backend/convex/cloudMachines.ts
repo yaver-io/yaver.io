@@ -1037,6 +1037,35 @@ export const listForUser = internalQuery({
   },
 });
 
+/**
+ * Remove only the explicitly enumerated control-plane rows for provider
+ * resources an operator has independently verified no longer exist. This is
+ * metadata cleanup: it never calls a cloud API and therefore cannot delete or
+ * stop a real VPS. Exact ids + ownership make bulk stale-row repair bounded.
+ */
+export const purgeMissingProviderRows = internalMutation({
+  args: {
+    userId: v.id("users"),
+    machineIds: v.array(v.id("cloudMachines")),
+  },
+  handler: async (ctx, args) => {
+    if (args.machineIds.length === 0 || args.machineIds.length > 100) {
+      throw new Error("INVALID_MACHINE_SET");
+    }
+    const uniqueIds = [...new Set(args.machineIds.map(String))];
+    if (uniqueIds.length !== args.machineIds.length) throw new Error("DUPLICATE_MACHINE_ID");
+    const rows = [];
+    for (const machineId of args.machineIds) {
+      const row = await ctx.db.get(machineId);
+      if (!row || row.userId !== args.userId) throw new Error("MACHINE_OWNERSHIP_MISMATCH");
+      rows.push(row);
+    }
+    const deviceIds = [...new Set(rows.map((row) => row.deviceId).filter((id): id is string => Boolean(id)))];
+    for (const row of rows) await ctx.db.delete(row._id);
+    return { ok: true, deleted: rows.length, deviceIds };
+  },
+});
+
 /** Get a specific machine by ID. */
 // internalQuery: single-machine read by id (see getInternal for the
 // server-trusted variant). Public exposure leaked any machine's row by id.

@@ -2419,7 +2419,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // the picked device still exists in the device list (so a deletion
     // / sign-out still allows a fallback).
     const sticky = userSelectedDeviceIdRef.current;
-    if (sticky && devices.some((d) => d.id === sticky)) {
+    // Stickiness protects an active/manual switch, not a dead selection. An
+    // offline VPS used to block promotion of an already-connected Mac until a
+    // scroll caused another render, leaving the header at "No machine
+    // selected" despite a live pooled transport.
+    if (
+      sticky &&
+      devices.some((d) => d.id === sticky) &&
+      (connectedDeviceIds.includes(sticky) || autoConnecting)
+    ) {
       return;
     }
 
@@ -2444,6 +2452,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     connectionStatus,
     devices,
     primaryDeviceId,
+    autoConnecting,
     settingsReady,
     secondaryDeviceId,
     userDisconnected,

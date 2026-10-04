@@ -4,17 +4,13 @@ import {
   Animated,
   Dimensions,
   Easing,
-  Image,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, RadialGradient, Rect, Stop } from "react-native-svg";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-
-// Real app icon (the "Y" mark expo uses for the home-screen icon) — shown on
-// the cold-start splash so the mark matches the installed app icon.
-const APP_ICON = require("../../assets/icon.png");
+import { YaverAppIcon } from "./YaverAppIcon";
 
 // YaverSplash — the branded cold-start overlay ("Remote AI Runtime").
 //
@@ -166,9 +162,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
       {/* Center brand block */}
       <Animated.View style={[styles.center, { opacity: fade, transform: [{ translateY: rise }] }]}>
         <Animated.View style={[styles.logoRow, { transform: [{ scale: logoScale }] }]}>
-          <View style={styles.markTile}>
-            <Image source={APP_ICON} style={styles.markImage} resizeMode="cover" />
-          </View>
+          <YaverAppIcon size={44} style={styles.markTile} />
           <Text style={styles.wordmark}>YAVER</Text>
         </Animated.View>
 
@@ -203,14 +197,9 @@ const styles = StyleSheet.create({
   center: { alignItems: "center", paddingHorizontal: 32 },
   logoRow: { flexDirection: "row", alignItems: "center", gap: 14 },
   markTile: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(200,205,215,0.22)",
   },
-  markImage: { width: "100%", height: "100%" },
   wordmark: {
     color: "#f4f5f7",
     fontSize: 44,

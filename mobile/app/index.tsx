@@ -3,6 +3,7 @@ import React from "react";
 import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
+import { YaverAppIcon } from "../src/components/YaverAppIcon";
 
 export default function IndexScreen() {
   const { isAuthenticated, isLoading, surveyCompleted } = useAuth();
@@ -11,6 +12,7 @@ export default function IndexScreen() {
   if (isLoading) {
     return (
       <View style={[styles.container, { backgroundColor: c.bg }]}>
+        <YaverAppIcon size={72} style={styles.brandMark} />
         <ActivityIndicator size="large" color={c.accent} />
       </View>
     );
@@ -43,4 +45,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  brandMark: { marginBottom: 20 },
 });

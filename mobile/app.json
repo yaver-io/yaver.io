@@ -13,8 +13,8 @@
       "assets/**"
     ],
     "splash": {
-      "backgroundColor": "#050506",
-      "image": "./assets/splash-logo.png",
+      "backgroundColor": "#FFFFFF",
+      "image": "./assets/icon.png",
       "imageWidth": 200
     },
     "ios": {
@@ -141,8 +141,8 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#050506",
-          "image": "./assets/splash-logo.png",
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/icon.png",
           "imageWidth": 200
         }
       ],

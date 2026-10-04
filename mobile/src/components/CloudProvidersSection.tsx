@@ -27,6 +27,7 @@ import type { HetznerRecoveryExport } from "../lib/hetznerRecovery";
 import type { LocalHetznerManagedServer } from "../lib/hetznerDirect";
 import type { HetznerActionLog } from "../lib/hetznerDirectCore";
 import ApiKeyScanner from "./ApiKeyScanner";
+import { isBoundHetznerDevice } from "../lib/hetznerDeviceBinding";
 
 // Featured BYO compute providers (the VM providers the agent can
 // provision on directly). Others connect via the web Accounts view.
@@ -91,7 +92,7 @@ export default function CloudProvidersSection({
   token: string | null | undefined;
 }) {
   const { user } = useAuth();
-  const { activeDevice } = useDevice();
+  const { activeDevice, devices } = useDevice();
   const [providers, setProviders] = useState<ProviderMeta[]>([]);
   const [accounts, setAccounts] = useState<Record<string, AccountSummary>>({});
   const [open, setOpen] = useState(false);
@@ -279,9 +280,21 @@ export default function CloudProvidersSection({
 
   const chooseManagedServer = (srv: any) => {
     const name = String(srv.name ?? srv.Name ?? "server");
+    const matchingDevice = devices.find((device) => isBoundHetznerDevice(device, {
+      id: Number(srv.id ?? srv.ID),
+      name,
+      ip: String(srv.ip ?? srv.IP ?? "") || null,
+    }));
+    if (!matchingDevice) {
+      Alert.alert(
+        "Not a Yaver device",
+        `${name} does not match any device on your Yaver account by public IP or alias. Yaver will not enable power control for it. On the connected computer, switch hcloud to the project containing your Yaver VPS, then transfer the credential again.`,
+      );
+      return;
+    }
     Alert.alert(
       `Manage ${name}?`,
-      "This phone will allow Hetzner power controls only for this exact server. The selection stays in this device's secure storage.",
+      `This matches ${matchingDevice.name}. This phone will allow Hetzner power controls only for this exact server. The selection stays in this device's secure storage.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -723,6 +736,11 @@ export default function CloudProvidersSection({
                       {servers.map((s: any) => {
                         const id = String(s.id ?? s.ID ?? "");
                         const isManaged = managedServer?.id === Number(s.id ?? s.ID);
+                        const isYaverDevice = devices.some((device) => isBoundHetznerDevice(device, {
+                          id: Number(s.id ?? s.ID),
+                          name: String(s.name ?? s.Name ?? id),
+                          ip: String(s.ip ?? s.IP ?? "") || null,
+                        }));
                         const type = s.type ?? s.Type ?? null;
                         const eur = monthlyEur(type);
                         const up = uptimeLabel(s.created ?? s.Created);
@@ -740,7 +758,9 @@ export default function CloudProvidersSection({
                           {!isManaged ? (
                             <Pressable disabled={busy !== null} onPress={() => chooseManagedServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
                               {busy === `manage:${id}` ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
-                                <Text style={{ color: "#0ea5e9", fontSize: 11, fontWeight: "700" }}>Manage this server</Text>
+                                <Text style={{ color: isYaverDevice ? "#0ea5e9" : c.textMuted, fontSize: 11, fontWeight: "700" }}>
+                                  {isYaverDevice ? "Manage this Yaver VPS" : "Not a Yaver device"}
+                                </Text>
                               )}
                             </Pressable>
                           ) : String(s.status ?? s.Status ?? "").toLowerCase() === "off" ? (

@@ -16,6 +16,7 @@ import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
 import { verifyTotpChallenge } from "../src/lib/auth";
 import { resumePendingDeviceApproval } from "../src/lib/pendingDeviceApproval";
+import { YaverAppIcon } from "../src/components/YaverAppIcon";
 
 // two-factor-challenge.tsx
 //
@@ -73,6 +74,7 @@ export default function TwoFactorChallengeScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.container}>
+          <YaverAppIcon size={72} style={styles.brandMark} />
           <Text style={[styles.subtitle, { color: c.textSecondary }]}>
             Enter the 6-digit code from your authenticator app, or a recovery code if you lost access.
           </Text>
@@ -120,6 +122,7 @@ export default function TwoFactorChallengeScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   container: { flex: 1, padding: 24, justifyContent: "center" },
+  brandMark: { alignSelf: "center", marginBottom: 20 },
   title: { fontSize: 22, fontWeight: "700", marginBottom: 8 },
   subtitle: { fontSize: 14, lineHeight: 20, marginBottom: 24 },
   input: {

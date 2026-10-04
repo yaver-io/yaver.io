@@ -10,9 +10,9 @@
 import QRCode from "react-native-qrcode-svg";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Platform } from "react-native";
+import { YaverAppIcon } from "../src/components/YaverAppIcon";
 
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
@@ -203,6 +203,7 @@ export default function TVSignInScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]}>
+      <YaverAppIcon size={76} style={styles.brandMark} />
       <View style={styles.modeRow}>
         <Pressable
           focusable
@@ -299,6 +300,7 @@ function formatClock(seconds: number): string {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
+  brandMark: { alignSelf: "center", marginTop: 28 },
   modeRow: { flexDirection: "row", justifyContent: "center", gap: 18, paddingTop: 34 },
   modeButton: { borderWidth: 2, borderColor: "transparent", borderRadius: 14, paddingHorizontal: 28, paddingVertical: 16 },
   modeText: { fontSize: 20, fontWeight: "700" },

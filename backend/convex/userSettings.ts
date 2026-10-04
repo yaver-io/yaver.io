@@ -1565,6 +1565,37 @@ export const setByEmail = internalMutation({
   },
 });
 
+/** Operator repair for stale primary-device pointers. The destination must be
+ * an active device owned by the exact email account; no cross-tenant id can be
+ * written even when this internal tool is called with a typo. */
+export const setPrimaryDeviceByEmail = internalMutation({
+  args: { email: v.string(), deviceId: v.string() },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .unique();
+    if (!user) throw new Error("USER_NOT_FOUND");
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device || device.userId !== user._id || device.removed === true) {
+      throw new Error("OWNED_ACTIVE_DEVICE_NOT_FOUND");
+    }
+    const settings = await ctx.db
+      .query("userSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .unique();
+    if (settings) {
+      await ctx.db.patch(settings._id, { primaryDeviceId: device.deviceId });
+    } else {
+      await ctx.db.insert("userSettings", { userId: user._id, primaryDeviceId: device.deviceId });
+    }
+    return { ok: true, userId: String(user._id), deviceId: device.deviceId };
+  },
+});
+
 /**
  * Seed default settings for all users who don't have settings yet.
  * Also generates per-user relay passwords and sets relayUrl for users missing them.

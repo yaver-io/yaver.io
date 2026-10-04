@@ -10,7 +10,6 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -54,6 +53,7 @@ import {
 
 import { resumePendingDeviceApproval } from "../src/lib/pendingDeviceApproval";
 import { SESSION_EXPIRED_NOTICE } from "../src/lib/sessionExpiredNotice";
+import { YaverAppIcon } from "../src/components/YaverAppIcon";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -77,7 +77,7 @@ const LEGACY_OAUTH_REDIRECT = "yaver:///oauth-callback";
 // device/keyboard offset: it tells the native ScrollView to reveal the control
 // immediately after the focused field. Without it, UIKit correctly revealed a
 // focused Email input while leaving Password completely behind the keyboard.
-const LOGIN_FOLLOWING_CONTROL_CLEARANCE = 72;
+const LOGIN_FOLLOWING_CONTROL_CLEARANCE = 112;
 
 function randomHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -633,28 +633,15 @@ export default function LoginScreen() {
             <View
               style={[
                 styles.header,
+                showEmailForm && !isTablet && styles.headerEmailMode,
                 isTabletPortrait && styles.headerTabletPortrait,
                 isTabletLandscape && styles.headerLandscape,
               ]}
             >
-              <View
-                style={[
-                  styles.brandMark,
-                  isTabletPortrait && styles.brandMarkTabletPortrait,
-                  isTabletLandscape && styles.brandMarkTabletLandscape,
-                ]}
-                accessibilityRole="image"
-                accessibilityLabel="Yaver Y"
-              >
-                {/* Use the shipped app-icon pixels themselves. Reconstructing
-                    this as a themed glyph previously changed both its shape
-                    and color, eventually reading as a play button. */}
-                <Image
-                  source={require("../assets/icon.png")}
-                  style={styles.brandMarkImage}
-                  resizeMode="cover"
-                />
-              </View>
+              <YaverAppIcon
+                size={isTabletLandscape ? 120 : isTabletPortrait ? 112 : showEmailForm ? 72 : 92}
+                style={styles.brandMark}
+              />
               <Text
                 style={[
                   styles.subtitle,
@@ -878,7 +865,10 @@ export default function LoginScreen() {
                           { backgroundColor: c.bgCard, borderColor: providerBorderColor },
                           pressed && styles.buttonPressed,
                         ]}
-                        onPress={() => setShowEmailForm(true)}
+                        onPress={() => {
+                          setShowEmailForm(true);
+                          requestAnimationFrame(() => loginScrollRef.current?.scrollTo({ y: 54, animated: true }));
+                        }}
                       >
                         <View style={styles.buttonContent}>
                           <Ionicons name="mail-outline" size={17} color={c.textPrimary} style={styles.buttonIcon} />
@@ -1115,6 +1105,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 40,
   },
+  headerEmailMode: {
+    marginBottom: 18,
+  },
   headerTabletPortrait: {
     maxWidth: 480,
     width: "100%",
@@ -1131,25 +1124,7 @@ const styles = StyleSheet.create({
     paddingLeft: 8,
   },
   brandMark: {
-    width: 92,
-    height: 92,
-    borderRadius: 21,
-    overflow: "hidden",
     marginBottom: 8,
-  },
-  brandMarkImage: {
-    width: "100%",
-    height: "100%",
-  },
-  brandMarkTabletPortrait: {
-    width: 112,
-    height: 112,
-    marginBottom: 10,
-  },
-  brandMarkTabletLandscape: {
-    width: 120,
-    height: 120,
-    marginBottom: 12,
   },
   webWordmark: {
     fontSize: 64,

@@ -98,6 +98,38 @@ export const listForUserInternal = internalQuery({
 });
 
 /**
+ * Permanently forget bookkeeping for a provider resource independently
+ * confirmed to no longer exist. This never calls a provider and cannot delete
+ * infrastructure. Every immutable identity field must match so an operator
+ * cannot remove the wrong tenant's or wrong server's binding by typo.
+ */
+export const purgeMissingResourceBinding = internalMutation({
+  args: {
+    userId: v.id("users"),
+    provider: v.string(),
+    serverId: v.string(),
+    deviceId: v.string(),
+    serverIp: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("byoMachines")
+      .withIndex("by_user_server", (q) => q.eq("userId", args.userId).eq("serverId", args.serverId))
+      .unique();
+    if (!row) return { ok: true, alreadyGone: true };
+    if (
+      row.provider !== args.provider ||
+      row.deviceId !== args.deviceId ||
+      row.serverIp !== args.serverIp
+    ) {
+      throw new Error("BYO_RESOURCE_IDENTITY_MISMATCH");
+    }
+    await ctx.db.delete(row._id);
+    return { ok: true, alreadyGone: false, deletedId: String(row._id) };
+  },
+});
+
+/**
  * Convert an existing bookkeeping row to client-custodied BYO ownership.
  * This changes metadata only: it never calls the provider and accepts no
  * credential. The immutable provider server id and Primary IPv4 must match the

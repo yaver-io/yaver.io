@@ -5,6 +5,7 @@ import * as Linking from "expo-linking";
 import { useAuth } from "../src/context/AuthContext";
 import { resumePendingDeviceApproval } from "../src/lib/pendingDeviceApproval";
 import { useRouteParamsCompat } from "../src/lib/useRouteParamsCompat";
+import { YaverAppIcon } from "../src/components/YaverAppIcon";
 
 // OAuth deep-link landing page.
 //
@@ -116,6 +117,7 @@ export default function OAuthCallbackScreen() {
           paddingHorizontal: 24,
         }}
       >
+        <YaverAppIcon size={72} style={{ marginBottom: 20 }} />
         <Text style={{ color: "#f87171", fontSize: 16, fontWeight: "600", marginBottom: 12 }}>
           Sign-in failed
         </Text>
@@ -144,6 +146,7 @@ export default function OAuthCallbackScreen() {
 
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#000" }}>
+      <YaverAppIcon size={72} style={{ marginBottom: 20 }} />
       <ActivityIndicator size="small" color="#818cf8" />
       <Text style={{ color: "#9ca3af", marginTop: 12, fontSize: 14 }}>Returning to Yaver…</Text>
     </View>

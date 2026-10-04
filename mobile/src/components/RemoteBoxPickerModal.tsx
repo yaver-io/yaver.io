@@ -36,6 +36,8 @@ import {
 } from "../lib/parkedMachines";
 import type { ManagedCloudMachineSummary } from "../lib/subscription";
 import { ENABLE_BOXLESS_UI, ENABLE_CLOUD_WORKSPACE_UI } from "../lib/launchFlags";
+import { hetznerClientCloud } from "../lib/clientCloudProvider";
+import { isBoundHetznerDevice } from "../lib/hetznerDeviceBinding";
 
 interface Props {
   visible: boolean;
@@ -528,8 +530,12 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       setPickedDeviceId(activeDevice.id);
       return;
     }
-    setPickedDeviceId(eligibleDevices[0]?.id ?? null);
-  }, [visible, activeDevice?.id, eligibleDevices, codingMode]);
+    // A usable live Mac/PC is a better initial choice than an offline primary
+    // cloud box. The user can still select that VPS and wake it explicitly.
+    const connected = eligibleDevices.find((d) => connectedSet.has(d.id));
+    const online = eligibleDevices.find((d) => d.online && d.needsAuth !== true);
+    setPickedDeviceId((connected || online || eligibleDevices[0])?.id ?? null);
+  }, [visible, activeDevice?.id, eligibleDevices, codingMode, connectedSet]);
 
   const runPing = React.useCallback(async (device: Device) => {
     const direct = connectionManager.clientFor(device.id);
@@ -672,6 +678,26 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     setSwitchError(null);
     setProbeStage(`Pinging ${target.name}…`);
     try {
+      let waitForHetznerBoot = false;
+      // BYO Hetzner is endpoint-controlled: if this exact pinned server is off,
+      // power it on directly from the phone before probing its Yaver agent.
+      // The token never crosses Convex, Cloudflare, or the relay.
+      if (Platform.OS !== "web" && !target.online) {
+        const managed = await hetznerClientCloud.getManagedServer().catch(() => null);
+        if (managed && isBoundHetznerDevice(target, managed)) {
+          waitForHetznerBoot = true;
+          setProbeStage(`Checking ${managed.name} with Hetzner…`);
+          const servers = await hetznerClientCloud.listServers();
+          const server = servers.find((candidate) => candidate.id === managed.id);
+          if (!server) throw new Error("The pinned VPS is no longer returned by Hetzner.");
+          if (server.status === "off") {
+            setProbeStage(`Powering on ${managed.name} with Hetzner…`);
+            await hetznerClientCloud.setPower(managed.id, "power_on");
+            setProbeStage("VPS is running — waiting for the Yaver agent…");
+          }
+        }
+      }
+
       // Probe-first: do a real reachability check (the same relay+direct race
       // `yaver ping` uses) and SHOW the result, instead of spinning blindly for
       // up to 20s. If nothing answers, fail fast with an honest reason rather
@@ -681,21 +707,32 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       // the identical sequence — it previously did a bare probe with no repair
       // rung and a tighter timeout, which made the default path strictly weaker
       // than this manual one. Same function, same stage strings, both surfaces.
-      const { probe } = await probeDeviceWithRepair(
-        {
-          id: target.id,
-          name: target.name,
-          host: (target as any).host,
-          port: (target as any).port,
-          lanIps: (target as any).lanIps,
-        },
-        {
-          token,
-          timeoutMs: 4000,
-          onStage: setProbeStage,
-          repairRelay: deviceCtx.repairRelay,
-        },
-      );
+      let probe = null as Awaited<ReturnType<typeof probeDeviceWithRepair>>["probe"];
+      // A freshly powered VPS can report `running` before systemd and the relay
+      // tunnel are ready. Keep this bounded and visible instead of failing the
+      // first ping and forcing the user to retry manually.
+      const probeAttempts = waitForHetznerBoot ? 24 : 1;
+      for (let attempt = 0; attempt < probeAttempts; attempt += 1) {
+        const result = await probeDeviceWithRepair(
+          {
+            id: target.id,
+            name: target.name,
+            host: (target as any).host,
+            port: (target as any).port,
+            lanIps: (target as any).lanIps,
+          },
+          {
+            token,
+            timeoutMs: 4000,
+            onStage: setProbeStage,
+            repairRelay: deviceCtx.repairRelay,
+          },
+        );
+        probe = result.probe;
+        if (probe?.reachable || (!waitForHetznerBoot && target.online) || attempt === probeAttempts - 1) break;
+        setProbeStage(`VPS is starting — waiting for Yaver (${attempt + 1}/${probeAttempts})…`);
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+      }
 
       if (probe?.reachable) {
         if (probe.authExpired) {

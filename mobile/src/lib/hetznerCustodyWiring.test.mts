@@ -32,7 +32,8 @@ test("tenant Hetzner surface is direct, recovery-capable, and limited to up/down
   assert.match(adapter, /hetznerManagedServer/);
   assert.match(ui, /Create encrypted backup/);
   assert.match(ui, /Validate and restore/);
-  assert.match(ui, /Manage this server/);
+  assert.match(ui, /Manage this Yaver VPS/);
+  assert.match(ui, /Not a Yaver device/);
   assert.match(ui, /Save name/);
   assert.match(ui, /Hetzner activity/);
   assert.doesNotMatch(ui, />Delete</);
@@ -85,10 +86,20 @@ test("boxless UI is globally disabled while active devices remain visible", asyn
   assert.match(devices, /device\.id === primaryDeviceId \|\| device\.id === activeDevice\?\.id/);
 });
 
-test("native login uses the canonical vector Y instead of a raster wordmark", async () => {
+test("native login uses the canonical app icon component instead of a recreated glyph", async () => {
   const login = await read("../../app/login.tsx");
-  assert.match(login, /M150 150 L256 288 M362 150 L256 288 M256 288 L256 384/);
-  assert.doesNotMatch(login, /yaver-login-wordmark|<Image/);
+  const icon = await read("../components/YaverAppIcon.tsx");
+  assert.match(login, /YaverAppIcon/);
+  assert.match(icon, /assets\/icon\.png/);
+  assert.doesNotMatch(login, /M150 150 L256 288/);
+});
+
+test("remote box picker wakes only the locally bound Hetzner VPS before connecting", async () => {
+  const picker = await read("../components/RemoteBoxPickerModal.tsx");
+  assert.match(picker, /isBoundHetznerDevice\(target, managed\)/);
+  assert.match(picker, /setPower\(managed\.id, "power_on"\)/);
+  assert.match(picker, /waiting for the Yaver agent/);
+  assert.match(picker, /const probeAttempts = waitForHetznerBoot \? 24 : 1/);
 });
 
 test("client cloud abstraction is endpoint-only and registers Hetzner alone", async () => {
