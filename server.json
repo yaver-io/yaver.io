@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.yaver-io/yaver",
   "title": "Yaver",
-  "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
+  "description": "Phone-first OpenCode development MCP: pair trusted devices, run, build, deploy, and manage endpoint-local tools.",
   "websiteUrl": "https://yaver.io/docs/mcp",
   "icons": [
     {
@@ -46,9 +46,9 @@
       "install_guide": "https://yaver.io/docs/mcp",
       "highlights": [
         "Resumable headless OAuth: the device-code flow survives agent tool-call timeouts without re-prompting the human.",
-        "Auto-registers in Claude Code, Codex, and OpenCode on first sign-in.",
+        "OpenCode-first with runner and provider credentials retained on the executing endpoint.",
         "Phone-to-dev-machine P2P control plane with MCP tools for hot reload, builds, deploys, git, tunnels, and sessions.",
-        "Works with any coding agent — provider-agnostic by design."
+        "Runner-agnostic task protocol with OpenCode as the release default."
       ]
     }
   }
