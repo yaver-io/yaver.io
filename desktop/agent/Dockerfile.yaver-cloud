@@ -44,11 +44,12 @@
 #                                    effort, the agent is mission-critical
 #                                    and gets `exec`'d as PID 1).
 FROM golang:1.26-bookworm AS agentbuild
+ARG YAVER_VERSION=dev
 WORKDIR /src
 COPY desktop/agent/go.mod desktop/agent/go.sum ./
 RUN go mod download
 COPY desktop/agent/ .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yaver .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${YAVER_VERSION}" -o /out/yaver .
 
 FROM golang:1.22-bookworm AS relaybuild
 WORKDIR /src
