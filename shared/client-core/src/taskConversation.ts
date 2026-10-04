@@ -138,12 +138,14 @@ export function remoteAgentConversationView(
 
   if (task.status === 'ready') {
     return {
-      state: 'your_turn', tone: 'muted', eyebrow: 'YOUR TURN', title: 'The agent replied',
+      state: 'your_turn', tone: assistantText ? 'muted' : 'attention',
+      eyebrow: assistantText ? 'YOUR TURN' : 'NO READABLE REPLY',
+      title: assistantText ? 'The agent replied' : 'The runner finished without a readable reply',
       detail: assistantText
         ? 'Continue in the same runner conversation.'
-        : 'This runner did not provide a clean assistant message. Its terminal output is available under Details.',
-      activity: semanticActivity || undefined,
-      assistantText, nextAction: 'Send a follow-up whenever you are ready.',
+        : 'Yaver received terminal output but no safe assistant answer. Open Runner details to inspect it, then retry or send a follow-up.',
+      activity: semanticActivity || undefined, assistantText,
+      nextAction: assistantText ? 'Send a follow-up whenever you are ready.' : 'Do not treat this turn as a successful answer.',
       isCoding: false, canCompose: true, closesTurnStream: true,
     };
   }
