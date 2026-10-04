@@ -18,7 +18,7 @@ import { getConvexSiteUrlSync } from "../../src/lib/backendConfig";
 import { useLocalSearchParams, router } from "expo-router";
 import { Device, useDevice } from "../../src/context/DeviceContext";
 import { appTag } from "../../src/lib/appVersion";
-import { ENABLE_CLOUD_WORKSPACE_UI } from "../../src/lib/launchFlags";
+import { ENABLE_BOXLESS_UI, ENABLE_CLOUD_WORKSPACE_UI } from "../../src/lib/launchFlags";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { chipPalette } from "../../src/lib/chipPalette";
@@ -1251,7 +1251,7 @@ export default function DevicesScreen() {
     return 0;
   });
   const roleVisibleDevices = primaryDeviceId && !showWorkerDevices
-    ? displayDevices.filter((device) => device.id === primaryDeviceId)
+    ? displayDevices.filter((device) => device.id === primaryDeviceId || device.id === activeDevice?.id)
     : displayDevices;
 
   const handleAdoptBootstrap = useCallback(
@@ -1490,7 +1490,7 @@ export default function DevicesScreen() {
                   </Pressable>
                 ) : null}
               </View>
-              {user?.isOwner === true ? <Pressable
+              {ENABLE_BOXLESS_UI && user?.isOwner === true ? <Pressable
                 testID="devices-remoteless-card"
                 disabled={!codingModeReady}
                 onPress={() => {

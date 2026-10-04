@@ -8,7 +8,7 @@
 
 const { ensureAgentBinary, runAgentCommand } = require("./agent-runtime");
 const { ensureHermesc } = require("./hermesc-runtime");
-const { execFileSync, execSync, spawnSync } = require("child_process");
+const { execFileSync, execSync, spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -244,7 +244,59 @@ function installMissingMobileTools() {
 // chromedp driver + redroid image are provisioned on demand by the in-app
 // "Install test tools" button (testkit_deps_install), so a run never fails on
 // missing tooling. Best-effort; never fails npm install.
-function installTestRunnerTools() {
+async function prepareHeadlessChromiumDogfood() {
+  const stateDir = path.join(os.homedir(), ".yaver", "install-state");
+  const marker = path.join(stateDir, "headless-chromium-localhost-v1.json");
+  if (fs.existsSync(marker)) {
+    log("Headless Chromium localhost permission/readiness was already verified.");
+    return;
+  }
+  const http = require("http");
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end("<!doctype html><title>Yaver CI Chromium readiness</title><main>ready</main>");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  const port = address && typeof address === "object" ? address.port : 0;
+  const screenshot = path.join(os.tmpdir(), `yaver-ci-chromium-${process.pid}.png`);
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  try {
+    const status = await new Promise((resolve) => {
+      const child = spawn(npx, ["--yes", "playwright", "screenshot", "--browser", "chromium", `http://127.0.0.1:${port}/`, screenshot], {
+        stdio: "inherit",
+        windowsHide: true,
+      });
+      const timer = setTimeout(() => {
+        child.kill();
+        resolve(-1);
+      }, 60_000);
+      child.once("error", () => {
+        clearTimeout(timer);
+        resolve(-1);
+      });
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        resolve(code == null ? -1 : code);
+      });
+    });
+    if (status !== 0 || !fs.existsSync(screenshot)) {
+      log("Headless Chromium readiness check did not complete. Run the Yaver CI install once from an interactive session to grant any OS browser permission.");
+      return;
+    }
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(marker, JSON.stringify({ version: 1, verifiedAt: new Date().toISOString() }) + "\n", { mode: 0o600 });
+    log("Verified headless Chromium against localhost; later dogfood runs reuse this one-time setup.");
+  } finally {
+    server.close();
+    try { fs.unlinkSync(screenshot); } catch (_) {}
+  }
+}
+
+async function installTestRunnerTools() {
   if (!commandExists("node")) {
     log("Node not found — skipping Playwright test driver bootstrap.");
     return;
@@ -254,19 +306,26 @@ function installTestRunnerTools() {
     execSync("node -e \"require.resolve('playwright')\"", { stdio: ["ignore", "ignore", "ignore"] });
     hasPW = true;
   } catch (_) {}
-  if (hasPW) {
-    log("Playwright test driver already present.");
-    return;
-  }
   const npmCmd = (process.env.npm_execpath || "npm").trim() || "npm";
-  try {
-    execSync(`"${npmCmd}" install -g --no-fund --no-audit playwright`, { stdio: "inherit" });
+  if (!hasPW) {
     try {
-      execSync("npx --yes playwright install chromium", { stdio: "inherit" });
-    } catch (_) {}
-    log("Installed Playwright test driver (web-playwright target).");
+      execSync(`"${npmCmd}" install -g --no-fund --no-audit playwright`, { stdio: "inherit" });
+      log("Installed Playwright test driver (web-playwright target).");
+    } catch (error) {
+      log(`Skipping Playwright test driver bootstrap: ${error.message}`);
+      return;
+    }
+  } else {
+    log("Playwright test driver already present.");
+  }
+  try {
+    // Idempotent: Playwright reuses its versioned browser cache. Checking the
+    // package alone was insufficient; it left fresh CI boxes with a driver but
+    // no Chromium binary.
+    execSync("npx --yes playwright install chromium", { stdio: "inherit" });
+    await prepareHeadlessChromiumDogfood();
   } catch (error) {
-    log(`Skipping Playwright test driver bootstrap: ${error.message}`);
+    log(`Skipping Chromium browser bootstrap: ${error.message}`);
   }
 }
 
@@ -599,7 +658,7 @@ async function main() {
   // Optional browser test lab, also positive opt-in because it downloads a
   // browser. `yaver test` can offer this route when the user chooses it.
   if ((completeAutomationHost || envEnabled("YAVER_POSTINSTALL_TESTKIT")) && !envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
-    installTestRunnerTools();
+    await installTestRunnerTools();
   }
 
   // Free/offline voice stack — provision ffmpeg + whisper.cpp + a ggml

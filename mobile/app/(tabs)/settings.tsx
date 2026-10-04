@@ -47,6 +47,7 @@ import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../
 import { publishAutoRenderVibing } from "../../src/lib/autoRenderVibing";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useRouteParamsCompat } from "../../src/lib/useRouteParamsCompat";
+import { ENABLE_BOXLESS_UI } from "../../src/lib/launchFlags";
 
 import {
   resolveRuntimeProjectPreference,
@@ -2241,7 +2242,7 @@ export default function SettingsScreen() {
                       </Text>
                     ) : null}
                   </View>
-                  {user?.isOwner === true ? <Pressable
+                  {ENABLE_BOXLESS_UI && user?.isOwner === true ? <Pressable
                     onPress={async () => {
                       try {
                         await setCodingMode(codingMode === "local-only" ? "remote-preferred" : "local-only");

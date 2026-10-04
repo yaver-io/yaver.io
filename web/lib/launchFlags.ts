@@ -8,6 +8,9 @@ export const ENABLE_RELAY_PRO_UI = true;
 export const ENABLE_RELAY_PRO_CHECKOUT =
   process.env.NEXT_PUBLIC_YAVER_RELAY_PRO_CHECKOUT_ENABLED === "true";
 export const ENABLE_CLOUD_WORKSPACE_UI = false;
+// Shared release policy with native clients: retain the dormant implementation
+// but do not advertise or select the boxless/remoteless execution lane.
+export const ENABLE_BOXLESS_UI = false;
 
 // Compatibility for surfaces that only need to know whether checkout exists.
 // New code should prefer the product-specific flags above.

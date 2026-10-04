@@ -69,7 +69,8 @@ test("scanner defaults to on-device text OCR, retains QR, and has no cloud persi
 
 test("Hetzner credential scan fills only transient native settings state", () => {
   const settings = fs.readFileSync(new URL("../components/CloudProvidersSection.tsx", import.meta.url), "utf8");
-  assert.match(settings, /Scan token from camera or photo/);
+  assert.match(settings, /Scan camera\/photo/);
+  assert.match(settings, /Paste and connect/);
   assert.match(settings, /Platform\.OS !== "web"/);
   assert.match(settings, /setSecret\(apiKey\)/);
   assert.match(settings, /hetznerClientCloud\.connect\(value\)/);

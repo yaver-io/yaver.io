@@ -473,6 +473,7 @@ export default function TabLayout() {
         name="tasks"
         options={{
           title: "Chat",
+          headerShown: false,
           tabBarIcon: ({ focused }) => <TabIcon label="Chat" focused={focused} rail={useLeftRail} />,
         }}
       />

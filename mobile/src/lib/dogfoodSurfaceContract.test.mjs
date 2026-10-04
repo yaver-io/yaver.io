@@ -254,8 +254,10 @@ test("Dogfood launch shows the real runtime console before opening the app", () 
     "the root owner may expose only the shared Y over the running app");
   assert.match(overlay, /!nativeDogfoodOwnsControls/,
     "the native Dogfood menu must not receive a redundant Y over itself");
-  assert.doesNotMatch(bubble, /Modal|StudioChatPane|KeyboardAvoidingView/,
-    "the running app must not be covered by a second Dogfood interface");
+  assert.match(bubble, /<DogfoodControlMenu/,
+    "the Y must open the same compact action contract as the Feedback SDK");
+  assert.match(bubble, /<StudioChatPane/,
+    "Chat from the Y must open a real composer without ending Dogfood");
   assert.match(overlay, /const workDir = typeof result\.metadata\?\.workDir === "string"/,
     "Fast Reload must prefer the checkout path resolved by the selected box");
   assert.match(overlay, /reloadAttachedDogfoodBrowserLane\(activeRequest\.deviceId, workDir, kind\)/,
@@ -338,8 +340,10 @@ test("Yaver Chat Only, Reload Only, and combined modes survive every handoff", (
   assert.match(nativeMenu, /dogfood-native-exit/);
   assert.match(nativeMenu, /Open Dogfood tasks/);
   assert.match(nativeMenu, /Open Dogfood settings/);
-  assert.doesNotMatch(bubble, /Full Reload|StudioChatPane|reload-only-panel/,
-    "mode-specific controls belong in native Dogfood, never over the guest");
+  assert.match(bubble, /usageMode=\{usageMode\}/,
+    "the shared Y menu must honor Chat Only, Reload Only, and combined modes");
+  assert.match(bubble, /onExitPreview\(\)/,
+    "Exit is an explicit menu action wired to the root runtime owner");
 });
 
 test("attached Dogfood does not offer its own Yaver dev server as a guest card", () => {

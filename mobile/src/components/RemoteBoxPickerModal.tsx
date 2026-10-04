@@ -35,7 +35,7 @@ import {
   WAKE_STAGES,
 } from "../lib/parkedMachines";
 import type { ManagedCloudMachineSummary } from "../lib/subscription";
-import { ENABLE_CLOUD_WORKSPACE_UI } from "../lib/launchFlags";
+import { ENABLE_BOXLESS_UI, ENABLE_CLOUD_WORKSPACE_UI } from "../lib/launchFlags";
 
 interface Props {
   visible: boolean;
@@ -434,14 +434,14 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     lastError,
   } = deviceCtx;
   const { token, user } = useAuth();
-  const remotelessEnabled = user?.isOwner === true;
+  const remotelessEnabled = ENABLE_BOXLESS_UI && user?.isOwner === true;
 
   const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
   const eligibleDevices = React.useMemo(
     () => {
       const eligible = eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id);
       const visible = primaryDeviceId && !showWorkerDevices
-        ? eligible.filter((device) => device.id === primaryDeviceId)
+        ? eligible.filter((device) => device.id === primaryDeviceId || device.id === activeDevice?.id)
         : eligible;
       return visible.sort((a, b) => {
         const rank = (device: Device) => {
@@ -711,9 +711,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
         setProbeStage(`Reachable via ${probe.path === "relay" ? "relay" : "direct"} — connecting…`);
       } else {
         // Online-but-unreachable: name it and stop, don't fake a 20s attempt.
+        const presence = target.online ? "its presence record says online" : "it is currently marked down";
         throw new Error(
-          `Couldn't reach ${target.name} — it's online but no transport answered (${probe?.error || "no route"}). ` +
-            `If it's a remote box, it may be heartbeating without a live relay tunnel.`,
+          `Couldn't reach ${target.name} — ${presence}, and no live transport answered (${probe?.error || "no route"}). ` +
+            `Power it on from Devices if needed, then wait for the Yaver agent to reconnect.`,
         );
       }
       // Always route through DeviceContext.selectDevice — even when

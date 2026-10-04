@@ -7137,6 +7137,9 @@ export default function TasksScreen() {
   return (
     <SafeAreaView style={[s.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
+        <View style={[s.tabScreenHeader, { paddingTop: insets.top + 8, backgroundColor: c.bg, borderBottomColor: c.border }]}>
+          <Text style={[s.tabScreenHeaderTitle, { color: c.textPrimary }]}>Chat</Text>
+        </View>
         <RemoteBoxBanner
           extra={
             <>
@@ -10280,6 +10283,8 @@ export default function TasksScreen() {
 const s = StyleSheet.create({
   safeArea: { flex: 1 },
   container: { flex: 1 },
+  tabScreenHeader: { minHeight: 54, paddingBottom: 10, paddingHorizontal: 16, alignItems: "center", justifyContent: "flex-end", borderBottomWidth: 1 },
+  tabScreenHeaderTitle: { ...typography.navTitle, textAlign: "center" },
 
   bannerMetaRow: {
     marginTop: 6,

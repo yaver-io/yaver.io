@@ -1,8 +1,10 @@
 // CloudProvidersSection — first-class "bring your own cloud" connect UI
 // for Settings. The user pastes their OWN provider API token (Hetzner
 // first-class, DigitalOcean too). Hetzner is phone-direct: its token lives
-// only in native Keychain/Keystore and calls go straight to Hetzner. It never
-// transits Convex, a Yaver agent, or Relay Free.
+// only in native Keychain/Keystore and calls go straight to Hetzner. Optional
+// device transfer uses a separate direct P2P channel and endpoint-targeted
+// ciphertext; Convex, Relay Free, and the normal Chat transport never receive
+// the plaintext credential.
 //
 // CREDENTIAL-LEAK SAFETY (deliberate):
 //  - the token input is secureTextEntry + autofill/autocorrect/spellcheck
@@ -18,7 +20,8 @@ import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking, Mo
 import * as Clipboard from "expo-clipboard";
 import { quicClient } from "../lib/quic";
 import { useAuth } from "../context/AuthContext";
-import { shareLocalHetznerWithConnectedEndpoint } from "../lib/hetznerHandoff";
+import { useDevice } from "../context/DeviceContext";
+import { receiveLocalHetznerFromConnectedEndpoint, shareLocalHetznerWithConnectedEndpoint } from "../lib/hetznerHandoff";
 import { hetznerClientCloud } from "../lib/clientCloudProvider";
 import type { HetznerRecoveryExport } from "../lib/hetznerRecovery";
 import type { LocalHetznerManagedServer } from "../lib/hetznerDirect";
@@ -88,6 +91,7 @@ export default function CloudProvidersSection({
   token: string | null | undefined;
 }) {
   const { user } = useAuth();
+  const { activeDevice } = useDevice();
   const [providers, setProviders] = useState<ProviderMeta[]>([]);
   const [accounts, setAccounts] = useState<Record<string, AccountSummary>>({});
   const [open, setOpen] = useState(false);
@@ -171,16 +175,17 @@ export default function CloudProvidersSection({
     setLabel("");
   };
 
-  const submitConnect = async () => {
-    if (!activeProvider || !secret.trim()) return;
-    setBusy(`connect:${activeProvider}`);
+  const submitConnect = async (overrideSecret?: string) => {
+    const provider = activeProvider;
+    const value = (overrideSecret ?? secret).trim();
+    if (!provider || !value) return;
+    setBusy(`connect:${provider}`);
     // Snapshot + immediately clear the secret from state; we only need
     // the local copy to make the request.
-    const value = secret.trim();
     setSecret("");
     try {
-      if (activeProvider === "hetzner") await hetznerClientCloud.connect(value);
-      else await quicClient.accountConnect(activeProvider, label.trim(), { token: value });
+      if (provider === "hetzner") await hetznerClientCloud.connect(value);
+      else await quicClient.accountConnect(provider, label.trim(), { token: value });
       setActiveProvider(null);
       setLabel("");
       await load();
@@ -189,8 +194,26 @@ export default function CloudProvidersSection({
       // surface a generic message and never echo `value`.
       Alert.alert("Couldn't connect", e?.message || "Check the token and try again.");
     } finally {
+      if (overrideSecret) {
+        // Explicit one-tap paste is a credential operation. Clear only when
+        // the clipboard still contains the exact value the user chose; never
+        // erase unrelated clipboard content that arrived in the meantime.
+        void Clipboard.getStringAsync().then((current) => {
+          if (current.trim() === value) return Clipboard.setStringAsync("");
+        }).catch(() => {});
+      }
       setBusy(null);
     }
+  };
+
+  const pasteAndConnect = async () => {
+    const pasted = (await Clipboard.getStringAsync()).trim();
+    if (!pasted) {
+      Alert.alert("Clipboard is empty", "Copy the Hetzner Cloud API token, then tap Paste and connect again.");
+      return;
+    }
+    setSecret(pasted);
+    await submitConnect(pasted);
   };
 
   const disconnect = (providerId: string, providerLabel: string) => {
@@ -392,7 +415,8 @@ export default function CloudProvidersSection({
           onPress: async () => {
             setBusy("hetzner-handoff");
             try {
-              await shareLocalHetznerWithConnectedEndpoint(user.id);
+              if (!activeDevice) throw new Error("Select the trusted Yaver device that should receive the credential first.");
+              await shareLocalHetznerWithConnectedEndpoint(user.id, token || "", activeDevice);
               Alert.alert("Shared securely", "The connected endpoint stored the token in its local encrypted credential vault.");
             } catch (e: any) {
               Alert.alert("Secure handoff failed", e?.message || "Use the same account over LAN or Yaver Mesh and try again.");
@@ -403,6 +427,24 @@ export default function CloudProvidersSection({
         },
       ],
     );
+  };
+
+  const receiveFromEndpoint = async () => {
+    if (!user?.id) {
+      Alert.alert("Sign in required", "Sign in before receiving configuration from another trusted device.");
+      return;
+    }
+    setBusy("hetzner-receive");
+    try {
+      if (!activeDevice) throw new Error("Select the Yaver device that holds your Hetzner token first.");
+      await receiveLocalHetznerFromConnectedEndpoint(user.id, token || "", activeDevice);
+      await load();
+      Alert.alert("Hetzner received securely", "The connected PC encrypted its token directly to this phone. It is now stored in this phone's Keychain/Keystore.");
+    } catch (e: any) {
+      Alert.alert("Couldn't receive from connected PC", e?.message || "Confirm both devices use the same Yaver account and try again.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const hetznerConnected = accounts["hetzner"]?.connected === true;
@@ -519,18 +561,27 @@ export default function CloudProvidersSection({
                           style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.textPrimary, backgroundColor: c.bgCardElevated ?? c.bgCard, fontFamily: "monospace" }}
                         />
                         {Platform.OS !== "web" ? (
-                          <Pressable
-                            disabled={busy !== null}
-                            onPress={() => setScanProvider(p.id)}
-                            style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
-                          >
-                            <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>▣ Scan token from camera or photo</Text>
-                          </Pressable>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                            <Pressable
+                              disabled={busy !== null}
+                              onPress={() => void pasteAndConnect()}
+                              style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: "#0ea5e9", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+                            >
+                              <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Paste and connect</Text>
+                            </Pressable>
+                            <Pressable
+                              disabled={busy !== null}
+                              onPress={() => setScanProvider(p.id)}
+                              style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+                            >
+                              <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>▣ Scan camera/photo</Text>
+                            </Pressable>
+                          </View>
                         ) : null}
                         <View style={{ flexDirection: "row", gap: 8 }}>
                           <Pressable
                             disabled={busy !== null || !secret.trim()}
-                            onPress={submitConnect}
+                            onPress={() => void submitConnect()}
                             style={{ opacity: busy || !secret.trim() ? 0.5 : 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: "#0ea5e9" }}
                           >
                             {busy === `connect:${p.id}` ? (
@@ -554,6 +605,11 @@ export default function CloudProvidersSection({
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
                   iOS Keychain normally survives reinstall with the same app identity. Android uninstall/reset removes Keystore data. Create an encrypted backup and keep its recovery key separately; Yaver cannot recover either for you.
                 </Text>
+                {activeDevice ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    No typing: {activeDevice.name} can import its active hcloud context and encrypt it directly for this device over a separate P2P channel. Your current Chat connection does not switch.
+                  </Text>
+                ) : null}
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                   {hetznerConnected ? (
                     <Pressable disabled={busy !== null} onPress={() => void createRecovery()} style={{ borderWidth: 1, borderColor: c.border, borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
@@ -563,6 +619,13 @@ export default function CloudProvidersSection({
                   <Pressable disabled={busy !== null} onPress={() => setShowRecoveryImport((v) => !v)} style={{ borderWidth: 1, borderColor: c.border, borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
                     <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Restore backup</Text>
                   </Pressable>
+                  {activeDevice ? (
+                    <Pressable disabled={busy !== null} onPress={() => void receiveFromEndpoint()} style={{ borderWidth: 1, borderColor: "#0ea5e9", borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
+                      {busy === "hetzner-receive" ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
+                        <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Get from {activeDevice.name} over P2P</Text>
+                      )}
+                    </Pressable>
+                  ) : null}
                 </View>
 
                 {recovery ? (

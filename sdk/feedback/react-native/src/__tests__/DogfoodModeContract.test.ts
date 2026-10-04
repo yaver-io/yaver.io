@@ -10,13 +10,15 @@ describe('Dogfood Settings and Usage contract', () => {
 
   it('keeps the compact card focused on Chat, Reload, Settings, Exit, and hiding Y', () => {
     const usage = readFileSync(join(__dirname, '../DogfoodQuickControls.tsx'), 'utf8');
-    expect(usage).toContain("usageMode !== 'reload-only'");
-    expect(usage).toContain("usageMode !== 'chat-only'");
-    expect(usage).toContain('yaver-dogfood-chat');
-    expect(usage).toContain('yaver-dogfood-fast-reload');
-    expect(usage).toContain('yaver-dogfood-settings');
-    expect(usage).toContain('yaver-dogfood-hide');
-    expect(usage).toContain('yaver-dogfood-exit');
+    const menu = readFileSync(join(__dirname, '../DogfoodControlMenu.tsx'), 'utf8');
+    expect(usage).toContain('<DogfoodControlMenu');
+    expect(menu).toContain("usageMode !== 'reload-only'");
+    expect(menu).toContain("usageMode !== 'chat-only'");
+    expect(menu).toContain('yaver-dogfood-chat');
+    expect(menu).toContain('yaver-dogfood-fast-reload');
+    expect(menu).toContain('yaver-dogfood-settings');
+    expect(menu).toContain('yaver-dogfood-hide');
+    expect(menu).toContain('yaver-dogfood-exit');
     expect(usage).toContain('YaverFeedback.exitDogfoodMode()');
     expect(usage).toContain('yaverFeedback:dogfoodUsageRequested');
     expect(usage).toContain("DeviceEventEmitter.emit('yaverFeedback:dogfoodNewChatRequested'");
@@ -30,6 +32,22 @@ describe('Dogfood Settings and Usage contract', () => {
     expect(usage).toContain('setDogfoodEntryIconVisible(true)');
     expect(usage).toContain("entryIconHidden ? 'Show Y' : 'Hide Y'");
     expect(usage).not.toContain("{'🧪'}");
+  });
+
+  it('keeps standalone SDK apps and Yaver-hosted containers on one Y-menu agreement', () => {
+    const feedback = readFileSync(join(__dirname, '../YaverFeedback.ts'), 'utf8');
+    const modal = readFileSync(join(__dirname, '../FeedbackModal.tsx'), 'utf8');
+    const controls = readFileSync(join(__dirname, '../DogfoodQuickControls.tsx'), 'utf8');
+    const menu = readFileSync(join(__dirname, '../DogfoodControlMenu.tsx'), 'utf8');
+    expect(feedback).toContain('const IS_HOST_MODE');
+    expect(feedback).toContain('YAVER_HOST_MODE');
+    expect(feedback).toContain('preferredDeviceId: inheritedDevice');
+    expect(modal).toContain('<DogfoodQuickControls suppressed={visible} />');
+    expect(controls).toContain('<DogfoodControlMenu');
+    expect(menu).toContain('yaver-dogfood-chat');
+    expect(menu).toContain('yaver-dogfood-settings');
+    expect(menu).toContain('yaver-dogfood-exit');
+    expect(controls).toContain('targetDeviceId: configured.targetDeviceId');
   });
 
   it('auto-launches the shared native menu and removes chat in Reload Only mode', () => {

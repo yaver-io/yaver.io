@@ -10,7 +10,6 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -20,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Path, Rect } from "react-native-svg";
 import { OAUTH_REDIRECT } from "../src/_core/constants";
 import { appLog } from "../src/lib/logger";
 import { useAuth } from "../src/context/AuthContext";
@@ -73,9 +73,6 @@ async function finishLogin() {
 }
 
 const LEGACY_OAUTH_REDIRECT = "yaver:///oauth-callback";
-const YAVER_LOGIN_WORDMARK_DARK = require("../assets/branding/yaver-login-wordmark-dark.png");
-const YAVER_LOGIN_WORDMARK_LIGHT = require("../assets/branding/yaver-login-wordmark-light.png");
-
 // One 48pt control + the email form's 12pt gap + breathing room. This is not a
 // device/keyboard offset: it tells the native ScrollView to reveal the control
 // immediately after the focused field. Without it, UIKit correctly revealed a
@@ -197,13 +194,11 @@ export default function LoginScreen() {
   const [emailError, setEmailError] = useState("");
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(false);
-  const [wordmarkFailed, setWordmarkFailed] = useState(false);
   const loginScrollRef = useRef<ScrollView>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const confirmPasswordInputRef = useRef<TextInput>(null);
   const passkeySupported = isPasskeySupported();
   const isTabletPortrait = isTablet && !isTabletLandscape;
-  const loginWordmark = isDark ? YAVER_LOGIN_WORDMARK_LIGHT : YAVER_LOGIN_WORDMARK_DARK;
   const providerGap = isTablet ? 10 : 8;
   const providerBorderColor = isDark ? c.borderSubtle : c.border;
   const heroCardShadow = !isDark
@@ -642,7 +637,7 @@ export default function LoginScreen() {
                 isTabletLandscape && styles.headerLandscape,
               ]}
             >
-              {Platform.OS === "web" || wordmarkFailed ? (
+              {Platform.OS === "web" ? (
                 <Text
                   accessibilityRole="header"
                   style={[
@@ -655,18 +650,30 @@ export default function LoginScreen() {
                   Yaver
                 </Text>
               ) : (
-                <Image
-                  source={loginWordmark}
+                <View
                   style={[
-                    styles.wordmark,
-                    isTabletPortrait && styles.wordmarkTabletPortrait,
-                    isTabletLandscape && styles.wordmarkTabletLandscape,
+                    styles.brandMark,
+                    isTabletPortrait && styles.brandMarkTabletPortrait,
+                    isTabletLandscape && styles.brandMarkTabletLandscape,
                   ]}
-                  resizeMode="contain"
                   accessibilityRole="image"
-                  accessibilityLabel="Yaver"
-                  onError={() => setWordmarkFailed(true)}
-                />
+                  accessibilityLabel="Yaver Y"
+                >
+                  {/* Canonical app-icon Y. Three explicit strokes stay legible
+                      at phone size; the old raster wordmark was cropped into a
+                      pale sideways triangle by the shipped iOS image view. */}
+                  <Svg width="100%" height="100%" viewBox="0 0 512 512">
+                    <Rect x="0" y="0" width="512" height="512" rx="116" fill={c.accent} />
+                    <Path
+                      d="M150 150 L256 288 M362 150 L256 288 M256 288 L256 384"
+                      fill="none"
+                      stroke="#FFFFFF"
+                      strokeWidth="46"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                </View>
               )}
               <Text
                 style={[
@@ -1143,19 +1150,19 @@ const styles = StyleSheet.create({
     marginBottom: 0,
     paddingLeft: 8,
   },
-  wordmark: {
-    width: 240,
-    height: 98,
+  brandMark: {
+    width: 92,
+    height: 92,
     marginBottom: 8,
   },
-  wordmarkTabletPortrait: {
-    width: 320,
-    height: 128,
+  brandMarkTabletPortrait: {
+    width: 112,
+    height: 112,
     marginBottom: 10,
   },
-  wordmarkTabletLandscape: {
-    width: 360,
-    height: 140,
+  brandMarkTabletLandscape: {
+    width: 120,
+    height: 120,
     marginBottom: 12,
   },
   webWordmark: {

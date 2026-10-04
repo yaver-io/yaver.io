@@ -77,6 +77,7 @@ import { isRawRunnerCommand } from "@/lib/raw-runner-command";
 import { loadLastProjectFromConvex, loadMCPServersFromConvex, saveLastProjectToConvex, saveMCPServersToConvex, setUseLatestMCPEnabled, useLatestMCPEnabled } from "@/lib/runtimeProjectSettings";
 import PreviewPane from "./PreviewPane";
 import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
+import { ENABLE_BOXLESS_UI } from "@/lib/launchFlags";
 
 // ANSI escape stripper. Mirrors desktop/agent/result_cleanup.go::stripANSI
 // so anything reaching the chat surface — historic task.Output rows that
@@ -552,7 +553,7 @@ export default function VibeCodingView({
     const preferred = runners.find((runner) => runner.ready && runner.id !== "remoteless");
     if (preferred) {
       setSelectedRunner(preferred.id);
-    } else if (user?.isOwner !== true) {
+    } else if (!ENABLE_BOXLESS_UI || user?.isOwner !== true) {
       // A stale browser session may remember the preview runner even though
       // the agent now correctly hides it. Clear that value before dispatch so
       // non-owners cannot reach the server-side refusal via stale UI state.
@@ -1002,7 +1003,7 @@ export default function VibeCodingView({
         )?.projects;
         setProjects(mergeConvexCatalogIntoProjects(projectRows, catalogRows));
         setMcpServers((mcpRows || []).filter((server) => server.enabled));
-        setRunners((runnerRows || []).filter((runner) => runner.installed));
+        setRunners((runnerRows || []).filter((runner) => runner.installed && (ENABLE_BOXLESS_UI || runner.id !== "remoteless")));
         setTaskList((prev) => {
           // The poll could not reach the box — hold the last known list rather
           // than rendering "no tasks" for "we don't know". See above.
@@ -2512,7 +2513,7 @@ export default function VibeCodingView({
               ) : null}
             </div>
           </div>
-          {user?.isOwner === true && selectedRunner === "remoteless" ? (
+          {ENABLE_BOXLESS_UI && user?.isOwner === true && selectedRunner === "remoteless" ? (
             <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
               <span>
                 Remoteless fallback in use · hosted DeepSeek coding is handling this turn. Configured device runners remain preferred.

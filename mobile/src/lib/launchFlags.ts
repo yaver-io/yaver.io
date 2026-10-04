@@ -3,6 +3,10 @@
 // Workspace controls remain unavailable for this release.
 export const ENABLE_RELAY_PRO_UI = true;
 export const ENABLE_CLOUD_WORKSPACE_UI = false;
+// Product-wide release gate. Keep the implementation available for later,
+// but do not expose or select a phone/TV-local "boxless" runtime in shipped
+// clients. Every coding task must name a real user-owned Yaver machine.
+export const ENABLE_BOXLESS_UI = false;
 export const HIDE_PAID_UI = !ENABLE_RELAY_PRO_UI;
 
 type DeviceRegistryRow = {

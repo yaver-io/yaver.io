@@ -137,14 +137,16 @@ final class TalosSceneDelegate: UIResponder, UIWindowSceneDelegate {
     const ios = readFileSync(join(__dirname, '../../ios/YaverDogfoodGesture.swift'), 'utf8');
     const android = readFileSync(join(__dirname, '../../android/src/main/java/io/yaver/feedback/YaverDogfoodGestureModule.java'), 'utf8');
     const controls = readFileSync(join(__dirname, '../DogfoodQuickControls.tsx'), 'utf8');
+    const menu = readFileSync(join(__dirname, '../DogfoodControlMenu.tsx'), 'utf8');
     expect(ios).toContain('numberOfTouchesRequired = 3');
     expect(ios).toContain('cancelsTouchesInView = false');
     expect(ios).toContain('isVoiceOverRunning');
     expect(android).toContain('event.getPointerCount() >= 3');
     expect(android).toContain('method.invoke(callback, args)');
     expect(android).toContain('isTouchExplorationEnabled');
-    expect(controls).toContain('yaver-dogfood-fast-reload');
-    expect(controls).toContain('yaver-dogfood-chat');
+    expect(controls).toContain('<DogfoodControlMenu');
+    expect(menu).toContain('yaver-dogfood-fast-reload');
+    expect(menu).toContain('yaver-dogfood-chat');
     expect(controls).toContain('yaver-dogfood-minimized-control');
   });
 });

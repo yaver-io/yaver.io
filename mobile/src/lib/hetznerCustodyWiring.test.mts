@@ -56,6 +56,39 @@ test("Hetzner token can move only in an authenticated encrypted device handoff",
   assert.match(protocol, /nacl\.box\(/);
   assert.match(store, /"hetzner-api-token": LOCAL_KEYS\.hetznerToken/);
   assert.match(screen, /"hetzner-api-token": "Hetzner API token"/);
+  const handoff = await read("./hetznerHandoff.ts");
+  assert.match(handoff, /credential_handoff_offer/);
+  assert.match(handoff, /registerCredentialHandoffDevice/);
+  assert.match(handoff, /createQuicClient/);
+  assert.match(handoff, /runIsolatedCredentialP2P/);
+  assert.doesNotMatch(handoff, /\bquicClient\b/);
+  assert.match(await read("../components/CloudProvidersSection.tsx"), /Get from \{activeDevice\.name\} over P2P/);
+});
+
+test("boxless UI is globally disabled while active devices remain visible", async () => {
+  const flags = await read("./launchFlags.ts");
+  const picker = await read("../components/RemoteBoxPickerModal.tsx");
+  const devices = await read("../../app/(tabs)/devices.tsx");
+  const settings = await read("../../app/(tabs)/settings.tsx");
+  const tvStore = await read("../../../tvos/YaverTV/YaverStore.swift");
+  const vision = await read("../../../visionos/YaverVision/Views/VisionDashboardView.swift");
+  const webFlags = await read("../../../web/lib/launchFlags.ts");
+  const webVibe = await read("../../../web/components/dashboard/VibeCodingView.tsx");
+  assert.match(flags, /ENABLE_BOXLESS_UI\s*=\s*false/);
+  assert.match(picker, /ENABLE_BOXLESS_UI\s*&&/);
+  assert.match(devices, /ENABLE_BOXLESS_UI\s*&&/);
+  assert.match(settings, /ENABLE_BOXLESS_UI\s*&&/);
+  assert.match(tvStore, /boxlessUIEnabled\s*=\s*false/);
+  assert.match(vision, /if store\.remotelessAllowed/);
+  assert.match(webFlags, /ENABLE_BOXLESS_UI\s*=\s*false/);
+  assert.match(webVibe, /ENABLE_BOXLESS_UI \|\| runner\.id !== "remoteless"/);
+  assert.match(devices, /device\.id === primaryDeviceId \|\| device\.id === activeDevice\?\.id/);
+});
+
+test("native login uses the canonical vector Y instead of a raster wordmark", async () => {
+  const login = await read("../../app/login.tsx");
+  assert.match(login, /M150 150 L256 288 M362 150 L256 288 M256 288 L256 384/);
+  assert.doesNotMatch(login, /yaver-login-wordmark|<Image/);
 });
 
 test("client cloud abstraction is endpoint-only and registers Hetzner alone", async () => {

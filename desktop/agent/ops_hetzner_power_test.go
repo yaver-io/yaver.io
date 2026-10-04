@@ -58,6 +58,9 @@ func TestHetznerRenameUsesExactBoundedProviderUpdate(t *testing.T) {
 }
 
 func TestHetznerPowerVerbIsCompanionDiscoverableAndFailsClosedWithoutAccount(t *testing.T) {
+	originalManager := globalAccountsManager
+	globalAccountsManager = &AccountsManager{baseDir: t.TempDir()}
+	t.Cleanup(func() { globalAccountsManager = originalManager })
 	spec, ok := func() (opsVerbSpec, bool) {
 		opsRegistryMu.RLock()
 		defer opsRegistryMu.RUnlock()

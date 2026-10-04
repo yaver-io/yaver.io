@@ -324,12 +324,18 @@ export function DogfoodOverlayProvider({ children }: { children: React.ReactNode
         <BrowserVibeBubble
           projectPath={overlayWorkDir}
           projectName="Yaver"
+          deviceId={request.deviceId}
+          deviceName={request.deviceName}
+          runner={request.runner}
           usageMode={request.usageMode}
           renderBehavior={request.renderBehavior}
           sessionBehavior={request.sessionBehavior}
           exitLabel="Open Dogfood"
           endLabel="End Dogfood"
           onGoHome={goHome}
+          onOpenSettings={() => {
+            router.push({ pathname: "/(tabs)/dogfood" as any, params: { view: "settings" } } as any);
+          }}
           onExitPreview={() => { void end(); }}
           onReload={openPreparedPreview}
           reloadBusy={["preparing", "starting", "compiling"].includes(snapshot.phase)}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ENABLE_CLOUD_WORKSPACE_UI,
+  ENABLE_BOXLESS_UI,
   ENABLE_RELAY_PRO_UI,
   isHostedCloudSurfaceDevice,
 } from "./launchFlags.ts";
@@ -9,6 +10,7 @@ import {
 test("Apple/mobile release exposes Relay Pro but no Cloud Workspace UI", () => {
   assert.equal(ENABLE_RELAY_PRO_UI, true);
   assert.equal(ENABLE_CLOUD_WORKSPACE_UI, false);
+  assert.equal(ENABLE_BOXLESS_UI, false);
 });
 
 test("registry boundary removes hosted compute and preserves user-owned VPS", () => {

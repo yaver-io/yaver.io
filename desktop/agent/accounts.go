@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -11,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -131,9 +131,18 @@ func (a *AccountsManager) ensureKey() ([]byte, error) {
 	}
 	keyPath := filepath.Join(filepath.Dir(a.baseDir), "master.key")
 	if data, err := os.ReadFile(keyPath); err == nil {
-		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
-		if err != nil || len(key) != 32 {
-			return nil, fmt.Errorf("master.key invalid; delete it to regenerate (will orphan secrets)")
+		// Vault v2 stores the 32-byte key raw and mirrors it to the native
+		// credential store (macOS Keychain today). Older AccountsManager-only
+		// installs wrote base64. Accept both so provider accounts use the same
+		// durable, Keychain-backed master key instead of silently failing after
+		// a vault upgrade.
+		if len(data) == 32 {
+			a.key = append([]byte(nil), data...)
+			return a.key, nil
+		}
+		key, decErr := base64.StdEncoding.DecodeString(string(bytes.TrimSpace(data)))
+		if decErr != nil || len(key) != 32 {
+			return nil, fmt.Errorf("master.key invalid; recovery is required before provider credentials can be opened")
 		}
 		a.key = key
 		return a.key, nil
@@ -142,8 +151,7 @@ func (a *AccountsManager) ensureKey() ([]byte, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	enc := base64.StdEncoding.EncodeToString(key)
-	if err := os.WriteFile(keyPath, []byte(enc), 0o600); err != nil {
+	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
 		return nil, err
 	}
 	a.key = key

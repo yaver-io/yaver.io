@@ -47,7 +47,8 @@ test("every supported native client family uses the same endpoint verb", async (
   }
   assert.match(await read("tvos/YaverTV/AgentClient.swift"), /verb == "hetzner_power" && endpoint\.relay/);
   assert.match(await read("androidtv/app/src/main/kotlin/io/yaver/tv/OpsClient.kt"), /allowRelay = verb != "hetzner_power"/);
-  assert.match(await read("mobile/src/lib/hetznerHandoff.ts"), /connectionMode !== "direct"/);
+  assert.match(await read("mobile/src/lib/hetznerHandoff.ts"), /runIsolatedCredentialP2P/);
+  assert.match(await read("mobile/src/lib/credentialP2P.ts"), /connectionMode !== "direct"/);
   assert.match(await read("watch/YaverWatch/DesktopVoiceClient.swift"), /hasPrivatePeerRoute/);
   assert.match(await read("wear/app/src/main/kotlin/io/yaver/wear/DesktopVoiceClient.kt"), /hasPrivatePeerRoute/);
 });

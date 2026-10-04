@@ -78,4 +78,7 @@ test("dedicated Yaver CI installs the complete cross-platform automation lab", (
   assert.match(source, /docker", \["pull", "redroid\/redroid:13\.0\.0-latest"/);
   assert.match(source, /Runtime still requires Linux binder support/);
   assert.match(source, /Apple simulators require macOS/);
+  assert.match(source, /headless-chromium-localhost-v1\.json/);
+  assert.match(source, /playwright", "screenshot", "--browser", "chromium"/);
+  assert.match(source, /await prepareHeadlessChromiumDogfood\(\)/);
 });

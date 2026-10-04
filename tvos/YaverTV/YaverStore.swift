@@ -8,6 +8,9 @@ import SwiftUI
 
 @MainActor
 final class YaverStore: ObservableObject {
+    // Global shipped-product policy. The dormant implementation remains in
+    // source, but current clients must select a real user-owned machine.
+    private static let boxlessUIEnabled = false
     @AppStorage("yaver.tv.token") private var legacyStoredToken: String = ""
     @AppStorage("yaver.tv.boxes") private var storedBoxesJSON: String = "[]"
     @AppStorage("yaver.tv.selectedBox") private var selectedBoxId: String = ""
@@ -475,7 +478,7 @@ final class YaverStore: ObservableObject {
                 // Only adopt the rotated token if we're still on the same one —
                 // the user may have signed out/in while the refresh was in flight.
                 guard self.token == current else { return }
-                self.remotelessAllowed = refresh.isOwner
+                self.remotelessAllowed = Self.boxlessUIEnabled && refresh.isOwner
                 if !refresh.isOwner {
                     self.remotelessMode = false
                     self.storedRemotelessMode = false

@@ -2,14 +2,20 @@ package main
 
 // One-time P2P credential handoff receiver. The sender encrypts directly to an
 // ephemeral endpoint key using the same NaCl box format as the native clients.
-// No provider credential appears in an ops schema, relay-visible envelope,
-// response, log, or device directory.
+// No plaintext provider credential appears in an ops schema, response, log,
+// relay-visible envelope, or device directory. Every handoff verb is direct-
+// transport-only; the ordinary relay/chat connection may remain active beside
+// this short-lived LAN or private-overlay channel.
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +37,8 @@ var endpointCredentialHandoffs = struct {
 	sync.Mutex
 	items map[string]endpointCredentialHandoff
 }{items: map[string]endpointCredentialHandoff{}}
+
+var credentialHandoffDirectoryHTTPClient = httpClient
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
@@ -59,6 +67,26 @@ func init() {
 		},
 		Handler: opsCredentialHandoffAccept,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "credential_handoff_offer",
+		Description: "Encrypt the endpoint's locally stored Hetzner token to a same-account, directory-verified phone key. Safe across relay because only phone-targeted ciphertext is returned; plaintext never leaves the endpoint vault.",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"version", "type", "handoffId", "targetDeviceId", "targetPublicKey", "accountFingerprint", "createdAt", "expiresAt"},
+			"properties": map[string]interface{}{
+				"version":            map[string]interface{}{"type": "integer", "const": 1},
+				"type":               map[string]interface{}{"type": "string", "const": "yaver-credential-request"},
+				"handoffId":          map[string]interface{}{"type": "string"},
+				"targetDeviceId":     map[string]interface{}{"type": "string"},
+				"targetPublicKey":    map[string]interface{}{"type": "string"},
+				"accountFingerprint": map[string]interface{}{"type": "string"},
+				"createdAt":          map[string]interface{}{"type": "integer"},
+				"expiresAt":          map[string]interface{}{"type": "integer"},
+			},
+			"additionalProperties": false,
+		},
+		Handler: opsCredentialHandoffOffer,
+	})
 }
 
 func credentialAccountFingerprintGo(accountID string) string {
@@ -67,6 +95,9 @@ func credentialAccountFingerprintGo(accountID string) string {
 }
 
 func opsCredentialHandoffRequest(c OpsContext, _ json.RawMessage) OpsResult {
+	if c.RequestHeaders != nil && c.RequestHeaders.Get("X-Yaver-Via-Relay") == "1" {
+		return OpsResult{OK: false, Code: "secure_transport_required", Error: "credential handoff requires a direct LAN or private-overlay connection"}
+	}
 	if c.Server == nil || strings.TrimSpace(c.Server.ownerUserID) == "" || c.Server.ownerUserID == "offline" {
 		return OpsResult{OK: false, Code: "account_required", Error: "a verified owner account is required"}
 	}
@@ -112,6 +143,17 @@ type endpointHandoffEnvelope struct {
 	Ciphertext         string `json:"ciphertext"`
 }
 
+type endpointHandoffRequest struct {
+	Version            int    `json:"version"`
+	Type               string `json:"type"`
+	HandoffID          string `json:"handoffId"`
+	TargetDeviceID     string `json:"targetDeviceId"`
+	TargetPublicKey    string `json:"targetPublicKey"`
+	AccountFingerprint string `json:"accountFingerprint"`
+	CreatedAt          int64  `json:"createdAt"`
+	ExpiresAt          int64  `json:"expiresAt"`
+}
+
 type endpointHandoffPlaintext struct {
 	Version            int    `json:"version"`
 	HandoffID          string `json:"handoffId"`
@@ -121,6 +163,116 @@ type endpointHandoffPlaintext struct {
 	ExpiresAt          int64  `json:"expiresAt"`
 	Kind               string `json:"kind"`
 	Value              string `json:"value"`
+}
+
+func opsCredentialHandoffOffer(c OpsContext, raw json.RawMessage) OpsResult {
+	if c.RequestHeaders != nil && c.RequestHeaders.Get("X-Yaver-Via-Relay") == "1" {
+		return OpsResult{OK: false, Code: "secure_transport_required", Error: "credential handoff requires a direct LAN or private-overlay connection"}
+	}
+	if c.Server == nil || strings.TrimSpace(c.Server.ownerUserID) == "" || c.Server.ownerUserID == "offline" {
+		return OpsResult{OK: false, Code: "account_required", Error: "a verified owner account is required"}
+	}
+	var request endpointHandoffRequest
+	now := time.Now()
+	if json.Unmarshal(raw, &request) != nil || request.Version != 1 || request.Type != "yaver-credential-request" ||
+		strings.TrimSpace(request.HandoffID) == "" || strings.TrimSpace(request.TargetDeviceID) == "" ||
+		request.ExpiresAt <= request.CreatedAt || now.UnixMilli() >= request.ExpiresAt ||
+		request.ExpiresAt-now.UnixMilli() > credentialHandoffLifetime.Milliseconds() {
+		return OpsResult{OK: false, Code: "handoff_malformed", Error: "invalid or expired credential handoff request"}
+	}
+	expectedFingerprint := credentialAccountFingerprintGo(c.Server.ownerUserID)
+	if request.AccountFingerprint != expectedFingerprint {
+		return OpsResult{OK: false, Code: "handoff_binding_failed", Error: "credential handoff account binding failed"}
+	}
+	registered, err := credentialHandoffReceiverRegistered(c.Ctx, c.Server.convexURL, c.Server.token, request)
+	if err != nil {
+		return OpsResult{OK: false, Code: "handoff_directory_unavailable", Error: "could not verify the receiving phone with the same-account handoff directory: " + err.Error()}
+	}
+	if !registered {
+		return OpsResult{OK: false, Code: "handoff_binding_failed", Error: "the receiving phone key is not registered to this Yaver account"}
+	}
+	recipientBytes, err := base64.StdEncoding.DecodeString(request.TargetPublicKey)
+	if err != nil || len(recipientBytes) != 32 {
+		return OpsResult{OK: false, Code: "handoff_malformed", Error: "invalid credential handoff public key"}
+	}
+	account, err := localHetznerAccountForCredentialHandoff()
+	if err != nil || account == nil || strings.TrimSpace(account.Fields["token"]) == "" {
+		return OpsResult{OK: false, Code: "credential_missing", Error: "this endpoint has no Hetzner token in its local vault or active hcloud context"}
+	}
+	var recipient [32]byte
+	copy(recipient[:], recipientBytes)
+	senderPublic, senderPrivate, err := box.GenerateKey(rand.Reader)
+	if err != nil {
+		return OpsResult{OK: false, Code: "crypto_unavailable", Error: "could not create a handoff key"}
+	}
+	var nonce [24]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		return OpsResult{OK: false, Code: "crypto_unavailable", Error: "could not create a handoff nonce"}
+	}
+	plain, err := json.Marshal(endpointHandoffPlaintext{
+		Version: 1, HandoffID: request.HandoffID, TargetDeviceID: request.TargetDeviceID,
+		AccountFingerprint: request.AccountFingerprint, CreatedAt: now.UnixMilli(),
+		ExpiresAt: request.ExpiresAt, Kind: "hetzner-api-token", Value: strings.TrimSpace(account.Fields["token"]),
+	})
+	if err != nil {
+		return OpsResult{OK: false, Code: "crypto_unavailable", Error: "could not encode credential handoff"}
+	}
+	ciphertext := box.Seal(nil, plain, &nonce, &recipient, senderPrivate)
+	for i := range plain {
+		plain[i] = 0
+	}
+	return OpsResult{OK: true, Initial: endpointHandoffEnvelope{
+		Version: 1, Type: "yaver-credential-envelope", HandoffID: request.HandoffID,
+		TargetDeviceID: request.TargetDeviceID, AccountFingerprint: request.AccountFingerprint,
+		SenderPublicKey: base64.StdEncoding.EncodeToString(senderPublic[:]),
+		Nonce:           base64.StdEncoding.EncodeToString(nonce[:]), Ciphertext: base64.StdEncoding.EncodeToString(ciphertext),
+	}}
+}
+
+func credentialHandoffReceiverRegistered(ctx context.Context, convexURL, token string, request endpointHandoffRequest) (bool, error) {
+	convexURL = strings.TrimRight(strings.TrimSpace(convexURL), "/")
+	token = strings.TrimSpace(token)
+	if convexURL == "" || token == "" {
+		return false, fmt.Errorf("endpoint is not signed in")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, convexURL+"/credential-handoff/devices", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Cache-Control", "no-store")
+	resp, err := credentialHandoffDirectoryHTTPClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return false, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("directory returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Devices []struct {
+			DeviceID  string `json:"deviceId"`
+			PublicKey string `json:"publicKey"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return false, fmt.Errorf("decode directory: %w", err)
+	}
+	for _, device := range result.Devices {
+		if device.DeviceID == request.TargetDeviceID && device.PublicKey == request.TargetPublicKey {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func opsCredentialHandoffAccept(c OpsContext, raw json.RawMessage) OpsResult {

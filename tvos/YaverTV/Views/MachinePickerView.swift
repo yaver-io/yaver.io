@@ -228,7 +228,7 @@ struct MachinePickerView: View {
             Text(msg).multilineTextAlignment(.center).frame(maxWidth: 640)
             Button("Try again") { Task { await load() } }
             NavigationLink("Type an address", destination: AddBoxView())
-            remotelessOption
+            if store.remotelessAllowed { remotelessOption }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -23,12 +23,15 @@ export const DogfoodEntryIcon: React.FC<DogfoodEntryIconProps> = ({
 }) => {
   const { width, height } = useWindowDimensions();
   const [preferenceHidden, setPreferenceHidden] = useState(false);
-  const position = useRef(new Animated.ValueXY({ x: Math.max(width - 34, 0), y: Math.max(height * 0.45, 64) })).current;
-  const origin = useRef({ x: Math.max(width - 34, 0), y: Math.max(height * 0.45, 64) });
+  const edgeInset = 12;
+  const iconSize = 48;
+  const rightEdge = Math.max(edgeInset, width - iconSize - edgeInset);
+  const position = useRef(new Animated.ValueXY({ x: rightEdge, y: Math.max(height * 0.45, 64) })).current;
+  const origin = useRef({ x: rightEdge, y: Math.max(height * 0.45, 64) });
   const moved = useRef(false);
 
   const clamp = (x: number, y: number) => ({
-    x: Math.max(-14, Math.min(width - 34, x)),
+    x: Math.max(edgeInset, Math.min(rightEdge, x)),
     y: Math.max(64, Math.min(Math.max(64, height - 128), y)),
   });
 
@@ -65,7 +68,7 @@ export const DogfoodEntryIcon: React.FC<DogfoodEntryIconProps> = ({
     onPanResponderRelease: (_, gesture) => {
       position.flattenOffset();
       const raw = clamp(origin.current.x + gesture.dx, origin.current.y + gesture.dy);
-      const next = { x: raw.x + 18 < width / 2 ? -14 : width - 34, y: raw.y };
+      const next = { x: raw.x + iconSize / 2 < width / 2 ? edgeInset : rightEdge, y: raw.y };
       origin.current = next;
       Animated.spring(position, { toValue: next, useNativeDriver: false, friction: 7 }).start();
     },

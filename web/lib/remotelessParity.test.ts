@@ -29,16 +29,18 @@ test("shared TS clients consume the same remoteless core", () => {
   }
 });
 
-test("native render surfaces name their remoteless limits", () => {
+test("dormant native fallback stays bounded while shipped UI gates it off", () => {
   const apple = `${read("tvos/YaverTV/Views/BoxlessCodeView.swift")}\n${read("tvos/YaverTV/Views/TasksView.swift")}`;
   assert.match(apple, /remoteless\.analysis-chat\.supported/);
   assert.match(apple, /remoteless\.code-edit\.unavailable/);
+  assert.match(read("tvos/YaverTV/YaverStore.swift"), /boxlessUIEnabled\s*=\s*false/);
   // visionOS compiles the same BoxlessCodeView; sharing is the parity mechanism.
   assert.match(read("visionos/project.yml"), /tvos\/YaverTV\/Views\/BoxlessCodeView\.swift/);
+  assert.match(read("visionos/YaverVision/Views/VisionDashboardView.swift"), /if store\.remotelessAllowed/);
 
   const androidTV = read("androidtv/app/src/main/kotlin/io/yaver/tv/ui/PlaceholderScreens.kt");
   assert.match(androidTV, /remoteless\.code-edit\.unavailable/);
-  assert.match(androidTV, /remoteless\.dev-server\.unavailable/);
+  assert.doesNotMatch(androidTV, /Use boxless|analysis fallback/);
 });
 
 test("watch and car surfaces delegate execution instead of inventing a local runtime", () => {
