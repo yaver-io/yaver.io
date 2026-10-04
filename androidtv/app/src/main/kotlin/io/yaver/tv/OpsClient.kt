@@ -79,7 +79,7 @@ class OpsClient(
     /** Core request: try every endpoint (LAN then relay), with one relay
      *  repair per streak. A 4xx with an `{error}` body is a real refusal from
      *  a reachable agent — throw it, do NOT walk on to the next endpoint. */
-    private suspend fun request(method: String, path: String, body: JSONObject?, extraOK: Set<Int> = emptySet()): HttpResult {
+    private suspend fun request(method: String, path: String, body: JSONObject?, extraOK: Set<Int> = emptySet(), allowRelay: Boolean = true): HttpResult {
         var repairedOnce = false
         var lastError: Throwable = AgentError("request failed: $method $path")
         repeat(2) { pass ->
@@ -88,6 +88,7 @@ class OpsClient(
             var innerError: Throwable? = null
             var repairThisPass = false
             for (endpoint in endpoints) {
+                if (!allowRelay && endpoint.relay) continue
                 val rb = requestBuilder(endpoint, path)
                 val req: Request = when (method) {
                     "GET" -> rb.get().build()
@@ -147,12 +148,51 @@ class OpsClient(
             .put("verb", verb)
             .put("payload", payload)
             .put("machine", "local")
-        val result = request("POST", "/ops", body)
+        val result = request("POST", "/ops", body, allowRelay = verb != "hetzner_power")
         val obj = bodyToJson(result.body) ?: throw AgentError("empty ops response for $verb")
         if (obj.optBoolean("ok", true) == false) {
             throw AgentError(obj.optString("error").ifEmpty { "$verb failed" })
         }
         obj
+    }
+
+    data class HetznerPowerServer(
+        val id: String,
+        val name: String,
+        val ip: String,
+        val status: String,
+        val type: String,
+        val location: String,
+    )
+
+    /** Provider credential remains in the selected trusted endpoint's vault.
+     * The endpoint refuses the inspectable reverse-proxy relay for this verb. */
+    suspend fun listHetznerServers(): List<HetznerPowerServer> {
+        val envelope = ops("hetzner_power", JSONObject().put("action", "list"))
+        val rows = envelope.optJSONObject("initial")?.optJSONArray("servers") ?: JSONArray()
+        return buildList {
+            for (i in 0 until rows.length()) {
+                val row = rows.optJSONObject(i) ?: continue
+                val id = row.optString("id")
+                if (id.isBlank()) continue
+                add(HetznerPowerServer(
+                    id = id,
+                    name = row.optString("name").ifBlank { id },
+                    ip = row.optString("ip"),
+                    status = row.optString("status", "unknown"),
+                    type = row.optString("type"),
+                    location = row.optString("location"),
+                ))
+            }
+        }
+    }
+
+    suspend fun setHetznerServerPower(serverId: String, powerOn: Boolean) {
+        require(serverId.matches(Regex("^[1-9][0-9]*$"))) { "exact numeric server id required" }
+        ops("hetzner_power", JSONObject()
+            .put("action", if (powerOn) "power_on" else "shutdown")
+            .put("serverId", serverId)
+            .put("confirm", true))
     }
 
     suspend fun info(): AgentInfo? {

@@ -3,8 +3,8 @@
 // sandbox-test — a no-auth dev harness for the browser-local sandbox + mini-figma
 // design layer. useAuth() is provider-free (reads localStorage), so BrowserSandbox
 // renders standalone here for local + browser-automation testing. Not linked from
-// the app; safe to delete. The AI paths (draft/design-chat) stay disabled unless
-// NEXT_PUBLIC_YAVER_GATEWAY_URL + a session token are present.
+// the app; safe to delete. Hosted AI paths remain disabled in zero-knowledge
+// mode; use a trusted endpoint or E2EE-paired agent for model execution.
 
 import BrowserSandbox from "@/components/dashboard/BrowserSandbox";
 

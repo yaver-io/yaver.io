@@ -166,6 +166,40 @@ actor AgentClient {
         return true
     }
 
+    // MARK: - Owner Hetzner power control
+
+    struct HetznerPowerServer: Decodable, Identifiable {
+        let id: String
+        let name: String
+        let ip: String
+        let status: String
+        let type: String
+        let location: String
+        let created: String
+    }
+
+    private struct HetznerPowerList: Decodable {
+        let servers: [HetznerPowerServer]
+    }
+
+    /// Uses the credential held by the selected user-owned endpoint. The TV or
+    /// headset never receives the provider token. Inspectable relay fallback is
+    /// rejected by the endpoint; LAN/TLS or Yaver Mesh is required.
+    func listHetznerServers() async throws -> [HetznerPowerServer] {
+        let result: HetznerPowerList = try await ops(
+            "hetzner_power", ["action": "list"], as: HetznerPowerList.self
+        )
+        return result.servers
+    }
+
+    func setHetznerServerPower(serverId: String, powerOn: Bool) async throws {
+        _ = try await call("hetzner_power", [
+            "action": powerOn ? "power_on" : "shutdown",
+            "serverId": serverId,
+            "confirm": true,
+        ])
+    }
+
     /// Run an ops verb, trying LAN first and the relay second.
     ///
     /// `machine` selects the TARGET of the verb once a reachable agent is
@@ -197,6 +231,9 @@ actor AgentClient {
 
             var lastError: Error = AgentError(message: "ops \(verb) failed")
             for endpoint in endpoints {
+                // Provider actions are application semantics. Never transmit
+                // them through the legacy inspectable HTTP relay fallback.
+                if verb == "hetzner_power" && endpoint.relay { continue }
                 let url = endpoint.url
                 var req = URLRequest(url: url)
                 req.httpMethod = "POST"

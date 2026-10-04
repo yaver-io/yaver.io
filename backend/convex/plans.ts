@@ -147,35 +147,19 @@ export const applyPlanEntitlements = internalAction({
       });
     }
 
-    // 2) Gateway inference policy — operator-set, user-immutable. hosted ⇒
-    //    enabled with anti-abuse ceilings; byok ⇒ disabled (the user must
-    //    route to their own key, so our gateway key is never spent for them).
+    // 2) Hosted inference is retired. Keep the legacy policy row disabled so
+    //    old clients fail closed and cannot route plaintext prompts through a
+    //    Yaver-operated control plane.
     await ctx.runMutation(internal.gatewayPolicy.setPolicyInternal, {
       userId,
-      enabled: e.gateway.enabled,
+      enabled: false,
       dailyCapCents: e.gateway.dailyCapCents,
       hourlyCapCents: e.gateway.hourlyCapCents,
       maxTokensPerRequest: e.gateway.maxTokensPerRequest,
       maxCentsPerRequest: e.gateway.maxCentsPerRequest,
-      note: `plan ${tier} (${plan})`,
+      note: `plan ${tier} (${plan}); endpoint-direct inference only`,
       setBy: "plan-activation",
     });
-
-    // 2b) Per-user OpenRouter key. hosted ⇒ ensure a key exists with its
-    //     hard credit limit pinned to our COGS BUDGET (the retail AI wallet
-    //     ÷ inference markup — NOT what the user paid). A per-user key
-    //     spreads OpenRouter's per-key rate limit across the GLM provider
-    //     pool and caps third-party spend below collected revenue. byok ⇒
-    //     disable any existing key (managed inference off). Scheduled so a
-    //     slow OpenRouter API call never blocks the webhook's 200.
-    if (e.gateway.enabled) {
-      await ctx.scheduler.runAfter(0, internal.openrouterKeys.ensureForUser, {
-        userId,
-        monthlyWalletCents: e.monthlyWalletCents,
-      });
-    } else {
-      await ctx.scheduler.runAfter(0, internal.openrouterKeys.disableForUser, { userId });
-    }
 
     // 3) Monthly wallet budget. Idempotent per (subscription, period) via
     //    creditTopups' orderId dedupe — re-fired webhook no-ops, a new
@@ -214,10 +198,6 @@ export const revokePlanEntitlements = internalAction({
       note: "subscription cancelled/expired — managed inference revoked",
       setBy: "plan-activation",
     });
-    // Disable the per-user OpenRouter key at the provider AND drop it from
-    // the gateway KV, so a lapsed subscriber can't keep spending even if a
-    // gateway-policy check were ever bypassed (defense in depth).
-    await ctx.scheduler.runAfter(0, internal.openrouterKeys.disableForUser, { userId });
     return { ok: true };
   },
 });

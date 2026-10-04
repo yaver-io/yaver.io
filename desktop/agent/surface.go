@@ -56,7 +56,7 @@ func normalizeSurface(raw string) ClientSurface {
 		return SurfaceWeb
 	case "cli", "terminal":
 		return SurfaceCLI
-	case "desktop", "electron":
+	case "desktop", "desktop-gui", "electron":
 		return SurfaceDesktop
 	default:
 		return SurfaceUnknown

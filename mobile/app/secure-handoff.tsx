@@ -43,6 +43,7 @@ const SECRET_SLOT: Record<HandoffCredentialKind, string> = {
   "github-token": LOCAL_KEYS.githubToken,
   "gitlab-token": LOCAL_KEYS.gitlabToken,
   "bitbucket-token": LOCAL_KEYS.bitbucketToken,
+  "hetzner-api-token": LOCAL_KEYS.hetznerToken,
 };
 
 const LABEL: Record<HandoffCredentialKind, string> = {
@@ -53,6 +54,7 @@ const LABEL: Record<HandoffCredentialKind, string> = {
   "github-token": "GitHub token",
   "gitlab-token": "GitLab token",
   "bitbucket-token": "Bitbucket token",
+  "hetzner-api-token": "Hetzner API token",
 };
 
 type ScanFor = "request" | "envelope" | null;

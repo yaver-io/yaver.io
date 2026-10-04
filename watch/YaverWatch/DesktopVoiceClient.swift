@@ -46,6 +46,88 @@ struct DesktopVoiceClient {
         return URLSession(configuration: cfg)
     }
 
+    private var hasPrivatePeerRoute: Bool {
+        guard let host = URL(string: boxBaseUrl)?.host?.lowercased() else { return false }
+        if host == "localhost" || host == "::1" ||
+            (host.contains(":") && (host.hasPrefix("fc") || host.hasPrefix("fd"))) { return true }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        return parts[0] == 10 || parts[0] == 127 ||
+            (parts[0] == 192 && parts[1] == 168) ||
+            (parts[0] == 172 && (16...31).contains(parts[1])) ||
+            (parts[0] == 100 && (64...127).contains(parts[1]))
+    }
+
+    struct HetznerPowerServer: Decodable, Identifiable {
+        let id: String
+        let name: String
+        let ip: String
+        let status: String
+        let type: String
+        let location: String
+    }
+
+    private struct HetznerPowerList: Decodable {
+        let servers: [HetznerPowerServer]
+    }
+
+    /// The watch receives server metadata only; the Hetzner token stays in the
+    /// trusted endpoint vault. The endpoint rejects inspectable relay ingress.
+    func listHetznerServers() async throws -> [HetznerPowerServer] {
+        guard hasPrivatePeerRoute else {
+            throw NSError(domain: "TalosHetzner", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Use the same LAN, Tailscale, or Yaver Mesh for Hetzner control."
+            ])
+        }
+        let data = try await opsData("hetzner_power", payload: ["action": "list"])
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if root?["ok"] as? Bool != true {
+            throw NSError(domain: "TalosHetzner", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: (root?["error"] as? String) ?? "Could not list Hetzner servers."
+            ])
+        }
+        let initial = try JSONSerialization.data(withJSONObject: root?["initial"] as? [String: Any] ?? [:])
+        return try JSONDecoder().decode(HetznerPowerList.self, from: initial).servers
+    }
+
+    func setHetznerServerPower(serverId: String, powerOn: Bool) async -> WatchReply {
+        guard hasPrivatePeerRoute else {
+            return WatchReply(kind: .error, spoken: "Connect over your private network or Yaver Mesh first.")
+        }
+        guard serverId.range(of: "^[1-9][0-9]*$", options: .regularExpression) != nil else {
+            return WatchReply(kind: .error, spoken: "An exact server number is required.")
+        }
+        do {
+            let data = try await opsData("hetzner_power", payload: [
+                "action": powerOn ? "power_on" : "shutdown",
+                "serverId": serverId,
+                "confirm": true,
+            ])
+            return Self.parseReply(data)
+        } catch {
+            return WatchReply(kind: .error, spoken: "I couldn't reach your trusted endpoint.")
+        }
+    }
+
+    private func opsData(
+        _ verb: String,
+        machine: String = "local",
+        payload: [String: Any]
+    ) async throws -> Data {
+        guard let url = URL(string: "\(boxBaseUrl)/ops") else {
+            throw URLError(.badURL)
+        }
+        let body: [String: Any] = ["verb": verb, "machine": machine, "payload": payload]
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("watch", forHTTPHeaderField: "X-Yaver-Surface")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await session.data(for: req)
+        return data
+    }
+
     /// Send a spoken phrase to a desktop.
     ///
     /// - Parameters:
@@ -58,29 +140,10 @@ struct DesktopVoiceClient {
         guard !trimmed.isEmpty else {
             return WatchReply(kind: .error, spoken: "I didn't catch that.")
         }
-        guard let url = URL(string: "\(boxBaseUrl)/ops") else {
-            return WatchReply(kind: .error, spoken: "Bad box address.")
-        }
-
-        // Serialized, never concatenated — a spoken phrase can contain quotes.
-        let body: [String: Any] = [
-            "verb": "desktop_voice",
-            "machine": machine,
-            "payload": ["transcript": trimmed],
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: body) else {
-            return WatchReply(kind: .error, spoken: "Couldn't build that request.")
-        }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("watch", forHTTPHeaderField: "X-Yaver-Surface")
-        req.httpBody = data
-
         do {
-            let (respData, _) = try await session.data(for: req)
+            let respData = try await opsData(
+                "desktop_voice", machine: machine, payload: ["transcript": trimmed]
+            )
             return Self.parseReply(respData)
         } catch {
             return WatchReply(kind: .error, spoken: "I couldn't reach your box.")

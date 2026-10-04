@@ -278,7 +278,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// override wins over the deepseek default.
 		Command:     "opencode",
 		Args:        []string{"run", "--dangerously-skip-permissions", "{prompt}"},
-		Model:       "deepseek/deepseek-flash",
+		Model:       "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
 		OutputMode:  "raw",
 		ExitCommand: "/quit",
 	},

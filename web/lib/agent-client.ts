@@ -4471,9 +4471,11 @@ export class AgentClient {
     // X-Yaver-Surface is advisory session provenance, never authorization.
     // Agent + relay CORS explicitly allow it so web participates in the same
     // initial/last-surface contract as native clients.
+    const desktopShell = typeof window !== "undefined" &&
+      (window as unknown as { yaver?: { surface?: string } }).yaver?.surface === "desktop-gui";
     const h: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
-      "X-Yaver-Surface": "web",
+      "X-Yaver-Surface": desktopShell ? "desktop" : "web",
     };
     // Carry the relay password whenever the relay is the active transport OR
     // a machine-role route may send this request through a relay despite a

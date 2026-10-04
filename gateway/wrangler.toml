@@ -1,51 +1,7 @@
-# Yaver Gateway — Cloudflare Worker (the captive-OpenRouter inference
-# proxy for Yaver Premium). Deploy: cd gateway && npx wrangler deploy.
-#
-# Secrets (NOT here — set with `npx wrangler secret put <NAME>`):
-#   GATEWAY_SHARED_SECRET   matches Convex env of the same name (also gates
-#                           the /admin/orkey route that writes per-user keys)
-#   ZAI_API_KEY             z.ai (GLM) upstream key — shared fallback chain
-#   DEEPINFRA_API_KEY       DeepInfra upstream key — shared fallback chain
-#
-# Per-user OpenRouter keys: the raw `sk-or-v1-...` secrets live in the
-# OR_USER_KEYS KV namespace (below), written ONLY by the backend via the
-# authenticated /admin/orkey route. Create the namespace once and paste its
-# id into the binding below:
-#   npx wrangler kv namespace create OR_USER_KEYS
-# The backend also needs YAVER_GATEWAY_URL (this Worker's URL) and
-# OPENROUTER_PROVISIONING_KEY (a Provisioning/Management key) to mint them.
-#
-# Public vars are fine in [vars]. Tune ceilings without a redeploy via
-# `wrangler secret put` overrides or by editing here + redeploy.
+# Retired hosted-inference gateway. It remains deployable only as a 410
+# tombstone for old clients. It has no secret, KV, Durable Object, Queue, D1,
+# or R2 bindings and never reads request bodies or Authorization headers.
 
 name = "yaver-gateway"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
-
-[vars]
-# CONVEX_URL must point at the .convex.site HTTP host (NOT .convex.cloud).
-CONVEX_URL = "https://perceptive-minnow-557.eu-west-1.convex.site"
-MAX_TOKENS_PER_REQUEST = "4096"
-MAX_CENTS_PER_REQUEST = "50"
-# Rolling per-user hourly spend cap (COGS cents). "0" or unset = no cap.
-MAX_CENTS_PER_HOUR = "500"
-
-# Per-user meter (hourly cap + sub-cent carry). Durable Objects need a
-# Workers Paid plan; the gateway falls back to per-request metering when
-# the USER_METER binding is absent (limiter.ts meterCheck → allow, ceil
-# carry). Re-enable on a paid plan by uncommenting + `wrangler deploy`.
-# [[durable_objects.bindings]]
-# name = "USER_METER"
-# class_name = "UserMeter"
-#
-# [[migrations]]
-# tag = "v1"
-# new_classes = ["UserMeter"]
-
-# Per-user OpenRouter key store (raw sk-or-v1 secrets, keyed by userId).
-# Uncomment + paste the id from `wrangler kv namespace create OR_USER_KEYS`.
-# Absent ⇒ gateway gracefully serves only the shared env-key chain (no
-# per-user OpenRouter routing).
-# [[kv_namespaces]]
-# binding = "OR_USER_KEYS"
-# id = "<paste-namespace-id>"

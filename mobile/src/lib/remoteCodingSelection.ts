@@ -13,12 +13,10 @@ export type DeviceIdentityLike = {
   os?: string | null;
 };
 
-// opencode default = deepseek-v4-flash (web'in DEFAULT_MODEL_BY_RUNNER'ı ile
-// aynı karar — 2026-08-09 kullanıcı tercihi: "default will be deepseek v4
-// flash"). Kutu opencode.json'ında deepseek/deepseek-flash tanımlı; mobil
-// TAM form (provider/model) kullanmalı çünkü isModelCompatibleWithRunnerId
-// opencode için split("/") ile doğrular — web'in kısa formu burada geçmez.
-export const HETZNER_OPENCODE_MODEL = "deepseek/deepseek-flash";
+// OpenCode default = DeepSeek V4.1 Flash through DeepInfra, kept in lockstep
+// with web DEFAULT_MODEL_BY_RUNNER. The provider-qualified form is required
+// because OpenCode validates selections as provider/model.
+export const HETZNER_OPENCODE_MODEL = "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash";
 
 export function isKivancAccount(email: string | null | undefined): boolean {
   const normalized = String(email || "").trim().toLowerCase();

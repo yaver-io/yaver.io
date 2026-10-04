@@ -181,14 +181,13 @@ export function setDebugLogsEnabledRuntime(enabled: boolean): void {
 // Why hardcoded: the alternative is round-tripping
 // /agent/runners → models lookup just to render the picker, which would
 // add network latency to a UX flow that needs to feel instant.
-// opencode = deepseek/deepseek-flash (2026-08-09, user ask: "our default will
-// be deepseek v4 flash") — the catalogue's current default, aligned with
-// the web DEFAULT_MODEL_BY_RUNNER.opencode. A saved per-device model
+// OpenCode defaults to DeepSeek V4.1 Flash through DeepInfra. The direct
+// DeepSeek API does not own this model id. A saved per-device model
 // (the user's explicit pick) still wins over this global default.
 export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   claude: "claude-opus-4-8",
   codex: "gpt-5.6-sol",
-  opencode: "deepseek/deepseek-flash",
+  opencode: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
 };
 
 function deviceRunnerReadyFromHeartbeat(device: Pick<Device, "runners" | "installedRunnerIds">): boolean {

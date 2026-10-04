@@ -18,6 +18,7 @@ export const HANDOFF_CREDENTIAL_KINDS = [
   "github-token",
   "gitlab-token",
   "bitbucket-token",
+  "hetzner-api-token",
 ] as const;
 
 export type HandoffCredentialKind = (typeof HANDOFF_CREDENTIAL_KINDS)[number];

@@ -1,0 +1,39 @@
+name: Zero-knowledge boundary
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/agent/go.mod
+      - name: Enforce Cloudflare and credential boundaries
+        run: node scripts/verify-zero-knowledge-boundary.mjs
+      - name: Prove retired gateway is body-blind
+        run: node --experimental-strip-types --test gateway/src/index.test.mts
+      - name: Prove relay envelope rejects semantic metadata
+        run: node --experimental-strip-types --test shared/zero-knowledge/relay-envelope.test.mts shared/zero-knowledge/hetzner-power-contract.test.mts
+      - name: Prove tenant-owned Hetzner custody and recovery
+        working-directory: mobile
+        run: |
+          npm ci --ignore-scripts
+          node --experimental-strip-types --test src/lib/hetznerDirectCore.test.mts src/lib/hetznerRecovery.test.mts src/lib/hetznerCustodyWiring.test.mts src/lib/credentialHandoff.test.mts
+      - name: Prove endpoint E2EE rejects tamper and replay
+        working-directory: desktop/agent
+        run: |
+          go test -count=1 ./e2ee
+          go test -count=1 -run 'Test(HetznerPower|EndpointCredentialHandoff)' .
+      - name: Prove Relay Free tenant isolation
+        working-directory: relay
+        run: go test -count=1 ./...
+      - name: Headless Hetzner contract across every surface
+        run: bash scripts/test-hetzner-all-surfaces.sh

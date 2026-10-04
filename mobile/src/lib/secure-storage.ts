@@ -7,6 +7,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const memoryFallback: Record<string, string> = {};
 const isTV = Boolean((Platform as typeof Platform & { isTV?: boolean }).isTV);
 const tvSessionKey = (key: string) => `@yaver/tvos_session/${key}`;
+const SECRET_KEYCHAIN_SERVICE = "works.yaver.credentials.v1";
+const secretOptions: SecureStore.SecureStoreOptions = {
+  // Stable service/alias across application upgrades. WHEN_UNLOCKED is not
+  // device-only on iOS, so normal encrypted device migration remains possible.
+  // We deliberately avoid requireAuthentication: biometric enrollment changes
+  // must not silently make infrastructure credentials unrecoverable.
+  keychainService: SECRET_KEYCHAIN_SERVICE,
+  keychainAccessible: SecureStore.WHEN_UNLOCKED,
+};
 
 function webStorage(): Storage | null {
   if (Platform.OS !== "web") return null;
@@ -89,7 +98,16 @@ async function requirePersistentSecureStorage(): Promise<void> {
 export async function getSecret(key: string): Promise<string | null> {
   await requirePersistentSecureStorage();
   try {
-    return await SecureStore.getItemAsync(key);
+    const current = await SecureStore.getItemAsync(key, secretOptions);
+    if (current !== null) return current;
+    // One-time migration for credentials written before the stable service was
+    // introduced. Never delete the legacy value until the new write succeeds.
+    const legacy = await SecureStore.getItemAsync(key);
+    if (legacy !== null) {
+      await SecureStore.setItemAsync(key, legacy, secretOptions);
+      await SecureStore.deleteItemAsync(key).catch(() => {});
+    }
+    return legacy;
   } catch {
     throw new Error("Secure device storage could not read this credential.");
   }
@@ -98,7 +116,7 @@ export async function getSecret(key: string): Promise<string | null> {
 export async function setSecret(key: string, value: string): Promise<void> {
   await requirePersistentSecureStorage();
   try {
-    await SecureStore.setItemAsync(key, value);
+    await SecureStore.setItemAsync(key, value, secretOptions);
   } catch {
     throw new Error("Secure device storage could not save this credential.");
   }
@@ -107,7 +125,8 @@ export async function setSecret(key: string, value: string): Promise<void> {
 export async function deleteSecret(key: string): Promise<void> {
   await requirePersistentSecureStorage();
   try {
-    await SecureStore.deleteItemAsync(key);
+    await SecureStore.deleteItemAsync(key, secretOptions);
+    await SecureStore.deleteItemAsync(key).catch(() => {});
   } catch {
     throw new Error("Secure device storage could not remove this credential.");
   }

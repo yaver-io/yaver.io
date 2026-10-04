@@ -8,16 +8,12 @@ package main
 // that isn't there, and a normie won't catch it. Output is strict JSON we
 // parse + clamp (Apple's keyword field is one comma-string ≤100 chars).
 //
-// Inference goes through the Yaver gateway (the wallet IS the key). With no
-// gateway configured we print the grounded prompt so the user/their agent can
-// run it. The pure parts (prompt build, parse, keyword cap) are unit-tested.
+// Hosted inference is disabled in zero-knowledge mode. The grounded prompt is
+// printed so a trusted endpoint or E2EE-paired agent can run it directly.
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 )
@@ -105,48 +101,10 @@ func applyCopyDraft(l *StoreListing, d CopyDraft) {
 	}
 }
 
-// gatewayChat calls the Yaver gateway's OpenAI-compatible endpoint with the
-// user's auth token (the wallet is the key). Returns the assistant text.
+// gatewayChat is retained for CLI compatibility but deliberately fails closed.
 func gatewayChat(prompt string) (string, error) {
-	base := gatewayBaseURL()
-	if base == "" {
-		return "", fmt.Errorf("no gateway configured (set YAVER_GATEWAY_URL)")
-	}
-	convexURL, token, err := loadAuthedConfig()
-	_ = convexURL
-	if err != nil || token == "" {
-		return "", fmt.Errorf("not authenticated (run `yaver auth`)")
-	}
-	body, _ := json.Marshal(map[string]interface{}{
-		"model":    "auto",
-		"messages": []map[string]string{{"role": "user", "content": prompt}},
-	})
-	req, err := http.NewRequest("POST", base+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("gateway HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
-		return "", fmt.Errorf("unexpected gateway response")
-	}
-	return out.Choices[0].Message.Content, nil
+	_ = prompt
+	return "", fmt.Errorf("hosted drafting is unavailable in zero-knowledge mode")
 }
 
 func runListingDraft(args []string) {
@@ -163,8 +121,7 @@ func runListingDraft(args []string) {
 			jsonOut = true
 		case "-h", "--help":
 			fmt.Println("Usage: yaver listing draft [--path DIR] [--json]")
-			fmt.Println("  Drafts subtitle/description/keywords/what's-new via the gateway, grounded")
-			fmt.Println("  on your detected capabilities. No gateway → prints the prompt to run.")
+			fmt.Println("  Prints a grounded prompt for a trusted local or E2EE-paired agent.")
 			return
 		}
 	}

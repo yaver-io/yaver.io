@@ -6,18 +6,14 @@
 //   1. sandboxForSlug — adapt the slug-keyed phoneSandboxSource into the
 //      slug-scoped CodingSandbox the tools expect (path-safety + atomic writes
 //      stay in phoneSandboxSource; we only re-shape the call signatures).
-//   2. loadCodingConfig — resolve the config the loop should use: MANAGED
-//      (Yaver Gateway, wallet-metered) when Premium managed mode is on, else
-//      the BYO GLM key. loadGlmCodingConfig / loadManagedCodingConfig are the
-//      two underlying builders.
+//   2. loadCodingConfig — resolve only endpoint-local model configuration.
+//      Provider credentials remain in SecureStore and requests go directly
+//      from the trusted endpoint to the selected provider.
 
 import {
   LOCAL_KEYS,
   getLocalSecret,
-  getToken,
-  getManagedCodingEnabled,
 } from "../auth";
-import { getGatewayUrlSync } from "../backendConfig";
 import {
   readSourceFile,
   writeSourceFile,
@@ -56,31 +52,8 @@ export async function loadDeepSeekCodingConfig(): Promise<CodingAgentConfig | nu
   return key ? defaultDeepSeekCodingAgentConfig(key) : null;
 }
 
-/** Build the MANAGED coding config: route the agentic loop through the Yaver
- *  Gateway (captive OpenRouter) authed by the user's SESSION TOKEN — no model
- *  key on the device; Yaver holds the upstream key and meters tokens into the
- *  prepaid wallet. Returns null when there's no token or no gateway origin yet
- *  (managed mode then falls back to BYO). The gateway is OpenAI-compatible at
- *  <origin>/v1/chat/completions; the runner appends /chat/completions, and
- *  model "auto" lets the gateway pick the cheapest-capable upstream — the user
- *  never chooses a model. */
-export async function loadManagedCodingConfig(): Promise<CodingAgentConfig | null> {
-  const token = (await getToken())?.trim();
-  if (!token) return null;
-  const override = (await getLocalSecret(LOCAL_KEYS.gatewayUrl))?.trim();
-  const origin = (override || getGatewayUrlSync()).replace(/\/+$/, "");
-  if (!origin) return null;
-  return { provider: "glm", model: "auto", apiKey: token, baseUrl: `${origin}/v1` };
-}
-
-/** The config the coding loop should use: managed (gateway, wallet-metered)
- *  when Premium managed mode is enabled AND available, else the BYO GLM key,
- *  else null (the UI then prompts the user to add a key / load credit). */
+/** The coding loop uses only endpoint-local BYO credentials. */
 export async function loadCodingConfig(): Promise<CodingAgentConfig | null> {
-  if (await getManagedCodingEnabled()) {
-    const managed = await loadManagedCodingConfig();
-    if (managed) return managed;
-  }
   return (await loadDeepSeekCodingConfig()) ?? loadGlmCodingConfig();
 }
 

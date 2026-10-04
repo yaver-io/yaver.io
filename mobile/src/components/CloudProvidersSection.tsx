@@ -1,31 +1,33 @@
 // CloudProvidersSection — first-class "bring your own cloud" connect UI
 // for Settings. The user pastes their OWN provider API token (Hetzner
-// first-class, DigitalOcean too); it's stored ENCRYPTED on their agent
-// (AES-256-GCM at ~/.yaver/secrets), never synced to Convex, and lets
-// them provision boxes on their OWN account — they pay the provider
-// directly, nothing to Yaver.
+// first-class, DigitalOcean too). Hetzner is phone-direct: its token lives
+// only in native Keychain/Keystore and calls go straight to Hetzner. It never
+// transits Convex, a Yaver agent, or Relay Free.
 //
 // CREDENTIAL-LEAK SAFETY (deliberate):
 //  - the token input is secureTextEntry + autofill/autocorrect/spellcheck
 //    OFF, so it's never shown, cached, or sent to a keyboard cloud;
-//  - the token is held in local state ONLY long enough to POST it to the
-//    agent over the authed channel, then cleared immediately;
+//  - the token is held in local state only long enough to validate it, then
+//    moved to hardware-backed native storage and cleared immediately;
 //  - we NEVER log it and NEVER render it back — the list/status APIs are
 //    redacted server-side (they return connected/label/lastUsed, never
 //    the token), so there is nowhere the secret can echo out.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking } from "react-native";
+import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking, Share } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { quicClient } from "../lib/quic";
-import { getByoMachines, type ByoMachine } from "../lib/subscription";
+import { useAuth } from "../context/AuthContext";
+import { shareLocalHetznerWithConnectedEndpoint } from "../lib/hetznerHandoff";
+import { hetznerClientCloud } from "../lib/clientCloudProvider";
+import type { HetznerRecoveryExport } from "../lib/hetznerRecovery";
 
 // Featured BYO compute providers (the VM providers the agent can
 // provision on directly). Others connect via the web Accounts view.
-const FEATURED = ["hetzner", "digitalocean"];
+const FEATURED = ["hetzner"];
 
-// Approx Hetzner running cost (EUR/mo, incl. IPv4) by server_type. Rough —
-// for at-a-glance "what am I burning right now", NOT billing. A running box
-// bills full price even powered-off; only DELETE halts it. Unknown type → null
+// Approx Hetzner allocated-server cost (EUR/mo, incl. IPv4) by server_type.
+// Power state does not stop billing. Unknown type → null
 // (we then just show the type, no fake number).
 const TYPE_EUR_MO: Record<string, number> = {
   cx11: 4.15, cx21: 5.83, cx31: 10.59, cx41: 19.9, cx51: 35.79,
@@ -72,6 +74,7 @@ export default function CloudProvidersSection({
   c: any;
   token: string | null | undefined;
 }) {
+  const { user } = useAuth();
   const [providers, setProviders] = useState<ProviderMeta[]>([]);
   const [accounts, setAccounts] = useState<Record<string, AccountSummary>>({});
   const [open, setOpen] = useState(false);
@@ -86,22 +89,32 @@ export default function CloudProvidersSection({
 
   // BYO server list (for a connected Hetzner account).
   const [servers, setServers] = useState<any[] | null>(null);
-  // Stopped boxes (snapshot images) available to restart.
-  const [snapshots, setSnapshots] = useState<any[] | null>(null);
-  // Convex-synced lifecycle state (alive/sleeping/deleted across devices).
-  const [byoState, setByoState] = useState<ByoMachine[] | null>(null);
-  // Spin-up form.
-  const [showSpinUp, setShowSpinUp] = useState(false);
-  const [plan, setPlan] = useState<"starter" | "pro" | "scale">("starter");
-  const [region, setRegion] = useState<"eu" | "us">("eu");
-  const [repoUrl, setRepoUrl] = useState("");
+  const [recovery, setRecovery] = useState<HetznerRecoveryExport | null>(null);
+  const [showRecoveryImport, setShowRecoveryImport] = useState(false);
+  const [recoveryBackupDraft, setRecoveryBackupDraft] = useState("");
+  const [recoveryKeyDraft, setRecoveryKeyDraft] = useState("");
 
   const load = useCallback(async () => {
-    if (!token || !quicClient.isConnected) return;
+    const localHetzner = await hetznerClientCloud.isConnected().catch(() => false);
+    let provs: ProviderMeta[] = [{
+      id: "hetzner",
+      label: "Hetzner Cloud",
+      fields: ["token"],
+      tokenURL: "https://console.hetzner.cloud/projects",
+      notes: "Stored only in this phone's Keychain/Keystore.",
+    }];
+    const byId: Record<string, AccountSummary> = {
+      hetzner: {
+        provider: "hetzner",
+        connected: localHetzner,
+        label: localHetzner ? "This phone" : undefined,
+      },
+    };
     try {
+      if (!token || !quicClient.isConnected) throw new Error("agent unavailable");
       const r = await quicClient.accountsList();
-      const provs: ProviderMeta[] = (r.providers || [])
-        .filter((p: any) => FEATURED.includes(p.id))
+      const agentProviders: ProviderMeta[] = (r.providers || [])
+        .filter((p: any) => FEATURED.includes(p.id) && p.id !== "hetzner")
         .map((p: any) => ({
           id: p.id,
           label: p.label,
@@ -110,17 +123,16 @@ export default function CloudProvidersSection({
           signupURL: p.signupURL,
           notes: p.notes,
         }));
-      // Keep Hetzner first.
-      provs.sort((a, b) => (a.id === "hetzner" ? -1 : b.id === "hetzner" ? 1 : 0));
-      setProviders(provs);
-      const byId: Record<string, AccountSummary> = {};
-      for (const a of r.accounts || []) byId[a.provider] = a;
-      setAccounts(byId);
-      setLoaded(true);
+      provs = [...provs, ...agentProviders];
+      for (const a of r.accounts || []) {
+        if (a.provider !== "hetzner") byId[a.provider] = a;
+      }
     } catch {
-      // agent unreachable — leave whatever we had; section still renders
-      setLoaded(true);
+      // Phone-direct Hetzner remains available without an online Yaver agent.
     }
+    setProviders(provs);
+    setAccounts(byId);
+    setLoaded(true);
   }, [token]);
 
   useEffect(() => {
@@ -147,7 +159,8 @@ export default function CloudProvidersSection({
     const value = secret.trim();
     setSecret("");
     try {
-      await quicClient.accountConnect(activeProvider, label.trim(), { token: value });
+      if (activeProvider === "hetzner") await hetznerClientCloud.connect(value);
+      else await quicClient.accountConnect(activeProvider, label.trim(), { token: value });
       setActiveProvider(null);
       setLabel("");
       await load();
@@ -163,7 +176,9 @@ export default function CloudProvidersSection({
   const disconnect = (providerId: string, providerLabel: string) => {
     Alert.alert(
       `Disconnect ${providerLabel}?`,
-      "Removes the stored API token from this machine's vault. Boxes already running on your account are not affected.",
+      providerId === "hetzner"
+        ? "Removes the API token from this phone's secure storage. Servers on your account are not affected."
+        : "Removes the stored API token from this machine's vault. Resources already running are not affected.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -172,7 +187,8 @@ export default function CloudProvidersSection({
           onPress: async () => {
             setBusy(`disc:${providerId}`);
             try {
-              await quicClient.accountDisconnect(providerId);
+              if (providerId === "hetzner") await hetznerClientCloud.disconnect();
+              else await quicClient.accountDisconnect(providerId);
               setServers(null);
               await load();
             } catch (e: any) {
@@ -189,77 +205,9 @@ export default function CloudProvidersSection({
   const loadServers = async () => {
     setBusy("servers");
     try {
-      const r = await quicClient.cloudListServers();
-      setServers(Array.isArray(r.servers) ? r.servers : []);
-      void loadLifecycle();
+      setServers(await hetznerClientCloud.listServers());
     } catch (e: any) {
       Alert.alert("Couldn't list servers", e?.message || "Try again.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  // Refresh the Convex-synced lifecycle (reconcile live servers → active,
-  // then read the cross-device state). Best-effort.
-  const loadLifecycle = async () => {
-    if (!token) return;
-    try {
-      await quicClient.cloudReconcile().catch(() => {});
-      setByoState(await getByoMachines(token));
-    } catch {
-      /* non-fatal */
-    }
-  };
-
-  const removeServer = (srv: any) => {
-    const id = String(srv.id ?? srv.ID ?? "");
-    const name = String(srv.name ?? srv.Name ?? id);
-    if (!id) return;
-    Alert.alert(
-      `Delete ${name}?`,
-      `Permanently deletes Hetzner server ${id} on YOUR account (no snapshot). This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setBusy(`rm:${id}`);
-            try {
-              await quicClient.cloudDestroyServer(id);
-              await loadServers();
-            } catch (e: any) {
-              Alert.alert("Couldn't delete", e?.message || "Try again.");
-            } finally {
-              setBusy(null);
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  // Approx Hetzner hourly price by plan (cx21/31/41), shown so the user
-  // sees the per-hour cost of a box on their own account.
-  const HOURLY_EUR: Record<string, string> = { starter: "€0.007/hr", pro: "€0.013/hr", scale: "€0.026/hr" };
-
-  const spinUp = async () => {
-    setBusy("spinup");
-    try {
-      const r = await quicClient.cloudProvision({ plan, region, repoUrl: repoUrl.trim() || undefined });
-      if (r?.dryRun) {
-        Alert.alert("Dry run — nothing created", String(r.plan || "") + "\n\nTo create real boxes, set YAVER_CLOUD_STOPSTART_LIVE=1 on the connected machine. This keeps spin-up / stop / start consistently enabled together.");
-      } else {
-        Alert.alert(
-          "Box spinning up",
-          `${r?.name || "Box"} is booting on your Hetzner account (${r?.ip || "ip pending"}). It self-installs Yaver and appears as a device to claim. Stop it anytime to halt billing.`,
-        );
-        setShowSpinUp(false);
-        setRepoUrl("");
-        await loadServers();
-      }
-    } catch (e: any) {
-      Alert.alert("Couldn't spin up", e?.message || "Try again.");
     } finally {
       setBusy(null);
     }
@@ -270,22 +218,17 @@ export default function CloudProvidersSection({
     const name = String(srv.name ?? srv.Name ?? id);
     if (!id) return;
     Alert.alert(
-      `Stop ${name}?`,
-      "Snapshots the box (recover-safe) then deletes the server so Hetzner billing stops — a powered-off server still bills full price; only delete halts it. Bring it back anytime from the snapshot.",
+      `Shut down ${name}?`,
+      "Requests a graceful shutdown directly from this phone. Hetzner continues billing while the server remains allocated.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Stop",
+          text: "Shut down",
           onPress: async () => {
             setBusy(`stop:${id}`);
             try {
-              const r = await quicClient.cloudStopServer(id);
-              if (r?.dryRun) {
-                Alert.alert("Dry run", String(r.plan || "") + "\n\nReal stop needs YAVER_CLOUD_STOPSTART_LIVE=1 on the machine.");
-              } else {
-                await loadServers();
-                await loadSnapshots();
-              }
+              await hetznerClientCloud.setPower(Number(id), "shutdown");
+              await loadServers();
             } catch (e: any) {
               Alert.alert("Couldn't stop", e?.message || "Try again.");
             } finally {
@@ -297,73 +240,78 @@ export default function CloudProvidersSection({
     );
   };
 
-  const bakeServer = (srv: any) => {
-    const id = String(srv.id ?? srv.ID ?? "");
-    const name = String(srv.name ?? srv.Name ?? id);
-    if (!id) return;
-    Alert.alert(
-      `Bake ${name} into a fast-boot image?`,
-      "Snapshots this ready box into a reusable golden image on YOUR account (the box keeps running). Future spin-ups boot from it in seconds. Re-bake after upgrading the box.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Bake",
-          onPress: async () => {
-            setBusy(`bake:${id}`);
-            try {
-              const r = await quicClient.cloudBake(id);
-              if (r?.dryRun) {
-                Alert.alert("Dry run", String(r.plan || "") + "\n\nReal bake needs YAVER_CLOUD_STOPSTART_LIVE=1 on the machine.");
-              } else {
-                Alert.alert("Baked", `Golden image ${r?.baked || ""} cached — new boxes will spin up fast.`);
-                await loadSnapshots();
-              }
-            } catch (e: any) {
-              Alert.alert("Couldn't bake", e?.message || "Try again.");
-            } finally {
-              setBusy(null);
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  const loadSnapshots = async () => {
+  const powerOnServer = async (srv: any) => {
+    const id = Number(srv.id ?? srv.ID);
+    if (!Number.isFinite(id)) return;
+    setBusy(`poweron:${id}`);
     try {
-      const r = await quicClient.cloudSnapshots();
-      setSnapshots(r.snapshots);
-    } catch {
-      // non-fatal
+      await hetznerClientCloud.setPower(id, "power_on");
+      await loadServers();
+    } catch (e: any) {
+      Alert.alert("Couldn't power on", e?.message || "Try again.");
+    } finally {
+      setBusy(null);
     }
   };
 
-  const startFromSnapshot = (snap: any) => {
-    const imageId = String(snap.id ?? snap.ID ?? "");
-    const desc = String(snap.description ?? snap.Description ?? imageId);
-    if (!imageId) return;
-    // Recreate under a fresh name derived from the snapshot label.
-    const name = (desc.replace(/^yaver-stop-/, "yaver-") || `yaver-${imageId}`).slice(0, 40);
+  const createRecovery = async () => {
+    setBusy("recovery-export");
+    try {
+      setRecovery(await hetznerClientCloud.exportRecovery());
+    } catch (e: any) {
+      Alert.alert("Couldn't create recovery", e?.message || "Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const restoreRecovery = async () => {
+    if (!recoveryBackupDraft.trim() || !recoveryKeyDraft.trim()) return;
+    setBusy("recovery-import");
+    try {
+      await hetznerClientCloud.importRecovery(recoveryBackupDraft, recoveryKeyDraft);
+      setRecoveryBackupDraft("");
+      setRecoveryKeyDraft("");
+      setShowRecoveryImport(false);
+      await load();
+      Alert.alert("Hetzner restored", "The token is back in this phone's secure credential store.");
+    } catch (e: any) {
+      Alert.alert("Couldn't restore", e?.message || "Check both recovery values.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const copyRecoveryKeyTemporarily = async () => {
+    if (!recovery) return;
+    const copied = recovery.recoveryKey;
+    await Clipboard.setStringAsync(copied);
+    setTimeout(() => {
+      void Clipboard.getStringAsync().then((current) => {
+        if (current === copied) return Clipboard.setStringAsync("");
+      }).catch(() => {});
+    }, 60_000);
+  };
+
+  const shareWithEndpoint = () => {
+    if (!user?.id) {
+      Alert.alert("Sign in required", "Sign in before sharing configuration with another trusted device.");
+      return;
+    }
     Alert.alert(
-      "Start this box?",
-      `Recreates a ${plan}/${region} server from snapshot ${imageId} on your account (new IP). Hourly billing resumes.`,
+      "Share with connected endpoint?",
+      "The token will be encrypted directly for the currently connected same-account endpoint and saved in that endpoint's local OS vault. This requires LAN or Yaver Mesh; the inspectable relay path is refused.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Start",
+          text: "Share securely",
           onPress: async () => {
-            setBusy(`start:${imageId}`);
+            setBusy("hetzner-handoff");
             try {
-              const r = await quicClient.cloudStartServer(imageId, name, plan, region);
-              if (r?.dryRun) {
-                Alert.alert("Dry run", String(r.plan || "") + "\n\nReal start needs YAVER_CLOUD_STOPSTART_LIVE=1 on the machine.");
-              } else {
-                Alert.alert("Box starting", `${name} is booting (${r?.ip || "ip pending"}).`);
-                await loadServers();
-                await loadSnapshots();
-              }
+              await shareLocalHetznerWithConnectedEndpoint(user.id);
+              Alert.alert("Shared securely", "The connected endpoint stored the token in its local encrypted credential vault.");
             } catch (e: any) {
-              Alert.alert("Couldn't start", e?.message || "Try again.");
+              Alert.alert("Secure handoff failed", e?.message || "Use the same account over LAN or Yaver Mesh and try again.");
             } finally {
               setBusy(null);
             }
@@ -397,17 +345,25 @@ export default function CloudProvidersSection({
 
       {open ? (
         <View style={{ marginTop: 4, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, gap: 10 }}>
-          {!token || !quicClient.isConnected ? (
-            <Text style={{ color: c.textMuted, fontSize: 12 }}>
-              Connect to a machine first — the token is stored on that machine&apos;s encrypted vault, never on our servers.
-            </Text>
-          ) : !loaded ? (
+          {!loaded ? (
             <ActivityIndicator color={c.textMuted} />
           ) : (
             <>
               <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                Your API token is encrypted on this machine ({"~/.yaver/secrets"}) and never leaves it — we never see or store it.
+                Hetzner credentials stay in this phone&apos;s native Keychain/Keystore across normal app and OS updates. This phone calls Hetzner directly; Yaver Cloud and Relay Free never receive the token.
               </Text>
+
+              {hetznerConnected && quicClient.isConnected ? (
+                <Pressable
+                  disabled={busy !== null}
+                  onPress={shareWithEndpoint}
+                  style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#0ea5e9", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                >
+                  {busy === "hetzner-handoff" ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
+                    <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700", textAlign: "center" }}>Share securely with connected endpoint</Text>
+                  )}
+                </Pressable>
+              ) : null}
 
               {providers.map((p) => {
                 const acct = accounts[p.id];
@@ -500,54 +456,85 @@ export default function CloudProvidersSection({
                 );
               })}
 
+              <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10, gap: 8 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Local credential recovery</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  iOS Keychain normally survives reinstall with the same app identity. Android uninstall/reset removes Keystore data. Create an encrypted backup and keep its recovery key separately; Yaver cannot recover either for you.
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {hetznerConnected ? (
+                    <Pressable disabled={busy !== null} onPress={() => void createRecovery()} style={{ borderWidth: 1, borderColor: c.border, borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
+                      <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Create encrypted backup</Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable disabled={busy !== null} onPress={() => setShowRecoveryImport((v) => !v)} style={{ borderWidth: 1, borderColor: c.border, borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Restore backup</Text>
+                  </Pressable>
+                </View>
+
+                {recovery ? (
+                  <View style={{ gap: 7, padding: 10, borderRadius: 8, backgroundColor: c.bgCardElevated ?? c.bgCard }}>
+                    <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>
+                      Save these in different places. Anyone with both can control your Hetzner account.
+                    </Text>
+                    <Pressable onPress={() => void Share.share({ title: "Encrypted Hetzner recovery backup", message: recovery.encryptedBackup })}>
+                      <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Share encrypted backup…</Text>
+                    </Pressable>
+                    <Text selectable style={{ color: c.textPrimary, fontFamily: "monospace", fontSize: 10 }}>
+                      {recovery.recoveryKey}
+                    </Text>
+                    <Pressable onPress={() => void copyRecoveryKeyTemporarily()}>
+                      <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Copy recovery key (clears in 60s)</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setRecovery(null)}>
+                      <Text style={{ color: c.textMuted, fontSize: 12 }}>I've saved both separately</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                {showRecoveryImport ? (
+                  <View style={{ gap: 7 }}>
+                    <TextInput
+                      value={recoveryBackupDraft}
+                      onChangeText={setRecoveryBackupDraft}
+                      placeholder="Encrypted backup"
+                      placeholderTextColor={c.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "monospace" }}
+                    />
+                    <TextInput
+                      value={recoveryKeyDraft}
+                      onChangeText={setRecoveryKeyDraft}
+                      placeholder="Recovery key"
+                      placeholderTextColor={c.textMuted}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      autoComplete="off"
+                      importantForAutofill="no"
+                      style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "monospace" }}
+                    />
+                    <Pressable disabled={busy !== null || !recoveryBackupDraft.trim() || !recoveryKeyDraft.trim()} onPress={() => void restoreRecovery()} style={{ alignSelf: "flex-start", backgroundColor: "#0ea5e9", borderRadius: 7, paddingHorizontal: 12, paddingVertical: 7, opacity: busy || !recoveryBackupDraft.trim() || !recoveryKeyDraft.trim() ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>Validate and restore</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+
               {/* BYO server management (Hetzner connected). */}
               {hetznerConnected ? (
                 <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10, gap: 8 }}>
-                  {/* Spin up a box on the user's own account. */}
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Run a box on your Hetzner</Text>
-                    <Pressable disabled={busy !== null} onPress={() => setShowSpinUp((s) => !s)} style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#059669", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}>
-                      <Text style={{ color: "#059669", fontSize: 12, fontWeight: "700" }}>{showSpinUp ? "Close" : "＋ Spin up"}</Text>
-                    </Pressable>
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Your Hetzner resources</Text>
                   </View>
-
-                  {showSpinUp ? (
-                    <View style={{ gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border }}>
-                      <View style={{ flexDirection: "row", gap: 6 }}>
-                        {(["starter", "pro", "scale"] as const).map((pl) => (
-                          <Pressable key={pl} onPress={() => setPlan(pl)} style={{ borderWidth: 1, borderColor: plan === pl ? "#0ea5e9" : c.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 }}>
-                            <Text style={{ color: plan === pl ? "#0ea5e9" : c.textMuted, fontSize: 11, fontWeight: "700" }}>{pl}</Text>
-                          </Pressable>
-                        ))}
-                        {(["eu", "us"] as const).map((rg) => (
-                          <Pressable key={rg} onPress={() => setRegion(rg)} style={{ borderWidth: 1, borderColor: region === rg ? "#0ea5e9" : c.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 }}>
-                            <Text style={{ color: region === rg ? "#0ea5e9" : c.textMuted, fontSize: 11, fontWeight: "700" }}>{rg}</Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                      <Text style={{ color: c.textMuted, fontSize: 10 }}>~{HOURLY_EUR[plan]} on your Hetzner bill (you pay Hetzner directly).</Text>
-                      <TextInput
-                        value={repoUrl}
-                        onChangeText={setRepoUrl}
-                        placeholder="Git repo to clone (optional, https:// or git@)"
-                        placeholderTextColor={c.textMuted}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        spellCheck={false}
-                        style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.textPrimary, backgroundColor: c.bgCardElevated ?? c.bgCard, fontFamily: "monospace", fontSize: 12 }}
-                      />
-                      <Pressable disabled={busy !== null} onPress={spinUp} style={{ opacity: busy ? 0.5 : 1, borderRadius: 8, paddingVertical: 9, alignItems: "center", backgroundColor: "#059669" }}>
-                        {busy === "spinup" ? <ActivityIndicator size="small" color="#fff" /> : (
-                          <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>Spin up {plan} box</Text>
-                        )}
-                      </Pressable>
-                    </View>
-                  ) : null}
 
                   {/* Running servers. */}
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
                     <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Your servers</Text>
-                    <Pressable disabled={busy !== null} onPress={() => { void loadServers(); void loadSnapshots(); }} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 8, paddingVertical: 4 }}>
+                    <Pressable disabled={busy !== null} onPress={() => { void loadServers(); }} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 8, paddingVertical: 4 }}>
                       {busy === "servers" ? <ActivityIndicator size="small" color={c.textMuted} /> : (
                         <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>{servers === null ? "Load" : "Refresh"}</Text>
                       )}
@@ -556,12 +543,11 @@ export default function CloudProvidersSection({
                   {servers === null ? (
                     <Text style={{ color: c.textMuted, fontSize: 11 }}>Tap Load to list servers on your account.</Text>
                   ) : servers.length === 0 ? (
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>No running servers.</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>No servers on this Hetzner account.</Text>
                   ) : (
                     <>
-                      {/* Headline monthly burn — the at-a-glance "am I leaking
-                          money on idle boxes" number. A running box bills even
-                          when idle; Stop (snapshot+delete) is what halts it. */}
+                      {/* Approximate allocated cost. Powering a server off does
+                          not halt Hetzner billing, so include every server. */}
                       {(() => {
                         const known = servers.map((s: any) => monthlyEur(s.type ?? s.Type)).filter((x): x is number => x !== null);
                         const total = known.reduce((a, b) => a + b, 0);
@@ -569,7 +555,7 @@ export default function CloudProvidersSection({
                         const approx = known.length < servers.length ? "+" : "";
                         return (
                           <Text style={{ color: total > 20 ? "#b45309" : c.textMuted, fontSize: 11, fontWeight: "700", marginTop: 2 }}>
-                            ≈ €{total.toFixed(2)}{approx}/mo across {servers.length} running box{servers.length === 1 ? "" : "es"} — you pay Hetzner directly. Stop idle ones to save.
+                            ≈ €{total.toFixed(2)}{approx}/mo across {servers.length} allocated box{servers.length === 1 ? "" : "es"} — paid directly to Hetzner; shutdown does not stop billing.
                           </Text>
                         );
                       })()}
@@ -589,21 +575,19 @@ export default function CloudProvidersSection({
                           <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
                             {String(s.name ?? s.Name ?? id)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? "")}
                           </Text>
-                          <Pressable disabled={busy !== null} onPress={() => bakeServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
-                            {busy === `bake:${id}` ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
-                              <Text style={{ color: "#0ea5e9", fontSize: 11, fontWeight: "700" }}>Bake</Text>
-                            )}
-                          </Pressable>
-                          <Pressable disabled={busy !== null} onPress={() => stopServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
-                            {busy === `stop:${id}` ? <ActivityIndicator size="small" color="#b45309" /> : (
-                              <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>Stop</Text>
-                            )}
-                          </Pressable>
-                          <Pressable disabled={busy !== null} onPress={() => removeServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
-                            {busy === `rm:${id}` ? <ActivityIndicator size="small" color="#e11d48" /> : (
-                              <Text style={{ color: "#e11d48", fontSize: 11, fontWeight: "700" }}>Delete</Text>
-                            )}
-                          </Pressable>
+                          {String(s.status ?? s.Status ?? "").toLowerCase() === "off" ? (
+                            <Pressable disabled={busy !== null} onPress={() => void powerOnServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
+                              {busy === `poweron:${id}` ? <ActivityIndicator size="small" color="#059669" /> : (
+                                <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>Power on</Text>
+                              )}
+                            </Pressable>
+                          ) : (
+                            <Pressable disabled={busy !== null} onPress={() => stopServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
+                              {busy === `stop:${id}` ? <ActivityIndicator size="small" color="#b45309" /> : (
+                                <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>Shut down</Text>
+                              )}
+                            </Pressable>
+                          )}
                         </View>
                         {costLine ? (
                           <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "monospace", marginLeft: 2 }}>{costLine}</Text>
@@ -614,51 +598,6 @@ export default function CloudProvidersSection({
                     </>
                   )}
 
-                  {/* Stopped boxes (snapshots) — restart to resume. */}
-                  {snapshots && snapshots.length > 0 ? (
-                    <View style={{ gap: 4, marginTop: 2 }}>
-                      <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Stopped boxes (snapshots)</Text>
-                      {snapshots.map((s: any) => {
-                        const id = String(s.id ?? s.ID ?? "");
-                        return (
-                          <View key={id} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 3 }}>
-                            <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
-                              {String(s.description ?? s.Description ?? id)} · €{Number(s.estMonthlyEur ?? s.EstMonthlyEUR ?? 0).toFixed(2)}/mo
-                            </Text>
-                            <Pressable disabled={busy !== null} onPress={() => startFromSnapshot(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
-                              {busy === `start:${id}` ? <ActivityIndicator size="small" color="#059669" /> : (
-                                <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>Start</Text>
-                              )}
-                            </Pressable>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : null}
-
-                  {/* Convex-synced lifecycle — visible across all your
-                      devices (alive / sleeping / deleted + timestamps).
-                      Convex holds only id/state/time — never the token. */}
-                  {byoState && byoState.length > 0 ? (
-                    <View style={{ gap: 3, marginTop: 2, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 6 }}>
-                      <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Lifecycle (all devices)</Text>
-                      {byoState.slice(0, 8).map((b) => {
-                        const color = b.state === "active" ? "#059669" : b.state === "stopped" ? "#b45309" : c.textMuted;
-                        const label = b.state === "active" ? "alive" : b.state === "stopped" ? "sleeping" : "deleted";
-                        const ts = b.state === "deleted" ? b.deletedAt : b.state === "stopped" ? b.stoppedAt : b.lastUpAt;
-                        const when = ts ? new Date(ts).toISOString().slice(0, 16).replace("T", " ") : "";
-                        return (
-                          <View key={b.id} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                            <Text style={{ color, fontSize: 10, fontWeight: "700", width: 56 }}>{label}</Text>
-                            <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "monospace", flex: 1 }} numberOfLines={1}>
-                              {b.name}{b.serverIp ? ` · ${b.serverIp}` : ""}
-                            </Text>
-                            <Text style={{ color: c.textMuted, fontSize: 9 }}>{when}</Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : null}
                 </View>
               ) : null}
 

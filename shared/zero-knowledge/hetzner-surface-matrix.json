@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "provider": "hetzner",
+  "allowedActions": ["list", "power_on", "shutdown"],
+  "surfaces": [
+    { "id": "ios", "state": "supported", "execution": "device_direct", "credential": "apple_keychain", "evidence": "mobile/src/lib/clientCloudProvider.ts" },
+    { "id": "android", "state": "supported", "execution": "device_direct", "credential": "android_keystore", "evidence": "mobile/src/lib/clientCloudProvider.ts" },
+    { "id": "macos", "state": "supported", "execution": "trusted_endpoint", "credential": "endpoint_vault", "evidence": "desktop/agent/ops_hetzner_power.go" },
+    { "id": "windows", "state": "supported", "execution": "trusted_endpoint", "credential": "endpoint_vault", "evidence": "desktop/agent/ops_hetzner_power.go" },
+    { "id": "linux", "state": "supported", "execution": "trusted_endpoint", "credential": "endpoint_vault", "evidence": "desktop/agent/ops_hetzner_power.go" },
+    { "id": "mcp", "state": "supported", "execution": "trusted_endpoint", "credential": "endpoint_vault", "evidence": "desktop/agent/ops_hetzner_power.go" },
+    { "id": "tvos", "state": "supported", "execution": "trusted_endpoint_p2p", "credential": "none", "evidence": "tvos/YaverTV/AgentClient.swift" },
+    { "id": "visionos", "state": "supported", "execution": "trusted_endpoint_p2p", "credential": "none", "evidence": "visionos/project.yml" },
+    { "id": "android_tv", "state": "supported", "execution": "trusted_endpoint_p2p", "credential": "none", "evidence": "androidtv/app/src/main/kotlin/io/yaver/tv/OpsClient.kt" },
+    { "id": "watchos", "state": "supported", "execution": "trusted_endpoint_p2p", "credential": "none", "evidence": "watch/YaverWatch/DesktopVoiceClient.swift" },
+    { "id": "wearos", "state": "supported", "execution": "trusted_endpoint_p2p", "credential": "none", "evidence": "wear/app/src/main/kotlin/io/yaver/wear/DesktopVoiceClient.kt" },
+    { "id": "carplay", "state": "delegated", "execution": "phone_host", "credential": "phone_vault", "evidence": "mobile/native-carplay/ios/YaverCarPlaySceneDelegate.swift" },
+    { "id": "android_auto", "state": "delegated", "execution": "phone_host", "credential": "phone_vault", "evidence": "mobile/app/car-voice-coding.tsx" },
+    { "id": "browser_web", "state": "disabled", "execution": "none", "credential": "none", "evidence": "web/components/dashboard/ByoCloudPanel.tsx" },
+    { "id": "xbox", "state": "planned", "execution": "none", "credential": "none", "evidence": "docs/security/ZERO_KNOWLEDGE_MIGRATION_AUDIT.md" },
+    { "id": "playstation", "state": "planned", "execution": "none", "credential": "none", "evidence": "docs/security/ZERO_KNOWLEDGE_MIGRATION_AUDIT.md" },
+    { "id": "meta_quest", "state": "planned", "execution": "none", "credential": "none", "evidence": "docs/security/ZERO_KNOWLEDGE_MIGRATION_AUDIT.md" }
+  ]
+}

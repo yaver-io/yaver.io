@@ -24,6 +24,18 @@ type meshStreamHandle struct {
 	mu     sync.Mutex // serializes writes to this agent's stream
 }
 
+// sameMeshOwner is the tenant boundary for opaque WireGuard frame forwarding.
+// A Convex-backed public relay must have an authenticated owner on both ends;
+// treating two missing owners as equal would silently collapse every tenant
+// into one. A deliberately self-hosted relay without Convex remains a single
+// trust domain and may use the legacy empty-owner representation.
+func sameMeshOwner(sourceUserID, targetUserID string, convexBacked bool) bool {
+	if convexBacked && (sourceUserID == "" || targetUserID == "") {
+		return false
+	}
+	return sourceUserID == targetUserID
+}
+
 func (h *meshStreamHandle) writeFrame(srcDeviceID string, payload []byte) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -70,7 +82,7 @@ func (s *RelayServer) handleMeshStream(stream quic.Stream, br *bufio.Reader, dev
 		// Frames are WG-encrypted so this is defense-in-depth, but it fails
 		// closed. Equality also holds for a self-hosted relay (no Convex →
 		// both userIDs empty → same single-tenant trust domain → forward).
-		if handle.userID != target.userID {
+		if !sameMeshOwner(handle.userID, target.userID, s.convexURL != "") {
 			continue
 		}
 		if err := target.writeFrame(deviceID, payload); err != nil {

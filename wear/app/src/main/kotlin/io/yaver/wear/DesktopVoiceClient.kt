@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /**
@@ -43,6 +44,27 @@ class DesktopVoiceClient(
     private val boxBaseUrl: String,
     private val bearerToken: String,
 ) {
+    private fun hasPrivatePeerRoute(): Boolean {
+        val host = runCatching { URI(boxBaseUrl).host?.lowercase().orEmpty() }.getOrDefault("")
+        if (host == "localhost" || host == "::1" ||
+            (host.contains(':') && (host.startsWith("fc") || host.startsWith("fd")))) return true
+        val parts = host.split('.').mapNotNull { it.toIntOrNull() }
+        if (parts.size != 4) return false
+        return parts[0] == 10 || parts[0] == 127 ||
+            (parts[0] == 192 && parts[1] == 168) ||
+            (parts[0] == 172 && parts[1] in 16..31) ||
+            (parts[0] == 100 && parts[1] in 64..127)
+    }
+
+    data class HetznerPowerServer(
+        val id: String,
+        val name: String,
+        val ip: String,
+        val status: String,
+        val type: String,
+        val location: String,
+    )
+
     private val http = OkHttpClient.Builder()
         // Desktop actions are local to the target machine (a click, a
         // keystroke, a tree read), so they return fast. A short ceiling keeps a
@@ -50,6 +72,61 @@ class DesktopVoiceClient(
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
+
+    private fun opsRequest(verb: String, payload: JSONObject, machine: String = "local"): Request {
+        val body = JSONObject()
+            .put("verb", verb)
+            .put("machine", machine)
+            .put("payload", payload)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        return Request.Builder()
+            .url("$boxBaseUrl/ops")
+            .addHeader("Authorization", "Bearer $bearerToken")
+            .addHeader("X-Yaver-Surface", "watch")
+            .post(body)
+            .build()
+    }
+
+    suspend fun listHetznerServers(): List<HetznerPowerServer> = withContext(Dispatchers.IO) {
+        if (!hasPrivatePeerRoute()) error("Use the same LAN, Tailscale, or Yaver Mesh for Hetzner control.")
+        http.newCall(opsRequest("hetzner_power", JSONObject().put("action", "list"))).execute().use { resp ->
+            val root = JSONObject(resp.body?.string().orEmpty())
+            if (!root.optBoolean("ok", false)) error(root.optString("error", "Could not list Hetzner servers."))
+            val rows = root.optJSONObject("initial")?.optJSONArray("servers") ?: return@withContext emptyList()
+            buildList {
+                for (i in 0 until rows.length()) {
+                    val row = rows.optJSONObject(i) ?: continue
+                    val id = row.optString("id")
+                    if (id.isBlank()) continue
+                    add(HetznerPowerServer(
+                        id, row.optString("name", id), row.optString("ip"),
+                        row.optString("status", "unknown"), row.optString("type"), row.optString("location")
+                    ))
+                }
+            }
+        }
+    }
+
+    suspend fun setHetznerServerPower(serverId: String, powerOn: Boolean): WatchProtocol.Reply =
+        withContext(Dispatchers.IO) {
+            if (!hasPrivatePeerRoute()) {
+                return@withContext WatchProtocol.Reply.Error("Connect over your private network or Yaver Mesh first.")
+            }
+            if (!serverId.matches(Regex("^[1-9][0-9]*$"))) {
+                return@withContext WatchProtocol.Reply.Error("An exact server number is required.")
+            }
+            try {
+                http.newCall(opsRequest("hetzner_power", JSONObject()
+                    .put("action", if (powerOn) "power_on" else "shutdown")
+                    .put("serverId", serverId)
+                    .put("confirm", true))).execute().use { resp ->
+                    parseReply(resp.body?.string().orEmpty())
+                }
+            } catch (e: Exception) {
+                WatchProtocol.Reply.Error("Could not reach your trusted endpoint.", boxUnreachable = true)
+            }
+        }
 
     /**
      * Send a spoken phrase to a desktop.
@@ -71,19 +148,7 @@ class DesktopVoiceClient(
             // and must never be concatenated into a request body.
             val payload = JSONObject()
                 .put("transcript", trimmed)
-            val body = JSONObject()
-                .put("verb", "desktop_voice")
-                .put("machine", machine)
-                .put("payload", payload)
-                .toString()
-                .toRequestBody("application/json".toMediaType())
-
-            val req = Request.Builder()
-                .url("$boxBaseUrl/ops")
-                .addHeader("Authorization", "Bearer $bearerToken")
-                .addHeader("X-Yaver-Surface", "watch")
-                .post(body)
-                .build()
+            val req = opsRequest("desktop_voice", payload, machine)
 
             try {
                 http.newCall(req).execute().use { resp ->

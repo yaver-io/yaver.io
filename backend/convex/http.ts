@@ -3859,11 +3859,18 @@ http.route({
 
     const body = await request.json();
     try {
+      const safeEvent: "restart" | "crash" | "oom" | "started" | "stopped" =
+        body.event === "restart" ||
+        body.event === "crash" ||
+        body.event === "oom" ||
+        body.event === "stopped"
+          ? body.event
+          : "started";
       await ctx.runMutation(api.deviceEvents.record, {
         tokenHash,
         deviceId: body.deviceId,
-        event: body.event,
-        details: body.details,
+        event: safeEvent,
+        details: undefined,
       });
       return jsonResponse({ ok: true });
     } catch (e: any) {
@@ -5168,12 +5175,17 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const body = await request.json();
+      const safeToken = (value: unknown, fallback: string) => {
+        const candidate = String(value ?? "").slice(0, 80);
+        return /^[a-zA-Z0-9_.:-]+$/.test(candidate) ? candidate : fallback;
+      };
+      const allowedLevels = new Set(["info", "warn", "error"]);
       await ctx.runMutation(internal.authLogs.writeLog, {
-        level: body.level || "info",
-        provider: body.provider || "unknown",
-        step: body.step || "unknown",
-        message: String(body.message ?? "").slice(0, 1000),
-        details: body.details ? String(body.details).slice(0, 2000) : undefined,
+        level: allowedLevels.has(body.level) ? body.level : "info",
+        provider: safeToken(body.provider, "unknown"),
+        step: safeToken(body.step, "unknown"),
+        message: "auth_event",
+        details: undefined,
       });
       return jsonResponse({ ok: true });
     } catch (e) {
@@ -5509,22 +5521,27 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      const body = await request.json();
-      // Best-effort user identification
-      let userId: string | undefined;
       const user = await authenticateRequest(ctx, request);
-      if (user) userId = user.userId;
+      if (!user) return errorResponse("Unauthorized", 401);
+      const body = await request.json();
+      // Treat arbitrary client text as application plaintext. Persist only
+      // bounded operational classifications; never message bodies/details.
+      const allowedLevels = new Set(["info", "warn", "error"]);
+      const safeToken = (value: unknown, fallback: string) => {
+        const candidate = String(value ?? "").slice(0, 80);
+        return /^[a-zA-Z0-9_.:-]+$/.test(candidate) ? candidate : fallback;
+      };
 
       await ctx.runMutation(internal.mobileStreamLogs.writeLog, {
-        userId,
-        platform: body.platform || "unknown",
-        appVersion: body.appVersion || "unknown",
-        buildNumber: body.buildNumber || "unknown",
+        userId: user.userId,
+        platform: safeToken(body.platform, "unknown"),
+        appVersion: safeToken(body.appVersion, "unknown"),
+        buildNumber: safeToken(body.buildNumber, "unknown"),
         runtimeMode: body.runtimeMode === "dogfood" ? "dogfood" : "native",
-        level: body.level || "info",
-        step: body.step || "unknown",
-        message: String(body.message ?? "").slice(0, 1000),
-        details: body.details ? String(body.details).slice(0, 2000) : undefined,
+        level: allowedLevels.has(body.level) ? body.level : "info",
+        step: safeToken(body.step, "unknown"),
+        message: "client_event",
+        details: undefined,
       });
       return jsonResponse({ ok: true });
     } catch (e) {
@@ -5542,24 +5559,26 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      const body = await request.json();
-      // Best-effort user identification
-      let email: string | undefined = body.email;
-      let userId: string | undefined;
       const user = await authenticateRequest(ctx, request);
-      if (user) {
-        email = user.email;
-        userId = user.userId;
+      if (!user || !isOwner(user.email, user.userDocId)) {
+        return errorResponse("Unauthorized", 401);
       }
+      const body = await request.json();
+      const safeToken = (value: unknown, fallback: string) => {
+        const candidate = String(value ?? "").slice(0, 80);
+        return /^[a-zA-Z0-9_.:-]+$/.test(candidate) ? candidate : fallback;
+      };
+      const allowedSources = new Set(["agent", "mobile", "web", "relay"]);
+      const allowedLevels = new Set(["info", "warn", "error", "debug"]);
 
       await ctx.runMutation(internal.developerLogs.writeLog, {
-        email,
-        userId,
-        source: body.source || "agent",
-        level: body.level || "info",
-        tag: body.tag || "general",
-        message: String(body.message ?? "").slice(0, 1000),
-        data: body.data ? String(body.data).slice(0, 8000) : undefined,
+        email: user.email,
+        userId: user.userId,
+        source: allowedSources.has(body.source) ? body.source : "agent",
+        level: allowedLevels.has(body.level) ? body.level : "info",
+        tag: safeToken(body.tag, "general"),
+        message: "developer_event",
+        data: undefined,
       });
       return jsonResponse({ ok: true });
     } catch (e) {
@@ -5569,11 +5588,15 @@ http.route({
   }),
 });
 
-/** GET /dev/logs — Read developer logs (no auth — dev-only data). */
+/** GET /dev/logs — owner-authenticated operational metadata only. */
 http.route({
   path: "/dev/logs",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
+    const user = await authenticateRequest(ctx, request);
+    if (!user || !isOwner(user.email, user.userDocId)) {
+      return errorResponse("Unauthorized", 401);
+    }
     const url = new URL(request.url);
     const limit = parseInt(url.searchParams.get("limit") || "50");
     const email = url.searchParams.get("email") || undefined;
@@ -8579,17 +8602,20 @@ http.route({
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 
-    let body: { eventType: string; details: string };
+    let body: { eventType: string; details?: string };
     try {
       body = await request.json();
     } catch {
       return errorResponse("Invalid body", 400);
     }
 
+    const eventType = /^[a-zA-Z0-9_.:-]{1,80}$/.test(String(body.eventType ?? ""))
+      ? String(body.eventType)
+      : "unknown";
     await ctx.runMutation(api.auth.reportSecurityEvent, {
       tokenHash,
-      eventType: body.eventType,
-      details: body.details,
+      eventType,
+      details: "redacted_at_ingress",
     });
 
     return jsonResponse({ ok: true });
@@ -9316,6 +9342,10 @@ http.route({
   path: "/gateway/authorize",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    void ctx;
+    void request;
+    return errorResponse("Hosted inference retired; use endpoint-direct providers", 410);
+    /* Legacy implementation retained temporarily for schema migration only.
     // Two ways to authenticate to the gateway:
     //   1. A scoped gateway token (operator-minted, inference-only) — the
     //      safe key path for free-tier tenants. Resolves to a userId but
@@ -9387,7 +9417,7 @@ http.route({
         dailyCapCents: pol.dailyCapCents ?? 0,
         spentTodayCents: pol.spentTodayCents,
       },
-    });
+    }); */
   }),
 });
 
@@ -9402,6 +9432,10 @@ http.route({
   path: "/gateway/policy/set",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    void ctx;
+    void request;
+    return errorResponse("Hosted inference retired", 410);
+    /* Legacy migration-only implementation.
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
     if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
@@ -9425,7 +9459,7 @@ http.route({
       note: typeof body.note === "string" ? body.note : undefined,
       setBy: String(session.userDocId),
     });
-    return jsonResponse(res);
+    return jsonResponse(res); */
   }),
 });
 
@@ -9434,6 +9468,10 @@ http.route({
   path: "/gateway/policy",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
+    void ctx;
+    void request;
+    return errorResponse("Hosted inference retired", 410);
+    /* Legacy migration-only implementation.
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
     if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
@@ -9445,7 +9483,7 @@ http.route({
     const tokens = await ctx.runQuery(internal.gatewayTokens.listForUserInternal, {
       userId: target as any,
     });
-    return jsonResponse({ ok: true, policy, tokens });
+    return jsonResponse({ ok: true, policy, tokens }); */
   }),
 });
 
@@ -9456,6 +9494,10 @@ http.route({
   path: "/gateway/token/mint",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    void ctx;
+    void request;
+    return errorResponse("Hosted inference retired", 410);
+    /* Legacy migration-only implementation.
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
     if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
@@ -9482,7 +9524,7 @@ http.route({
     });
     // raw is returned ONCE — the operator stores it (it's the OPENAI_API_KEY
     // they bake into the tenant's runner). It is never retrievable again.
-    return jsonResponse({ ...res, token: raw });
+    return jsonResponse({ ...res, token: raw }); */
   }),
 });
 
@@ -9491,6 +9533,10 @@ http.route({
   path: "/gateway/token/revoke",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    void ctx;
+    void request;
+    return errorResponse("Hosted inference retired", 410);
+    /* Legacy migration-only implementation.
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
     if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
@@ -9504,7 +9550,7 @@ http.route({
     const res = await ctx.runMutation(internal.gatewayTokens.revokeInternal, {
       tokenId: body.tokenId as any,
     });
-    return jsonResponse(res);
+    return jsonResponse(res); */
   }),
 });
 
@@ -9515,6 +9561,10 @@ http.route({
   path: "/gateway/token/rotate",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    void ctx;
+    void request;
+    return errorResponse("Hosted inference retired", 410);
+    /* Legacy migration-only implementation.
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
     if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
@@ -9540,7 +9590,7 @@ http.route({
       label: typeof body.label === "string" ? body.label : "rotated",
       createdBy: String(session.userDocId),
     });
-    return jsonResponse({ ...res, token: raw, rotated: true });
+    return jsonResponse({ ...res, token: raw, rotated: true }); */
   }),
 });
 
@@ -9554,6 +9604,10 @@ http.route({
   path: "/gateway/meter",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
+    void ctx;
+    void req;
+    return errorResponse("Hosted inference retired", 410);
+    /* Legacy migration-only implementation.
     const authHeader = req.headers.get("authorization") ?? "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
     const check = await ctx.runAction(internal.gatewaySecret.verify, { token });
@@ -9585,7 +9639,7 @@ http.route({
           ? dryRun
           : !parseBooleanEnv(process.env.YAVER_MANAGED_METER_LIVE, false),
     });
-    return jsonResponse({ ok: true, ...result });
+    return jsonResponse({ ok: true, ...result }); */
   }),
 });
 

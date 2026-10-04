@@ -165,7 +165,13 @@
         }
       ],
       "expo-router",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "Allow Yaver to access credentials protected by your device."
+        }
+      ],
       "expo-apple-authentication",
       "expo-font",
       [

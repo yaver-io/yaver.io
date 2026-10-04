@@ -69,8 +69,8 @@ test("DeepSeek can be configured from the backend screen that advertises it", as
   assert.match(source, /deepseek: LOCAL_KEYS\.deepseekApiKey/);
   assert.match(source, /\["deepseek", "anthropic", "openai", "glm"\]/);
   assert.match(source, /av\.deepseekKey/);
-  assert.match(source, /setManagedCodingEnabled\(next\)/);
-  assert.match(source, /Use account-managed coding/);
+  assert.doesNotMatch(source, /managed coding/i);
+  assert.doesNotMatch(source, /Yaver Gateway/i);
 });
 
 test("Projects reads phone checkouts and connected Git providers without a box", async () => {

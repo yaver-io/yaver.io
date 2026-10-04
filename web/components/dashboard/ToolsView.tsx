@@ -1366,12 +1366,20 @@ export const providerPresets: Array<{
     hint: "Remote Ollama over a private network — replace the host with your endpoint.",
   },
   {
+    label: "DeepInfra · DeepSeek V4.1 Flash",
+    id: "deepinfra",
+    name: "DeepInfra",
+    baseUrl: "https://api.deepinfra.com/v1/openai",
+    model: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
+    hint: "DeepSeek V4.1 Flash on DeepInfra. API key from deepinfra.com/dash/api_keys.",
+  },
+  {
     label: "DeepSeek",
     id: "deepseek",
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
-    model: "deepseek/deepseek-flash",
-    hint: "DeepSeek V4.1 Flash — Hetzner/OpenCode varsayılanı. API key from platform.deepseek.com.",
+    model: "deepseek/deepseek-chat",
+    hint: "DeepSeek's direct API. API key from platform.deepseek.com.",
   },
 ];
 

@@ -25,6 +25,7 @@ const SECRET_SLOT: Record<HandoffCredentialKind, string> = {
   "github-token": LOCAL_KEYS.githubToken,
   "gitlab-token": LOCAL_KEYS.gitlabToken,
   "bitbucket-token": LOCAL_KEYS.bitbucketToken,
+  "hetzner-api-token": LOCAL_KEYS.hetznerToken,
 };
 
 function scopedKey(prefix: string, accountFingerprint: string): string {

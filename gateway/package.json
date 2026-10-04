@@ -2,7 +2,7 @@
   "name": "yaver-gateway",
   "version": "0.0.0",
   "private": true,
-  "description": "Yaver Premium captive-OpenRouter inference gateway (Cloudflare Worker)",
+  "description": "Body-blind tombstone for Yaver's retired hosted-inference gateway",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
