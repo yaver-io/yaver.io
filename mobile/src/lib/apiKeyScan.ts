@@ -80,8 +80,25 @@ export function parseHetznerCloudTokenText(rawText: string): ScannedAPIKey | nul
   }
 
   const exactCandidates = raw.match(/[A-Za-z0-9_-]{64}/g) || [];
-  return exactCandidates.length === 1
-    ? { apiKey: exactCandidates[0], provider: "hetzner" }
+  if (exactCandidates.length === 1) return { apiKey: exactCandidates[0], provider: "hetzner" };
+  if (exactCandidates.length > 1) return null;
+
+  // Bank-style document scanners normalize visual grouping only after a
+  // strong format/context check. Do the same for an OCR-wrapped token, but do
+  // not repair ambiguous characters or concatenate arbitrary page text.
+  if (!/hetzner/i.test(raw) || !/(?:api\s*token|cloud\s*token)/i.test(raw)) return null;
+  const fragments = raw.match(/[A-Za-z0-9_-]{8,63}/g) || [];
+  const wrapped = new Set<string>();
+  for (let start = 0; start < fragments.length; start += 1) {
+    let candidate = "";
+    for (let end = start; end < Math.min(start + 4, fragments.length); end += 1) {
+      candidate += fragments[end];
+      if (candidate.length === 64 && isHetznerCloudToken(candidate)) wrapped.add(candidate);
+      if (candidate.length >= 64) break;
+    }
+  }
+  return wrapped.size === 1
+    ? { apiKey: [...wrapped][0], provider: "hetzner" }
     : null;
 }
 

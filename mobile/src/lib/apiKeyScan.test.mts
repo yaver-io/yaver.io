@@ -45,6 +45,10 @@ test("Hetzner scanner accepts only one Cloud project token and rejects S3 pairs"
     provider: "hetzner",
   });
   assert.equal(parseHetznerCloudTokenText("access_key = ABCDEFGHIJKLMNOPQRST\nsecret_key = " + "z".repeat(40)), null);
+  assert.deepEqual(parseHetznerCloudTokenText(`Hetzner Cloud API token\n${token.slice(0, 32)}\n${token.slice(32)}`), {
+    apiKey: token,
+    provider: "hetzner",
+  });
   assert.equal(parseHetznerCloudTokenText("A".repeat(63)), null);
   assert.equal(parseHetznerCloudTokenText(`${"A".repeat(64)}\n${"B".repeat(64)}`), null);
 });
