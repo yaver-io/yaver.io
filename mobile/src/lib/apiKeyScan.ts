@@ -59,6 +59,36 @@ export function parseRecognizedAPIKeyText(rawText: string): ScannedAPIKey | null
   return plausible[0] ? { apiKey: plausible[0] } : null;
 }
 
+// Hetzner Cloud API tokens are a single 64-byte ASCII value. Object Storage
+// credentials are a different access-key/secret-key pair and intentionally do
+// not pass this parser: S3 credentials cannot manage Cloud VPS resources.
+export function parseHetznerCloudTokenText(rawText: string): ScannedAPIKey | null {
+  const raw = String(rawText || "").trim();
+  if (!raw || raw.length > 64_000) return null;
+
+  const structured = parseScannedAPIKey(raw);
+  if (structured && (!structured.provider || structured.provider === "hetzner") && isHetznerCloudToken(structured.apiKey)) {
+    return { apiKey: structured.apiKey, provider: "hetzner" };
+  }
+
+  const lines = raw.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const labelled = line.match(/(?:cloud[ _-]?)?(?:api[ _-]?)?token\s*[:=]\s*(.+)$/i)?.[1];
+    if (!labelled) continue;
+    const compact = labelled.replace(/[\s"'`]+/g, "");
+    if (isHetznerCloudToken(compact)) return { apiKey: compact, provider: "hetzner" };
+  }
+
+  const exactCandidates = raw.match(/[A-Za-z0-9_-]{64}/g) || [];
+  return exactCandidates.length === 1
+    ? { apiKey: exactCandidates[0], provider: "hetzner" }
+    : null;
+}
+
+function isHetznerCloudToken(value: string): boolean {
+  return /^[A-Za-z0-9_-]{64}$/.test(value);
+}
+
 function keyScore(value: string): number {
   const knownPrefix = /^(?:sk-|ds-|gsk_|hf_|xai-|AIza|key-)/i.test(value) ? 10_000 : 0;
   return knownPrefix + Math.min(value.length, 4096);

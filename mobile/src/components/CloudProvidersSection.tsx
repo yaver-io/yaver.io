@@ -14,7 +14,7 @@
 //    the token), so there is nowhere the secret can echo out.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking, Share } from "react-native";
+import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking, Modal, Platform, Share } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { quicClient } from "../lib/quic";
 import { useAuth } from "../context/AuthContext";
@@ -23,6 +23,7 @@ import { hetznerClientCloud } from "../lib/clientCloudProvider";
 import type { HetznerRecoveryExport } from "../lib/hetznerRecovery";
 import type { LocalHetznerManagedServer } from "../lib/hetznerDirect";
 import type { HetznerActionLog } from "../lib/hetznerDirectCore";
+import ApiKeyScanner from "./ApiKeyScanner";
 
 // Featured BYO compute providers (the VM providers the agent can
 // provision on directly). Others connect via the web Accounts view.
@@ -98,6 +99,7 @@ export default function CloudProvidersSection({
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [secret, setSecret] = useState("");
+  const [scanProvider, setScanProvider] = useState<string | null>(null);
 
   // BYO server list (for a connected Hetzner account).
   const [servers, setServers] = useState<any[] | null>(null);
@@ -516,6 +518,15 @@ export default function CloudProvidersSection({
                           importantForAutofill="no"
                           style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.textPrimary, backgroundColor: c.bgCardElevated ?? c.bgCard, fontFamily: "monospace" }}
                         />
+                        {Platform.OS !== "web" ? (
+                          <Pressable
+                            disabled={busy !== null}
+                            onPress={() => setScanProvider(p.id)}
+                            style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+                          >
+                            <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>▣ Scan token from camera or photo</Text>
+                          </Pressable>
+                        ) : null}
                         <View style={{ flexDirection: "row", gap: 8 }}>
                           <Pressable
                             disabled={busy !== null || !secret.trim()}
@@ -763,6 +774,23 @@ export default function CloudProvidersSection({
           )}
         </View>
       ) : null}
+      <Modal
+        visible={scanProvider !== null}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setScanProvider(null)}
+      >
+        <ApiKeyScanner
+          provider={scanProvider ?? undefined}
+          onClose={() => setScanProvider(null)}
+          onScanned={({ apiKey }) => {
+            // Keep the OCR result transient and editable. It is validated by
+            // Hetzner only after Save, then wiped from React state.
+            setSecret(apiKey);
+            setScanProvider(null);
+          }}
+        />
+      </Modal>
     </View>
   );
 }
