@@ -24,6 +24,23 @@
 >   live MJPEG server. Until then `ios-device` capture is built but
 >   unproven on real hardware; control/dims/screenshot are contract-
 >   verified.
+> - Studio registry slice ✅ (2026-10-05): authenticated `/real-devices`
+>   publishes opaque device IDs, exact-device session creation accepts
+>   `realDeviceId`, heartbeat persists public discovery metadata in Convex
+>   `realDevices`, and tablet Vibe Studio exposes a live interactive Device
+>   source on the left while chat stays on the right. MCP exposes
+>   `real_device_probe` plus the existing `runtime_create` / `runtime_frame` /
+>   `runtime_control` closed loop. Raw ADB serials, pixels, and input never enter
+>   Convex.
+>
+> **Capture truth:** Android production streaming currently carries repeated
+> ADB JPEG frames over an authenticated WebRTC data channel, with authenticated
+> relay polling as the compatibility fallback. It is interactive but not yet a
+> high-frame-rate video lane.
+> `scrcpy` installation is measured and reported but is not yet used as a
+> tunneled protocol. Do not describe `scrcpy` on PATH as proof of a working
+> stream; MCP operation-tests a real screenshot and then the runtime tools test
+> frames and control.
 
 ## 1. The "sync comm layer" already exists
 
@@ -84,20 +101,20 @@ Rules this plan must honor:
 
 | Framework | Build | Install/Launch | Video | Control | Stream |
 |---|---|---|---|---|---|
-| React Native | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Flutter | ✅ | ✅ | ❌ | ❌ | ❌ |
-| iOS-native | ✅ (Mac) | ✅ | ❌ | ❌ | ❌ |
-| Kotlin-native | ✅ | ✅ | ❌ | ❌ | ❌ |
+| React Native | ✅ | ✅ | ✅ Android | ✅ Android | ✅ Android |
+| Flutter | ✅ | ✅ | ✅ Android | ✅ Android | ✅ Android |
+| iOS-native | ✅ (Mac) | ✅ | ✅ via WDA/ffmpeg, hardware proof pending | ✅ via WDA | ✅, hardware proof pending |
+| Kotlin-native | ✅ | ✅ | ✅ Android | ✅ Android | ✅ Android |
 
 Build/install/launch on real devices is **complete** for all four via
 `yaver wire push` / `wireless push` (`wire_cmd.go`, `wireless_cmd.go`,
 `device_install.go`, `native_build.go`); USB + wifi/mDNS detection done
 (`listAndroidWireDevices`, `listIOSWireDevices`, `adbPair`/`adbConnect`).
 
-**Single architectural gap:** `yaver wire` (build/install) and
-remote-runtime (stream/control) are two siloed subsystems that never
-connect. `wire push` stops after launch; remote-runtime rejects any
-non-emulator/simulator target.
+The physical target and remote-runtime are connected. The remaining Android
+product work is replacing the compatibility frame path with an
+operation-probed continuous H.264 encoder (scrcpy adapter or proven
+`adb screenrecord`) without exposing ADB over the public network.
 
 Asymmetry that drives phasing:
 

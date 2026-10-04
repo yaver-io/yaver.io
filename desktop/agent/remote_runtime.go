@@ -106,21 +106,24 @@ type RemoteBuilderSummary struct {
 }
 
 type RemoteRuntimeSession struct {
-	ID               string                 `json:"id"`
-	WorkDir          string                 `json:"workDir"`
-	Framework        string                 `json:"framework"`
-	ExecutionMode    ProjectExecutionMode   `json:"executionMode"`
-	TargetID         string                 `json:"targetId"`
-	TargetLabel      string                 `json:"targetLabel"`
-	Platform         string                 `json:"platform,omitempty"`
-	DeviceID         string                 `json:"deviceId,omitempty"`
-	RuntimeHostClass string                 `json:"runtimeHostClass,omitempty"`
-	DisplaySurface   string                 `json:"displaySurface,omitempty"`
-	Viewport         *RemoteRuntimeViewport `json:"viewport,omitempty"`
-	TransportMode    string                 `json:"transportMode,omitempty"`
-	FrameTransport   string                 `json:"frameTransport,omitempty"`
-	Status           string                 `json:"status"`
-	LastCommand      string                 `json:"lastCommand,omitempty"`
+	ID            string               `json:"id"`
+	WorkDir       string               `json:"workDir"`
+	Framework     string               `json:"framework"`
+	ExecutionMode ProjectExecutionMode `json:"executionMode"`
+	TargetID      string               `json:"targetId"`
+	TargetLabel   string               `json:"targetLabel"`
+	Platform      string               `json:"platform,omitempty"`
+	DeviceID      string               `json:"deviceId,omitempty"`
+	// RequestedRealDeviceID is opaque agent-local routing state. It selects a
+	// registered physical device without exposing its ADB serial to Convex.
+	RequestedRealDeviceID string                 `json:"-"`
+	RuntimeHostClass      string                 `json:"runtimeHostClass,omitempty"`
+	DisplaySurface        string                 `json:"displaySurface,omitempty"`
+	Viewport              *RemoteRuntimeViewport `json:"viewport,omitempty"`
+	TransportMode         string                 `json:"transportMode,omitempty"`
+	FrameTransport        string                 `json:"frameTransport,omitempty"`
+	Status                string                 `json:"status"`
+	LastCommand           string                 `json:"lastCommand,omitempty"`
 	// TextInputFocused is measured after a pointer tap on browser-window.
 	// Remote viewers cannot receive the page's native keyboard request, so this
 	// signal lets them open their own text-entry surface only for real editable
@@ -1111,8 +1114,9 @@ func (m *RemoteRuntimeManager) Create(workDir, framework, targetID, transportMod
 // remoteRuntimeCreator identifies who is starting a session, so the
 // shared-session roster can attribute it ("Kivan · phone started this").
 type remoteRuntimeCreator struct {
-	ClientID string
-	Surface  string
+	ClientID     string
+	Surface      string
+	RealDeviceID string
 }
 
 // sourceSurfaceForCreator keeps the DTO honest for legacy (anonymous)
@@ -1175,6 +1179,10 @@ func (m *RemoteRuntimeManager) CreateWith(workDir, framework, targetID, transpor
 	if !selected.Enabled {
 		return RemoteRuntimeSession{}, fmt.Errorf("%s", selected.Reason)
 	}
+	requestedRealDeviceID := strings.TrimSpace(creator.RealDeviceID)
+	if requestedRealDeviceID != "" && selected.ID != remoteRuntimeAndroidDeviceTargetID {
+		return RemoteRuntimeSession{}, fmt.Errorf("realDeviceId is only valid with targetId=%s", remoteRuntimeAndroidDeviceTargetID)
+	}
 	transportMode = strings.TrimSpace(transportMode)
 	if transportMode == "" {
 		transportMode = "direct-webrtc"
@@ -1197,24 +1205,25 @@ func (m *RemoteRuntimeManager) CreateWith(workDir, framework, targetID, transpor
 		note = "Remote runtime session created in relay mode. Frames will be fetched over Yaver relay-compatible HTTP."
 	}
 	session := RemoteRuntimeSession{
-		ID:               fmt.Sprintf("rr_%d", time.Now().UTC().UnixNano()),
-		WorkDir:          strings.TrimSpace(workDir),
-		Framework:        strings.TrimSpace(framework),
-		ExecutionMode:    caps.ExecutionMode,
-		TargetID:         selected.ID,
-		TargetLabel:      selected.Label,
-		Platform:         selected.Platform,
-		RuntimeHostClass: selected.RuntimeHostClass,
-		DisplaySurface:   selected.DisplaySurface,
-		Viewport:         cloneRemoteRuntimeViewport(selected.Viewport),
-		TransportMode:    transportMode,
-		FrameTransport:   frameTransport,
-		Status:           "control-ready",
-		StartedBy:        strings.TrimSpace(creator.ClientID),
-		SourceSurface:    sourceSurfaceForCreator(creator),
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		Note:             note,
+		ID:                    fmt.Sprintf("rr_%d", time.Now().UTC().UnixNano()),
+		WorkDir:               strings.TrimSpace(workDir),
+		Framework:             strings.TrimSpace(framework),
+		ExecutionMode:         caps.ExecutionMode,
+		TargetID:              selected.ID,
+		TargetLabel:           selected.Label,
+		Platform:              selected.Platform,
+		RequestedRealDeviceID: requestedRealDeviceID,
+		RuntimeHostClass:      selected.RuntimeHostClass,
+		DisplaySurface:        selected.DisplaySurface,
+		Viewport:              cloneRemoteRuntimeViewport(selected.Viewport),
+		TransportMode:         transportMode,
+		FrameTransport:        frameTransport,
+		Status:                "control-ready",
+		StartedBy:             strings.TrimSpace(creator.ClientID),
+		SourceSurface:         sourceSurfaceForCreator(creator),
+		CreatedAt:             now,
+		UpdatedAt:             now,
+		Note:                  note,
 	}
 	m.mu.Lock()
 	m.sessions[session.ID] = session
@@ -1633,6 +1642,17 @@ func isRNSimulatorTarget(targetID string) bool {
 	return false
 }
 
+func rnGuestBuildPlatform(targetID string) string {
+	switch targetID {
+	case "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
+		return "android"
+	case "tvos-simulator":
+		return "tvos"
+	default:
+		return "ios"
+	}
+}
+
 // buildAndLaunchRNInSimulator dispatches the guest RN build to the platform path:
 // Apple sims → xcodebuild+simctl (macOS); Android emulator/redroid → gradle+adb
 // (runs on Linux too, which is the Cloud-Workspace normie case — an iPhone client
@@ -1650,10 +1670,10 @@ func (s *HTTPServer) buildAndLaunchRNInSimulator(ctx context.Context, session Re
 			s.devServerMgr.EmitLog("[webrtc-doctor] " + line)
 		}
 	}
-	switch session.TargetID {
-	case "android-emulator", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
+	switch rnGuestBuildPlatform(session.TargetID) {
+	case "android":
 		return s.buildAndLaunchRNAndroid(ctx, session, workDir)
-	case "tvos-simulator":
+	case "tvos":
 		return s.buildAndLaunchTVOSApp(ctx, session, workDir)
 	}
 	return s.buildAndLaunchRNiOS(ctx, session, workDir)
@@ -1872,10 +1892,18 @@ func androidGradleAssembleArgs() []string {
 // on the session's adb-reachable device — an Android emulator (macOS/local) OR a
 // redroid container (Linux Cloud Workspace). Both are just an adb serial once
 // connected, so this one path serves the "Apple client, Linux server" case.
+func androidMetroReverseArgs(serial string) []string {
+	return []string{"-s", strings.TrimSpace(serial), "reverse", "tcp:8081", "tcp:8081"}
+}
+
 func (s *HTTPServer) buildAndLaunchRNAndroid(ctx context.Context, session RemoteRuntimeSession, workDir string) error {
 	serial := strings.TrimSpace(session.DeviceID)
 	if serial == "" {
-		return fmt.Errorf("android session has no adb device serial (emulator/redroid not attached)")
+		return fmt.Errorf("android session has no attached adb device serial")
+	}
+	adbPath, err := resolveAndroidTool("adb")
+	if err != nil {
+		return fmt.Errorf("adb is unavailable; run `yaver install remote-runtime`: %w", err)
 	}
 	androidDir := filepath.Join(workDir, "android")
 	if _, err := os.Stat(filepath.Join(androidDir, "gradlew")); err != nil {
@@ -1906,8 +1934,14 @@ func (s *HTTPServer) buildAndLaunchRNAndroid(ctx context.Context, session Remote
 		return fmt.Errorf("locate debug apk: %w", err)
 	}
 	emit("built " + filepath.Base(apk) + "; adb install onto " + serial)
-	if out, err := exec.CommandContext(ctx, "adb", "-s", serial, "install", "-r", apk).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, adbPath, "-s", serial, "install", "-r", apk).CombinedOutput(); err != nil {
 		return fmt.Errorf("adb install failed: %s", strings.TrimSpace(string(out)))
+	}
+	// A remote physical device reaches Metro through its edge host, not through
+	// the thin client. This is idempotent for emulators/redroid and essential
+	// for a USB-connected phone or tablet running a debug RN build.
+	if out, err := exec.CommandContext(ctx, adbPath, androidMetroReverseArgs(serial)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("adb reverse tcp:8081 failed: %s", strings.TrimSpace(string(out)))
 	}
 	pkg, activity := readAndroidLaunchInfo(apk)
 	if pkg == "" {
@@ -1917,9 +1951,9 @@ func (s *HTTPServer) buildAndLaunchRNAndroid(ctx context.Context, session Remote
 	if activity == "" {
 		comp = pkg
 	}
-	if out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, adbPath, "-s", serial, "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1").CombinedOutput(); err != nil {
 		// monkey-launch failed; try an explicit component start.
-		if out2, err2 := exec.CommandContext(ctx, "adb", "-s", serial, "shell", "am", "start", "-n", comp).CombinedOutput(); err2 != nil {
+		if out2, err2 := exec.CommandContext(ctx, adbPath, "-s", serial, "shell", "am", "start", "-n", comp).CombinedOutput(); err2 != nil {
 			return fmt.Errorf("adb launch failed: %s / %s", strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)))
 		}
 	}
@@ -2200,11 +2234,12 @@ func (s *HTTPServer) handleRemoteRuntimeSessions(w http.ResponseWriter, r *http.
 		jsonReply(w, http.StatusOK, map[string]interface{}{"sessions": out})
 	case http.MethodPost:
 		var req struct {
-			WorkDir   string `json:"workDir"`
-			Framework string `json:"framework"`
-			TargetID  string `json:"targetId"`
-			Transport string `json:"transportMode"`
-			Runner    string `json:"runner,omitempty"`
+			WorkDir      string `json:"workDir"`
+			Framework    string `json:"framework"`
+			TargetID     string `json:"targetId"`
+			RealDeviceID string `json:"realDeviceId,omitempty"`
+			Transport    string `json:"transportMode"`
+			Runner       string `json:"runner,omitempty"`
 			// ClientID + Surface attribute WHO created the session, so the
 			// shared-session roster can say "Kivan · phone started this" and a
 			// returning surface can find the room it began. Mirrors the offer
@@ -2224,8 +2259,9 @@ func (s *HTTPServer) handleRemoteRuntimeSessions(w http.ResponseWriter, r *http.
 			bodySurface = r.Header.Get(surfaceHeader)
 		}
 		creator := remoteRuntimeCreator{
-			ClientID: strings.TrimSpace(req.ClientID),
-			Surface:  string(normalizeSurface(bodySurface)),
+			ClientID:     strings.TrimSpace(req.ClientID),
+			Surface:      string(normalizeSurface(bodySurface)),
+			RealDeviceID: strings.TrimSpace(req.RealDeviceID),
 		}
 		session, err := mgr.CreateWith(req.WorkDir, req.Framework, req.TargetID, req.Transport, creator)
 		if err == nil && strings.TrimSpace(req.Runner) != "" {

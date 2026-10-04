@@ -10,6 +10,8 @@
 //     box reports a web target.
 //   - "Live"    — LivePreviewPane frame lane (/vibing/preview/* SSE frames;
 //     headless Chrome runs on the box, so use relay-wifi/cell profiles).
+//   - "Device"  — a continuously streamed, interactive physical Android
+//     phone/tablet attached to the remote Yaver host.
 //
 // Portrait (tablet-portrait): single-pane chat base with a "preview peek"
 // panel — swipe/expand to bring the app view above the chat, collapsible.
@@ -33,13 +35,14 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { DevPreview } from "../src/components/DevPreview";
 import { LivePreviewPane } from "../src/components/studio/LivePreviewPane";
+import { RealDevicePane } from "../src/components/studio/RealDevicePane";
 import { StudioChatPane } from "../src/components/studio/StudioChatPane";
 import { useResponsiveLayout } from "../src/hooks/useResponsiveLayout";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
 
-type Lane = "browser" | "live";
+type Lane = "device" | "browser" | "live";
 
 type Project = { name: string; path: string; framework?: string; surfaces?: string[] };
 
@@ -58,7 +61,7 @@ export default function VibeStudioScreen() {
   const [project, setProject] = useState<Project | null>(null);
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [paramMissed, setParamMissed] = useState<string | null>(null);
-  const [lane, setLane] = useState<Lane>("browser");
+  const [lane, setLane] = useState<Lane>("device");
   const [peekOpen, setPeekOpen] = useState(false);
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [previewStarting, setPreviewStarting] = useState(false);
@@ -221,17 +224,17 @@ export default function VibeStudioScreen() {
     <View style={styles.headerRight}>
       {landscape ? (
         <View style={styles.laneSwitcher}>
-          {(["browser", "live"] as Lane[]).map((l) => (
+          {(["device", "browser", "live"] as Lane[]).map((l) => (
             <Pressable
               key={l}
               onPress={() => setLane(l)}
               style={[styles.laneBtn, lane === l && { backgroundColor: c.accentSoft }]}
               accessibilityRole="button"
               accessibilityState={{ selected: lane === l }}
-              accessibilityLabel={`${l === "browser" ? "Browser" : "Live"} preview lane`}
+              accessibilityLabel={`${l === "device" ? "Real device" : l === "browser" ? "Browser" : "Live"} preview lane`}
             >
               <Text style={[styles.laneBtnText, { color: lane === l ? c.accent : c.textSecondary }]}>
-                {l === "browser" ? "Browser" : "Live"}
+                {l === "device" ? "Device" : l === "browser" ? "Browser" : "Live"}
               </Text>
             </Pressable>
           ))}
@@ -315,13 +318,13 @@ export default function VibeStudioScreen() {
           <View style={[styles.leftPane, { flex: splitRatio }]} testID="studio-left-pane">
             <View style={styles.deviceStage}>
               <View style={[
-                mobileTarget ? styles.deviceFrame : styles.browserFrame,
+                mobileTarget || lane === "device" ? styles.deviceFrame : styles.browserFrame,
                 { backgroundColor: "#09090b", borderColor: c.border },
               ]}>
-                {mobileTarget ? <View style={[styles.deviceSpeaker, { backgroundColor: c.border }]} /> : null}
+                {mobileTarget || lane === "device" ? <View style={[styles.deviceSpeaker, { backgroundColor: c.border }]} /> : null}
                 <View style={[
                   styles.deviceScreen,
-                  !mobileTarget && styles.browserScreen,
+                  !mobileTarget && lane !== "device" && styles.browserScreen,
                   { backgroundColor: c.bgCard },
                 ]}>
                   {/* Persistent phone-frame content. The base empty pane sits
@@ -362,7 +365,11 @@ export default function VibeStudioScreen() {
                       </Pressable>
                     ) : null}
                   </View>
-                  {lane === "browser" ? (
+                  {lane === "device" && project ? (
+                    <View style={styles.paneHost}>
+                      <RealDevicePane projectPath={project.path} framework={project.framework || "react-native"} />
+                    </View>
+                  ) : lane === "browser" ? (
                     <View style={styles.paneHost}>
                       <DevPreview paneMode exitLabel="Go to Vibe" onLogStateChange={setPreviewLogState} />
                     </View>

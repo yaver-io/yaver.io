@@ -1160,6 +1160,19 @@ export const heartbeat = mutation({
         })
       )
     ),
+    realDevices: v.optional(v.array(v.object({
+      id: v.string(),
+      hostDeviceId: v.optional(v.string()),
+      name: v.string(),
+      platform: v.union(v.literal("android"), v.literal("ios")),
+      kind: v.string(),
+      osVersion: v.optional(v.string()),
+      transport: v.union(v.literal("usb"), v.literal("wifi")),
+      online: v.boolean(),
+      capabilities: v.array(v.string()),
+      capture: v.string(),
+      lastSeen: v.number(),
+    }))),
     // Live disk gauge. Sent every heartbeat (unlike hardwareProfile, which is
     // 24h-gated) because free space is the thing that changes — and the thing
     // that stops a build at 3am.
@@ -1355,6 +1368,52 @@ export const heartbeat = mutation({
     }
     // else: device is already online, unchanged, and its lastHeartbeat is
     // still fresh within the bucket — skip the write to save Convex cost.
+
+    // Attached real-device registration. The host is authoritative for
+    // presence, while Convex stores only public discovery metadata. An empty
+    // array deliberately marks previously registered devices on this host
+    // offline; raw ADB serials/addresses are never accepted by this validator.
+    if (args.realDevices !== undefined) {
+      const incoming = args.realDevices.slice(0, 16);
+      const seen = new Set(incoming.map((entry) => entry.id));
+      const now = Date.now();
+      for (const entry of incoming) {
+        const existing = await ctx.db
+          .query("realDevices")
+          .withIndex("by_real_device", (q) => q.eq("realDeviceId", entry.id))
+          .unique();
+        const value = {
+          userId: device.userId,
+          realDeviceId: entry.id,
+          hostDeviceId: device.deviceId,
+          name: entry.name.slice(0, 120),
+          platform: entry.platform,
+          kind: entry.kind.slice(0, 32),
+          osVersion: entry.osVersion?.slice(0, 40),
+          transport: entry.transport,
+          capabilities: entry.capabilities.slice(0, 16).map((cap) => cap.slice(0, 40)),
+          capture: entry.capture.slice(0, 40),
+          online: true,
+          lastSeen: now,
+          updatedAt: now,
+        };
+        if (existing) {
+          if (existing.userId !== device.userId) throw new Error("REAL_DEVICE_OWNERSHIP_CONFLICT");
+          await ctx.db.patch(existing._id, value);
+        } else {
+          await ctx.db.insert("realDevices", { ...value, registeredAt: now });
+        }
+      }
+      const hosted = await ctx.db
+        .query("realDevices")
+        .withIndex("by_host", (q) => q.eq("hostDeviceId", device.deviceId))
+        .collect();
+      for (const row of hosted) {
+        if (!seen.has(row.realDeviceId) && row.online) {
+          await ctx.db.patch(row._id, { online: false, updatedAt: now });
+        }
+      }
+    }
 
     // Best-effort: seed the managed cloudMachines row's REAL specs + available
     // runners from the box's own heartbeat. The provisioning-time specs were a
@@ -1861,6 +1920,18 @@ export const listMyDevices = query({
   },
 });
 
+export const listMyRealDevices = query({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+    return await ctx.db
+      .query("realDevices")
+      .withIndex("by_user", (q) => q.eq("userId", session.user._id))
+      .collect();
+  },
+});
+
 export const recommendTaskPlacement = query({
   args: {
     tokenHash: v.string(),
@@ -2089,6 +2160,16 @@ export const removeDevice = mutation({
     for (const deviceSession of deviceSessions) {
       if (deviceSession.userId === session.user._id) {
         await ctx.db.delete(deviceSession._id);
+      }
+    }
+
+    const attachedRealDevices = await ctx.db
+      .query("realDevices")
+      .withIndex("by_host", (q) => q.eq("hostDeviceId", args.deviceId))
+      .collect();
+    for (const realDevice of attachedRealDevices) {
+      if (realDevice.userId === session.user._id) {
+        await ctx.db.delete(realDevice._id);
       }
     }
 

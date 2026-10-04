@@ -3630,6 +3630,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// first-class MCP image (image/jpeg), the rest return JSON strings.
 	runtimeRuntimeTools := []map[string]interface{}{
 		{
+			"name":        "real_device_probe",
+			"description": "List physical Android phones/tablets attached to this Yaver host and operation-test screen capture. Reports whether scrcpy is installed, but uses the same ADB/WebRTC runtime contract as Studio; follow with runtime_create, runtime_frame and runtime_control for a closed-loop automation test.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
 			"name":        "runtime_targets",
 			"description": "List remote-runtime targets for a project (iOS/iPadOS/watchOS/tvOS/visionOS sims, Android emu/device, browser-window). Returns each target's id, surface badge, enabled/disabled state, and presentation hints such as displaySurface + viewport; agents must use those hints when browser-window is rendering a mobile web build.",
 			"inputSchema": map[string]interface{}{
@@ -3651,6 +3656,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"framework":     map[string]interface{}{"type": "string"},
 					"workDir":       map[string]interface{}{"type": "string"},
 					"targetId":      map[string]interface{}{"type": "string", "description": "e.g. ios-simulator, watchos-simulator, android-emulator, browser-window."},
+					"realDeviceId":  map[string]interface{}{"type": "string", "description": "Opaque id returned by real_device_probe. Required to select an exact physical device when targetId=android-device."},
 					"transportMode": map[string]interface{}{"type": "string", "description": "direct-webrtc (default) or relay-jpeg-poll."},
 				},
 			},

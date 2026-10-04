@@ -2658,6 +2658,7 @@ http.route({
         : undefined,
       deployCapabilitiesAt:
         typeof body.deployCapabilitiesAt === "string" ? body.deployCapabilitiesAt : undefined,
+      realDevices: Array.isArray(body.realDevices) ? body.realDevices.slice(0, 16) : undefined,
       // Batched CPU/RAM samples folded into the heartbeat (replaces the
       // separate /devices/metrics 60s poll). Validated by the mutation's
       // array schema; only forwarded when it's actually an array.

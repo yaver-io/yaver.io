@@ -92,5 +92,11 @@ assert.match(studioChatSrc, /accessibilityLabel=\{previewLogsExpanded \? "Hide p
   "tablet Studio preview logs must remain explicitly expandable");
 assert.match(studioChatSrc, />Logs<\/Text>/,
   "tablet Studio must expose preview logs as a folded right-pane section");
+assert.match(studioSrc, /type Lane = "device" \| "browser" \| "live"/,
+  "tablet Studio must keep real-device streaming as a first-class left-pane source");
+assert.match(studioSrc, /<RealDevicePane projectPath=\{project\.path\} framework=\{project\.framework \|\| "react-native"\}/,
+  "the Device source must stream the selected project's physical device beside chat");
+assert.match(studioSrc, /<View style=\{\[styles\.rightPane,[\s\S]{0,240}<StudioChatPane/,
+  "the right side of landscape Studio must remain the chat pane when sources change");
 
 console.log("Projects preview layout contract ok");

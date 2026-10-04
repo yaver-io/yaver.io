@@ -208,4 +208,10 @@ func TestRunGuestUnsupportedReason_NamesIOSPhysicalPath(t *testing.T) {
 	if !isRNSimulatorTarget("android-device") {
 		t.Fatalf("android-device should use the RN guest build/install path")
 	}
+	if got := rnGuestBuildPlatform("android-device"); got != "android" {
+		t.Fatalf("android-device build dispatch = %q, want android (never iOS fallback)", got)
+	}
+	if got := strings.Join(androidMetroReverseArgs("USB-123"), " "); got != "-s USB-123 reverse tcp:8081 tcp:8081" {
+		t.Fatalf("physical-device Metro route = %q", got)
+	}
 }

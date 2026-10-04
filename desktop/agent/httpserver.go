@@ -1094,6 +1094,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/web", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/projects/all", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/remote-runtime/capabilities", s.auth(s.handleRemoteRuntimeCapabilities))
+	mux.HandleFunc("/real-devices", s.auth(s.handleRealDevices))
 	mux.HandleFunc("/remote-runtime/turn-credentials", s.auth(s.handleRemoteRuntimeTURNCredentials))
 	mux.HandleFunc("/remote-runtime/sessions", s.auth(s.handleRemoteRuntimeSessions))
 	mux.HandleFunc("/remote-runtime/sessions/", s.auth(s.handleRemoteRuntimeSessionRoute))
@@ -14833,16 +14834,26 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(string(body))
 
+	case "real_device_probe":
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		body, _ := json.MarshalIndent(realDeviceProbe(ctx), "", "  ")
+		return mcpToolResult(string(body))
+
 	case "runtime_create":
 		var args struct {
 			Framework     string `json:"framework"`
 			WorkDir       string `json:"workDir"`
 			TargetID      string `json:"targetId"`
+			RealDeviceID  string `json:"realDeviceId"`
 			TransportMode string `json:"transportMode"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if strings.TrimSpace(args.Framework) == "" || strings.TrimSpace(args.WorkDir) == "" || strings.TrimSpace(args.TargetID) == "" {
 			return mcpToolError("framework, workDir, and targetId are required")
+		}
+		if args.TargetID == remoteRuntimeAndroidDeviceTargetID && strings.TrimSpace(args.RealDeviceID) == "" {
+			return mcpToolError("realDeviceId from real_device_probe is required for targetId=android-device")
 		}
 		payload := map[string]interface{}{
 			"framework": args.Framework,
@@ -14851,6 +14862,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		if args.TransportMode != "" {
 			payload["transportMode"] = args.TransportMode
+		}
+		if args.RealDeviceID != "" {
+			payload["realDeviceId"] = args.RealDeviceID
 		}
 		body, status, err := remoteRuntimeHTTPMCP("POST", "/remote-runtime/sessions", payload)
 		if err != nil {

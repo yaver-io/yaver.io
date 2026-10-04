@@ -616,6 +616,29 @@ export default defineSchema({
     .index("by_deviceId", ["deviceId"])
     .index("by_hardwareId", ["hardwareId"]),
 
+  // Physical phones/tablets attached to a Yaver agent host. This is discovery
+  // metadata only: opaque id + model/capability state. ADB serials, network
+  // addresses, screen pixels and input events remain on the host/P2P path.
+  realDevices: defineTable({
+    userId: v.id("users"),
+    realDeviceId: v.string(),
+    hostDeviceId: v.string(),
+    name: v.string(),
+    platform: v.union(v.literal("android"), v.literal("ios")),
+    kind: v.string(),
+    osVersion: v.optional(v.string()),
+    transport: v.union(v.literal("usb"), v.literal("wifi")),
+    capabilities: v.array(v.string()),
+    capture: v.string(),
+    online: v.boolean(),
+    lastSeen: v.number(),
+    registeredAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_real_device", ["realDeviceId"])
+    .index("by_host", ["hostDeviceId"]),
+
   // Public client keys for direct credential handoff. This table is a device
   // directory, never a mailbox: API keys, encrypted envelopes, nonces and QR
   // payloads are forbidden here. A sender uses the authenticated account list

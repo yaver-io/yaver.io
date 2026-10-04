@@ -48,8 +48,9 @@ func TestWedgeProfileKeepsTheWedge(t *testing.T) {
 		"vibe_preview_start",   // vibing
 		"mobile_hermes_reload", // Hermes render path
 		"mobile_project_build",
-		"browser_navigate",                        // browser lane driving
-		"remote_status",                           // remote runtime
+		"browser_navigate",                                                        // browser lane driving
+		"remote_status",                                                           // remote runtime
+		"real_device_probe", "runtime_create", "runtime_frame", "runtime_control", // physical-device closed loop
 		"read_file", "write_file", "exec_command", // primitives
 		"git_info",
 		"yaver_devices", "yaver_status",

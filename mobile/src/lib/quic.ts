@@ -1334,6 +1334,20 @@ export interface RemoteRuntimeSession {
   };
 }
 
+export interface RegisteredRealDevice {
+  id: string;
+  hostDeviceId?: string;
+  name: string;
+  platform: "android" | "ios";
+  kind: "phone" | "tablet" | "foldable" | "tv" | string;
+  osVersion?: string;
+  transport: "usb" | "wifi" | string;
+  online: boolean;
+  capabilities: string[];
+  capture: string;
+  lastSeen: number;
+}
+
 /** What a single agent pane is doing. Mirrors VibeStatus* in the Go agent. */
 export type VibeStatus =
   | "working"
@@ -4994,7 +5008,15 @@ export class QuicClient {
     if (!res.ok) throw new Error(data?.error || `Failed to start browser preview: ${res.status}`);
   }
 
-  async startRemoteRuntimeSession(workDir: string, framework: string, targetId: string, transportMode?: string): Promise<RemoteRuntimeSession> {
+  async listRealDevices(): Promise<RegisteredRealDevice[]> {
+    this.assertConnected();
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/real-devices`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to list real devices: ${res.status}`);
+    return Array.isArray(data?.devices) ? data.devices as RegisteredRealDevice[] : [];
+  }
+
+  async startRemoteRuntimeSession(workDir: string, framework: string, targetId: string, transportMode?: string, realDeviceId?: string): Promise<RemoteRuntimeSession> {
     this.assertConnected();
     if (targetId === "browser-window") {
       await this.prepareRemoteRuntimeBrowserLane(workDir, framework);
@@ -5004,7 +5026,7 @@ export class QuicClient {
     const res = await this.fetchWithTimeout(`${this.baseUrl}/remote-runtime/sessions`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ workDir, framework, targetId, transportMode, clientId, surface: "mobile" }),
+      body: JSON.stringify({ workDir, framework, targetId, transportMode, realDeviceId, clientId, surface: "mobile" }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Failed to start remote runtime session: ${res.status}`);

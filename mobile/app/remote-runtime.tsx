@@ -644,7 +644,7 @@ const styles = StyleSheet.create({
   },
 });
 
-function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, string>, session: RemoteRuntimeSession) {
+export function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, string>, session: RemoteRuntimeSession) {
   const payload = JSON.stringify({
     baseUrl,
     headers,

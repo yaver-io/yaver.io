@@ -156,7 +156,9 @@ func (m *RemoteRuntimeManager) Attach(sessionID string) (RemoteRuntimeSession, e
 	defer cancel()
 
 	var releaseDevice func()
-	if tgt, terr := runtimeTargetFor(session.TargetID); terr != nil {
+	if session.TargetID == remoteRuntimeAndroidDeviceTargetID && strings.TrimSpace(session.RequestedRealDeviceID) != "" {
+		deviceID, err = resolveRegisteredRealDevice(ctx, session.RequestedRealDeviceID)
+	} else if tgt, terr := runtimeTargetFor(session.TargetID); terr != nil {
 		err = terr
 	} else if ex, ok := tgt.(exclusiveAttacher); ok {
 		// Simulators and emulators are EXCLUSIVE: one session per device, or two

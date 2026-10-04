@@ -957,6 +957,11 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 		"hardwareId":         HardwareID(),
 		"agentVersion":       version,
 	}
+	// Discovery metadata only. The raw ADB serial/address is stripped by
+	// realDevicesForHeartbeat; screen pixels and input never enter Convex.
+	if realDevices := realDevicesForHeartbeat(); realDevices != nil {
+		payload["realDevices"] = realDevices
+	}
 	if profile := hardwareProfileForHeartbeat(); profile != nil {
 		payload["hardwareProfile"] = profile
 	}

@@ -87,9 +87,10 @@ var wedgeToolFamilies = map[string]bool{
 	"dev": true, "preview": true, "web": true, "vibe": true, "expo": true,
 	"dogfood": true,
 	"native":  true, "mobile": true, "hotreload": true, "push": true,
-	"browser": true, "selenium": true, "remote": true, "cast": true,
+	"browser": true, "selenium": true, "remote": true, "runtime": true, "cast": true,
 	"record": true, "screenshot": true, "screenlog": true, "clip": true,
 	"studio": true, "droid": true, "robot": true, "desktop": true, "artifact": true,
+	"real_device_probe": true,
 
 	// ── Mobile build + device toolchains.
 	"build": true, "xcode": true, "gradle": true, "pod": true, "flutter": true,
