@@ -30,6 +30,7 @@ test("tenant Hetzner surface is direct, recovery-capable, and limited to up/down
   assert.match(adapter, /importLocalHetznerRecovery/);
   assert.match(adapter, /requireManagedServer/);
   assert.match(adapter, /hetznerManagedServer/);
+  assert.match(adapter, /clearLocalHetznerManagedServer/);
   assert.match(ui, /Create encrypted backup/);
   assert.match(ui, /Validate and restore/);
   assert.match(ui, /Manage this Yaver VPS/);
@@ -46,6 +47,8 @@ test("Devices renders provider-authoritative status without enabling web credent
   assert.match(card, /Provider status:/);
   assert.match(card, /Platform\.OS === "web"/);
   assert.match(card, /separate from Yaver agent connectivity/);
+  assert.match(card, /Power control blocked/);
+  assert.match(card, /isBoundHetznerDevice/);
   assert.doesNotMatch(card, /Convex|Cloudflare|relayPacket/);
 });
 

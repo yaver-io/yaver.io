@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, Text, View } from "react-native";
 import { hetznerClientCloud } from "../lib/clientCloudProvider";
 import type { HetznerServer } from "../lib/hetznerDirectCore";
+import { useDevice } from "../context/DeviceContext";
+import { isBoundHetznerDevice } from "../lib/hetznerDeviceBinding";
 
 function statusLabel(status: string): string {
   if (status === "running") return "Running";
@@ -17,6 +19,7 @@ function statusLabel(status: string): string {
  * running while its Yaver agent is stopped. Web never receives the credential.
  */
 export function HetznerManagedDeviceCard({ c }: { c: any }) {
+  const { devices } = useDevice();
   const [server, setServer] = useState<HetznerServer | null>(null);
   const [busy, setBusy] = useState(false);
   const [configured, setConfigured] = useState(false);
@@ -39,9 +42,13 @@ export function HetznerManagedDeviceCard({ c }: { c: any }) {
   }, [refresh]);
 
   if (Platform.OS === "web" || !configured) return null;
+  const bindingValid = Boolean(server && devices.some((device) => isBoundHetznerDevice(device, server)));
 
   const setPower = async (action: "power_on" | "shutdown") => {
-    if (!server) return;
+    if (!server || !bindingValid) {
+      Alert.alert("Power control blocked", "This Hetzner server does not match a current Yaver device by public IP or alias.");
+      return;
+    }
     setBusy(true);
     setServer({ ...server, status: action === "power_on" ? "starting" : "stopping" });
     try {
@@ -84,7 +91,19 @@ export function HetznerManagedDeviceCard({ c }: { c: any }) {
             Provider status: {statusLabel(server.status)} · {server.ip || "no public IPv4"}
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 3 }}>Provider power state is separate from Yaver agent connectivity.</Text>
-          <Pressable
+          {!bindingValid ? (
+            <View style={{ marginTop: 8, gap: 7 }}>
+              <Text style={{ color: c.warn, fontSize: 11, fontWeight: "700" }}>
+                Power control blocked — this server is not a current Yaver device.
+              </Text>
+              <Pressable
+                onPress={() => { void hetznerClientCloud.clearManagedServer().then(refresh); }}
+                style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}
+              >
+                <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: "700" }}>Clear stale selection</Text>
+              </Pressable>
+            </View>
+          ) : <Pressable
             disabled={busy || (server.status !== "running" && server.status !== "off")}
             onPress={server.status === "off" ? () => { void setPower("power_on"); } : requestShutdown}
             style={{ alignSelf: "flex-start", borderWidth: 1, borderColor: server.status === "off" ? c.success : c.warn, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginTop: 8, opacity: busy ? 0.5 : 1 }}
@@ -92,7 +111,7 @@ export function HetznerManagedDeviceCard({ c }: { c: any }) {
             <Text style={{ color: server.status === "off" ? c.success : c.warn, fontSize: 11, fontWeight: "700" }}>
               {server.status === "off" ? "Power on" : server.status === "running" ? "Shut down" : statusLabel(server.status)}
             </Text>
-          </Pressable>
+          </Pressable>}
         </>
       ) : (
         <Text style={{ color: c.warn, fontSize: 11, marginTop: 8 }}>The selected server was not returned by Hetzner. Open Settings → Bring your own cloud to review it.</Text>

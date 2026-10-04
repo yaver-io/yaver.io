@@ -315,6 +315,8 @@ export default function CloudProvidersSection({
     );
   };
 
+  const managedServerBindingValid = Boolean(managedServer && devices.some((device) => isBoundHetznerDevice(device, managedServer)));
+
   const renameManagedServer = async () => {
     if (!managedServer || renameServerId !== managedServer.id || !renameDraft.trim()) return;
     setBusy(`rename:${managedServer.id}`);
@@ -704,6 +706,21 @@ export default function CloudProvidersSection({
                       ? `Managed server: ${managedServer.name} · ${managedServer.ip || "no public IPv4"}`
                       : "Choose exactly one server below. Yaver will refuse power actions for every other server."}
                   </Text>
+                  {managedServer && !managedServerBindingValid ? (
+                    <View style={{ borderWidth: 1, borderColor: c.warn, borderRadius: 8, padding: 9, gap: 7 }}>
+                      <Text style={{ color: c.warn, fontSize: 11, fontWeight: "700" }}>
+                        This saved server no longer matches a current Yaver device. Power actions are blocked.
+                      </Text>
+                      <Pressable
+                        onPress={() => {
+                          void hetznerClientCloud.clearManagedServer().then(() => setManagedServer(null));
+                        }}
+                        style={{ alignSelf: "flex-start" }}
+                      >
+                        <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>Clear stale selection</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
 
                   {/* Running servers. */}
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
@@ -763,6 +780,8 @@ export default function CloudProvidersSection({
                                 </Text>
                               )}
                             </Pressable>
+                          ) : !isYaverDevice ? (
+                            <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700" }}>Power blocked</Text>
                           ) : String(s.status ?? s.Status ?? "").toLowerCase() === "off" ? (
                             <Pressable disabled={busy !== null} onPress={() => void powerOnServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
                               {busy === `poweron:${id}` ? <ActivityIndicator size="small" color="#059669" /> : (

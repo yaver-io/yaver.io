@@ -1,5 +1,6 @@
 import {
   connectLocalHetzner,
+  clearLocalHetznerManagedServer,
   disconnectLocalHetzner,
   exportLocalHetznerRecovery,
   getLocalHetznerServers,
@@ -32,6 +33,7 @@ export abstract class ClientCloudProviderAdapter<TServer> {
   abstract listServers(): Promise<TServer[]>;
   abstract getManagedServer(): Promise<ClientCloudManagedResource | null>;
   abstract setManagedServer(server: TServer): Promise<void>;
+  abstract clearManagedServer(): Promise<void>;
   abstract setPower(serverId: number, action: ClientCloudPowerAction): Promise<TServer>;
   abstract renameServer(serverId: number, name: string): Promise<TServer>;
   abstract listActions(serverId: number): Promise<HetznerActionLog[]>;
@@ -48,6 +50,7 @@ class HetznerClientCloudAdapter extends ClientCloudProviderAdapter<HetznerServer
   listServers = getLocalHetznerServers;
   getManagedServer = getLocalHetznerManagedServer;
   setManagedServer = setLocalHetznerManagedServer;
+  clearManagedServer = clearLocalHetznerManagedServer;
   exportRecovery = exportLocalHetznerRecovery;
   importRecovery = importLocalHetznerRecovery;
 

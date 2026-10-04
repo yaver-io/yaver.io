@@ -61,6 +61,10 @@ export async function setLocalHetznerManagedServer(server: HetznerServer): Promi
   } satisfies LocalHetznerManagedServer));
 }
 
+export async function clearLocalHetznerManagedServer(): Promise<void> {
+  await deleteSecret(LOCAL_KEYS.hetznerManagedServer);
+}
+
 async function requireManagedServer(serverId: number): Promise<LocalHetznerManagedServer> {
   const selected = await getLocalHetznerManagedServer();
   if (!selected) throw new Error("Select the Hetzner server this phone may control first.");
