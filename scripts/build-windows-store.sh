@@ -12,6 +12,24 @@ normalized_sha="$(printf '%s' "$YAVER_WINDOWS_CERT_SHA1" | tr -d '[:space:]:' | 
 [[ "$normalized_sha" =~ ^[A-F0-9]{40}$ ]] || { echo "Invalid certificate thumbprint." >&2; exit 2; }
 command -v osslsigncode >/dev/null 2>&1 || { echo "Install osslsigncode before building." >&2; exit 2; }
 
+# Probe the operation before spending time compiling. SimplySign Desktop can
+# be running while its virtual card is logged out, in which case the PKCS#11
+# library exposes zero slots and Jsign otherwise waits roughly two minutes
+# before returning a deeply nested provider error.
+if command -v pkcs11-tool >/dev/null 2>&1; then
+  slot_output="$(pkcs11-tool --module /usr/local/lib/libSimplySignPKCS.dylib --list-slots 2>&1)" || {
+    echo "SimplySign PKCS#11 preflight failed:" >&2
+    printf '%s\n' "$slot_output" >&2
+    echo "Open SimplySign Desktop, activate the virtual card, and retry." >&2
+    exit 2
+  }
+  if printf '%s\n' "$slot_output" | grep -Eq '^[[:space:]]*No slots\.'; then
+    echo "SimplySign Desktop has no active virtual-card session." >&2
+    echo "Open SimplySign Desktop, activate the virtual card, and retry." >&2
+    exit 2
+  fi
+fi
+
 gui_version="$(node -p "require('$root/versions.json').gui")"
 cli_version="$(node -p "require('$root/versions.json').cli")"
 package_version="$(node -p "require('$root/electron/package.json').version")"

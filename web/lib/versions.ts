@@ -11,7 +11,7 @@
  * the repository's generic "latest" release can be a CLI/mobile release and
  * must never decide which desktop bytes a user downloads.
  */
-export const GUI_VERSION = "0.1.15";
+export const GUI_VERSION = "0.1.16";
 export const GUI_WINDOWS_VERSION = "0.1.2";
 export const WINDOWS_STORE_URL = "https://apps.microsoft.com/detail/9NCMRQ0SXCS9";
 // Public pages use stable same-origin routes that resolve only an asset which

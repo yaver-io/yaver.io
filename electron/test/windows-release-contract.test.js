@@ -73,6 +73,7 @@ test("canonical deploy exposes a non-publishing Windows Store build lane", () =>
   assert.match(deploy, /gh workflow run microsoft-store-release\.yml/);
   assert.match(build, /npm run dist:win/);
   assert.match(build, /require-leaf-hash/);
+  assert.match(build, /pkcs11-tool[\s\S]*?No slots\\\.[\s\S]*?activate the virtual card/);
   assert.doesNotMatch(build, /git push|wrangler r2 object put/);
   assert.match(publish, /refusing to overwrite immutable Store object/);
   assert.match(publish, /max-redirs 0/);
