@@ -18,8 +18,17 @@ node --experimental-strip-types --test \
 )
 
 (
+  cd "$repo_root/mobile-headless"
+  bun test test/hetzner-power-state.test.ts
+
+  # The real-account lifecycle test is opt-in and skipped in normal CI. It
+  # imports the same mobile core and requires process-local HCLOUD_TOKEN.
+  bun test test/hetzner-live-account.test.ts
+)
+
+(
   cd "$repo_root/desktop/agent"
-  go test -count=1 -run 'Test(HetznerPower|EndpointCredentialHandoff)' .
+  go test -count=1 -run 'Test(HetznerPower|HetznerRename|EndpointCredentialHandoff)' .
   go test -count=1 ./e2ee
 )
 

@@ -55,7 +55,9 @@ func TestSelectAutorunRunnerFallsBackToAReadyRunner(t *testing.T) {
 		t.Fatal("returned the runner that just failed its readiness probe")
 	}
 	if got.RunnerID != "claude" {
-		t.Fatalf("fallback must follow supportedRunnerIDs order (claude first); got %q", got.RunnerID)
+		// The requested OpenCode entry is skipped after its failed probe; the
+		// next locally installed compatibility runner is Claude.
+		t.Fatalf("fallback must follow supportedRunnerIDs order after the requested OpenCode entry; got %q", got.RunnerID)
 	}
 	if probed[0] != "opencode" {
 		t.Fatalf("the requested runner must be tried FIRST — it is a preference, not a last resort; probed: %v", probed)

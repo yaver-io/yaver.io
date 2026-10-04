@@ -82,7 +82,7 @@ describe("remote box coding flow", () => {
   it("prefers OpenCode with the current DeepSeek default on Hetzner-style Linux boxes", () => {
     const device = { name: "Hetzner box", hostName: "yaver-cpu-1234", os: "linux" };
     expect(preferredDefaultRunnerForDevice(device, "dev@example.com", ["claude", "codex", "opencode"])).toBe("opencode");
-    expect(preferredDefaultModelForRunner("opencode", device, "dev@example.com")).toBe("deepseek/deepseek-flash");
+    expect(preferredDefaultModelForRunner("opencode", device, "dev@example.com")).toBe("deepseek/deepseek-chat");
   });
 
   it("does not show transport addresses or root as task context chips", () => {

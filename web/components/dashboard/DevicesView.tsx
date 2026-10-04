@@ -2732,7 +2732,7 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   // Applied when the user selects opencode and has no prior per-device
   // model choice; a saved per-device model (the user's explicit pick)
   // still wins over this global default.
-  opencode: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
+  opencode: "deepseek/deepseek-chat",
 };
 
 export function isKivancAccount(email: string | null | undefined): boolean {

@@ -13,7 +13,7 @@ test("Convex defaults match the Yaver runner contract", () => {
   assert.deepEqual(YAVER_MODEL_DEFAULTS, {
     claude: { model: "claude-opus-4-8" },
     codex: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
-    opencode: { model: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash" },
+    opencode: { model: "deepseek/deepseek-chat" },
   });
 });
 
@@ -35,16 +35,6 @@ test("Convex owns the Codex model and reasoning matrix", () => {
 });
 
 test("Convex seeds the first-class DeepSeek OpenCode choices", () => {
-  const deepinfra = PREDEFINED_MODELS
-    .filter((model) => model.runnerId === "opencode" && "providerId" in model && model.providerId === "deepinfra")
-    .map((model) => ({
-      model: model.modelId,
-      lifecycle: "lifecycle" in model ? model.lifecycle : undefined,
-      isDefault: "isDefault" in model ? model.isDefault === true : false,
-    }));
-  assert.deepEqual(deepinfra, [
-    { model: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash", lifecycle: "active", isDefault: true },
-  ]);
   const deepseek = PREDEFINED_MODELS
     .filter((model) => model.runnerId === "opencode" && "providerId" in model && model.providerId === "deepseek")
     .map((model) => ({
@@ -53,9 +43,10 @@ test("Convex seeds the first-class DeepSeek OpenCode choices", () => {
       isDefault: "isDefault" in model ? model.isDefault === true : false,
     }));
   assert.deepEqual(deepseek, [
+    { model: "deepseek/deepseek-v4-flash", lifecycle: "active", isDefault: false },
     { model: "deepseek/deepseek-v4-pro", lifecycle: "active", isDefault: false },
-    { model: "deepseek/deepseek-flash-vision-exp", lifecycle: "active", isDefault: false },
-    { model: "deepseek/deepseek-chat", lifecycle: "legacy", isDefault: false },
+    { model: "deepseek/deepseek-v4-flash-vision-exp", lifecycle: "active", isDefault: false },
+    { model: "deepseek/deepseek-chat", lifecycle: "active", isDefault: true },
   ]);
 });
 
@@ -66,7 +57,7 @@ test("stored Convex defaults override bootstrap values and invalid fields fail c
   })), {
     claude: { model: "claude-opus-4-8" },
     codex: { model: "future-codex", reasoningEffort: "xhigh" },
-    opencode: { model: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash" },
+    opencode: { model: "deepseek/deepseek-chat" },
   });
 });
 

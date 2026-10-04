@@ -136,6 +136,18 @@ func TestHardenedSystemUnit(t *testing.T) {
 	}
 }
 
+func TestSystemInstallStagesBinaryOutsideInvokingHome(t *testing.T) {
+	source := "/root/.yaver/bin/1.2.3/linux-amd64/yaver"
+	snippet := systemInstallBinarySnippet(source)
+	if !strings.Contains(snippet, source) || !strings.Contains(snippet, yaverSystemBinaryPath) {
+		t.Fatalf("system binary install snippet = %q", snippet)
+	}
+	unit := hardenedSystemUnit(yaverSystemBinaryPath, false)
+	if strings.Contains(unit, "/root/") || !strings.Contains(unit, "ExecStart="+yaverSystemBinaryPath+" serve") {
+		t.Fatalf("system unit must execute staged binary outside /root:\n%s", unit)
+	}
+}
+
 // visudo-guard: the writer never blindly activates an unvalidated file.
 func TestWriteSudoersSnippetValidatesBeforeActivating(t *testing.T) {
 	got := writeSudoersSnippet(profileSelfHost)

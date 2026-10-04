@@ -59,6 +59,9 @@ const (
 )
 
 func runnerSupportsBrowserAuth(id string) bool {
+	if !remoteRunnerOAuthEnabled() {
+		return false
+	}
 	switch normalizeRunnerID(id) {
 	case "claude", "codex", "opencode":
 		// opencode added 2026-08-12 (ACP audit): the headless ChatGPT login

@@ -239,6 +239,11 @@ WantedBy=multi-user.target
 
 // systemUnitPath is the canonical location for the dedicated-user system unit.
 const systemUnitPath = "/etc/systemd/system/yaver.service"
+const yaverSystemBinaryPath = "/usr/local/lib/yaver/yaver"
+
+func systemInstallBinarySnippet(source string) string {
+	return fmt.Sprintf("install -D -m 0755 %s %s", shellQuote(source), shellQuote(yaverSystemBinaryPath))
+}
 
 // helperUnitName / helperUnitPath — the root-side privilege-separated helper.
 const (
@@ -305,6 +310,17 @@ func installSystemdSystemService(operator bool) {
 		fmt.Fprintf(os.Stderr, "Error creating %s user: %v\n", yaverSystemUser, err)
 		os.Exit(1)
 	}
+	// npm's launcher resolves the native binary beneath the invoking user's
+	// home (commonly /root/.yaver/bin/<version>/...). ProtectHome=read-only
+	// deliberately makes that path inaccessible to the dedicated yaver user.
+	// Stage the currently executing native binary at a system-owned path before
+	// writing the unit so npm installs and direct binaries share one valid
+	// production service contract.
+	if err := runRootShell(systemInstallBinarySnippet(yaverBin)); err != nil {
+		fmt.Fprintf(os.Stderr, "Error installing system binary: %v\n", err)
+		os.Exit(1)
+	}
+	yaverBin = yaverSystemBinaryPath
 	// 2. Scoped sudoers, validated with visudo before activation.
 	if err := runRootShell(writeSudoersSnippet(profile)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error installing scoped sudoers: %v\n", err)

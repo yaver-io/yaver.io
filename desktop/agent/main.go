@@ -1036,7 +1036,7 @@ Flags for connect:
   --relay-server    Relay server URL (auto-fetched from Convex if not set)
 
 Examples:
-  yaver set-runner claude           Use Claude Code (default)
+  yaver set-runner opencode         Use OpenCode (default)
   yaver set-runner codex            Use OpenAI Codex
   yaver set-runner aider            Use Aider
   yaver set-runner custom "my-ai --auto {prompt}"   Use a custom command
@@ -5828,7 +5828,7 @@ func runSetRunner(args []string) {
 		}
 		fmt.Println()
 		fmt.Println("Usage:")
-		fmt.Println("  yaver set-runner claude           Use Claude Code (default)")
+		fmt.Println("  yaver set-runner opencode         Use OpenCode (default)")
 		fmt.Println("  yaver set-runner codex            Use OpenAI Codex")
 		fmt.Println("  yaver set-runner opencode         Use opencode (BYOK)")
 		fmt.Printf("  yaver set-runner custom \"cmd\"      Use a custom command\n")

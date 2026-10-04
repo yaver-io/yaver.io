@@ -144,17 +144,12 @@ function defaultOptions() {
       envName: "production",
     },
     runners: {
-      defaultRunner: "claude",
-      allowedRunners: ["claude", "codex", "opencode"],
+      defaultRunner: "opencode",
+      allowedRunners: ["opencode", "claude", "codex"],
       allowUserOverride: true,
       requireRunnerAuthPerUser: false,
-      // OAuth-first: Yaver wraps Claude Code / Codex / OpenCode using the
-      // user's OWN subscription OAuth (Claude Max/Pro, ChatGPT Plus) on the
-      // runtime — never an API key (that double-bills and breaks the
-      // "all agents on one plan" promise). The runtime signs in via the
-      // existing `--claudeai` runner-auth browser/device/mirror flow. The
-      // company-api-key / local-model modes stay available for genuine
-      // on-prem local inference, but OAuth is the default and the focus.
+      // OpenCode is the default. Other installed adapters may still be
+      // selected, but provider sign-in happens locally on the runner endpoint.
       credentialMode: "user-auth-on-runtime" as const,
     },
     opencode: {

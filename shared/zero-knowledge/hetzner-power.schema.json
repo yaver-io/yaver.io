@@ -8,7 +8,7 @@
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["list", "power_on", "shutdown"]
+      "enum": ["list", "rename", "power_on", "shutdown"]
     },
     "serverId": {
       "type": "string",
@@ -16,19 +16,31 @@
     },
     "confirm": {
       "type": "boolean"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
     }
   },
   "additionalProperties": false,
   "allOf": [
     {
       "if": {
-        "properties": { "action": { "enum": ["power_on", "shutdown"] } },
+        "properties": { "action": { "enum": ["rename", "power_on", "shutdown"] } },
         "required": ["action"]
       },
       "then": {
         "required": ["serverId", "confirm"],
         "properties": { "confirm": { "const": true } }
       }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "rename" } },
+        "required": ["action"]
+      },
+      "then": { "required": ["name"] }
     }
   ]
 }

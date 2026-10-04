@@ -97,7 +97,7 @@ struct RuntimeDashboardView: View {
                 }
 
                 HStack(alignment: .top, spacing: 24) {
-                    RuntimeCard(icon: "sparkles", title: "Claude / Codex") {
+                    RuntimeCard(icon: "sparkles", title: "OpenCode") {
                         RuntimeRow("Sessions", "\(runners?.count ?? runners?.sessions?.count ?? 0)")
                         if let sessions = runners?.sessions, !sessions.isEmpty {
                             ForEach(sessions.prefix(3)) { session in
@@ -120,7 +120,7 @@ struct RuntimeDashboardView: View {
                                 .padding(.top, 8)
                             }
                         } else {
-                            Text("Start Claude Code or Codex on your MacBook; active sessions appear here.")
+                            Text("Start OpenCode in tmux on your machine; active sessions appear here.")
                                 .font(.system(size: 18))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
@@ -128,7 +128,7 @@ struct RuntimeDashboardView: View {
                     }
 
                     RuntimeCard(icon: "arrow.triangle.2.circlepath", title: "Reload") {
-                        Text("Refresh the connected phone, simulator, or emulator after changes from terminal, Claude Code, Codex, or mobile.")
+                        Text("Refresh the connected phone, simulator, or emulator after changes from terminal, OpenCode, or mobile.")
                             .font(.system(size: 18))
                             .foregroundStyle(.secondary)
                             .lineLimit(3)
@@ -153,45 +153,14 @@ struct RuntimeDashboardView: View {
                     }
                 }
 
-                RuntimeCard(icon: "qrcode", title: "OAuth QR", wide: true) {
+                RuntimeCard(icon: "qrcode", title: "Git sign-in", wide: true) {
                     HStack(alignment: .center, spacing: 28) {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Start remote-runtime auth on the selected machine, then scan the QR with your phone camera. Claude Code, Codex, and Yaver stay on their normal browser/device-code paths.")
+                            Text("Authorize GitHub or GitLab for repository operations. Runner credentials are configured locally on the machine that executes the runner.")
                                 .font(.system(size: 18))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(3)
-                            // The agent refused because the runner is already
-                            // signed in. Offer the ONE case where signing in
-                            // again is genuinely wanted, and make it a second,
-                            // deliberate tap rather than a silent retry.
-                            if let reauthable = authReauthableRunner {
-                                Button {
-                                    Task { await startRunnerAuth(reauthable, confirm: true) }
-                                } label: {
-                                    Label(
-                                        "Sign in to \(runnerLabel(reauthable)) with a different account",
-                                        systemImage: "person.crop.circle.badge.plus"
-                                    )
-                                }
-                                .disabled(authStartingRunner != nil)
-                            }
                             HStack(spacing: 16) {
-                                Button {
-                                    Task { await startRunnerAuth("claude") }
-                                } label: {
-                                    Label("Claude Code", systemImage: "sparkles")
-                                        .frame(minWidth: 210)
-                                }
-                                .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
-
-                                Button {
-                                    Task { await startRunnerAuth("codex") }
-                                } label: {
-                                    Label("Codex", systemImage: "terminal")
-                                        .frame(minWidth: 160)
-                                }
-                                .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
-
                                 Button {
                                     Task { await startGitAuth("github") }
                                 } label: {
@@ -209,44 +178,6 @@ struct RuntimeDashboardView: View {
                                 .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
                             }
 
-                            if let authSession {
-                                RuntimeRow("Runner", runnerLabel(authSession.runner))
-                                RuntimeRow("Status", authSession.status ?? "pending")
-                                if let code = authSession.code, !code.isEmpty {
-                                    RuntimeRow("Code", code)
-                                }
-                                if let detail = authSession.detail, !detail.isEmpty {
-                                    Text(detail)
-                                        .font(.system(size: 16))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                }
-                                // The one terminal state where "try again" is a
-                                // lie: the sign-in worked, the account has no
-                                // eligible subscription. Say so instead of
-                                // showing a bare "ACCOUNT_NOT_ELIGIBLE" row.
-                                if FailureSignals.runnerAuthRetryIsFutile(authSession.status),
-                                   let verdict = FailureSignals.explainRunnerAuthOutcome(
-                                       status: authSession.status,
-                                       runnerLabel: runnerLabel(authSession.runner),
-                                       error: authSession.error,
-                                       detail: authSession.detail
-                                   ) {
-                                    Text(verdict)
-                                        .font(.system(size: 16))
-                                        .foregroundStyle(.orange)
-                                        .frame(maxWidth: 820, alignment: .leading)
-                                } else if !FailureSignals.isRunnerAuthTerminal(authSession.status),
-                                          let line = FailureSignals.runnerAuthLivenessLine(
-                                              now: authTicker.timeIntervalSince1970 * 1000,
-                                              startedAt: authSession.startedAt,
-                                              lastOutputAt: authSession.lastOutputAt
-                                          ) {
-                                    Text(line)
-                                        .font(.system(size: 15).monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
                             if let gitAuthSession {
                                 RuntimeRow("Git", gitProviderLabel(gitAuthSession.provider))
                                 RuntimeRow("Status", gitAuthSession.state ?? "pending")
@@ -262,7 +193,7 @@ struct RuntimeDashboardView: View {
 
                         ZStack {
                             RoundedRectangle(cornerRadius: 18).fill(.white)
-                            if let url = authSession?.openURL ?? gitAuthSession?.verificationURI, let img = qrImage(url) {
+                            if let url = gitAuthSession?.verificationURI, let img = qrImage(url) {
                                 Image(uiImage: img)
                                     .interpolation(.none)
                                     .resizable()
@@ -272,7 +203,7 @@ struct RuntimeDashboardView: View {
                                     Image(systemName: "qrcode.viewfinder")
                                         .font(.system(size: 54))
                                         .foregroundStyle(.black.opacity(0.75))
-                                    Text((authStartingRunner == nil && gitAuthStartingProvider == nil) ? "Choose auth" : "Starting...")
+                                    Text(gitAuthStartingProvider == nil ? "Choose Git provider" : "Starting...")
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundStyle(.black.opacity(0.75))
                                 }

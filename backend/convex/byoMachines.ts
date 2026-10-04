@@ -6,7 +6,7 @@
 // ever write their OWN rows). Reads go through the session-authed HTTP
 // route (/byo/machines) which scopes by the resolved userId.
 
-import { mutation, internalQuery } from "./_generated/server";
+import { mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { resolveUser } from "./agentSync";
 
@@ -94,5 +94,73 @@ export const listForUserInternal = internalQuery({
       deletedAt: m.deletedAt ?? null,
       updatedAt: m.updatedAt,
     }));
+  },
+});
+
+/**
+ * Convert an existing bookkeeping row to client-custodied BYO ownership.
+ * This changes metadata only: it never calls the provider and accepts no
+ * credential. The immutable provider server id and Primary IPv4 must match the
+ * existing row, preventing an operator typo from rebinding another resource.
+ */
+export const adoptExistingClientManaged = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    providerServerId: v.string(),
+    primaryIpv4: v.string(),
+    name: v.string(),
+    region: v.optional(v.string()),
+    plan: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine) throw new Error("MACHINE_NOT_FOUND");
+    if (machine.provider !== "hetzner") throw new Error("PROVIDER_MISMATCH");
+    if (String(machine.hetznerServerId || "") !== args.providerServerId.trim()) {
+      throw new Error("SERVER_ID_MISMATCH");
+    }
+    if (String(machine.serverIp || "") !== args.primaryIpv4.trim()) {
+      throw new Error("PRIMARY_IP_MISMATCH");
+    }
+    if (!machine.deviceId) throw new Error("DEVICE_NOT_REGISTERED");
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", machine.deviceId!))
+      .unique();
+    if (!device || device.userId !== machine.userId || device.removed === true) {
+      throw new Error("OWNED_DEVICE_NOT_FOUND");
+    }
+    const name = args.name.trim();
+    if (!name) throw new Error("NAME_REQUIRED");
+    const now = Date.now();
+
+    await ctx.db.patch(machine._id, {
+      origin: "self-hosted",
+      tier: "byok",
+      hostname: name,
+      updatedAt: now,
+    });
+    await ctx.db.patch(device._id, { name, alias: name });
+
+    const existing = await ctx.db
+      .query("byoMachines")
+      .withIndex("by_user_server", (q) => q.eq("userId", machine.userId).eq("serverId", args.providerServerId.trim()))
+      .unique();
+    const byo = {
+      provider: "hetzner",
+      serverId: args.providerServerId.trim(),
+      deviceId: machine.deviceId,
+      name,
+      region: args.region,
+      plan: args.plan,
+      serverIp: args.primaryIpv4.trim(),
+      state: "active" as const,
+      lastUpAt: now,
+      updatedAt: now,
+    };
+    const byoId = existing
+      ? (await ctx.db.patch(existing._id, byo), existing._id)
+      : await ctx.db.insert("byoMachines", { userId: machine.userId, createdAt: now, ...byo });
+    return { ok: true, userId: machine.userId, deviceId: machine.deviceId, byoId };
   },
 });

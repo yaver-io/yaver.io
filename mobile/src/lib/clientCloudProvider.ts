@@ -3,15 +3,20 @@ import {
   disconnectLocalHetzner,
   exportLocalHetznerRecovery,
   getLocalHetznerServers,
+  getLocalHetznerServerActions,
+  getLocalHetznerManagedServer,
   hasLocalHetznerToken,
   importLocalHetznerRecovery,
   powerOnLocalHetznerServer,
+  renameLocalHetznerServer,
   shutdownLocalHetznerServer,
+  setLocalHetznerManagedServer,
 } from "./hetznerDirect";
-import type { HetznerServer } from "./hetznerDirectCore";
+import type { HetznerActionLog, HetznerServer } from "./hetznerDirectCore";
 import type { HetznerRecoveryExport } from "./hetznerRecovery";
 
 export type ClientCloudPowerAction = "power_on" | "shutdown";
+export type ClientCloudManagedResource = { id: number; name: string; ip: string | null };
 
 /**
  * Endpoint-only provider contract. Implementations may be linked into trusted
@@ -25,7 +30,11 @@ export abstract class ClientCloudProviderAdapter<TServer> {
   abstract connect(credential: string): Promise<void>;
   abstract disconnect(): Promise<void>;
   abstract listServers(): Promise<TServer[]>;
-  abstract setPower(serverId: number, action: ClientCloudPowerAction): Promise<void>;
+  abstract getManagedServer(): Promise<ClientCloudManagedResource | null>;
+  abstract setManagedServer(server: TServer): Promise<void>;
+  abstract setPower(serverId: number, action: ClientCloudPowerAction): Promise<TServer>;
+  abstract renameServer(serverId: number, name: string): Promise<TServer>;
+  abstract listActions(serverId: number): Promise<HetznerActionLog[]>;
   abstract exportRecovery(): Promise<HetznerRecoveryExport>;
   abstract importRecovery(ciphertext: string, recoveryKey: string): Promise<void>;
 }
@@ -37,13 +46,18 @@ class HetznerClientCloudAdapter extends ClientCloudProviderAdapter<HetznerServer
   connect = connectLocalHetzner;
   disconnect = disconnectLocalHetzner;
   listServers = getLocalHetznerServers;
+  getManagedServer = getLocalHetznerManagedServer;
+  setManagedServer = setLocalHetznerManagedServer;
   exportRecovery = exportLocalHetznerRecovery;
   importRecovery = importLocalHetznerRecovery;
 
-  async setPower(serverId: number, action: ClientCloudPowerAction): Promise<void> {
+  async setPower(serverId: number, action: ClientCloudPowerAction): Promise<HetznerServer> {
     if (action === "power_on") return powerOnLocalHetznerServer(serverId);
     return shutdownLocalHetznerServer(serverId);
   }
+
+  renameServer = renameLocalHetznerServer;
+  listActions = getLocalHetznerServerActions;
 }
 
 // Phase one intentionally registers Hetzner only. Future providers add native

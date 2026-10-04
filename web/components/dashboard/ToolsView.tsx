@@ -11,6 +11,7 @@ import { agentClient, isRunnerBrowserAuthTerminal, type CapabilitySnapshot, type
 import { runnerAuthLivenessLine } from "@/lib/runnerAuthFlow";
 import { CONVEX_URL } from "@/lib/constants";
 import type { Device } from "@/lib/use-devices";
+import { isRemoteRunnerOAuthEnabled } from "@/lib/releaseFeaturePolicy";
 
 type InstallEntry = { name: string; installed: boolean; description: string };
 
@@ -755,7 +756,7 @@ export default function ToolsView({ devices = [] }: Props) {
         )}
       </section>
 
-      <section>
+      {isRemoteRunnerOAuthEnabled() ? <section>
         <div className="flex items-start justify-between gap-4 mb-3">
           <div>
             <h3 className="text-sm font-semibold text-surface-300">Runner sign-in</h3>
@@ -848,7 +849,7 @@ export default function ToolsView({ devices = [] }: Props) {
             {browserAuthError}
           </div>
         )}
-      </section>
+      </section> : null}
 
       <section>
         <div className="flex items-start justify-between gap-4 mb-3">
@@ -1366,20 +1367,12 @@ export const providerPresets: Array<{
     hint: "Remote Ollama over a private network — replace the host with your endpoint.",
   },
   {
-    label: "DeepInfra · DeepSeek V4.1 Flash",
-    id: "deepinfra",
-    name: "DeepInfra",
-    baseUrl: "https://api.deepinfra.com/v1/openai",
-    model: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
-    hint: "DeepSeek V4.1 Flash on DeepInfra. API key from deepinfra.com/dash/api_keys.",
-  },
-  {
-    label: "DeepSeek",
+    label: "DeepSeek · Chat",
     id: "deepseek",
     name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com",
+    baseUrl: "https://api.deepseek.com/v1",
     model: "deepseek/deepseek-chat",
-    hint: "DeepSeek's direct API. API key from platform.deepseek.com.",
+    hint: "DeepSeek's direct API. The key stays on this runner machine.",
   },
 ];
 

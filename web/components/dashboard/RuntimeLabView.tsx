@@ -43,6 +43,7 @@ import RemoteRuntimeViewer from "./RemoteRuntimeViewer";
 import { StreamHealthNotice } from "./StreamHealthNotice";
 import { clampDevPct, formatDevProgressLine } from "@/lib/devEventLine";
 import { runnerAuthFlowKind, runnerAuthLivenessLine } from "@/lib/runnerAuthFlow";
+import { isRemoteRunnerOAuthEnabled } from "@/lib/releaseFeaturePolicy";
 import { describeRunnerTurn } from "@/lib/runnerTurnHeartbeat";
 import { assembleTrace } from "@/lib/_core/trace";
 import { CONVEX_URL } from "@/lib/constants";
@@ -556,7 +557,7 @@ function runnersFromDeviceInventory(device?: Device | null): Runner[] {
         authSource: row.authSource,
         error: row.error,
         warning: row.warning,
-        supportsBrowserAuth: id === "claude" || id === "codex",
+        supportsBrowserAuth: isRemoteRunnerOAuthEnabled() && (id === "claude" || id === "codex"),
         supportsModelSelection: id === "claude" || id === "codex" || id === "opencode",
         models: FALLBACK_MODELS[id] || [],
       };

@@ -43,6 +43,7 @@ import { describeDeviceCardPing } from "../../src/lib/deviceCardLiveness";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
+import { HetznerManagedDeviceCard } from "../../src/components/HetznerManagedDeviceCard";
 
 function transportFor(device: Device): TransportInfo {
   return classifyTransport({
@@ -1457,6 +1458,7 @@ export default function DevicesScreen() {
           onRefresh={refreshDevices}
           ListHeaderComponent={(
             <>
+              <HetznerManagedDeviceCard c={c} />
               <View style={{ backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 12 }}>
                 <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "800" }}>Fleet roles</Text>
                 <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 }}>

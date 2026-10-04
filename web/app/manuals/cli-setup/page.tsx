@@ -313,7 +313,7 @@ export default function CLISetupManual() {
             <CommandBlock
               name="yaver set-runner"
               description="Choose which AI agent runs your tasks. Supports Claude Code, OpenAI Codex, OpenCode, or any custom CLI command."
-              example={`$ yaver set-runner claude      # Claude Code (default)\n$ yaver set-runner codex       # OpenAI Codex\n$ yaver set-runner opencode    # OpenCode (BYOK Anthropic / OpenAI / OpenRouter / GLM, or local Ollama)\n$ yaver set-runner custom "my-tool --auto {prompt}"`}
+              example={`$ yaver set-runner opencode    # OpenCode (default; provider auth stays local)\n$ yaver set-runner claude      # Claude Code (locally authenticated)\n$ yaver set-runner codex       # OpenAI Codex (locally authenticated)\n$ yaver set-runner custom "my-tool --auto {prompt}"`}
             />
             <CommandBlock
               name="yaver tmux"

@@ -88,6 +88,7 @@ import { usableTunnelUrls } from "@/lib/endpoints";
 import { classifyFetchError, summarizeFailures } from "@/lib/connection-error";
 import { clearLastFailure, recordLastFailure } from "@/lib/probe-backoff";
 import { parseDashboardChatIntent } from "@/lib/dashboard-chat-intent";
+import { applyProductPolicy, isRemoteRunnerOAuthEnabled } from "@/lib/releaseFeaturePolicy";
 import {
   loadLastProjectFromConvex,
   saveLastProjectToConvex,
@@ -1251,7 +1252,7 @@ export default function DashboardPage() {
         // so handleSend's `runnerAuthIssue` check doesn't block — mobile
         // proves the runner works; if it doesn't, the task surface will
         // bubble the real error back.
-        supportsBrowserAuth: id === "claude" || id === "codex",
+        supportsBrowserAuth: isRemoteRunnerOAuthEnabled() && (id === "claude" || id === "codex"),
         supportsModelSelection: false,
         models: [],
       });
@@ -1396,7 +1397,11 @@ export default function DashboardPage() {
       // Fetch platform relay servers (already includes password)
       const r = await fetch(`${CONVEX_URL}/config`);
       let relays: any[] = [];
-      if (r.ok) { const d = await r.json(); relays = d.relayServers || []; }
+      if (r.ok) {
+        const d = await r.json();
+        applyProductPolicy(d.productPolicy);
+        relays = d.relayServers || [];
+      }
 
       // Fetch user settings to get relay password override + primary device
       if (token) {
@@ -6259,7 +6264,7 @@ export default function DashboardPage() {
       {/* Lifted out of the chat-tab branch so the Hot Reload "Sign in
           & reconnect" button can open the modal regardless of which
           tab is active. The modal handles its own backdrop + z-index. */}
-      {chatRunnerAuthModal ? (
+      {chatRunnerAuthModal && isRemoteRunnerOAuthEnabled() ? (
         <RunnerAuthModal
           runner={chatRunnerAuthModal}
           deviceName={connectedDevice?.name || connectedDevice?.id || "this machine"}

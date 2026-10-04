@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,6 +30,30 @@ func TestHetznerPowerUsesExactBoundedProviderAction(t *testing.T) {
 	}
 	if err := hetznerServerPower("test-token", "123", "delete"); err == nil {
 		t.Fatal("unsupported destructive action accepted")
+	}
+}
+
+func TestHetznerRenameUsesExactBoundedProviderUpdate(t *testing.T) {
+	originalBase := hetznerAPIBase
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/servers/123" {
+			t.Fatalf("unexpected provider request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatal("provider credential was not confined to the authorization header")
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["name"] != "mn71pn9c.cloud.yaver.io" {
+			t.Fatalf("unexpected rename body: %#v (%v)", body, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":{"id":123,"name":"mn71pn9c.cloud.yaver.io"}}`))
+	}))
+	hetznerAPIBase = server.URL
+	t.Cleanup(func() { hetznerAPIBase = originalBase; server.Close() })
+
+	if err := hetznerServerRename("test-token", "123", "mn71pn9c.cloud.yaver.io"); err != nil {
+		t.Fatal(err)
 	}
 }
 

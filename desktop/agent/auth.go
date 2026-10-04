@@ -734,6 +734,14 @@ type PlatformConfig struct {
 	Runners       []backendRunnerFull           `json:"runners"`
 	Models        []BackendModel                `json:"models"`
 	ModelDefaults map[string]RunnerModelDefault `json:"modelDefaults"`
+	ProductPolicy PlatformProductPolicy         `json:"productPolicy"`
+}
+
+type PlatformProductPolicy struct {
+	DefaultRunner            string   `json:"defaultRunner"`
+	PrimaryCloudProvider     string   `json:"primaryCloudProvider"`
+	RemoteRunnerOAuthEnabled bool     `json:"remoteRunnerOAuthEnabled"`
+	DeviceRoles              []string `json:"deviceRoles"`
 }
 
 // BackendModel mirrors the Convex aiModels table.
@@ -776,6 +784,7 @@ func FetchPlatformConfig(baseURL string) (*PlatformConfig, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	applyProductPolicy(result.ProductPolicy)
 	return &result, nil
 }
 

@@ -142,31 +142,12 @@ type RunnerConfig struct {
 }
 
 var defaultRunner = RunnerConfig{
-	RunnerID: "claude",
-	Name:     "Claude Code",
-	Command:  "claude",
-	Args: []string{
-		"-p", "{prompt}",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--include-partial-messages",
-		"--model", "sonnet",
-		"--tools", "Bash",
-		// Plain mobile tasks can legitimately start from the agent's
-		// global work-dir (often /root on ephemeral boxes) rather than a
-		// git repo. Without this, Claude aborts before running even a
-		// trivial command like `ls` with:
-		//   "Not inside a trusted directory and --skip-git-repo-check was not specified."
-		// Permission bypass is unrelated; it only controls edit
-		// approvals. We still want Claude to start in non-repo dirs for
-		// shell-like mobile flows.
-		"--skip-git-repo-check",
-		"--permission-mode", "bypassPermissions",
-	},
-	OutputMode:      "stream-json",
-	ResumeSupported: false,
-	ResumeArgs:      []string{"--resume", "{sessionId}"},
-	ExitCommand:     "/exit",
+	RunnerID:    "opencode",
+	Name:        "OpenCode",
+	Command:     "opencode",
+	Args:        []string{"run", "--dangerously-skip-permissions", "{prompt}"},
+	OutputMode:  "raw",
+	ExitCommand: "/quit",
 }
 
 // exitCommands maps runner IDs to their graceful exit commands.
@@ -278,7 +259,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// override wins over the deepseek default.
 		Command:     "opencode",
 		Args:        []string{"run", "--dangerously-skip-permissions", "{prompt}"},
-		Model:       "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
+		Model:       "deepseek/deepseek-flash",
 		OutputMode:  "raw",
 		ExitCommand: "/quit",
 	},
@@ -323,7 +304,10 @@ func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
 // hosted-model lane (interim backend = opencode + DeepSeek key); it
 // comes last so a working subscription binary still wins the default
 // fallback.
-var supportedRunnerIDs = []string{"claude", "codex", "opencode", "remoteless"}
+// OpenCode is first because it is the release default. Other locally installed
+// runners remain selectable and are still eligible as explicit fallbacks; Yaver
+// simply does not broker their OAuth anymore.
+var supportedRunnerIDs = []string{"opencode", "claude", "codex", "remoteless"}
 
 // IsSupportedRunner reports whether a runner ID is in the canonical
 // user-facing set. Use this anywhere you'd otherwise enumerate the

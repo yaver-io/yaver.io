@@ -1023,6 +1023,10 @@ func (s *HTTPServer) handleRunnerBrowserAuthStart(w http.ResponseWriter, r *http
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
 		return
 	}
+	if !remoteRunnerOAuthEnabled() {
+		jsonError(w, http.StatusGone, "Yaver-managed remote runner OAuth is disabled; sign in locally on the runner machine")
+		return
+	}
 	var req runnerBrowserAuthStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json body")

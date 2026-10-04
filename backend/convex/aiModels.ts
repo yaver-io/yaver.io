@@ -89,18 +89,17 @@ export const PREDEFINED_MODELS = [
     defaultReasoningEffort: "high",
     supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
   },
-  // OpenCode can sit on top of OpenAI-compatible managed gateways or
-  // user-provided keys. Keep these labels short because the product should
-  // show only the inference source, not cloud-internal routing detail.
+  // OpenCode uses the user's endpoint-local provider configuration. The
+  // product default mirrors the direct DeepSeek setup used by the owner's
+  // trusted machines; Yaver never receives that provider credential.
   {
-    modelId: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
+    modelId: "deepseek/deepseek-v4-flash",
     runnerId: "opencode",
-    name: "DeepSeek V4.1 Flash",
-    description: "Fast agentic coding through the user's DeepInfra provider",
-    providerId: "deepinfra",
-    providerName: "DeepInfra",
+    name: "DeepSeek V4 Flash",
+    description: "Selectable when the endpoint's live DeepSeek provider probe accepts this alias",
+    providerId: "deepseek",
+    providerName: "DeepSeek",
     lifecycle: "active" as const,
-    isDefault: true,
     sortOrder: 1,
   },
   {
@@ -126,11 +125,12 @@ export const PREDEFINED_MODELS = [
   {
     modelId: "deepseek/deepseek-chat",
     runnerId: "opencode",
-    name: "DeepSeek Chat (legacy)",
-    description: "Legacy compatibility alias; prefer a current DeepSeek V4 model",
+    name: "DeepSeek Chat",
+    description: "Verified direct DeepSeek coding model",
     providerId: "deepseek",
     providerName: "DeepSeek",
-    lifecycle: "legacy" as const,
+    lifecycle: "active" as const,
+    isDefault: true,
     sortOrder: 4,
   },
   // These managed-provider rows remain useful cross-device metadata. They are

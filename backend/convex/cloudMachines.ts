@@ -322,6 +322,21 @@ export function buildManagedCloudInitContainer(
       git clone "$repo" "$dest" || echo "[workspace] clone skipped: $repo"
     }
     clone_one https://github.com/kivanccakmak/yaver.io.git yaver.io
+
+    # Optional owner-managed project inventory. Keep private project names and
+    # repository URLs off the shared control plane: the file lives only on the
+    # trusted VPS and each line is "<directory> <git-url>". Credentials are
+    # resolved by the endpoint's own Git/SSH configuration.
+    if [ -f /etc/yaver/workspace-repos ]; then
+      while read -r name repo extra; do
+        [ -z "\${name:-}" ] && continue
+        case "$name" in \#*) continue;; esac
+        [ -z "\${repo:-}" ] && continue
+        [ -n "\${extra:-}" ] && { echo "[workspace] invalid manifest row: $name"; continue; }
+        case "$name" in *[!A-Za-z0-9._-]*) echo "[workspace] invalid directory: $name"; continue;; esac
+        clone_one "$repo" "$name"
+      done < /etc/yaver/workspace-repos
+    fi
 ${optionalRepoClone}    SCRIPT
   - chmod +x /usr/local/bin/yaver-bootstrap-workspace
   - /usr/local/bin/yaver-bootstrap-workspace || true
@@ -711,6 +726,18 @@ export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
       sudo -u yaver git clone "$repo" "$dest" || echo "[workspace] clone skipped: $repo"
     }
     clone_one https://github.com/kivanccakmak/yaver.io.git yaver.io
+
+    # Optional endpoint-local inventory; never persisted through Convex.
+    if [ -f /etc/yaver/workspace-repos ]; then
+      while read -r name repo extra; do
+        [ -z "\${name:-}" ] && continue
+        case "$name" in \#*) continue;; esac
+        [ -z "\${repo:-}" ] && continue
+        [ -n "\${extra:-}" ] && { echo "[workspace] invalid manifest row: $name"; continue; }
+        case "$name" in *[!A-Za-z0-9._-]*) echo "[workspace] invalid directory: $name"; continue;; esac
+        clone_one "$repo" "$name"
+      done < /etc/yaver/workspace-repos
+    fi
 ${optionalRepoCloneSnippet}    chown -R yaver:yaver "$root" || true
     SCRIPT
   - chmod +x /usr/local/bin/yaver-bootstrap-workspace

@@ -169,7 +169,17 @@ func runnerControlModels(ctx context.Context, runnerID string) ([]runnerModelInf
 		return cached, "backend"
 	}
 	if runnerID == "remoteless" {
-		return fallbackRunnerModels("opencode"), "builtin"
+		models := fallbackRunnerModels("opencode")
+		if len(models) > 0 {
+			// Remoteless is OpenCode-backed today, but it is a separate lane
+			// with its own stable provider/model contract. Do not let the
+			// product-wide OpenCode default rewrite that hosted-lane default.
+			models[0] = runnerModelInfo{
+				ID: "deepseek/deepseek-flash", Name: "DeepSeek Flash",
+				Provider: "deepseek", Source: "builtin", IsDefault: true,
+			}
+		}
+		return models, "builtin"
 	}
 	return fallbackRunnerModels(runnerID), "builtin"
 }

@@ -69,7 +69,8 @@ describe("mobile lib surface drift", () => {
     const required = [
       "primaryDeviceId",           // context state + API surfaced to screens
       "setPrimaryDevice",          // public setter that POSTs to /settings
-      "applyRelayPresence",        // merge relay tunnel-up state into the device list
+      "subscribeBusEvents",        // authenticated peer presence from the connected agent
+      "busPresence",               // sub-minute peer truth overlaid on the device list
       "lanIps",                    // normalised Device field fed into quicClient.connect()
     ];
     const missing = required.filter((name) => !src.includes(name));

@@ -21,6 +21,8 @@ import { useAuth } from "../context/AuthContext";
 import { shareLocalHetznerWithConnectedEndpoint } from "../lib/hetznerHandoff";
 import { hetznerClientCloud } from "../lib/clientCloudProvider";
 import type { HetznerRecoveryExport } from "../lib/hetznerRecovery";
+import type { LocalHetznerManagedServer } from "../lib/hetznerDirect";
+import type { HetznerActionLog } from "../lib/hetznerDirectCore";
 
 // Featured BYO compute providers (the VM providers the agent can
 // provision on directly). Others connect via the web Accounts view.
@@ -48,6 +50,16 @@ function uptimeLabel(created?: string | null): string {
   if (days >= 1) return `up ${days}d`;
   const hrs = Math.floor(ms / 3600000);
   return `up ${Math.max(1, hrs)}h`;
+}
+
+function displayPowerStatus(status: unknown): string {
+  switch (String(status || "unknown").toLowerCase()) {
+    case "running": return "Running";
+    case "off": return "Off — allocated";
+    case "starting": return "Powering on…";
+    case "stopping": return "Shutting down…";
+    default: return String(status || "Unknown");
+  }
 }
 
 type ProviderMeta = {
@@ -89,6 +101,10 @@ export default function CloudProvidersSection({
 
   // BYO server list (for a connected Hetzner account).
   const [servers, setServers] = useState<any[] | null>(null);
+  const [managedServer, setManagedServer] = useState<LocalHetznerManagedServer | null>(null);
+  const [renameServerId, setRenameServerId] = useState<number | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [actions, setActions] = useState<HetznerActionLog[] | null>(null);
   const [recovery, setRecovery] = useState<HetznerRecoveryExport | null>(null);
   const [showRecoveryImport, setShowRecoveryImport] = useState(false);
   const [recoveryBackupDraft, setRecoveryBackupDraft] = useState("");
@@ -96,6 +112,7 @@ export default function CloudProvidersSection({
 
   const load = useCallback(async () => {
     const localHetzner = await hetznerClientCloud.isConnected().catch(() => false);
+    const localManagedServer = localHetzner ? await hetznerClientCloud.getManagedServer().catch(() => null) : null;
     let provs: ProviderMeta[] = [{
       id: "hetzner",
       label: "Hetzner Cloud",
@@ -132,6 +149,7 @@ export default function CloudProvidersSection({
     }
     setProviders(provs);
     setAccounts(byId);
+    setManagedServer(localManagedServer);
     setLoaded(true);
   }, [token]);
 
@@ -190,6 +208,7 @@ export default function CloudProvidersSection({
               if (providerId === "hetzner") await hetznerClientCloud.disconnect();
               else await quicClient.accountDisconnect(providerId);
               setServers(null);
+              if (providerId === "hetzner") setManagedServer(null);
               await load();
             } catch (e: any) {
               Alert.alert("Couldn't disconnect", e?.message || "Try again.");
@@ -213,6 +232,67 @@ export default function CloudProvidersSection({
     }
   };
 
+  const loadActions = async () => {
+    if (!managedServer) return;
+    setBusy("actions");
+    try {
+      setActions(await hetznerClientCloud.listActions(managedServer.id));
+    } catch (e: any) {
+      Alert.alert("Couldn't load Hetzner activity", e?.message || "Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const replaceServer = (next: any) => {
+    setServers((current) => current?.map((server) => Number(server.id ?? server.ID) === Number(next.id ?? next.ID) ? next : server) ?? current);
+  };
+
+  const markServerTransition = (id: number, status: "starting" | "stopping") => {
+    setServers((current) => current?.map((server) => Number(server.id ?? server.ID) === id ? { ...server, status } : server) ?? current);
+  };
+
+  const chooseManagedServer = (srv: any) => {
+    const name = String(srv.name ?? srv.Name ?? "server");
+    Alert.alert(
+      `Manage ${name}?`,
+      "This phone will allow Hetzner power controls only for this exact server. The selection stays in this device's secure storage.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Use this server",
+          onPress: async () => {
+            setBusy(`manage:${String(srv.id ?? srv.ID ?? "")}`);
+            try {
+              await hetznerClientCloud.setManagedServer(srv);
+              setManagedServer(await hetznerClientCloud.getManagedServer());
+            } catch (e: any) {
+              Alert.alert("Couldn't save configuration", e?.message || "Try again.");
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const renameManagedServer = async () => {
+    if (!managedServer || renameServerId !== managedServer.id || !renameDraft.trim()) return;
+    setBusy(`rename:${managedServer.id}`);
+    try {
+      const renamed = await hetznerClientCloud.renameServer(managedServer.id, renameDraft);
+      replaceServer(renamed);
+      setManagedServer(await hetznerClientCloud.getManagedServer());
+      setRenameServerId(null);
+      setRenameDraft("");
+    } catch (e: any) {
+      Alert.alert("Couldn't rename server", e?.message || "Check the name and try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const stopServer = (srv: any) => {
     const id = String(srv.id ?? srv.ID ?? "");
     const name = String(srv.name ?? srv.Name ?? id);
@@ -226,10 +306,11 @@ export default function CloudProvidersSection({
           text: "Shut down",
           onPress: async () => {
             setBusy(`stop:${id}`);
+            markServerTransition(Number(id), "stopping");
             try {
-              await hetznerClientCloud.setPower(Number(id), "shutdown");
-              await loadServers();
+              replaceServer(await hetznerClientCloud.setPower(Number(id), "shutdown"));
             } catch (e: any) {
+              await loadServers().catch(() => {});
               Alert.alert("Couldn't stop", e?.message || "Try again.");
             } finally {
               setBusy(null);
@@ -244,10 +325,11 @@ export default function CloudProvidersSection({
     const id = Number(srv.id ?? srv.ID);
     if (!Number.isFinite(id)) return;
     setBusy(`poweron:${id}`);
+    markServerTransition(id, "starting");
     try {
-      await hetznerClientCloud.setPower(id, "power_on");
-      await loadServers();
+      replaceServer(await hetznerClientCloud.setPower(id, "power_on"));
     } catch (e: any) {
+      await loadServers().catch(() => {});
       Alert.alert("Couldn't power on", e?.message || "Try again.");
     } finally {
       setBusy(null);
@@ -528,8 +610,13 @@ export default function CloudProvidersSection({
               {hetznerConnected ? (
                 <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10, gap: 8 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Your Hetzner resources</Text>
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Hetzner power control</Text>
                   </View>
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    {managedServer
+                      ? `Managed server: ${managedServer.name} · ${managedServer.ip || "no public IPv4"}`
+                      : "Choose exactly one server below. Yaver will refuse power actions for every other server."}
+                  </Text>
 
                   {/* Running servers. */}
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
@@ -561,6 +648,7 @@ export default function CloudProvidersSection({
                       })()}
                       {servers.map((s: any) => {
                         const id = String(s.id ?? s.ID ?? "");
+                        const isManaged = managedServer?.id === Number(s.id ?? s.ID);
                         const type = s.type ?? s.Type ?? null;
                         const eur = monthlyEur(type);
                         const up = uptimeLabel(s.created ?? s.Created);
@@ -573,24 +661,66 @@ export default function CloudProvidersSection({
                         <View key={id} style={{ paddingVertical: 4 }}>
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                           <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
-                            {String(s.name ?? s.Name ?? id)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? "")}
+                            {String(s.name ?? s.Name ?? id)} · {displayPowerStatus(s.status ?? s.Status)} · {String(s.ip ?? s.IP ?? "")}
                           </Text>
-                          {String(s.status ?? s.Status ?? "").toLowerCase() === "off" ? (
+                          {!isManaged ? (
+                            <Pressable disabled={busy !== null} onPress={() => chooseManagedServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
+                              {busy === `manage:${id}` ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
+                                <Text style={{ color: "#0ea5e9", fontSize: 11, fontWeight: "700" }}>Manage this server</Text>
+                              )}
+                            </Pressable>
+                          ) : String(s.status ?? s.Status ?? "").toLowerCase() === "off" ? (
                             <Pressable disabled={busy !== null} onPress={() => void powerOnServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
                               {busy === `poweron:${id}` ? <ActivityIndicator size="small" color="#059669" /> : (
                                 <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>Power on</Text>
                               )}
                             </Pressable>
-                          ) : (
+                          ) : String(s.status ?? s.Status ?? "").toLowerCase() === "running" ? (
                             <Pressable disabled={busy !== null} onPress={() => stopServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
                               {busy === `stop:${id}` ? <ActivityIndicator size="small" color="#b45309" /> : (
                                 <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>Shut down</Text>
                               )}
                             </Pressable>
-                          )}
+                          ) : null}
                         </View>
                         {costLine ? (
                           <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "monospace", marginLeft: 2 }}>{costLine}</Text>
+                        ) : null}
+                        {isManaged ? (
+                          <View style={{ gap: 6, marginLeft: 2, marginTop: 4 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                              <Text style={{ color: "#059669", fontSize: 10, fontWeight: "700" }}>Managed on this phone</Text>
+                              <Pressable
+                                disabled={busy !== null}
+                                onPress={() => { setRenameServerId(Number(id)); setRenameDraft(String(s.name ?? s.Name ?? "")); }}
+                              >
+                                <Text style={{ color: "#0ea5e9", fontSize: 10, fontWeight: "700" }}>Rename</Text>
+                              </Pressable>
+                            </View>
+                            {renameServerId === Number(id) ? (
+                              <View style={{ gap: 6 }}>
+                                <TextInput
+                                  value={renameDraft}
+                                  onChangeText={setRenameDraft}
+                                  placeholder="Hetzner server name"
+                                  placeholderTextColor={c.textMuted}
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                  spellCheck={false}
+                                  maxLength={64}
+                                  style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 9, color: c.textPrimary, fontFamily: "monospace" }}
+                                />
+                                <View style={{ flexDirection: "row", gap: 8 }}>
+                                  <Pressable disabled={busy !== null || !renameDraft.trim()} onPress={() => void renameManagedServer()} style={{ opacity: busy || !renameDraft.trim() ? 0.5 : 1 }}>
+                                    <Text style={{ color: "#0ea5e9", fontSize: 11, fontWeight: "700" }}>Save name</Text>
+                                  </Pressable>
+                                  <Pressable onPress={() => { setRenameServerId(null); setRenameDraft(""); }}>
+                                    <Text style={{ color: c.textMuted, fontSize: 11 }}>Cancel</Text>
+                                  </Pressable>
+                                </View>
+                              </View>
+                            ) : null}
+                          </View>
                         ) : null}
                         </View>
                       );
@@ -598,11 +728,36 @@ export default function CloudProvidersSection({
                     </>
                   )}
 
+                  {managedServer ? (
+                    <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8, gap: 5 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Hetzner activity</Text>
+                        <Pressable disabled={busy !== null} onPress={() => { void loadActions(); }} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 8, paddingVertical: 4 }}>
+                          {busy === "actions" ? <ActivityIndicator size="small" color={c.textMuted} /> : (
+                            <Text style={{ color: "#0ea5e9", fontSize: 11, fontWeight: "700" }}>{actions === null ? "Load" : "Refresh"}</Text>
+                          )}
+                        </Pressable>
+                      </View>
+                      {actions === null ? (
+                        <Text style={{ color: c.textMuted, fontSize: 10 }}>Recent native Hetzner actions stay on this phone and are never copied to Yaver Cloud.</Text>
+                      ) : actions.length === 0 ? (
+                        <Text style={{ color: c.textMuted, fontSize: 10 }}>No recent actions returned by Hetzner.</Text>
+                      ) : actions.slice(0, 8).map((action) => (
+                        <Text key={action.id} style={{ color: action.status === "error" ? "#e11d48" : c.textMuted, fontSize: 10, fontFamily: "monospace" }}>
+                          {action.command} · {action.status}{action.progress !== null ? ` · ${action.progress}%` : ""}{action.started ? ` · ${new Date(action.started).toLocaleString()}` : ""}{action.errorCode ? ` · ${action.errorCode}` : ""}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : null}
+
                 </View>
               ) : null}
 
               <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>
-                Other providers (Vercel, Supabase, Cloudflare, …) connect from the web dashboard → Accounts.
+                Power on and graceful shutdown keep the same server and Primary IP. They never delete the server, and an off server remains allocated and billable.
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                Create the VPS in Hetzner Console, SSH into it, then install and authenticate Yaver CLI manually. This screen supports only list, rename, power on, and graceful shutdown; use Hetzner Console for everything else.
               </Text>
             </>
           )}

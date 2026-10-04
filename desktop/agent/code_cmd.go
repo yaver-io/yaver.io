@@ -91,7 +91,7 @@ func runCode(args []string) {
 			fmt.Fprintln(os.Stderr, "code: --pty requires --attach <device> (for a local TUI just run the runner directly)")
 			os.Exit(1)
 		}
-		ptyRunner := normalizeRunnerID(firstNonEmpty(strings.TrimSpace(*runner), "claude"))
+		ptyRunner := normalizeRunnerID(firstNonEmpty(strings.TrimSpace(*runner), "opencode"))
 		ptyArgs := applyRunnerYoloDefaults(ptyRunner, fs.Args())
 		if err := runRemoteRunnerPTY(*attachTarget, ptyRunner, ptyArgs, "", "", *chrome, false, false); err != nil {
 			fmt.Fprintf(os.Stderr, "code: %v\n", err)

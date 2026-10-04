@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Clipboard from "expo-clipboard";
+import { isRemoteRunnerOAuthEnabled } from "../lib/releaseFeaturePolicy";
 
 import {
   quicClient,
@@ -56,7 +57,7 @@ const runnerLabel = (runner: string) => {
   return runner || "agent";
 };
 
-export default function RunnerAuthModal({
+function RemoteRunnerAuthModal({
   visible,
   runner,
   deviceName,
@@ -542,6 +543,11 @@ export default function RunnerAuthModal({
       </KeyboardAvoidingView>
     </Modal>
   );
+}
+
+export default function RunnerAuthModal(props: Props) {
+  if (!isRemoteRunnerOAuthEnabled()) return null;
+  return <RemoteRunnerAuthModal {...props} />;
 }
 
 const styles = StyleSheet.create({

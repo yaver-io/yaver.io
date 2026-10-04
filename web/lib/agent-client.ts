@@ -3771,6 +3771,10 @@ export class AgentClient {
     error?: string;
   }> {
     this.assertConnected();
+    const { isRemoteRunnerOAuthEnabled } = await import("./releaseFeaturePolicy");
+    if (!isRemoteRunnerOAuthEnabled()) {
+      return { ok: false, error: "Yaver-managed remote runner OAuth is disabled. Sign in locally on the runner machine." };
+    }
     const base = target
       ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/start`
       : `${this.taskBaseUrl}/runner-auth/browser/start`;

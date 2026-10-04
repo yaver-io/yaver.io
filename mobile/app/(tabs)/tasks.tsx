@@ -8772,7 +8772,7 @@ export default function TasksScreen() {
                   installed: false,
                   ready: false,
                   // opencode authenticates via provider config, not browser OAuth.
-                  supportsBrowserAuth: id !== "opencode",
+                  supportsBrowserAuth: false,
                 } as typeof availableRunners[number];
               });
               const verificationPending = runnerVerificationPending(selectedRunnerRow);

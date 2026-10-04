@@ -14,18 +14,18 @@ import { GUI_DOWNLOADS, WINDOWS_STORE_URL } from "@/lib/versions";
 // phone, tablet, watch, or the web. No comparative claims against named
 // competitors, per LEGAL_SAFETY.md §2 (trademark) and §3.
 const LANDING_TAGLINE =
-  "Yaver is an open-source, self-hostable real-device app development loop. It runs Claude Code, Codex, and OpenCode on your own Mac, PC, Linux host, home server, or VPS and hot-reloads the real app on your iPhone or Android seconds after the agent edits it. Drive it from desktop, phone, tablet, watch, TV, car, spatial clients, the web, or your own app using Yaver's SDK.";
+  "Yaver is an open-source, self-hostable OpenCode development loop. It runs OpenCode on your own Mac, PC, Linux host, home server, or VPS and hot-reloads the real app on your iPhone or Android seconds after it edits the project. Drive it from desktop, phone, tablet, watch, TV, car, spatial clients, the web, or your own app using Yaver's SDK.";
 
 const SUPPORTED_SURFACES = ["iOS", "Android", "Web", "watchOS", "tvOS", "Wear OS", "CarPlay", "Android Auto"];
 
 const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
     q: "What is Yaver?",
-    a: "Yaver is an open-source real-device app development loop. Claude Code, Codex, OpenCode, or another terminal agent runs on your own laptop, workstation, home server, or VPS. Yaver adds secure remote control, browser lane, Hermes/native previews, feedback capture, and clients from phone and watch to TV and spatial surfaces.",
+    a: "Yaver is an open-source real-device app development loop built around OpenCode running on your own laptop, workstation, home server, or VPS. Yaver adds secure remote control, browser lanes, Hermes/native previews, feedback capture, and clients from phone and watch to TV and spatial surfaces.",
   },
   {
     q: "Where does the agent run?",
-    a: "On a computer you control: a laptop, workstation, Mac mini, Linux box, home server, or VPS. Install Yaver there and use your own Claude Code, Codex, OpenCode, or terminal-agent account.",
+    a: "On a computer you control: a laptop, workstation, Mac mini, Linux box, home server, or VPS. Install Yaver and OpenCode there, then connect your chosen AI provider directly on that endpoint.",
   },
   {
     q: "Is it a WebView?",
@@ -41,7 +41,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Which coding agents work?",
-    a: "Claude Code, OpenAI Codex, and OpenCode are first-class. Anything that runs in a terminal can be driven through the generic runner, and OpenCode can route to Aider, Goose, local Ollama models, OpenRouter, and other providers.",
+    a: "OpenCode is the default on every Yaver surface. The task protocol remains runner-agnostic, so another locally installed runner can be selected and its real launch failure is reported without Yaver brokering its OAuth.",
   },
   {
     q: "What license is it under?",
@@ -506,17 +506,13 @@ export default function HomePage() {
             Or use it from your coding agent
           </h2>
           <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-surface-400">
-            Yaver also exposes itself as an MCP server, so Claude Code, Codex,
-            and OpenCode can drive the same real-device loop directly from the
+            Yaver also exposes itself as an MCP server, so OpenCode can drive
+            the same real-device loop directly from the
             agent chat — build on your machine, hot-reload on your phone,
             shake to send repro context back.
           </p>
           <div className="mx-auto max-w-xl space-y-2 rounded-xl border border-surface-800 bg-surface-950 p-5 font-mono text-[12px] leading-relaxed">
-            <div className="text-surface-500"># Claude Code:</div>
-            <div><span className="text-surface-400">$</span> <span className="select-all text-surface-200">claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp</span></div>
-            <div className="mt-2 text-surface-500"># Codex:</div>
-            <div><span className="text-surface-400">$</span> <span className="select-all text-surface-200">codex mcp add yaver -- npx -y yaver-cli yaver-mcp</span></div>
-            <div className="mt-2 text-surface-500"># OpenCode:</div>
+            <div className="text-surface-500"># OpenCode:</div>
             <div><span className="text-surface-400">$</span> <span className="select-all text-surface-200">npx -y -p yaver-cli yaver mcp setup opencode</span></div>
             <div className="mt-3 h-px bg-surface-800/60" />
             <div className="text-surface-500"># then, in the agent chat:</div>

@@ -34,6 +34,7 @@ import { probeDeviceWithRepair } from "../lib/probeWithRepair";
 import { resolveSweepOutcome } from "../lib/autoConnectStatus";
 import { loadConnectionCache } from "../lib/connectionCache";
 import { mostRecentSuccessfulDeviceId } from "../lib/recentConnection";
+import { applyProductPolicy } from "../lib/releaseFeaturePolicy";
 import { aliasCollisionOutcome, agentInstanceRelation } from "../lib/aliasShadowing";
 import { resolveIdentityMerge, type IdentityCandidate } from "../lib/deviceIdentityMerge";
 import { normalizeTunnelEndpoint } from "../lib/tunnelEndpoint";
@@ -181,13 +182,13 @@ export function setDebugLogsEnabledRuntime(enabled: boolean): void {
 // Why hardcoded: the alternative is round-tripping
 // /agent/runners → models lookup just to render the picker, which would
 // add network latency to a UX flow that needs to feel instant.
-// OpenCode defaults to DeepSeek V4.1 Flash through DeepInfra. The direct
-// DeepSeek API does not own this model id. A saved per-device model
-// (the user's explicit pick) still wins over this global default.
+// OpenCode defaults to the direct DeepSeek V4 Flash provider/model used by
+// the trusted runner machines. A saved per-device model (the user's explicit
+// pick) still wins over this global default.
 export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   claude: "claude-opus-4-8",
   codex: "gpt-5.6-sol",
-  opencode: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
+  opencode: "deepseek/deepseek-chat",
 };
 
 function deviceRunnerReadyFromHeartbeat(device: Pick<Device, "runners" | "installedRunnerIds">): boolean {
@@ -2516,6 +2517,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const res = await fetch(`${getConvexSiteUrl()}/config`);
         if (res.ok) {
           const data = await res.json();
+          applyProductPolicy(data.productPolicy);
           platformServers = data.relayServers || [];
           if (typeof data.cliVersion === "string" && data.cliVersion.trim() !== "") {
             setLatestCliVersion(data.cliVersion.trim());

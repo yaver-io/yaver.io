@@ -23,13 +23,29 @@ test("tenant Hetzner surface is direct, recovery-capable, and limited to up/down
   assert.match(core, /https:\/\/api\.hetzner\.cloud\/v1/);
   assert.match(core, /actions\/poweron/);
   assert.match(core, /actions\/shutdown/);
+  assert.match(core, /method:\s*["']PUT["']/);
   assert.doesNotMatch(core, /method:\s*["']DELETE["']/);
   assert.doesNotMatch(adapter, /deleteHetznerServer/);
   assert.match(adapter, /exportLocalHetznerRecovery/);
   assert.match(adapter, /importLocalHetznerRecovery/);
+  assert.match(adapter, /requireManagedServer/);
+  assert.match(adapter, /hetznerManagedServer/);
   assert.match(ui, /Create encrypted backup/);
   assert.match(ui, /Validate and restore/);
+  assert.match(ui, /Manage this server/);
+  assert.match(ui, /Save name/);
+  assert.match(ui, /Hetzner activity/);
   assert.doesNotMatch(ui, />Delete</);
+});
+
+test("Devices renders provider-authoritative status without enabling web credential use", async () => {
+  const screen = await read("../../app/(tabs)/devices.tsx");
+  const card = await read("../components/HetznerManagedDeviceCard.tsx");
+  assert.match(screen, /HetznerManagedDeviceCard/);
+  assert.match(card, /Provider status:/);
+  assert.match(card, /Platform\.OS === "web"/);
+  assert.match(card, /separate from Yaver agent connectivity/);
+  assert.doesNotMatch(card, /Convex|Cloudflare|relayPacket/);
 });
 
 test("Hetzner token can move only in an authenticated encrypted device handoff", async () => {

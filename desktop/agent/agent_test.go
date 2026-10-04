@@ -194,11 +194,11 @@ func TestAgentStatusEndpoint(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected runner object, got %T", agentStatus["runner"])
 	}
-	if runner["id"] != "claude" {
-		t.Fatalf("expected runner id=claude, got %v", runner["id"])
+	if runner["id"] != "opencode" {
+		t.Fatalf("expected runner id=opencode, got %v", runner["id"])
 	}
-	if runner["name"] != "Claude Code" {
-		t.Fatalf("expected runner name=Claude Code, got %v", runner["name"])
+	if runner["name"] != "OpenCode" {
+		t.Fatalf("expected runner name=OpenCode, got %v", runner["name"])
 	}
 
 	system, ok := agentStatus["system"].(map[string]interface{})

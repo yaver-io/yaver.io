@@ -227,6 +227,8 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
   assert.match(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
   assert.doesNotMatch(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/(?!yaver\.io\.git)/);
   assert.match(byok, /-v \/srv\/yaver\/state\/Workspace:\/srv\/yaver\/workspace/);
+  assert.match(byok, /\/etc\/yaver\/workspace-repos/);
+  assert.match(byok, /invalid directory/);
   assert.match(byok, /-e YAVER_CLOUD_WORKSPACE=1/);
   assert.doesNotMatch(byok, /HC_Volume_/);
   assert.doesNotMatch(byok, /ghcr\.io\/get-convex\/convex-backend/);

@@ -13,7 +13,7 @@ export type RunnerModelDefaults = Record<"claude" | "codex" | "opencode", Runner
 export const YAVER_MODEL_DEFAULTS: RunnerModelDefaults = {
   claude: { model: "claude-opus-4-8" },
   codex: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
-  opencode: { model: "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash" },
+  opencode: { model: "deepseek/deepseek-chat" },
 };
 
 export function canonicalModelRunnerId(value: unknown): keyof RunnerModelDefaults | null {

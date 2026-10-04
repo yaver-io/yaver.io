@@ -19,6 +19,18 @@ export type HetznerServer = {
   created: string | null;
 };
 
+export type HetznerPowerTarget = "running" | "off";
+
+export type HetznerActionLog = {
+  id: number;
+  command: string;
+  status: string;
+  started: string | null;
+  finished: string | null;
+  progress: number | null;
+  errorCode: string | null;
+};
+
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 type WaitLike = (milliseconds: number) => Promise<void>;
 
@@ -74,6 +86,19 @@ function normalizeServer(server: any): HetznerServer {
   };
 }
 
+export async function getHetznerServer(
+  token: string,
+  serverId: number,
+  fetchImpl: FetchLike = fetch,
+): Promise<HetznerServer> {
+  const body = await request(token, `/servers/${encodeURIComponent(String(serverId))}`, {}, fetchImpl);
+  const server = normalizeServer(body?.server);
+  if (!Number.isSafeInteger(server.id) || server.id <= 0) {
+    throw new HetznerDirectError(502, "invalid_server");
+  }
+  return server;
+}
+
 export async function validateHetznerToken(token: string, fetchImpl: FetchLike = fetch): Promise<void> {
   await request(token, "/servers?per_page=1", {}, fetchImpl);
 }
@@ -83,14 +108,41 @@ export async function listHetznerServers(token: string, fetchImpl: FetchLike = f
   return Array.isArray(body?.servers) ? body.servers.map(normalizeServer) : [];
 }
 
+export async function listHetznerServerActions(
+  token: string,
+  serverId: number,
+  fetchImpl: FetchLike = fetch,
+): Promise<HetznerActionLog[]> {
+  const body = await request(
+    token,
+    `/servers/${encodeURIComponent(String(serverId))}/actions?sort=started:desc&per_page=20`,
+    {},
+    fetchImpl,
+  );
+  return Array.isArray(body?.actions) ? body.actions.map((action: any) => ({
+    id: Number(action?.id),
+    command: String(action?.command || "unknown"),
+    status: String(action?.status || "unknown"),
+    started: action?.started ? String(action.started) : null,
+    finished: action?.finished ? String(action.finished) : null,
+    progress: Number.isFinite(Number(action?.progress)) ? Number(action.progress) : null,
+    // Provider error messages can contain user-controlled resource data. Only
+    // the stable code is safe to expose in the local UI.
+    errorCode: action?.error?.code ? String(action.error.code) : null,
+  })).filter((action: HetznerActionLog) => Number.isSafeInteger(action.id) && action.id > 0) : [];
+}
+
 export async function powerOnHetznerServer(
   token: string,
   serverId: number,
   fetchImpl: FetchLike = fetch,
   wait?: WaitLike,
-): Promise<void> {
+): Promise<HetznerServer> {
+  const before = await getHetznerServer(token, serverId, fetchImpl);
+  if (before.status === "running") return before;
   const body = await request(token, `/servers/${encodeURIComponent(String(serverId))}/actions/poweron`, { method: "POST" }, fetchImpl);
   await waitForAction(token, body?.action, fetchImpl, wait);
+  return waitForServerState(token, before, "running", fetchImpl, wait);
 }
 
 export async function shutdownHetznerServer(
@@ -98,9 +150,59 @@ export async function shutdownHetznerServer(
   serverId: number,
   fetchImpl: FetchLike = fetch,
   wait?: WaitLike,
-): Promise<void> {
+): Promise<HetznerServer> {
+  const before = await getHetznerServer(token, serverId, fetchImpl);
+  if (before.status === "off") return before;
   const body = await request(token, `/servers/${encodeURIComponent(String(serverId))}/actions/shutdown`, { method: "POST" }, fetchImpl);
   await waitForAction(token, body?.action, fetchImpl, wait);
+  return waitForServerState(token, before, "off", fetchImpl, wait);
+}
+
+export async function renameHetznerServer(
+  token: string,
+  serverId: number,
+  name: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<HetznerServer> {
+  const nextName = name.trim();
+  if (!nextName || nextName.length > 64 || /[\x00-\x20\x7f]/.test(nextName)) {
+    throw new HetznerDirectError(400, "invalid_server_name");
+  }
+  const before = await getHetznerServer(token, serverId, fetchImpl);
+  const body = await request(token, `/servers/${encodeURIComponent(String(serverId))}`, {
+    method: "PUT",
+    body: JSON.stringify({ name: nextName }),
+  }, fetchImpl);
+  const renamed = normalizeServer(body?.server);
+  if (renamed.id !== before.id || renamed.ip !== before.ip || renamed.name !== nextName) {
+    throw new HetznerDirectError(409, "server_identity_changed");
+  }
+  return renamed;
+}
+
+async function waitForServerState(
+  token: string,
+  before: HetznerServer,
+  target: HetznerPowerTarget,
+  fetchImpl: FetchLike,
+  wait: WaitLike | undefined,
+): Promise<HetznerServer> {
+  const pause = wait ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    const current = await getHetznerServer(token, before.id, fetchImpl);
+    if (current.id !== before.id || current.ip !== before.ip) {
+      // Power transitions must never replace a server or its Primary IPv4.
+      // Do not silently report completion if the provider response violates
+      // that identity-preservation contract.
+      throw new HetznerDirectError(409, "server_identity_changed");
+    }
+    if (current.status === target) return current;
+    if (current.status === "deleting" || current.status === "rebuilding") {
+      throw new HetznerDirectError(409, "unexpected_destructive_state");
+    }
+    await pause(2_000);
+  }
+  throw new HetznerDirectError(504, "server_state_timeout");
 }
 
 async function waitForAction(

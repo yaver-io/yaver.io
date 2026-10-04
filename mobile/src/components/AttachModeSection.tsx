@@ -281,7 +281,7 @@ export default function AttachModeSection({
   // instead of maintaining a second Dogfood-only choice.
   useEffect(() => {
     if (!targetDevice?.id) return;
-    setRunner(primaryRunnerByDevice[targetDevice.id] || "codex");
+    setRunner(primaryRunnerByDevice[targetDevice.id] || "opencode");
   }, [primaryRunnerByDevice, targetDevice?.id]);
 
   useEffect(() => {

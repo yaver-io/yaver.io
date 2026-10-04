@@ -6185,12 +6185,19 @@ http.route({
     }
     const modelDefaults = parseRunnerModelDefaults(config[MODEL_DEFAULTS_CONFIG_KEY]);
     const effectiveModels = applyRunnerModelDefaults(models, modelDefaults);
+    const productPolicy = {
+      defaultRunner: config.default_runner || "opencode",
+      primaryCloudProvider: config.primary_cloud_provider || "hetzner",
+      remoteRunnerOAuthEnabled: config.remote_runner_oauth_enabled === "true",
+      deviceRoles: ["master", "worker"],
+    };
     return new Response(
       JSON.stringify({
         relayServers,
         runners,
         models: effectiveModels,
         modelDefaults,
+        productPolicy,
         cliVersion: config.cli_version || null,
         mobileVersion: config.mobile_version || null,
         relayVersion: config.relay_version || null,

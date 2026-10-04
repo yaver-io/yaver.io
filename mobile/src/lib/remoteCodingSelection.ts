@@ -13,10 +13,10 @@ export type DeviceIdentityLike = {
   os?: string | null;
 };
 
-// OpenCode default = DeepSeek V4.1 Flash through DeepInfra, kept in lockstep
-// with web DEFAULT_MODEL_BY_RUNNER. The provider-qualified form is required
-// because OpenCode validates selections as provider/model.
-export const HETZNER_OPENCODE_MODEL = "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash";
+// OpenCode default = the live-verified direct DeepSeek Chat model, kept in lockstep with the
+// endpoint-local OpenCode configuration and web DEFAULT_MODEL_BY_RUNNER.
+// Yaver never receives the provider credential.
+export const HETZNER_OPENCODE_MODEL = "deepseek/deepseek-chat";
 
 export function isKivancAccount(email: string | null | undefined): boolean {
   const normalized = String(email || "").trim().toLowerCase();

@@ -50,6 +50,7 @@ import type * as crons from "../crons.js";
 import type * as developerLogs from "../developerLogs.js";
 import type * as deviceCode from "../deviceCode.js";
 import type * as deviceEvents from "../deviceEvents.js";
+import type * as deviceFootprintPurge from "../deviceFootprintPurge.js";
 import type * as deviceIdentityMerge from "../deviceIdentityMerge.js";
 import type * as deviceLabels from "../deviceLabels.js";
 import type * as deviceMetrics from "../deviceMetrics.js";
@@ -173,6 +174,7 @@ declare const fullApi: ApiFromModules<{
   developerLogs: typeof developerLogs;
   deviceCode: typeof deviceCode;
   deviceEvents: typeof deviceEvents;
+  deviceFootprintPurge: typeof deviceFootprintPurge;
   deviceIdentityMerge: typeof deviceIdentityMerge;
   deviceLabels: typeof deviceLabels;
   deviceMetrics: typeof deviceMetrics;

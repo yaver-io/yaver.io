@@ -1,7 +1,7 @@
 {
   "version": 1,
   "provider": "hetzner",
-  "allowedActions": ["list", "power_on", "shutdown"],
+  "allowedActions": ["list", "rename", "power_on", "shutdown"],
   "surfaces": [
     { "id": "ios", "state": "supported", "execution": "device_direct", "credential": "apple_keychain", "evidence": "mobile/src/lib/clientCloudProvider.ts" },
     { "id": "android", "state": "supported", "execution": "device_direct", "credential": "android_keystore", "evidence": "mobile/src/lib/clientCloudProvider.ts" },
