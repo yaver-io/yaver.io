@@ -607,8 +607,8 @@ function runnerChipTitle(state: RunnerChipState): string {
         state.authVerifiedAt ? `, last confirmed ${new Date(state.authVerifiedAt).toLocaleString()}` : ""
       }`;
     case "needs-auth": return state.authVerified === false
-      ? `${state.label}: credentials were found, but the runner has not verified them. Click to refresh remote OAuth.`
-      : `${state.label}: installed but not signed in — click "Sign in" on this runner to authorize it with your Claude Max / ChatGPT Plus subscription`;
+      ? `${state.label}: its native CLI found credentials but has not verified them. Open this device's encrypted terminal and test or sign in there.`
+      : `${state.label}: installed but not signed in. Open this device's encrypted terminal and use the runner's native sign-in command.`;
     case "down": return `${state.label}: detected but reporting an error: ${state.hint ?? "unknown"}`;
     case "not-installed": return `${state.label}: not installed on this machine`;
     default: return state.label;
@@ -643,7 +643,7 @@ function RunnerStatusChip({
   onSignIn: (runnerId: string) => void;
   primary?: boolean;
 }) {
-  const canSignIn = !!token && state.health === "needs-auth" && (state.id === "claude" || state.id === "codex");
+  const canSignIn = false;
   const inner = (
     <>
       <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
@@ -659,7 +659,7 @@ function RunnerStatusChip({
         type="button"
         onClick={() => onSignIn(state.id)}
         className={className}
-        title={`${runnerChipTitle(state)}\nClick to open remote OAuth.`}
+        title={runnerChipTitle(state)}
       >
         {inner}
       </button>
@@ -707,7 +707,7 @@ function RunnerChipWithTest({
   const [local, setLocal] = useState<LocalState>({ kind: "idle" });
   const inFlight = useRef(false);
 
-  const supportsBrowserAuth = state.id === "claude" || state.id === "codex";
+  const supportsBrowserAuth = false;
   const isLocalLLM = state.id === "ollama" || state.id === "aider-ollama";
   // Cloud LLMs need an online device; local LLMs need the agent reachable too.
   const canTest =
@@ -753,12 +753,6 @@ function RunnerChipWithTest({
         // "sign in" / "auth ✓" badge accordingly — without this the
         // sidebar stayed stale until the user reloaded the page.
         broadcastPrimaryRunnerChange();
-      } else if (result.needsAuth && result.supportsBrowserAuth) {
-        // Auto fall-through: this is a cloud LLM that needs sign-in
-        // and we have a headless flow for it. Skip the red error and
-        // open the modal directly so one click = signed in.
-        setLocal({ kind: "idle" });
-        onSignIn(state.id);
       } else {
         setLocal({ kind: "fail", result });
       }

@@ -822,14 +822,22 @@ func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machi
 	if strings.Contains(strings.ToLower(row.Error), "blocking the sandbox") {
 		return false, fmt.Errorf("%s: Linux is blocking codex's sandbox (userns sysctls) — apply /etc/sysctl.d/99-yaver-runner-sandbox.conf on the box (re-provision does this automatically)", machine)
 	}
+	if !row.AuthConfigured {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "→ %s is not signed in on %s; opening its native PTY so the runner can handle sign-in directly\r\n", runnerID, machine)
+		}
+		return false, nil
+	}
 	// A runner that is merely signed out is repairable below; only surface a
 	// hard error for the states we cannot fix from here (broken install,
 	// unusable provider config, an explicitly rejected token).
 	if row.AuthConfigured && (!row.Ready || strings.TrimSpace(row.Error) != "") {
 		msg := firstNonEmptyBrowserAuth(row.Error, row.Warning, row.Detail, "runner is not ready")
 		if IsRunnerAuthFailureOutput(msg) == runnerID {
-			return false, fmt.Errorf("%s auth on %s is not usable: %s — re-authenticate with `yaver primary auth %s` or `yaver runner-auth setup %s --target %s`",
-				runnerID, machine, msg, runnerID, runnerID, machine)
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "→ %s auth on %s needs attention (%s); opening the native PTY\r\n", runnerID, machine, msg)
+			}
+			return false, nil
 		}
 		return false, fmt.Errorf("%s on %s is not ready: %s", runnerID, machine, msg)
 	}
@@ -862,6 +870,10 @@ func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machi
 		return false, nil
 	}
 
+	// Legacy mirror/device-auth implementation below is unreachable: unsigned-in
+	// runners return above and authenticate in their native PTY. It remains only
+	// while rolling older callers forward and can be deleted after compatibility
+	// support expires.
 	// 2) Mirror from this machine when we hold a real credential.
 	switch runnerID {
 	case "claude", "codex", "opencode":

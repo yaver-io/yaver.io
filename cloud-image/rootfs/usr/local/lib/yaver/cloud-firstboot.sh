@@ -120,7 +120,8 @@ cat >/etc/motd <<EOF
   Yaver Cloud Image — provider=$PROVIDER
 
   Next steps:
-    yaver auth --headless         # sign in (subscription OAuth)
+    yaver auth --headless         # sign in to this Yaver device
+    yaver terminal                # native PTY; sign in to runner CLIs here
     yaver status                  # confirm agent is reachable
 
   Agent: systemctl status yaver-agent

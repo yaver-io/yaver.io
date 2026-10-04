@@ -1,18 +1,12 @@
 package main
 
-import (
-	"sync/atomic"
-)
-
-var remoteRunnerOAuthPolicy atomic.Bool
-
-// Remote runner OAuth is an optional compatibility feature controlled by
-// Convex platformConfig. It defaults off until a verified config fetch says
-// otherwise, so backend/config outages fail closed.
+// Yaver transports a native PTY; it does not broker a coding runner's OAuth.
+// Keep the policy function while older clients roll forward, but deliberately
+// make it impossible for a server-side flag to re-enable credential capture,
+// callback replay, or cross-device runner credential transfer.
 func remoteRunnerOAuthEnabled() bool {
-	return remoteRunnerOAuthPolicy.Load()
+	return false
 }
 
-func applyProductPolicy(policy PlatformProductPolicy) {
-	remoteRunnerOAuthPolicy.Store(policy.RemoteRunnerOAuthEnabled)
+func applyProductPolicy(_ PlatformProductPolicy) {
 }

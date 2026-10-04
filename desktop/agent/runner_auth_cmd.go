@@ -26,15 +26,12 @@ func runRunnerAuth(args []string) {
 		printRunnerAuthUsage()
 		return
 	}
-	if target, runner, extra, ok := parseRunnerAuthQuickFlow(args); ok {
-		runRunnerAuthQuickFlow(target, runner, extra)
-		return
-	}
 	switch args[0] {
 	case "status", "ls", "list":
 		runRunnerAuthStatus(args[1:])
 	case "set":
-		runRunnerAuthSet(args[1:])
+		fmt.Fprintln(os.Stderr, "runner-auth set was removed: open an encrypted Yaver PTY and configure/sign in with the runner's native CLI")
+		os.Exit(2)
 	case "setup":
 		runRunnerAuthSetup(args[1:])
 	case "help", "-h", "--help":
@@ -47,30 +44,21 @@ func runRunnerAuth(args []string) {
 }
 
 func printRunnerAuthUsage() {
-	fmt.Print(`yaver runner-auth — headless runner/provider auth setup
+	fmt.Print(`yaver runner-auth — native runner readiness and install-only setup
 
 Usage:
   yaver runner-auth status [--target <deviceId>]
-  yaver runner-auth <deviceId|name|alias> <claude|claude-code|codex>
-  yaver runner-auth set opencode [--target <deviceId>] [--openai-api-key <key>] [--anthropic-api-key <key>] [--glm-api-key <key>] [--zai-api-key <key>]
-  yaver runner-auth set glm [--target <deviceId>] [--glm-api-key <key>] [--zai-api-key <key>]
-  yaver runner-auth setup claude [--target <deviceId>] [--no-install] [--no-login] [--no-mcp]
-  yaver runner-auth setup codex [--target <deviceId>] [--no-install] [--no-login] [--no-mcp]
+  yaver runner-auth setup <claude|codex|opencode> [--target <deviceId>] [--no-install]
 
 Examples:
-  yaver runner-auth test codex
-  yaver runner-auth test claude-code
   yaver runner-auth status --target cloud-12345678
-
-  yaver runner-auth set opencode --glm-api-key $GLM_API_KEY --target cloud-12345678
+  yaver runner-auth setup opencode --target cloud-12345678
 
 Notes:
-  - <device> <runner> is the interactive remote auth shortcut: it checks local Yaver auth, checks the target machine's Yaver auth, runs remote 'yaver auth --headless' over 'yaver ssh' if needed, then starts the remote Claude/Codex browser auth flow and prints the link/code.
-  - Subscription OAuth (Max Pro / ChatGPT Plus) is the canonical path. The first-class glass / phone helper lives in the Yaver mobile app under "Runner Auth" — it mirrors credentials from a signed-in Mac to any other box via owner-authenticated QUIC, no API keys involved.
-  - Provider keys are only for OpenCode/GLM provider configuration. Claude Code and Codex use plan OAuth or credential import.
-  - Provider values are stored in the target machine's Yaver vault.
-  - setup also installs the runner when missing and wires Yaver into the runner's MCP config when supported.
-  - --target uses the existing Yaver remote-agent channel; it does not require SSH.
+  - Yaver never accepts, stores, mirrors, or brokers runner credentials/OAuth.
+  - setup installs the native CLI only and reports readiness.
+  - To authenticate, open the endpoint's encrypted Yaver terminal and use the
+    runner's own sign-in/configuration command. Its files remain endpoint-local.
 `)
 }
 

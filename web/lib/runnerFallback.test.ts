@@ -92,8 +92,8 @@ const soloOauth = [
 ];
 const stuck = planRunnerFix("codex", "auth", soloOauth);
 eq(stuck.candidate, null, "with only the broken runner present there is no candidate");
-ok(/remote oauth/i.test(stuck.blocked || ""),
-  "…and it names the actual route out — Remote OAuth on that box — rather than a spinner");
+ok(/encrypted terminal/i.test(stuck.blocked || ""),
+  "…and it names the native PTY route out rather than remote OAuth or a spinner");
 ok(!/fix with/i.test(stuck.blocked || ""), "it must not dangle a Fix button it cannot honour");
 
 // A proven credential outranks a merely-present one when OAuth is not at issue.

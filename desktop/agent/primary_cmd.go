@@ -228,7 +228,9 @@ func runPrimaryAuth(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "primary auth: unsupported runner %q. Use claude / claude-code / codex / opencode.\n", args[0])
 		os.Exit(1)
 	}
-	runRunnerQuickFlow(current, runner, args[1:])
+	// Runner authentication is the runner's own interactive concern. Reuse the
+	// native primary PTY launcher instead of starting or relaying OAuth.
+	runPrimaryRunnerQuickFlow(runner, args[1:])
 }
 
 // resolvePrimaryDeviceForRemote loads the caller's Convex creds, looks up the
@@ -661,8 +663,8 @@ Usage:
   yaver primary auth              Run remote 'yaver auth --headless' on
                                   the primary device (Yaver-level auth)
   yaver primary auth <claude|claude-code|codex|opencode>
-                                  Run the runner sanity/auth flow on the
-                                  primary device for the named coding agent
+                                  Open that native runner in the primary
+                                  device's encrypted PTY; sign in there
   yaver primary signout [-y]      Sign the primary device out (clears its
                                   Yaver auth token + marks it offline; the
                                   agent stays running but enters

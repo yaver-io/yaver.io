@@ -83,9 +83,9 @@ function addNpmGlobalBinToProcessPath() {
 
 function installMissingCodingRunners() {
   const plan = codingRunnerBootstrapPlan(CODING_RUNNER_BOOTSTRAP, commandExists);
-  if (plan.installed.length > 0) {
+  if (plan.installed.length > 0 && plan.toInstall.length === 0) {
     const labels = plan.installed.map((entry) => entry.label).join(", ");
-    log(`Using existing coding runner${plan.installed.length === 1 ? "" : "s"}: ${labels}. Other runners were not installed.`);
+    log(`All native coding runner CLIs are already installed: ${labels}.`);
     return;
   }
 
@@ -94,30 +94,9 @@ function installMissingCodingRunners() {
   try {
     installGlobalNpmPackages(packages);
     addNpmGlobalBinToProcessPath();
-    log(`Installed missing coding runners: ${labels}.`);
+    log(`Installed missing native coding runner CLIs: ${labels}. Sign in with each CLI in a Yaver PTY.`);
   } catch (error) {
     log(`Skipping coding runner bootstrap: ${error.message}`);
-  }
-}
-
-async function setupMCPForInstalledRunners() {
-  const targets = [
-    { command: "claude", client: "claude-code", label: "Claude Code" },
-    { command: "codex", client: "codex", label: "Codex" },
-    { command: "opencode", client: "opencode", label: "OpenCode" },
-  ];
-  const configured = [];
-  for (const target of targets) {
-    if (!commandExists(target.command)) continue;
-    try {
-      await runAgentCommand(["mcp", "setup", target.client], { quiet: true });
-      configured.push(target.label);
-    } catch (error) {
-      log(`Skipping MCP setup for ${target.label}: ${error.message}`);
-    }
-  }
-  if (configured.length > 0) {
-    log(`Registered Yaver MCP in: ${configured.join(", ")}.`);
   }
 }
 
@@ -291,6 +270,23 @@ function installTestRunnerTools() {
   }
 }
 
+async function provisionCompleteAutomationHostBase() {
+  if (process.platform !== "linux") return;
+  try {
+    await runAgentCommand(["install", "docker"], { quiet: true });
+  } catch (error) {
+    log(`Skipping Docker bootstrap for Redroid: ${error.message}`);
+    return;
+  }
+  if (!commandExists("docker")) return;
+  try {
+    execFileSync("docker", ["pull", "redroid/redroid:13.0.0-latest"], { stdio: "inherit" });
+    log("Preloaded the Redroid Android test image. Runtime still requires Linux binder support and an explicitly privileged QA launch.");
+  } catch (error) {
+    log(`Skipping Redroid image preload: ${error.message}`);
+  }
+}
+
 // Make sure `yaver` resolves on PATH for the next shell session. npm's
 // global prefix (e.g. ~/.npm-global/bin) is not on PATH by default on
 // most Linux distros — so `npm install -g yaver-cli` succeeds but
@@ -457,6 +453,12 @@ async function main() {
     return;
   }
 
+  // Explicit full-lab mode for dedicated Yaver cloud/CI machines. Do not key
+  // this off generic CI=1: package installs in unrelated CI jobs must stay
+  // small. YAVER_CI=1 means this host is intentionally the automation lab.
+  const completeAutomationHost =
+    envEnabled("YAVER_CI") || envEnabled("YAVER_COMPLETE_AUTOMATION_HOST");
+
   let installedBinary = null;
   try {
     installedBinary = await ensureAgentBinary({ quiet: true });
@@ -512,6 +514,9 @@ async function main() {
   ensureLinuxRunnerSandboxPackages();
   ensureLinuxRunnerSandboxSupport();
   reportLinuxRunnerSandboxStatus();
+  if (completeAutomationHost) {
+    await provisionCompleteAutomationHostBase();
+  }
 
   if (process.platform === "win32") {
     // Windows is a first-class Yaver node. The mobile/remote-runtime bootstrap
@@ -520,7 +525,6 @@ async function main() {
     // the install came from PowerShell.
     if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
       installMissingCodingRunners();
-      await setupMCPForInstalledRunners();
     }
     await installDesktopCompanion();
     return;
@@ -531,7 +535,6 @@ async function main() {
   if (envEnabled("YAVER_SKIP_POSTINSTALL_MOBILE")) {
     if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
       installMissingCodingRunners();
-      await setupMCPForInstalledRunners();
     }
     await installDesktopCompanion();
     return;
@@ -548,7 +551,7 @@ async function main() {
   // bundle-push path above. Native mirroring is a separate, multi-gigabyte
   // capability (Android SDK + system image, Flutter, WebRTC helpers) and must
   // follow explicit user intent instead of blocking a routine CLI update.
-  if (envEnabled("YAVER_POSTINSTALL_REMOTE_RUNTIME") && !envEnabled("YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME")) {
+  if ((completeAutomationHost || envEnabled("YAVER_POSTINSTALL_REMOTE_RUNTIME")) && !envEnabled("YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME")) {
     try {
       await runAgentCommand(["install", "remote-runtime"], { quiet: true });
       log("Provisioned native remote-runtime host tools (Android everywhere; macOS host helpers where supported).");
@@ -576,7 +579,6 @@ async function main() {
 
   if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
     installMissingCodingRunners();
-    await setupMCPForInstalledRunners();
   }
 
   await installDesktopCompanion();
@@ -585,7 +587,7 @@ async function main() {
   // Android system image, Appium and Maestro; silently running it during
   // `yaver update` exhausted disk and kept an already-downloaded agent stale
   // under launchd on macOS (2026-09-10).
-  if (envEnabled("YAVER_POSTINSTALL_VIBE_PREVIEW") && !envEnabled("YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW")) {
+  if ((completeAutomationHost || envEnabled("YAVER_POSTINSTALL_VIBE_PREVIEW")) && !envEnabled("YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW")) {
     try {
       await runAgentCommand(["install", "vibe-preview"], { quiet: true });
       log("Provisioned Vibe Preview tool stack (chromium + ffmpeg + maestro + appium + adb).");
@@ -596,7 +598,7 @@ async function main() {
 
   // Optional browser test lab, also positive opt-in because it downloads a
   // browser. `yaver test` can offer this route when the user chooses it.
-  if (envEnabled("YAVER_POSTINSTALL_TESTKIT") && !envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
+  if ((completeAutomationHost || envEnabled("YAVER_POSTINSTALL_TESTKIT")) && !envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
     installTestRunnerTools();
   }
 
@@ -614,7 +616,9 @@ async function main() {
     }
   }
 
-  log("React Native / Expo core is ready. Native runtime, Vibe Preview, browser-test, voice, and VSR labs install on demand when selected.");
+  log(completeAutomationHost
+    ? "Complete Yaver automation host is ready (native runtime, browser tests, Redroid-capable testkit, Hermes, and runner CLIs). Platform SDK limits still apply: Apple simulators require macOS."
+    : "React Native / Expo core is ready. Native runtime, Vibe Preview, browser-test, voice, and VSR labs install on demand when selected.");
 }
 
 main()

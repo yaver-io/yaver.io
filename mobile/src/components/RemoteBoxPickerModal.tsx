@@ -1237,11 +1237,6 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             {codingStatus?.path ? ` · ${codingStatus.path}` : ""}
                           </Text>
                         ) : codingRunners.length > 0 ? (
-                          // "Claude Code auth needed" used to be dead text: it named
-                          // the blocker and then abandoned you. The remote-OAuth flow
-                          // already existed (RunnerAuthModal) but was buried in the
-                          // device-details sheet, which nobody opens while picking a
-                          // machine. Put the fix where the problem is stated.
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
                             <Text style={{ color: c.warn, fontSize: 11, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>
                               {codingRunners.map((r) => {
@@ -1250,47 +1245,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                                 return `${runnerDisplayName(r.id)} not ready`;
                               }).join(" · ")}
                             </Text>
-                            {(() => {
-                              // Browser OAuth only covers claude/codex; opencode
-                              // authenticates through provider config, and offering
-                              // it a "Sign in" button that opens an OAuth page the
-                              // user cannot complete is worse than offering nothing.
-                              const signInTarget = codingRunners.find(
-                                (r) =>
-                                  r.installed &&
-                                  !r.authConfigured &&
-                                  ["claude", "claude-code", "codex"].includes(r.id),
-                              );
-                              if (!signInTarget) return null;
-                              return (
-                                <Pressable
-                                  onPress={(e: any) => {
-                                    // Don't let the tap fall through to the row, which
-                                    // would select the box and close the picker out
-                                    // from under the auth sheet.
-                                    e?.stopPropagation?.();
-                                    setAuthTarget({
-                                      deviceId: device.id,
-                                      deviceName: device.name || device.id,
-                                      runner: signInTarget.id,
-                                    });
-                                  }}
-                                  hitSlop={6}
-                                  style={{
-                                    paddingHorizontal: 8,
-                                    paddingVertical: 3,
-                                    borderRadius: 6,
-                                    backgroundColor: "#f59e0b22",
-                                    borderWidth: 1,
-                                    borderColor: "#f59e0b66",
-                                  }}
-                                >
-                                  <Text style={{ color: "#f59e0b", fontSize: 11, fontWeight: "700" }}>
-                                    Sign in →
-                                  </Text>
-                                </Pressable>
-                              );
-                            })()}
+                            <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                              Open Terminal and sign in with the runner's native CLI
+                            </Text>
                           </View>
                         ) : codingStatus?.probeState && codingStatus.probeState !== "ok" ? (
                           <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>

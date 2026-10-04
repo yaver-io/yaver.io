@@ -14,7 +14,7 @@ test("global bootstrap names all three official first-class runner packages", ()
   assert.match(source, /opencode-ai/);
 });
 
-test("an existing OpenCode install is wired without installing competing runners", () => {
+test("an existing OpenCode install is preserved while missing runner binaries are installed", () => {
   const entries = [
     { command: "claude", pkg: "claude" },
     { command: "codex", pkg: "codex" },
@@ -22,9 +22,9 @@ test("an existing OpenCode install is wired without installing competing runners
   ];
   const plan = codingRunnerBootstrapPlan(entries, (command) => command === "opencode");
   assert.deepEqual(plan.installed.map((entry) => entry.command), ["opencode"]);
-  assert.deepEqual(plan.toInstall, []);
-  assert.match(source, /Other runners were not installed/);
-  assert.match(source, /setupMCPForInstalledRunners/);
+  assert.deepEqual(plan.toInstall.map((entry) => entry.command), ["claude", "codex"]);
+  assert.doesNotMatch(source, /setupMCPForInstalledRunners/);
+  assert.match(source, /Sign in with each CLI in a Yaver PTY/);
 });
 
 test("a fresh machine still receives the supported runner bootstrap", () => {
@@ -41,7 +41,7 @@ test("a fresh machine still receives the supported runner bootstrap", () => {
 test("PowerShell/global Windows installs bootstrap runners before returning", () => {
   const windowsBranch = source.slice(source.lastIndexOf('if (process.platform === "win32") {'));
   assert.match(windowsBranch, /installMissingCodingRunners\(\)/);
-  assert.match(windowsBranch, /setupMCPForInstalledRunners\(\)/);
+  assert.doesNotMatch(windowsBranch, /setupMCPForInstalledRunners\(\)/);
   assert.match(source, /where\.exe/);
   assert.match(source, /process\.platform === "win32" \? prefix/);
 });
@@ -68,4 +68,14 @@ test("default postinstall is React Native first and heavy labs require positive 
       `${name} must require explicit opt-in`);
   }
   assert.match(source, /React Native \/ Expo core is ready/);
+});
+
+test("dedicated Yaver CI installs the complete cross-platform automation lab", () => {
+  assert.match(source, /envEnabled\("YAVER_CI"\)/);
+  assert.match(source, /completeAutomationHost \|\| envEnabled\("YAVER_POSTINSTALL_REMOTE_RUNTIME"\)/);
+  assert.match(source, /completeAutomationHost \|\| envEnabled\("YAVER_POSTINSTALL_VIBE_PREVIEW"\)/);
+  assert.match(source, /completeAutomationHost \|\| envEnabled\("YAVER_POSTINSTALL_TESTKIT"\)/);
+  assert.match(source, /docker", \["pull", "redroid\/redroid:13\.0\.0-latest"/);
+  assert.match(source, /Runtime still requires Linux binder support/);
+  assert.match(source, /Apple simulators require macOS/);
 });

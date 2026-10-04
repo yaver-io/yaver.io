@@ -351,10 +351,8 @@ if ! command -v aider >/dev/null 2>&1; then
 fi
 
 log "claude code + codex (npm globals)"
-# The two subscription-OAuth runners. Install-only: auth NEVER lands on this
-# box at provision time — it arrives later via runner_auth_mirror /
-# credentials_import from a signed-in machine, or `codex login --device-auth` /
-# `claude auth login` relayed through the agent's browser-auth flow.
+# Install binaries only. Yaver never brokers, imports, or mirrors runner OAuth
+# material. The owner signs in using each native CLI inside an encrypted PTY.
 if ! command -v claude >/dev/null 2>&1; then
   npm install -g @anthropic-ai/claude-code || log "WARN: claude-code install failed (non-fatal)"
 fi
@@ -396,6 +394,30 @@ if ! command -v yaver >/dev/null 2>&1; then
   fi
 fi
 
+log "complete browser/mobile automation lab"
+# Dedicated Yaver cloud/CI images carry the heavy lab by design. This fills
+# gaps left by the explicit bootstrap above: Chrome/ffmpeg, Maestro, Appium,
+# adb and Android host tooling. Redroid itself is pulled when a QA run starts;
+# the preflight records whether the Linux host kernel exposes binder support.
+if command -v yaver >/dev/null 2>&1; then
+  yaver install vibe-preview || log "WARN: vibe-preview install reported a gap (non-fatal; preflight records it)"
+fi
+if ! npm list -g playwright --depth=0 >/dev/null 2>&1; then
+  npm install -g --no-fund --no-audit playwright || log "WARN: Playwright package install failed"
+fi
+npx --yes playwright install chromium || log "WARN: Playwright Chromium install failed"
+docker pull redroid/redroid:13.0.0-latest || log "WARN: Redroid image preload failed; QA will retry on first use"
+{
+  echo "chrome=$(google-chrome --version 2>&1 | head -1 || chromium --version 2>&1 | head -1)"
+  echo "playwright=$(npm list -g playwright --depth=0 2>&1 | tail -1)"
+  echo "adb=$(adb version 2>&1 | head -1)"
+  if [ -e /dev/binderfs ] || lsmod 2>/dev/null | grep -q '^binder_linux'; then
+    echo "redroid_host=supported"
+  else
+    echo "redroid_host=kernel_support_required"
+  fi
+} >> /var/lib/yaver-remote-runtime.preflight 2>&1 || true
+
 log "vault self-heal (headless boxes have no interactive key recovery)"
 # A v2 vault whose master key is lost/swapped is cryptographically dead and
 # bricks every vault op (runner-auth, provider keys) — exactly what blocked
@@ -404,23 +426,6 @@ log "vault self-heal (headless boxes have no interactive key recovery)"
 # starts fresh under the current master key. System-wide so `yaver serve` and
 # interactive `yaver runner-auth`/`yaver vault` all see it.
 grep -q '^YAVER_VAULT_AUTO_RESET=' /etc/environment 2>/dev/null || echo 'YAVER_VAULT_AUTO_RESET=1' >> /etc/environment
-
-log "wire Yaver (+ Talos) MCP into runners"
-# Register Yaver as an MCP server inside claude-code / codex / opencode so a
-# runner launched on this box can call Yaver's own tools — and, when the
-# operator has set TALOS_MCP_URL / TALOS_MCP_LICENSE, Talos's tools too
-# (federated behind Yaver's MCP as an ACL peer). Runs as the `yaver` user
-# because that's who owns the runner configs (~/.claude.json, ~/.codex,
-# ~/.config/opencode) and who the agent spawns runners as. `mcp setup all`
-# is idempotent and skips any runner that isn't installed, so it's safe to
-# re-run on every golden-image rebuild and on box wake.
-if command -v yaver >/dev/null 2>&1 && id yaver >/dev/null 2>&1; then
-  sudo -iu yaver env \
-    TALOS_MCP_URL="${TALOS_MCP_URL:-}" \
-    TALOS_MCP_AUTH="${TALOS_MCP_AUTH:-}" \
-    TALOS_MCP_LICENSE="${TALOS_MCP_LICENSE:-}" \
-    bash -lc 'yaver mcp setup all' || log "WARN: mcp setup all failed (non-fatal)"
-fi
 
 log "system hermesc (linux-arm64 pre-warm)"
 # arm64 Linux boxes have no embedded prebuilt in the Go agent (see

@@ -63,7 +63,8 @@ var wedgeToolFamilies = map[string]bool{
 	"ssl": true, "domain": true, "proxy": true, "companion": true,
 	"microservice": true,
 
-	// ── Runners + remote OAuth. The thing the user could not do today.
+	// ── Native runner inventory + install-only bootstrap. Authentication is
+	// performed by the runner itself inside an encrypted PTY.
 	"runner": true, "list": true, "switch": true, "opencode": true, "copilot": true,
 	"models": true, "auth": true,
 

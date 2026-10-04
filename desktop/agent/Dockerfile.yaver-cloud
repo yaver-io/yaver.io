@@ -16,10 +16,9 @@
 # Run  :  docker run -d --name yaver -p 18080:18080 \
 #           -v yaver-home:/root ghcr.io/kivanccakmak/yaver-cloud:latest
 #
-# The /root volume persists ~/.yaver, ~/.claude, ~/.codex,
-# ~/.config/opencode, ~/.config/gh, ~/.config/glab — so the agent's
-# remote-OAuth sync (yaver + claude-code + codex + opencode) and the
-# GLM api-key setting survive container restarts / image upgrades.
+# The /root volume persists native CLI state across image upgrades. Yaver never
+# reads, copies, or brokers runner OAuth material; owners authenticate each CLI
+# directly in an encrypted PTY.
 
 # ── Stage 1: build the Yaver Go agent FROM SOURCE ────────────────────
 # The image build context is desktop/agent (see
@@ -77,7 +76,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake pkg-config \
       python3 python3-pip python3-venv \
       zip unzip jq tree ripgrep tmux zsh fzf vim file \
-      chromium ffmpeg fonts-liberation \
+      chromium ffmpeg fonts-liberation xvfb \
+      openjdk-17-jdk-headless android-sdk-platform-tools \
+      gstreamer1.0-tools gstreamer1.0-plugins-good \
+      gstreamer1.0-plugins-bad gstreamer1.0-libav \
+      bubblewrap uidmap qemu-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # ── GitHub CLI (gh) ──────────────────────────────────────────────────
@@ -109,12 +112,15 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # ── RN / Expo / Hermes bundling + deploy tooling ─────────────────────
 # hermesc ships per-project inside react-native; the toolchain needs
 # Node (above) + expo/eas + a global RN CLI for `yaver` /dev/build-native.
-RUN npm install -g expo-cli eas-cli @react-native-community/cli wrangler 2>/dev/null || true
+RUN npm install -g expo-cli eas-cli @react-native-community/cli wrangler \
+      playwright react-native@0.81.5 2>/dev/null || true \
+    && npx --yes playwright install chromium 2>/dev/null || true
+RUN HERMESC_PATH="$(find /usr/local/lib/node_modules/react-native/sdks/hermesc -type f -name hermesc -perm -0100 2>/dev/null | head -1)" \
+    && if [ -n "$HERMESC_PATH" ]; then install -m 0755 "$HERMESC_PATH" /usr/local/bin/hermesc; fi
 
-# ── Coding runners (subscription-OAuth at runtime, never API-key) ────
-# OAuth tokens are NOT baked in — they arrive via the mounted /root
-# volume + yaver's remote-auth sync. GLM api-key is an opencode setting
-# written to ~/.config/opencode at runtime, also on the volume.
+# ── Coding runner binaries (native CLI auth at runtime) ───────────────
+# No token is baked in or transported by Yaver. Users run each CLI's own login
+# command in the endpoint PTY; its state persists only in the mounted home.
 RUN npm install -g \
       @anthropic-ai/claude-code@latest \
       @openai/codex@latest \
@@ -160,9 +166,8 @@ exec yaver "$@"
 ENTRYPOINT_SH
 RUN chmod +x /usr/local/bin/yaver-cloud-entrypoint.sh
 
-# Persisted dirs (remote-OAuth + caches) — mounted as a Docker volume
-# so claude/codex/opencode/gh/glab/yaver auth + GLM api-key survive
-# restarts and image upgrades.
+# Persisted native CLI dirs + caches. These are endpoint-local files on the
+# user's own volume, not Yaver control-plane data.
 RUN mkdir -p /root/.yaver /root/.claude /root/.codex \
       /root/.config/opencode /root/.config/gh /root/.config/glab \
       /root/.npm /root/.cargo/registry /root/go/pkg/mod \

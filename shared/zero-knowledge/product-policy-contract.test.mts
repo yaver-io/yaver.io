@@ -12,14 +12,21 @@ test("Convex publishes the fail-closed product policy", () => {
   assert.match(http, /deviceRoles: \["master", "worker"\]/);
 });
 
-test("agent denies remote runner OAuth while task and tmux adapters remain generic", () => {
+test("agent exposes no remote runner OAuth transport while task and tmux adapters remain generic", () => {
   const policy = read("../../desktop/agent/runner_oauth_policy.go");
-  const auth = read("../../desktop/agent/runner_auth_browser_http.go");
+  const server = read("../../desktop/agent/httpserver.go");
+  const tools = read("../../desktop/agent/mcp_tools.go");
+  const ops = read("../../desktop/agent/ops_runner_auth.go");
   const tasks = read("../../desktop/agent/tasks.go");
   const code = read("../../desktop/agent/code_cmd.go");
-  assert.match(policy, /atomic\.Bool/);
-  assert.match(auth, /if !remoteRunnerOAuthEnabled\(\)/);
-  assert.match(auth, /sign in locally on the runner machine/);
+  assert.match(policy, /func remoteRunnerOAuthEnabled\(\) bool \{\s*return false/);
+  assert.doesNotMatch(server, /HandleFunc\("\/runner-auth\/browser/);
+  assert.doesNotMatch(server, /HandleFunc\("\/runner-auth\/credentials\/import/);
+  assert.doesNotMatch(server, /HandleFunc\("\/runner\/auth\/mirror/);
+  assert.doesNotMatch(tools, /\{"name": "runner_auth_browser_/);
+  assert.doesNotMatch(tools, /\{"name": "runner_auth_credentials_import"/);
+  assert.match(ops, /Intentionally not registered/);
+  assert.match(ops, /Code: "removed"/);
   assert.match(tasks, /knownRunnerIDs := supportedRunnerIDs/);
   assert.match(tasks, /RunnerID:\s+"opencode"/);
   assert.match(tasks, /supportedRunnerIDs = \[\]string\{"opencode", "claude", "codex", "remoteless"\}/);

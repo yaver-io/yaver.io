@@ -9,7 +9,7 @@ package main
 // then delegates to the existing per-device MCP plumbing.
 //
 //   primary_auth   → device_reauth_start (Yaver token) OR
-//                    runner_auth_browser_start (claude / codex)
+//                    native runner PTY (claude / codex / opencode)
 //   primary_status → fetchRemoteAgentStatusByDeviceID
 //   primary_ping   → reachability + agent identity
 //   primary_projects (with mobile_only flag) → /projects [/mobile]

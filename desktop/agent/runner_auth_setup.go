@@ -15,7 +15,9 @@ import (
 )
 
 type runnerAuthSetupRequest struct {
-	Runner           string `json:"runner"`
+	Runner string `json:"runner"`
+	// Deprecated credential/setup fields are retained only so rolling clients
+	// receive an explicit refusal instead of silently losing secrets.
 	OpenAIAPIKey     string `json:"openai_api_key,omitempty"`
 	AnthropicAPIKey  string `json:"anthropic_api_key,omitempty"`
 	GLMAPIKey        string `json:"glm_api_key,omitempty"`
@@ -52,29 +54,14 @@ func runRunnerAuthSetup(args []string) {
 	runner := normalizeRunnerAuthName(args[0])
 	fs := flag.NewFlagSet("runner-auth setup", flag.ExitOnError)
 	target := fs.String("target", "", "remote device ID to update")
-	openAIKey := fs.String("openai-api-key", "", "OpenCode provider credential")
-	anthropicKey := fs.String("anthropic-api-key", "", "OpenCode provider credential")
-	glmKey := fs.String("glm-api-key", "", "GLM API key")
-	zaiKey := fs.String("zai-api-key", "", "ZAI API key")
-	notes := fs.String("notes", "", "optional vault note")
 	noInstall := fs.Bool("no-install", false, "skip installing the runner if missing")
-	noLogin := fs.Bool("no-login", false, "skip Codex headless login")
-	noMCP := fs.Bool("no-mcp", false, "skip registering Yaver as an MCP server in the runner")
 	fs.Parse(args[1:])
 
 	installIfMissing := !*noInstall
-	codexLogin := !*noLogin
-	setupMCP := !*noMCP
 	req := runnerAuthSetupRequest{
 		Runner:           runner,
-		OpenAIAPIKey:     *openAIKey,
-		AnthropicAPIKey:  *anthropicKey,
-		GLMAPIKey:        *glmKey,
-		ZAIAPIKey:        *zaiKey,
-		Notes:            *notes,
 		InstallIfMissing: &installIfMissing,
-		CodexLogin:       &codexLogin,
-		SetupMCP:         &setupMCP,
+		AllowInstallOnly: boolPtr(true),
 	}
 
 	var (
@@ -235,6 +222,9 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 	if req.Runner != "claude" && req.Runner != "codex" && req.Runner != "opencode" {
 		return result, fmt.Errorf("unsupported runner %q (want claude, codex, or opencode)", req.Runner)
 	}
+	if runnerAuthValueProvided(req) || strings.TrimSpace(req.Notes) != "" {
+		return result, fmt.Errorf("Yaver does not accept runner credentials; open an encrypted PTY and authenticate with the native %s CLI", req.Runner)
+	}
 
 	installIfMissing := boolOrDefault(req.InstallIfMissing, true)
 	cmdName := GetRunnerConfig(req.Runner).Command
@@ -249,45 +239,6 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 		return result, fmt.Errorf("%s is not installed and --no-install was set", req.Runner)
 	}
 
-	if runnerAuthValueProvided(req) {
-		entries, err := buildRunnerAuthEntries(
-			req.Runner,
-			req.OpenAIAPIKey,
-			req.AnthropicAPIKey,
-			"",
-			"",
-			req.GLMAPIKey,
-			req.ZAIAPIKey,
-			req.Notes,
-		)
-		if err != nil {
-			return result, err
-		}
-		if err := setRunnerAuthEntriesLocal(entries); err != nil {
-			return result, err
-		}
-		for _, entry := range entries {
-			result.VaultKeys = append(result.VaultKeys, entry.Name)
-		}
-	}
-
-	if req.Runner == "codex" && boolOrDefault(req.CodexLogin, true) {
-		// Codex auth MUST use ChatGPT Plus OAuth via `codex login
-		// --device-auth` (see runner_auth_browser_http.go). The API-key
-		// path was deleted 2026-05-27 per
-		// feedback_no_api_keys_subscription_only — double-bills + breaks
-		// "all agents on same plan" promise.
-		result.Notes = append(result.Notes, "Codex requires ChatGPT Plus OAuth. Open Yaver mobile or run `codex login --device-auth`.")
-	}
-
-	if boolOrDefault(req.SetupMCP, true) {
-		configured, err := setupRunnerMCP(req.Runner)
-		if err != nil {
-			return result, err
-		}
-		result.MCPConfigured = configured
-	}
-
 	rows, err := collectRunnerAuthStatusRows()
 	if err != nil {
 		return result, err
@@ -300,34 +251,9 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 	result.Warning = row.Warning
 	result.Detail = row.Detail
 
-	if req.Runner == "claude" && !row.AuthConfigured {
-		if boolOrDefault(req.AllowInstallOnly, false) && row.Installed {
-			result.Warning = "Claude Code was installed, but authentication is still required."
-			if strings.TrimSpace(result.Detail) == "" {
-				result.Detail = "Open the browser/device login flow to finish Claude Code setup."
-			}
-			return result, nil
-		}
-		return result, fmt.Errorf("Claude Code is installed but no auth was configured. Finish Claude plan OAuth with the browser login flow or import subscription credentials from an already-signed-in user-owned device")
-	}
-	if req.Runner == "codex" && !row.AuthConfigured {
-		if boolOrDefault(req.AllowInstallOnly, false) && row.Installed {
-			result.Warning = "Codex was installed, but authentication is still required."
-			const authDetail = "Open the browser/device login flow to finish ChatGPT Plus/Pro plan OAuth for Codex."
-			if strings.TrimSpace(result.Detail) == "" {
-				result.Detail = authDetail
-			} else if !strings.Contains(result.Detail, "ChatGPT Plus/Pro plan OAuth") {
-				// A host-specific readiness warning (for example a Linux
-				// user-namespace blocker) must not hide the action the user
-				// still needs to take to authenticate the installed CLI.
-				result.Detail = authDetail + " " + result.Detail
-			}
-			return result, nil
-		}
-		return result, fmt.Errorf("Codex is installed but no auth was configured. Finish ChatGPT Plus/Pro plan OAuth with the browser login flow or import subscription credentials from an already-signed-in user-owned device")
-	}
-	if req.Runner == "claude" {
-		result.Notes = append(result.Notes, "Yaver can use the saved Claude credentials from its vault. Direct `claude` shell sessions outside Yaver may still require exported env vars or Claude's own native login.")
+	if !row.AuthConfigured {
+		result.Warning = fmt.Sprintf("%s is installed, but its native CLI is not authenticated.", row.Name)
+		result.Detail = fmt.Sprintf("Open an encrypted Yaver PTY on this device and run the native %s sign-in command. Yaver does not broker or copy runner credentials.", req.Runner)
 	}
 	return result, nil
 }

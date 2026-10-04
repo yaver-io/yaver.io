@@ -178,10 +178,9 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("    source: yaver auth send <code> <target-url>")
 	fmt.Println("  Re-auth Yaver on this machine from a clean state:")
 	fmt.Println("    yaver auth factory-reset --headless")
-	fmt.Println("  Re-auth the coding runner on a remote machine without SSH:")
-	fmt.Println("    yaver runner-auth setup codex --target <deviceId> --openai-api-key $OPENAI_API_KEY")
-	fmt.Println("    yaver runner-auth setup claude --target <deviceId> --anthropic-api-key $ANTHROPIC_API_KEY")
-	fmt.Println("    yaver runner-auth setup opencode --target <deviceId>")
+	fmt.Println("  Sign in to a coding runner on another machine:")
+	fmt.Println("    open that device's encrypted Terminal, launch codex / claude / opencode,")
+	fmt.Println("    and use the runner's own sign-in or provider-configuration flow")
 	fmt.Println()
 }
 

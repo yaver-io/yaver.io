@@ -537,13 +537,14 @@ func parseStreamJSONResult(out []byte) string {
 		if json.Unmarshal(line, &ev) != nil {
 			continue
 		}
-		sawJSONEvent = true
 		switch ev.Type {
 		case "result":
+			sawJSONEvent = true
 			if strings.TrimSpace(ev.Result) != "" {
 				resultText = ev.Result
 			}
 		case "assistant":
+			sawJSONEvent = true
 			var parts []string
 			for _, c := range ev.Message.Content {
 				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {

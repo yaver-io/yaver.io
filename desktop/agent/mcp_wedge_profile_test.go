@@ -24,7 +24,7 @@ func TestWedgeProfileFitsProviderCap(t *testing.T) {
 }
 
 // A lean surface that drops the wedge's OWN tools is worse than the flood: the
-// agent would conclude Yaver cannot render, cannot sign a runner in, cannot
+// agent would conclude Yaver cannot render, cannot inspect a runner, cannot
 // push to a phone. These are the capabilities the profile exists to protect,
 // so they are asserted by name rather than trusted to the family allowlist.
 func TestWedgeProfileKeepsTheWedge(t *testing.T) {
@@ -40,8 +40,7 @@ func TestWedgeProfileKeepsTheWedge(t *testing.T) {
 	for _, must := range []string{
 		"ops",                       // the grand-tool: one tool, ~20 verbs
 		"create_task", "list_tasks", // dispatch work
-		"list_runners",              // which runners exist
-		"runner_auth_browser_start", // REMOTE OAUTH — dead on the user's box today
+		"list_runners", // which runners exist
 		"runner_auth_status",
 		"tmux_list_sessions", "tmux_adopt_session", // adopt an existing runner session
 		"tmux_detach_session", "tmux_send_input",
@@ -57,6 +56,18 @@ func TestWedgeProfileKeepsTheWedge(t *testing.T) {
 	} {
 		if !have[must] {
 			t.Errorf("wedge profile dropped %q — a capability the profile exists to keep", must)
+		}
+	}
+	for _, forbidden := range []string{
+		"runner_auth_set",
+		"runner_auth_browser_start",
+		"runner_auth_browser_status",
+		"runner_auth_browser_submit_code",
+		"runner_auth_browser_submit_callback",
+		"runner_auth_credentials_import",
+	} {
+		if have[forbidden] {
+			t.Errorf("wedge profile exposes removed runner credential transport %q", forbidden)
 		}
 	}
 }

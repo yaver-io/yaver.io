@@ -44,7 +44,7 @@ import (
 // release build injects the real tag via -ldflags "-X main.version=<tag>"
 // (see .github/workflows/release-cli.yml). The default below is only used for
 // local `go build`; releases always override it, so it never drifts again.
-var version = "1.99.470"
+var version = "1.99.471"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1042,8 +1042,7 @@ Examples:
   yaver set-runner custom "my-ai --auto {prompt}"   Use a custom command
   yaver set-runner                  List available runners
   yaver runner-auth status [--target <deviceId>]   Show runner auth readiness
-  yaver runner-auth set <runner> [flags]           Save runner/provider auth into the Yaver vault
-  yaver runner-auth setup <runner> [flags]         Install + auth + MCP-wire Codex/Claude on this machine or a remote Yaver device
+  yaver runner-auth setup <runner> [flags]         Install a native runner CLI; authenticate it inside the endpoint PTY
   (Agent is also selectable per task from the mobile app)
   yaver config set auto-start true  Start Yaver on login
   yaver config set auto-update true Check for updates on startup

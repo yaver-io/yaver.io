@@ -2,16 +2,15 @@ package main
 
 import "testing"
 
-func TestRemoteRunnerOAuthPolicyDefaultsClosedAndFollowsPlatformConfig(t *testing.T) {
+func TestRemoteRunnerOAuthPolicyCannotBeEnabledByPlatformConfig(t *testing.T) {
 	applyProductPolicy(PlatformProductPolicy{})
 	if remoteRunnerOAuthEnabled() || runnerSupportsBrowserAuth("claude") || runnerSupportsBrowserAuth("codex") {
 		t.Fatal("remote runner OAuth must default off")
 	}
 
 	applyProductPolicy(PlatformProductPolicy{RemoteRunnerOAuthEnabled: true})
-	t.Cleanup(func() { applyProductPolicy(PlatformProductPolicy{}) })
-	if !remoteRunnerOAuthEnabled() || !runnerSupportsBrowserAuth("claude") || !runnerSupportsBrowserAuth("codex") {
-		t.Fatal("Convex product policy must be able to re-enable the dormant compatibility flow")
+	if remoteRunnerOAuthEnabled() || runnerSupportsBrowserAuth("claude") || runnerSupportsBrowserAuth("codex") {
+		t.Fatal("server-side config must not re-enable runner OAuth transport")
 	}
 }
 

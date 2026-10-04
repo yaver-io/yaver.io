@@ -8,8 +8,8 @@ package main
 //
 // Resolution order matches user expectation:
 //   1. Caller's explicit --engine / --runner picks first
-//   2. Hybrid mode → use the planner CLI (claude when available)
-//   3. claude → codex → aider → ollama  (whichever is on PATH)
+//   2. OpenCode, the product default, when no runner is requested
+//   3. Claude Code or Codex only as installed fallbacks
 //   4. Surface a clear error listing missing CLIs
 //
 // All runners are wrapped in the same stdin-prompt + stream-json
@@ -115,8 +115,10 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 		// Planner = claude; fall through to standard order if missing.
 	}
 
-	// Fallback chain — yaver's three first-class runners only.
-	for _, bin := range []string{"claude", "codex", "opencode"} {
+	// Fallback chain — yaver's three first-class runners only. Keep this in
+	// the same preference order as supportedRunnerIDs. An installed but signed
+	// out Claude binary must not steal an otherwise healthy OpenCode request.
+	for _, bin := range []string{"opencode", "claude", "codex"} {
 		if have(bin) {
 			return bin
 		}

@@ -833,19 +833,14 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := r.URL.Query().Get("query")
-	path := r.URL.Query().Get("path")
-
-	if path == "" && query != "" {
-		found, err := findProject(query)
-		if err != nil {
-			jsonError(w, http.StatusNotFound, "project not found: "+err.Error())
-			return
-		}
-		path = found
-	}
-	if path == "" {
-		path = s.taskMgr.workDir
+	path, err := resolveVibingProjectPath(
+		r.URL.Query().Get("path"),
+		r.URL.Query().Get("query"),
+		s.taskMgr.workDir,
+	)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "project not found: "+err.Error())
+		return
 	}
 
 	// Check cache first
@@ -892,6 +887,28 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[vibing] Generated %d quick actions for %s (suggestions via Deep Shuffle)", len(quickActions), projectName)
 	jsonReply(w, http.StatusOK, state)
+}
+
+func resolveVibingProjectPath(explicitPath, query, fallback string) (string, error) {
+	if strings.TrimSpace(explicitPath) != "" {
+		return filepath.Clean(explicitPath), nil
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return fallback, nil
+	}
+	// Phone projects are valid Yaver workspaces even before the background repo
+	// discovery pass sees them. The SDK historically sends its argument as
+	// `query`, including when that argument is the absolute path returned by
+	// /phone/projects/create. Resolve an existing absolute directory directly;
+	// named/fuzzy lookups still use the normal discovered-project inventory.
+	candidate := filepath.Clean(query)
+	if filepath.IsAbs(candidate) {
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return findProject(query)
 }
 
 func resolveVibingProject(projectPath, projectName, bundleID string) (string, string) {

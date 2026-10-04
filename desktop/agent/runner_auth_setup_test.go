@@ -24,15 +24,13 @@ func TestApplyRunnerAuthSetupLocalCodexInstallOnly(t *testing.T) {
 		t.Fatalf("mkdir codex home: %v", err)
 	}
 
-	mcpArgsPath := filepath.Join(home, "codex-mcp-args.txt")
 	script := "#!/bin/sh\n" +
 		"set -eu\n" +
 		"case \"$1 ${2-} ${3-}\" in\n" +
 		"  \"--version  \") echo \"codex test\" ;;\n" +
 		"  \"login status \") echo not-logged-in >&2; exit 1 ;;\n" +
 		"  \"login \"*) echo unexpected-codex-login-command >&2; exit 44 ;;\n" +
-		"  \"mcp get yaver\") exit 1 ;;\n" +
-		"  \"mcp add yaver\") printf '%s' \"$*\" > \"" + mcpArgsPath + "\" ;;\n" +
+		"  \"mcp \"*) echo unexpected-mcp-modification >&2; exit 45 ;;\n" +
 		"  *) exit 0 ;;\n" +
 		"esac\n"
 	codexPath := filepath.Join(stubDir, "codex")
@@ -45,16 +43,10 @@ func TestApplyRunnerAuthSetupLocalCodexInstallOnly(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("YAVER_VAULT_PASSPHRASE", "test-passphrase")
 
-	setupMCP := true
 	installIfMissing := false
-	codexLogin := true
-	allowInstallOnly := true
 	result, err := applyRunnerAuthSetupLocal(context.Background(), runnerAuthSetupRequest{
 		Runner:           "codex",
 		InstallIfMissing: &installIfMissing,
-		CodexLogin:       &codexLogin,
-		SetupMCP:         &setupMCP,
-		AllowInstallOnly: &allowInstallOnly,
 	})
 	if err != nil {
 		t.Fatalf("applyRunnerAuthSetupLocal: %v", err)
@@ -65,18 +57,20 @@ func TestApplyRunnerAuthSetupLocalCodexInstallOnly(t *testing.T) {
 	if result.LoginAttempt {
 		t.Fatalf("expected no Codex login command attempt")
 	}
-	if len(result.MCPConfigured) != 1 || result.MCPConfigured[0] != "codex" {
-		t.Fatalf("expected codex MCP config, got %+v", result.MCPConfigured)
+	if len(result.MCPConfigured) != 0 || len(result.VaultKeys) != 0 {
+		t.Fatalf("install-only setup must not modify MCP or credentials: %+v", result)
 	}
-	if !strings.Contains(result.Detail, "ChatGPT Plus/Pro plan OAuth") {
-		t.Fatalf("expected plan OAuth detail, got %q", result.Detail)
+	if !strings.Contains(result.Detail, "encrypted Yaver PTY") || !strings.Contains(result.Detail, "native codex sign-in") {
+		t.Fatalf("expected native PTY guidance, got %q", result.Detail)
 	}
+}
 
-	mcpArgs, err := os.ReadFile(mcpArgsPath)
-	if err != nil {
-		t.Fatalf("read MCP args: %v", err)
-	}
-	if !strings.Contains(string(mcpArgs), "mcp add yaver") {
-		t.Fatalf("unexpected MCP args: %q", string(mcpArgs))
+func TestApplyRunnerAuthSetupRejectsCredentialMaterial(t *testing.T) {
+	_, err := applyRunnerAuthSetupLocal(context.Background(), runnerAuthSetupRequest{
+		Runner:       "opencode",
+		OpenAIAPIKey: "must-not-enter-yaver",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not accept runner credentials") {
+		t.Fatalf("expected credential refusal, got %v", err)
 	}
 }

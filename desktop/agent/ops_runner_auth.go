@@ -23,7 +23,10 @@ import (
 )
 
 func init() {
-	registerOpsVerb(opsVerbSpec{
+	// Intentionally not registered. Runner auth belongs to each native CLI in
+	// the endpoint PTY; keeping an ops verb would recreate a credential/OAuth
+	// transport even though the dedicated HTTP and MCP routes are gone.
+	/* registerOpsVerb(opsVerbSpec{
 		Name:        "runner_auth",
 		Description: "Authorize a coding runner (claude/codex/opencode) ON an owned box (e.g. a managed cloud box) so it can run agents. op=browser_start returns {verification_uri,user_code,sessionId} to open in any browser; poll op=browser_status; op=credentials_import copies a locally signed-in subscription token to the box (preferred — never API keys). Pass deviceId to target the box; remote routing + ownership are enforced by the underlying runner-auth layer, tokens go device→device and never reach Convex.",
 		Schema: map[string]interface{}{
@@ -50,7 +53,7 @@ func init() {
 		Handler:        opsRunnerAuthHandler,
 		Streaming:      false,
 		AllowCompanion: false,
-	})
+	}) */
 }
 
 // wrapMCPResult turns the interface{} an mcp* runner-auth function
@@ -80,52 +83,55 @@ func wrapMCPResult(v interface{}) OpsResult {
 }
 
 func opsRunnerAuthHandler(_ OpsContext, payload json.RawMessage) OpsResult {
-	var p struct {
-		Op              string `json:"op"`
-		DeviceID        string `json:"deviceId"`
-		Runner          string `json:"runner"`
-		SessionID       string `json:"sessionId"`
-		Code            string `json:"code"`
-		CallbackURL     string `json:"callbackUrl"`
-		CredentialsJSON string `json:"credentialsJson"`
-	}
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
-	}
-	switch strings.TrimSpace(p.Op) {
-	case "status":
-		return wrapMCPResult(mcpRunnerAuthStatus(p.DeviceID))
-	case "browser_start":
-		if strings.TrimSpace(p.Runner) == "" {
-			return OpsResult{OK: false, Code: "bad_payload", Error: "runner required"}
+	return OpsResult{OK: false, Code: "removed", Error: "runner OAuth transport was removed; authenticate with the native CLI in an encrypted endpoint PTY"}
+	/*
+		var p struct {
+			Op              string `json:"op"`
+			DeviceID        string `json:"deviceId"`
+			Runner          string `json:"runner"`
+			SessionID       string `json:"sessionId"`
+			Code            string `json:"code"`
+			CallbackURL     string `json:"callbackUrl"`
+			CredentialsJSON string `json:"credentialsJson"`
 		}
-		return wrapMCPResult(mcpRunnerBrowserAuthStart(p.DeviceID, p.Runner, false))
-	case "browser_status":
-		if strings.TrimSpace(p.SessionID) == "" {
-			return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId required"}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
 		}
-		return wrapMCPResult(mcpRunnerBrowserAuthStatus(p.DeviceID, p.SessionID))
-	case "submit_code":
-		if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.Code) == "" {
-			return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId and code required"}
+		switch strings.TrimSpace(p.Op) {
+		case "status":
+			return wrapMCPResult(mcpRunnerAuthStatus(p.DeviceID))
+		case "browser_start":
+			if strings.TrimSpace(p.Runner) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "runner required"}
+			}
+			return wrapMCPResult(mcpRunnerBrowserAuthStart(p.DeviceID, p.Runner, false))
+		case "browser_status":
+			if strings.TrimSpace(p.SessionID) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId required"}
+			}
+			return wrapMCPResult(mcpRunnerBrowserAuthStatus(p.DeviceID, p.SessionID))
+		case "submit_code":
+			if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.Code) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId and code required"}
+			}
+			return wrapMCPResult(mcpRunnerBrowserAuthSubmitCode(p.DeviceID, p.SessionID, p.Code))
+		case "submit_callback":
+			if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.CallbackURL) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId and callbackUrl required"}
+			}
+			return wrapMCPResult(mcpRunnerBrowserAuthSubmitCallback(p.DeviceID, p.SessionID, p.CallbackURL))
+		case "cancel":
+			if strings.TrimSpace(p.SessionID) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId required"}
+			}
+			return wrapMCPResult(mcpRunnerBrowserAuthCancel(p.DeviceID, p.SessionID))
+		case "credentials_import":
+			if strings.TrimSpace(p.Runner) == "" || strings.TrimSpace(p.CredentialsJSON) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "runner and credentialsJson required"}
+			}
+			return wrapMCPResult(mcpRunnerAuthCredentialsImport(p.DeviceID, p.Runner, p.CredentialsJSON))
+		default:
+			return OpsResult{OK: false, Code: "bad_payload", Error: "unknown op"}
 		}
-		return wrapMCPResult(mcpRunnerBrowserAuthSubmitCode(p.DeviceID, p.SessionID, p.Code))
-	case "submit_callback":
-		if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.CallbackURL) == "" {
-			return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId and callbackUrl required"}
-		}
-		return wrapMCPResult(mcpRunnerBrowserAuthSubmitCallback(p.DeviceID, p.SessionID, p.CallbackURL))
-	case "cancel":
-		if strings.TrimSpace(p.SessionID) == "" {
-			return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId required"}
-		}
-		return wrapMCPResult(mcpRunnerBrowserAuthCancel(p.DeviceID, p.SessionID))
-	case "credentials_import":
-		if strings.TrimSpace(p.Runner) == "" || strings.TrimSpace(p.CredentialsJSON) == "" {
-			return OpsResult{OK: false, Code: "bad_payload", Error: "runner and credentialsJson required"}
-		}
-		return wrapMCPResult(mcpRunnerAuthCredentialsImport(p.DeviceID, p.Runner, p.CredentialsJSON))
-	default:
-		return OpsResult{OK: false, Code: "bad_payload", Error: "unknown op"}
-	}
+	*/
 }

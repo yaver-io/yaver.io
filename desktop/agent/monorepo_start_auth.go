@@ -87,6 +87,24 @@ func runMonorepoAuthInteractive(r *bufio.Reader, loc *runnerLocation, runner str
 		return promptChoice(r, "Continue without authing", []string{"yes", "no"}, "yes") == "yes"
 	}
 
+	// Yaver installs runner binaries but never mediates their authentication.
+	// If needed, do the install-only step, then hand control to the native CLI
+	// in the endpoint PTY. No API key/token prompt or cross-device copy exists.
+	if row == nil || !row.Installed {
+		install := true
+		_, err := applyRunnerAuthSetupForLocation(loc, runnerAuthSetupRequest{
+			Runner:           runner,
+			InstallIfMissing: &install,
+		})
+		if err != nil {
+			fmt.Printf("    ! Runner install failed: %v\n", err)
+		}
+	}
+	fmt.Println()
+	printSelfBrowserHints(runner, loc)
+	fmt.Println("    Authentication stays inside that native CLI; Yaver does not receive credentials.")
+	return promptChoice(r, "Continue with the wizard now", []string{"yes", "no"}, "yes") == "yes"
+
 	// Case 3 / 2 collapse — needs credentials, with or without an
 	// install on the way. The credential menu is the same; the
 	// applyRunnerAuthSetup* call below threads InstallIfMissing

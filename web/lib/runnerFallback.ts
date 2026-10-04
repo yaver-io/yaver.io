@@ -178,7 +178,7 @@ export function planRunnerFix(
       runnerAgnostic: false,
       blocked: accountBound
         ? mech === "subscription-oauth"
-          ? `No other runner is ready on this machine, so ${label(failed)}'s sign-in has to be repaired before anything can run here. Use Remote OAuth on this box, or sign it in over SSH.`
+          ? `No other runner is ready on this machine, so ${label(failed)}'s sign-in has to be repaired before anything can run here. Open an encrypted terminal to this box and use the runner's native sign-in command.`
           : `No other runner is ready on this machine. Fix ${label(failed) || "the runner"}'s credential, or install another runner here.`
         : "No runner is ready on this machine — install or sign one in before retrying.",
     };

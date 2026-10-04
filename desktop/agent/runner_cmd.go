@@ -35,7 +35,11 @@ func runRunner(args []string) {
 		return
 	}
 	if target, runner, extra, ok := parseRunnerAuthQuickFlow(args); ok {
-		runRunnerQuickFlow(target, runner, extra)
+		// This syntax now means "open the native runner in that device's PTY".
+		// It must never start Yaver-mediated OAuth or credential transfer.
+		passthrough := append([]string(nil), extra...)
+		passthrough = append(passthrough, "--machine="+target, "--yaver-no-sync", "--yaver-fresh")
+		runRunnerPassthrough(runner, passthrough)
 		return
 	}
 	// `yaver runner <hint> status [--json]` — same dispatch shape as
@@ -81,7 +85,9 @@ func runnerUsage() {
 	fmt.Print(`yaver runner — unified self-hosted runner (RUNNER_DEV.md)
 
 Usage:
-  yaver runner <deviceId|name|alias> <claude|claude-code|codex>
+  yaver runner <deviceId|name|alias> <claude|claude-code|codex|opencode>
+                                          Open the native CLI in that
+                                          device's encrypted PTY
   yaver runner <deviceId|name|alias> status [--json]
                                           Show that device's live agent
                                           status (version, lifecycle,

@@ -425,3 +425,11 @@ func TestParseStreamJSONResultPrefersStructuredResult(t *testing.T) {
 		t.Fatalf("structured result = %q", got)
 	}
 }
+
+func TestParseStreamJSONResultPreservesPlainJSONObject(t *testing.T) {
+	raw := "{\"name\":\"Todo\",\"schema\":{\"tables\":[]}}\n"
+	got := parseStreamJSONResult([]byte(raw))
+	if got != strings.TrimSpace(raw) {
+		t.Fatalf("raw JSON object = %q, want %q", got, strings.TrimSpace(raw))
+	}
+}

@@ -36,6 +36,18 @@ const BOOT_MS = Number(process.env.BOOT_BUDGET_MS || 240_000);
 const auth = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function closeAfterEvidence(label, close) {
+  try {
+    await close();
+  } catch (err) {
+    // Browser teardown is cleanup, not product evidence. On resource-pressured
+    // macOS hosts Playwright can throw `spawn ... -88` while closing an already
+    // rendered page. Preserve the PIXELS/SILENT verdict produced above and
+    // report teardown separately instead of turning a proven render red.
+    console.warn(`  WARN ${label} teardown: ${err?.message || err}`);
+  }
+}
+
 function previewUrl(previewPath) {
   const url = new URL(`${AGENT}${previewPath || '/dev-web/'}`);
   // Match the phone/WebView path. A browser context-level Authorization header
@@ -119,6 +131,9 @@ async function bringUpWebLane(app) {
   while (Date.now() < deadline) {
     const st = (await agent('/dev/status')).json || {};
     if (st.error) lastErr = String(st.error);
+    if (st.running === false && /exited before becoming ready|version solving failed/i.test(lastErr)) {
+      return { ok: false, reason: lastErr.slice(0, 300) };
+    }
     const bundleUrl = typeof st.bundleUrl === 'string' ? st.bundleUrl : '';
     const previewPath = bundleUrl || (st.webPort > 0 ? '/dev-web/' : '');
     if (previewPath) {
@@ -179,7 +194,7 @@ for (const app of APPS) {
   if (!up.ok) {
     results.push({ app: app.name, verdict: 'NAMED', detail: up.reason });
     console.log(`  NAMED  ${up.reason}`);
-    await page.close();
+    await closeAfterEvidence('page', () => page.close());
     continue;
   }
   console.log(`  web lane :${up.webPort} ${up.previewPath || '/dev-web/'} — rendering in chromium`);
@@ -214,11 +229,11 @@ for (const app of APPS) {
     results.push({ app: app.name, verdict: 'SILENT', detail: errs[0] ? `first page error: ${errs[0]}` : 'served a shell, nothing mounted, nothing said' });
     console.log(`  SILENT ${errs[0] || 'nothing mounted and nothing said'}`);
   }
-  await page.close();
+  await closeAfterEvidence('page', () => page.close());
 }
 
-await ctx.close();
-await browser.close();
+await closeAfterEvidence('browser context', () => ctx.close());
+await closeAfterEvidence('browser', () => browser.close());
 
 console.log('\n===== TODO IFRAME LOOP (light lanes only) =====');
 const w = Math.max(...results.map((r) => r.app.length));

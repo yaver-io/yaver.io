@@ -449,7 +449,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/runners", s.authSDK(s.handleRunners))
 	mux.HandleFunc("/agent/runners/test", s.auth(s.handleRunnerTest))
 	mux.HandleFunc("/runner-auth/status", s.auth(s.handleRunnerAuthStatus))
-	mux.HandleFunc("/runner-auth/set", s.auth(s.handleRunnerAuthSet))
 	// Same-Convex-user SSH bootstrap: append the caller's pubkey to
 	// ~/.ssh/authorized_keys so `yaver ssh primary` from a freshly
 	// signed-in box works without ssh-copy-id. See auth_ssh_http.go.
@@ -462,23 +461,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// for old clients; new phone/web/desktop/TV/spatial surfaces share these.
 	mux.HandleFunc("/project/start/status", s.auth(s.handleMobileWorkspaceStatus))
 	mux.HandleFunc("/project/start", s.auth(s.handleProjectStart))
-	// Browser/device-auth sub-family is also reachable by SDK tokens that
-	// carry the "runner-auth" scope — lets the embedded Feedback SDK on
-	// carrotbytes.xyz / an RN host trigger `codex login --device-auth`
-	// (verification URL + one-time code) without forcing the end-user to
-	// also log in to yaver.io. The api-key setter stays owner-only via
-	// the other /runner-auth/* endpoints registered near the top.
-	mux.HandleFunc("/runner-auth/browser/start", s.authSDK(s.handleRunnerBrowserAuthStart))
-	mux.HandleFunc("/runner-auth/browser/status", s.authSDK(s.handleRunnerBrowserAuthStatus))
-	mux.HandleFunc("/runner-auth/browser/cancel", s.authSDK(s.handleRunnerBrowserAuthCancel))
-	mux.HandleFunc("/runner-auth/browser/submit-code", s.authSDK(s.handleRunnerBrowserAuthSubmitCode))
-	mux.HandleFunc("/runner-auth/browser/submit-callback", s.authSDK(s.handleRunnerBrowserAuthSubmitCallback))
-	// Subscription-token transfer between user-owned devices. See the
-	// handler — yaver is a single-user wrapper, so the user's existing
-	// local Claude / Codex token gets *copied* to a remote box rather
-	// than re-OAuthing per box. Avoids the SSH-launched-daemon Keychain
-	// quagmire entirely.
-	mux.HandleFunc("/runner-auth/credentials/import", s.authSDK(s.handleRunnerAuthCredentialsImport))
+	// Runner sign-in deliberately has no HTTP surface. Users launch the native
+	// CLI in an encrypted Yaver PTY and authenticate there; Yaver never accepts,
+	// mirrors, stores, or replays runner OAuth material.
 	mux.HandleFunc("/runner-provider/preflight", s.authSDK(s.handleRunnerProviderPreflight))
 	mux.HandleFunc("/company-ai/resolve-local", s.authSDK(s.handleCompanyAIResolveLocal))
 	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
@@ -890,15 +875,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/hermes/validate", s.auth(s.handleHermesValidate))
 	mux.HandleFunc("/hermes/run", s.auth(s.handleHermesRun))
 	mux.HandleFunc("/hermes/smoke", s.auth(s.handleHermesSmoke))
-
-	// Runner-auth mirror — token-mirror for glass OAuth flow. See
-	// project_glass_oauth_mirror_2026_05_27 memory. All routes are
-	// owner-auth gated (NOT authSDK) because plaintext credentials
-	// travel through mirror/accept; SDK tokens cannot push runner auth.
-	mux.HandleFunc("/runner/auth/mirror/request", s.auth(s.handleRunnerAuthMirrorRequest))
-	mux.HandleFunc("/runner/auth/mirror/accept", s.auth(s.handleRunnerAuthMirrorAccept))
-	mux.HandleFunc("/runner/auth/ledger", s.auth(s.handleRunnerAuthLedger))
-	mux.HandleFunc("/runner/auth/ledger/revoke", s.auth(s.handleRunnerAuthLedgerRevoke))
 
 	// Webhooks (public — uses webhook secret instead of auth)
 	mux.HandleFunc("/webhooks/trigger", s.handleWebhookTrigger)
@@ -1865,7 +1841,7 @@ var scopePathPrefixes = map[string][]string{
 	// runner-auth: lets the embedded Feedback SDK inspect runner state
 	// and complete either browser-style auth (codex / claude) or
 	// token-based setup (opencode) without a separate full-session UI.
-	"runner-auth": {"/runner-auth/browser/start", "/runner-auth/browser/status", "/runner-auth/browser/cancel", "/runner-auth/browser/submit-code", "/runner-auth/browser/submit-callback", "/runner-auth/status", "/runner-auth/setup", "/agent/runners", "/agent/runner/switch"},
+	"runner-auth": {"/runner-auth/status", "/runner-auth/setup", "/agent/runners", "/agent/runner/switch"},
 }
 
 func pathAllowedByScopes(path string, scopes []string) bool {
@@ -12234,28 +12210,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRunnerModelProbe(a.Runner, a.Models))
-	case "runner_auth_set":
-		var a struct {
-			DeviceID        string `json:"device_id"`
-			Runner          string `json:"runner"`
-			OpenAIAPIKey    string `json:"openai_api_key"`
-			AnthropicAPIKey string `json:"anthropic_api_key"`
-			GLMAPIKey       string `json:"glm_api_key"`
-			ZAIAPIKey       string `json:"zai_api_key"`
-			Notes           string `json:"notes"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerAuthSet(
-			a.DeviceID,
-			a.Runner,
-			a.OpenAIAPIKey,
-			a.AnthropicAPIKey,
-			"",
-			"",
-			a.GLMAPIKey,
-			a.ZAIAPIKey,
-			a.Notes,
-		))
 	case "opencode_config_get":
 		var a struct {
 			DeviceID string `json:"device_id"`
@@ -12676,75 +12630,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var a struct {
 			DeviceID         string `json:"device_id"`
 			Runner           string `json:"runner"`
-			OpenAIAPIKey     string `json:"openai_api_key"`
-			AnthropicAPIKey  string `json:"anthropic_api_key"`
-			GLMAPIKey        string `json:"glm_api_key"`
-			ZAIAPIKey        string `json:"zai_api_key"`
-			Notes            string `json:"notes"`
 			InstallIfMissing *bool  `json:"install_if_missing"`
-			CodexLogin       *bool  `json:"codex_login"`
-			SetupMCP         *bool  `json:"setup_mcp"`
-			AllowInstallOnly *bool  `json:"allow_install_only"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRunnerAuthSetup(a.DeviceID, runnerAuthSetupRequest{
 			Runner:           a.Runner,
-			OpenAIAPIKey:     a.OpenAIAPIKey,
-			AnthropicAPIKey:  a.AnthropicAPIKey,
-			GLMAPIKey:        a.GLMAPIKey,
-			ZAIAPIKey:        a.ZAIAPIKey,
-			Notes:            a.Notes,
 			InstallIfMissing: a.InstallIfMissing,
-			CodexLogin:       a.CodexLogin,
-			SetupMCP:         a.SetupMCP,
-			AllowInstallOnly: a.AllowInstallOnly,
+			AllowInstallOnly: boolPtr(true),
 		}))
-	case "runner_auth_browser_start":
-		var a struct {
-			DeviceID string `json:"device_id"`
-			Runner   string `json:"runner"`
-			Confirm  bool   `json:"confirm"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthStart(a.DeviceID, a.Runner, a.Confirm))
-	case "runner_auth_browser_status":
-		var a struct {
-			DeviceID  string `json:"device_id"`
-			SessionID string `json:"session_id"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthStatus(a.DeviceID, a.SessionID))
-	case "runner_auth_browser_submit_code":
-		var a struct {
-			DeviceID  string `json:"device_id"`
-			SessionID string `json:"session_id"`
-			Code      string `json:"code"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthSubmitCode(a.DeviceID, a.SessionID, a.Code))
-	case "runner_auth_browser_submit_callback":
-		var a struct {
-			DeviceID    string `json:"device_id"`
-			SessionID   string `json:"session_id"`
-			CallbackURL string `json:"callback_url"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthSubmitCallback(a.DeviceID, a.SessionID, a.CallbackURL))
-	case "runner_auth_browser_cancel":
-		var a struct {
-			DeviceID  string `json:"device_id"`
-			SessionID string `json:"session_id"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthCancel(a.DeviceID, a.SessionID))
-	case "runner_auth_credentials_import":
-		var a struct {
-			DeviceID        string `json:"device_id"`
-			Runner          string `json:"runner"`
-			CredentialsJSON string `json:"credentials_json"`
-		}
-		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerAuthCredentialsImport(a.DeviceID, a.Runner, a.CredentialsJSON))
 	case "machine_onboarding_status":
 		var a struct {
 			DeviceID  string   `json:"device_id"`
