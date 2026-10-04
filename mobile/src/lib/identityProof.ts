@@ -1,4 +1,4 @@
-import nacl from "tweetnacl";
+import nacl from "./secureNacl";
 import { decodeBase64, encodeBase64 } from "tweetnacl-util";
 
 /**

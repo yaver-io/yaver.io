@@ -1,4 +1,4 @@
-import nacl from "tweetnacl";
+import nacl from "./secureNacl";
 import util from "tweetnacl-util";
 
 import { LOCAL_KEYS } from "./auth";

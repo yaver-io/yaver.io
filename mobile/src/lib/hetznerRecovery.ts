@@ -1,4 +1,4 @@
-import nacl from "tweetnacl";
+import nacl from "./secureNacl";
 import util from "tweetnacl-util";
 
 const { decodeBase64, encodeBase64, decodeUTF8, encodeUTF8 } = util;

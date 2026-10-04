@@ -507,9 +507,11 @@ function AuthContent() {
     <div className={`flex items-center justify-center px-6 ${isSdkPopup ? "min-h-screen py-8" : "min-h-screen py-12"}`}>
       <div className={containerClass}>
         <div className={`${isSdkPopup ? "mb-6" : "mb-8"} text-center`}>
-          <span className={`${isSdkPopup ? "text-xl" : "text-2xl"} font-bold tracking-tight text-surface-50`}>
-            yaver<span className="font-normal text-surface-500">.io</span>
-          </span>
+          <img
+            src="/icon-512.png"
+            alt="Yaver Y"
+            className={`mx-auto rounded-[22%] ${isSdkPopup ? "h-14 w-14" : "h-20 w-20"}`}
+          />
           {isDeviceAuth && (
             <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4 text-left">
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700 dark:text-indigo-300">

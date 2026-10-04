@@ -4114,6 +4114,13 @@ export default function SettingsScreen() {
         </>}
 
         {settingsPane === "advanced" && <>
+        {/* BYO infrastructure is the primary Advanced action. Keep it first,
+            ahead of diagnostics and account maintenance, so users do not have
+            to scroll through unrelated controls to reach Hetzner. */}
+        <View style={styles.section}>
+          <CloudProvidersSection c={c} token={token} />
+        </View>
+
         {/* Test App */}
         {!LEAN_SETTINGS_SURFACE && connectionStatus === "connected" && (
         <View style={styles.section}>
@@ -5517,14 +5524,6 @@ export default function SettingsScreen() {
             <Text style={[styles.signOutText, { color: c.textSecondary }]}>Factory Reset</Text>
           </Pressable>
         </View>
-
-        {/* Bring your own cloud (Hetzner / DigitalOcean) — connect your
-            own provider token, run boxes on your account, pay the
-            provider directly. Token stored encrypted on the agent. */}
-        <View style={styles.section}>
-          <CloudProvidersSection c={c} token={token} />
-        </View>
-
 
         {/* Delete account */}
         <View style={styles.section}>

@@ -1,5 +1,5 @@
 import { Platform } from "react-native";
-import nacl from "tweetnacl";
+import nacl from "./secureNacl";
 import { decodeBase64, encodeBase64 } from "tweetnacl-util";
 import { getConvexSiteUrl } from "./auth";
 import { getItem, getSecret, setItem, setSecret } from "./secure-storage";

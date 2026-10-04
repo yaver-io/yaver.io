@@ -10,6 +10,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -19,7 +20,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Svg, { Path, Rect } from "react-native-svg";
 import { OAUTH_REDIRECT } from "../src/_core/constants";
 import { appLog } from "../src/lib/logger";
 import { useAuth } from "../src/context/AuthContext";
@@ -637,44 +637,24 @@ export default function LoginScreen() {
                 isTabletLandscape && styles.headerLandscape,
               ]}
             >
-              {Platform.OS === "web" ? (
-                <Text
-                  accessibilityRole="header"
-                  style={[
-                    styles.webWordmark,
-                    { color: c.textPrimary },
-                    isTabletPortrait && styles.webWordmarkTabletPortrait,
-                    isTabletLandscape && styles.webWordmarkTabletLandscape,
-                  ]}
-                >
-                  Yaver
-                </Text>
-              ) : (
-                <View
-                  style={[
-                    styles.brandMark,
-                    isTabletPortrait && styles.brandMarkTabletPortrait,
-                    isTabletLandscape && styles.brandMarkTabletLandscape,
-                  ]}
-                  accessibilityRole="image"
-                  accessibilityLabel="Yaver Y"
-                >
-                  {/* Canonical app-icon Y. Three explicit strokes stay legible
-                      at phone size; the old raster wordmark was cropped into a
-                      pale sideways triangle by the shipped iOS image view. */}
-                  <Svg width="100%" height="100%" viewBox="0 0 512 512">
-                    <Rect x="0" y="0" width="512" height="512" rx="116" fill={c.accent} />
-                    <Path
-                      d="M150 150 L256 288 M362 150 L256 288 M256 288 L256 384"
-                      fill="none"
-                      stroke="#FFFFFF"
-                      strokeWidth="46"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </Svg>
-                </View>
-              )}
+              <View
+                style={[
+                  styles.brandMark,
+                  isTabletPortrait && styles.brandMarkTabletPortrait,
+                  isTabletLandscape && styles.brandMarkTabletLandscape,
+                ]}
+                accessibilityRole="image"
+                accessibilityLabel="Yaver Y"
+              >
+                {/* Use the shipped app-icon pixels themselves. Reconstructing
+                    this as a themed glyph previously changed both its shape
+                    and color, eventually reading as a play button. */}
+                <Image
+                  source={require("../assets/icon.png")}
+                  style={styles.brandMarkImage}
+                  resizeMode="cover"
+                />
+              </View>
               <Text
                 style={[
                   styles.subtitle,
@@ -1153,7 +1133,13 @@ const styles = StyleSheet.create({
   brandMark: {
     width: 92,
     height: 92,
+    borderRadius: 21,
+    overflow: "hidden",
     marginBottom: 8,
+  },
+  brandMarkImage: {
+    width: "100%",
+    height: "100%",
   },
   brandMarkTabletPortrait: {
     width: 112,
