@@ -33,7 +33,6 @@ import { AppBackButton } from "../src/components/AppBackButton";
 import XtermView, { type XtermHandle } from "../src/components/XtermView";
 import { isTerminalMetaFrame, resizeFrame } from "../src/lib/xtermBridge";
 import { isWhisperReady, speakText, startRealtimeTranscribe, stopSpeaking } from "../src/lib/speech";
-import NoMachineEmpty from "../src/components/NoMachineEmpty";
 import { stripAnsi } from "../src/lib/taskPreview";
 import { addTerminalSSHProfile, type TerminalSSHProfile } from "../src/lib/sshProfile";
 import {
@@ -98,6 +97,7 @@ export default function ShellScreen() {
     devices,
     selectDevice,
     connectionStatus,
+    connectedDeviceIds,
     refreshDevices,
     recoverDeviceAuth,
   } = useDevice();
@@ -652,27 +652,11 @@ export default function ShellScreen() {
     [activeDevice?.id, selectDevice],
   );
 
-  // No auto-connected machine (yet). Do NOT dead-end: the same auto-connect
-  // sweep Tasks relies on is already running globally, so narrate it and offer
-  // the same inline machine picker. Picking one sets activeDevice, which the
-  // PTY effect above observes and opens the shell automatically — the shell
-  // rides the Tasks auto-connect exactly as before.
-  if (!activeDevice) {
-    return (
-      <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 12, paddingHorizontal: 12 }}>
-        <AppBackButton onPress={() => router.back()} />
-        <View style={{ flex: 1, paddingTop: 8 }}>
-          <NoMachineEmpty noun="shells" />
-        </View>
-      </View>
-    );
-  }
-
-  // A task-owned deep link must wait for its exact machine instead of briefly
-  // opening the currently focused box. The ordinary no-machine state above
-  // keeps the shared auto-connect/picker experience from upstream.
-  if (requestedDeviceId && activeDevice.id !== requestedDeviceId) {
+  if (!activeDevice || (requestedDeviceId && activeDevice.id !== requestedDeviceId)) {
     const requested = devices.find((device) => device.id === requestedDeviceId);
+    const activeMachines = devices.filter(
+      (device) => connectedDeviceIds.includes(device.id) || device.online,
+    );
     return (
       <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 16, paddingHorizontal: 16 }}>
         <AppBackButton label="Exit SSH" onPress={() => router.replace("/(tabs)/ssh" as any)} />
@@ -683,8 +667,42 @@ export default function ShellScreen() {
           <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
             {error || (requested
               ? "Opening its encrypted interactive PTY."
-              : "This session's machine is no longer in your Yaver device list.")}
+              : activeMachines.length > 0
+                ? "Yaver will connect it, then open its interactive terminal."
+                : "No active remote boxes are available yet.")}
           </Text>
+          {!requested && activeMachines.length > 0 ? (
+            <View style={{ width: "100%", maxWidth: 460, marginTop: 18, gap: 8 }}>
+              {activeMachines.map((device) => (
+                <Pressable
+                  key={device.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Connect SSH to ${device.alias ? `@${device.alias}` : device.name}`}
+                  onPress={() => { void pickDevice(device); }}
+                  style={[styles.deviceRow, { borderColor: c.border, backgroundColor: c.bgCard }]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.textPrimary, fontWeight: "600" }}>
+                      {device.alias ? `@${device.alias}` : device.name}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      {device.os} · {connectedDeviceIds.includes(device.id) ? "connected" : "online"}
+                    </Text>
+                  </View>
+                  <Text style={{ color: c.accent, fontWeight: "700" }}>SSH</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : !requested ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Refresh active machines"
+              onPress={() => { void refreshDevices(); }}
+              style={[styles.reconnectBtn, { marginTop: 14 }]}
+            >
+              <Text style={styles.reconnectText}>Refresh machines</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     );
