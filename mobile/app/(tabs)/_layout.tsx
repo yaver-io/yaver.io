@@ -22,19 +22,7 @@ import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 // flow rather than surfacing a confusing global "Reclaim" CTA.)
 
 function WebTabGlyph({ label, color }: { label: string; color: string }) {
-  if (label === "Tasks") {
-    return (
-      <View style={styles.drawnTasksIcon}>
-        {[0, 1, 2].map((row) => (
-          <View key={row} style={styles.drawnTaskRow}>
-            <View style={[styles.drawnTaskDot, { borderColor: color }]} />
-            <View style={[styles.drawnTaskLine, { backgroundColor: color }]} />
-          </View>
-        ))}
-      </View>
-    );
-  }
-  if (label === "Projects") {
+  if (label === "Studio") {
     return (
       <View style={[styles.drawnFolderIcon, { borderColor: color }]}>
         <View style={[styles.drawnFolderTab, { borderColor: color }]} />
@@ -62,13 +50,14 @@ function TabIcon({ label, focused, showGreenDot, rail }: { label: string; focuse
   // iOS-native style — no boxy pill behind the glyph.
   const icons: Record<string, { on: keyof typeof Ionicons.glyphMap; off: keyof typeof Ionicons.glyphMap }> = {
     Reload: { on: "refresh", off: "refresh-outline" },
-    Tasks: { on: "list", off: "list-outline" },
     Todos: { on: "checkbox", off: "square-outline" },
-    Projects: { on: "apps", off: "apps-outline" },
+    Studio: { on: "apps", off: "apps-outline" },
     Shortcuts: { on: "flash", off: "flash-outline" },
     Repos: { on: "folder", off: "folder-outline" },
     Builds: { on: "hammer", off: "hammer-outline" },
     Devices: { on: "desktop", off: "desktop-outline" },
+    Tasks: { on: "checkbox", off: "checkbox-outline" },
+    SSH: { on: "terminal", off: "terminal-outline" },
     More: { on: "ellipsis-horizontal", off: "ellipsis-horizontal" },
     Settings: { on: "settings", off: "settings-outline" },
   };
@@ -367,7 +356,8 @@ export default function TabLayout() {
     return unsubscribe;
   }, [isConnected, devices]);
 
-  // Startup tab preference. Defaults to Chat (see startupScreen.ts).
+  // Tasks is the developer-tool home. SSH reuses the same active machine, so
+  // switching tabs never asks the developer to select that box twice.
   // MUST stay ABOVE the auth gate below: these are the last hooks in the
   // component, and the `if (!isAuthenticated) return <Redirect/>` gate would
   // otherwise SKIP them on sign-out — dropping the render's hook count and
@@ -425,7 +415,8 @@ export default function TabLayout() {
               borderRightColor: c.borderSubtle,
               borderRightWidth: 1,
               borderTopWidth: 0,
-              width: layout.rail.width,
+              // Three primary destinations fit comfortably with full labels.
+              width: 112,
               paddingTop: 12,
               paddingHorizontal: 8,
             }
@@ -472,17 +463,25 @@ export default function TabLayout() {
       <Tabs.Screen
         name="tasks"
         options={{
-          title: "Chat",
+          title: "Tasks",
           headerShown: false,
-          tabBarIcon: ({ focused }) => <TabIcon label="Chat" focused={focused} rail={useLeftRail} />,
+          tabBarIcon: ({ focused }) => <TabIcon label="Tasks" focused={focused} rail={useLeftRail} />,
+        }}
+      />
+      <Tabs.Screen
+        name="ssh"
+        options={{
+          title: "SSH",
+          headerShown: false,
+          tabBarIcon: ({ focused }) => <TabIcon label="SSH" focused={focused} rail={useLeftRail} />,
         }}
       />
       <Tabs.Screen
         name="apps"
         options={{
-          title: "Projects",
+          title: "Studio",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Projects" focused={focused} rail={useLeftRail} />
+            <TabIcon label="Studio" focused={focused} rail={useLeftRail} />
           ),
         }}
       />
@@ -578,18 +577,21 @@ const styles = StyleSheet.create({
   // Expanded landscape rail: horizontal icon+label row filling the
   // widened rail, with room for the active-item accent pill.
   tabIconWrapRail: {
+    // React Navigation gives tabBarIcon a compact icon slot even when the
+    // rail itself is wider. A horizontal label gets clipped inside that slot;
+    // stack it under the glyph and use the wider rail to keep the full word.
     flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
     alignSelf: "stretch",
     minWidth: 0,
     paddingTop: 0,
-    paddingHorizontal: 2,
+    paddingHorizontal: 4,
     paddingVertical: 8,
     gap: 3,
     borderRadius: 12,
   },
-  tabLabelRail: { marginTop: 0, fontSize: 10, letterSpacing: -0.1 },
+  tabLabelRail: { marginTop: 0, fontSize: 11, letterSpacing: -0.1, minWidth: 72, textAlign: "center" },
   // Plain centered slot for the glyph — no pill. Active state is conveyed
   // by the accent tint + solid icon, matching iOS-native tab bars.
   iconSlot: {
@@ -598,10 +600,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  drawnTasksIcon: { width: 24, gap: 4 },
-  drawnTaskRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  drawnTaskDot: { width: 5, height: 5, borderRadius: 2.5, borderWidth: 1.5 },
-  drawnTaskLine: { height: 2, width: 15, borderRadius: 2 },
   drawnFolderIcon: {
     width: 24,
     height: 17,

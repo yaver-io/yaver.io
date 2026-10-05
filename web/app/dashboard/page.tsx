@@ -170,7 +170,7 @@ function statusColor(s: string) {
 type ChatMsg = { role: "user" | "assistant"; text: string; queued?: boolean };
 type OpenCodeAgentRow = { name: string; model?: string; isBuiltin?: boolean };
 const DASHBOARD_TABS = [
-  "home", "chat", "projects", "runtime", "vibe", "devices", "git", "todos",
+  "home", "ssh", "chat", "projects", "runtime", "vibe", "devices", "git", "todos",
   "feedback", "artifacts", "builds", "webview", "preview", "web-reload",
   "health", "quality", "convex", "data", "switch", "accounts", "company-ai",
   "companion", "observ", "ops", "autoruns", "extras", "share",
@@ -766,7 +766,7 @@ function DeviceConnectCard({
 // and the self-gating preview tabs (vibe, webview,
 // preview, web-reload) are intentionally excluded.
 const CONNECTION_REQUIRED_TABS = new Set<string>([
-  "chat", "projects", "git", "runtime", "storage", "ops", "data", "convex",
+  "ssh", "chat", "projects", "git", "runtime", "storage", "ops", "data", "convex",
   "schedules", "apikeys", "exec", "companion", "builds", "quality", "observ",
   "screenlog", "extras", "accounts", "switch", "tools", "phone", "health",
   "todos", "arm", "appletv", "verbs", "autoruns",
@@ -1053,7 +1053,7 @@ export default function DashboardPage() {
     return [...rows].sort((a, b) => rank(a) - rank(b) || b.lastSeenAt - a.lastSeenAt);
   }, [sidebarConvexTmux, sidebarTmux, connectedDevice]);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<DashboardTab>("devices");
+  const [activeTab, setActiveTab] = useState<DashboardTab>("ssh");
   const [runtimeIntent, setRuntimeIntent] = useState<RuntimeLabIntent | null>(null);
   const [autoStart2faSetup, setAutoStart2faSetup] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -3602,6 +3602,7 @@ export default function DashboardPage() {
   // "network" tab itself stays a valid DashboardTab \u2014 Settings and ?tab=
   // deep links still open it.
   const tabs: { id: typeof activeTab; label: string; badge?: number }[] = ([
+    { id: "ssh", label: "SSH" },
     { id: "devices", label: "Devices" },
     { id: "chat", label: "Chat" },
     { id: "projects", label: "Projects" },
@@ -3670,6 +3671,7 @@ export default function DashboardPage() {
           {/* Nav */}
           <nav className="flex flex-col gap-[2px]">
 	            {([
+	              { id: "ssh",      label: "SSH" },
 	              { id: "devices",  label: "Devices" },
 	              { id: "chat",     label: "Chat" },
 	              { id: "projects", label: "Projects" },
@@ -4563,6 +4565,30 @@ export default function DashboardPage() {
                   </>
                 )}
                 </div>
+              </div>
+            </div>
+          ) : activeTab === "ssh" ? (
+            <div className="flex flex-1 items-center justify-center overflow-y-auto p-6">
+              <div className="w-full max-w-xl rounded-2xl border border-surface-800 bg-surface-900/70 p-7 text-center">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
+                  <NavIcon id="ssh" className="h-6 w-6" />
+                </div>
+                <h2 className="text-lg font-semibold text-surface-100">
+                  {connectedDevice?.alias ? `@${connectedDevice.alias}` : connectedDevice?.name || "SSH"}
+                </h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-5 text-surface-400">
+                  Open a real PTY on this machine. Your persistent tmux session can be detached and resumed from another Yaver device.
+                </p>
+                {connectedDevice ? (
+                  <button
+                    type="button"
+                    onClick={() => setShellDevice(connectedDevice)}
+                    className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400"
+                  >
+                    <NavIcon id="ssh" className="h-4 w-4" />
+                    Open SSH
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : activeTab === "home" ? (

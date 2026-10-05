@@ -7,16 +7,18 @@ import (
 
 func TestWSOriginAllowed(t *testing.T) {
 	tests := []struct {
-		name   string
-		host   string
-		origin string
-		want   bool
+		name     string
+		host     string
+		origin   string
+		viaRelay bool
+		want     bool
 	}{
 		{name: "no origin", host: "127.0.0.1:18080", origin: "", want: true},
 		{name: "same host", host: "agent.local:18080", origin: "http://agent.local:18080", want: true},
 		{name: "trusted yaver origin", host: "192.168.1.9:18080", origin: "https://yaver.io", want: true},
 		{name: "trusted localhost origin", host: "192.168.1.9:18080", origin: "http://localhost:3000", want: true},
 		{name: "untrusted origin", host: "192.168.1.9:18080", origin: "https://evil.example", want: false},
+		{name: "authenticated relay replay", host: "127.0.0.1:18080", origin: "https://relay.yaver.io", viaRelay: true, want: true},
 		{name: "invalid origin", host: "192.168.1.9:18080", origin: "://bad", want: false},
 	}
 
@@ -26,6 +28,9 @@ func TestWSOriginAllowed(t *testing.T) {
 			req.Host = tt.host
 			if tt.origin != "" {
 				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.viaRelay {
+				req.Header.Set("X-Yaver-Via-Relay", "1")
 			}
 			if got := wsOriginAllowed(req); got != tt.want {
 				t.Fatalf("wsOriginAllowed() = %v, want %v", got, tt.want)

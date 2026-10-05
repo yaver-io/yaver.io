@@ -96,7 +96,13 @@ EOF
 # route to repair rather than a late configure/build failure.
 yaver_android_probe_ndk_host() {
   local sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-  local host_arch
+  local host_os host_arch
+  host_os=$(uname -s)
+  # This probe exists for Linux ARM workers that execute Google's x86_64-only
+  # host tools through binfmt. Apple Silicon uses the NDK's darwin-x86_64 host
+  # toolchain directly; demanding a linux-x86_64 directory there is a false
+  # failure before Gradle gets a chance to use the correct compiler.
+  [ "$host_os" = Linux ] || return 0
   host_arch=$(uname -m)
   case "$host_arch" in
     arm64|aarch64) ;;

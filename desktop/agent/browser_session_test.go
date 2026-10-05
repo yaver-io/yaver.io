@@ -22,6 +22,14 @@ func TestBrowserSessionScopedToPath(t *testing.T) {
 	}
 }
 
+func TestBrowserSessionAllowsBothOwnerPTYPaths(t *testing.T) {
+	for _, path := range []string{"/ws/terminal", "/ws/runner"} {
+		if !isAllowedBrowserSessionPath(path) {
+			t.Fatalf("expected %s to allow a path-scoped browser session", path)
+		}
+	}
+}
+
 func TestHandleBrowserSessionRejectsUnsafePaths(t *testing.T) {
 	s := &HTTPServer{}
 	req := httptest.NewRequest(http.MethodPost, "/auth/browser-session", strings.NewReader(`{"pathPrefix":"/tasks"}`))

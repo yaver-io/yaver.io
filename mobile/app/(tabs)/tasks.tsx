@@ -7138,7 +7138,7 @@ export default function TasksScreen() {
     <SafeAreaView style={[s.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
         <View style={[s.tabScreenHeader, { paddingTop: insets.top + 8, backgroundColor: c.bg, borderBottomColor: c.border }]}>
-          <Text style={[s.tabScreenHeaderTitle, { color: c.textPrimary }]}>Chat</Text>
+          <Text style={[s.tabScreenHeaderTitle, { color: c.textPrimary }]}>Tasks</Text>
         </View>
         <RemoteBoxBanner
           extra={
@@ -9245,6 +9245,17 @@ export default function TasksScreen() {
                   runnerActionLabel="Change model for the next turn"
                   modelLabel={undefined}
                   onBack={() => { closeFollowUpComposer(); setSelectedTask(null); setFollowUpText(""); }}
+                  onOpenSSH={selectedTaskOwnerId ? () => {
+                    // Carry the task owner through navigation. The shell must
+                    // never inherit whichever pooled device happened to be
+                    // focused when this historical task was opened.
+                    const ownerId = selectedTaskOwnerId;
+                    closeFollowUpComposer();
+                    setSelectedTask(null);
+                    setTimeout(() => {
+                      taskRouter.push({ pathname: "/shell", params: { deviceId: ownerId, source: "task" } } as any);
+                    }, 220);
+                  } : undefined}
                   onOpenLogs={() => setShowLogs(true)}
                   primaryAction={
                     taskHasUnresolvedFailure(selectedTask) ? "retry"

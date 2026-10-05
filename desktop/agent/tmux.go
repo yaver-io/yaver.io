@@ -341,6 +341,32 @@ func TmuxInstallHint() string {
 	return "install tmux for your platform (https://github.com/tmux/tmux/wiki/Installing)"
 }
 
+// ControlClient performs the two tmux operations that are otherwise awkward
+// or unreliable from a tablet keyboard. It accepts only a plain session name
+// and a closed action set; no caller-controlled argv reaches exec.
+func (m *TmuxManager) ControlClient(sessionName, action string) error {
+	sessionName = sanitizeTmuxSessionName(sessionName)
+	if sessionName == "" {
+		return fmt.Errorf("invalid tmux session name")
+	}
+	if !tmuxSessionExists(sessionName) {
+		return fmt.Errorf("tmux session %s is not running", sessionName)
+	}
+	var args []string
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "detach":
+		args = []string{"detach-client", "-s", sessionName}
+	case "kill-pane":
+		args = []string{"kill-pane", "-t", sessionName}
+	default:
+		return fmt.Errorf("unsupported tmux client action")
+	}
+	if out, err := exec.Command(tmuxCmdName(), args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux %s failed: %w: %s", action, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ListTmuxSessions returns all tmux sessions with metadata about their
 // relationship to Yaver (adopted, forked-by-yaver, or unrelated).
 func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {

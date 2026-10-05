@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const login = readFileSync(join(here, "../../app/login.tsx"), "utf8");
+const emailLogin = readFileSync(join(here, "../../app/email-login.tsx"), "utf8");
 
 function inputWithTestID(testID: string): string {
   const marker = `testID="${testID}"`;
@@ -47,5 +48,36 @@ test("email sign-in reserves keyboard room for the following control", () => {
 test("the platform still owns the actual keyboard inset", () => {
   assert.match(login, /automaticallyAdjustKeyboardInsets/);
   assert.match(login, /keyboardDismissMode="interactive"/);
+  assert.match(login, /Keyboard\.addListener\("keyboardDidShow"/);
+  assert.match(login, /showEmailForm && keyboardVisible && styles\.scrollContainerKeyboard/);
+  assert.match(login, /showEmailForm && styles\.hidden/);
   assert.doesNotMatch(login, /<KeyboardAvoidingView/);
+});
+
+test("the non-OAuth stage routes email login to a dedicated two-field page", () => {
+  assert.match(
+    login,
+    /const \[loginPane, setLoginPane\] = useState<"email" \| "options">\("options"\)/,
+  );
+  assert.match(login, /testID="login-email-entry"/);
+  assert.match(login, /router\.push\("\/email-login"\)/);
+  assert.match(login, />Sign in with email<\/Text>/);
+  assert.ok(
+    login.indexOf('testID="login-email-entry"') < login.indexOf("{passkeySupported && !showEmailForm"),
+    "email login must appear before passkey and OAuth choices",
+  );
+  assert.match(login, /\{!showEmailForm && <View style=\{\[styles\.providerGroup/);
+
+  assert.equal((emailLogin.match(/\n\s*<TextInput\n/g) ?? []).length, 2);
+  assert.match(emailLogin, /testID="email-login-email"/);
+  assert.match(emailLogin, /testID="email-login-password"/);
+  assert.match(emailLogin, /testID="email-login-submit"/);
+  assert.match(emailLogin, /automaticallyAdjustKeyboardInsets/);
+  assert.match(emailLogin, /scrollResponderScrollNativeHandleToKeyboard/);
+
+  const emailInput = inputWithTestID("login-email-input");
+  const passwordInput = inputWithTestID("login-password-input");
+  assert.match(emailInput, /placeholder="Email"/);
+  assert.match(passwordInput, /placeholder="Password"/);
+  assert.match(login, /setLoginPane\("options"\)/);
 });

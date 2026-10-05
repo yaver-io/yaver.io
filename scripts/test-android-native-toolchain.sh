@@ -175,6 +175,21 @@ if YAVER_ANDROID_NINJA_JOBS=0 "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" target 
   echo "Ninja low-memory wrapper accepted an invalid zero job count" >&2
   exit 1
 fi
+# Apple Silicon has a darwin-x86_64 NDK host toolchain, not linux-x86_64.
+# Prove the Linux-emulation preflight stays out of the macOS build path.
+mkdir -p "$NINJA_TEST_ROOT/fake-bin" "$NINJA_TEST_ROOT/darwin-sdk/ndk"
+cat >"$NINJA_TEST_ROOT/fake-bin/uname" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  -s) printf '%s\n' Darwin ;;
+  -m) printf '%s\n' arm64 ;;
+  *) printf '%s\n' Darwin ;;
+esac
+EOF
+chmod +x "$NINJA_TEST_ROOT/fake-bin/uname"
+PATH="$NINJA_TEST_ROOT/fake-bin:$PATH" \
+  ANDROID_SDK_ROOT="$NINJA_TEST_ROOT/darwin-sdk" \
+  yaver_android_probe_ndk_host
 cleanup_ninja_test_root
 trap - EXIT
 grep -q 'deploy-playstore.sh' "$ANDROID_ALL_DEPLOY"

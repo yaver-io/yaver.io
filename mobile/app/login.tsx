@@ -10,6 +10,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -105,7 +106,10 @@ export default function LoginScreen() {
   const isTabletLandscape = layout.layoutClass === "tablet-landscape";
   const isTablet = layout.isTablet;
   const [isLoading, setIsLoading] = useState(false);
-  const [showEmailForm, setShowEmailForm] = useState(false);
+  // Email is a first-class, non-OAuth entry point. It opens the same compact
+  // two-field widget on phones and tablets, in either orientation.
+  const [loginPane, setLoginPane] = useState<"email" | "options">("options");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   // Code sign-in. The whole flow is three bits of state: the short code to show,
   // a line saying what is happening, and a cancel flag the poll loop reads.
   const [deviceCode, setDeviceCode] = useState<{ userCode: string; secret: string } | null>(null);
@@ -194,6 +198,7 @@ export default function LoginScreen() {
   const [emailError, setEmailError] = useState("");
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(false);
+  const showEmailForm = emailPasswordEnabled && loginPane === "email";
   const loginScrollRef = useRef<ScrollView>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const confirmPasswordInputRef = useRef<TextInput>(null);
@@ -253,6 +258,19 @@ export default function LoginScreen() {
     [],
   );
 
+  // Match the proven Talos mobile credential pattern: the ScrollView owns
+  // keyboard movement, while decorative brand/footer space collapses when the
+  // software keyboard is present. This matters most on a tablet in landscape,
+  // where adjustResize leaves a short but wide viewport.
+  useEffect(() => {
+    const shown = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const hidden = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+
   // Belt-and-braces fallback: if the OAuth deep link arrives while
   // LoginScreen is still mounted (cold-start race winner), consume
   // the token here. The canonical handler is app/oauth-callback.tsx,
@@ -261,16 +279,10 @@ export default function LoginScreen() {
     void getAuthConfig().then((config) => {
       setEmailPasswordEnabled(config.emailPasswordEnabled);
       if (!config.emailPasswordEnabled) {
-        setShowEmailForm(false);
+        setLoginPane("options");
       }
     });
   }, []);
-
-  useEffect(() => {
-    if (!emailPasswordEnabled) {
-      setShowEmailForm(false);
-    }
-  }, [emailPasswordEnabled]);
 
   useEffect(() => {
     const subscription = Linking.addEventListener("url", async (event) => {
@@ -373,7 +385,7 @@ export default function LoginScreen() {
     setEmailError("");
     if (!email.trim() || !email.includes("@")) {
       setEmailError("Enter your email first.");
-      setShowEmailForm(true);
+      setLoginPane("email");
       setIsSignUp(true);
       return;
     }
@@ -623,19 +635,27 @@ export default function LoginScreen() {
             styles.scrollContainer,
             isTabletLandscape && styles.scrollContainerLandscape,
             isTabletPortrait && styles.scrollContainerTabletPortrait,
+            showEmailForm && keyboardVisible && styles.scrollContainerKeyboard,
           ]}
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
           keyboardDismissMode="interactive"
           contentInsetAdjustmentBehavior="automatic"
         >
-          <View style={[styles.shell, isTabletLandscape && styles.shellLandscape]}>
+          <View
+            style={[
+              styles.shell,
+              isTabletLandscape && styles.shellLandscape,
+              showEmailForm && styles.shellEmailOnly,
+            ]}
+          >
             <View
               style={[
                 styles.header,
                 showEmailForm && !isTablet && styles.headerEmailMode,
                 isTabletPortrait && styles.headerTabletPortrait,
                 isTabletLandscape && styles.headerLandscape,
+                showEmailForm && styles.hidden,
               ]}
             >
               <YaverAppIcon
@@ -686,11 +706,31 @@ export default function LoginScreen() {
                 { backgroundColor: isTablet ? c.bgCardElevated : "transparent" },
                 isTabletPortrait && styles.formCardTabletPortrait,
                 isTabletLandscape && styles.formCardTabletLandscape,
+                showEmailForm && styles.formCardEmailOnly,
                 isTablet && { borderColor: c.borderSubtle },
                 isTablet && elevatedCardShadow,
               ]}
             >
               <View style={styles.buttons}>
+                {emailPasswordEnabled && !showEmailForm && (
+                  <Pressable
+                    testID="login-email-entry"
+                    style={({ pressed }) => [
+                      styles.emailEntryButton,
+                      { backgroundColor: c.accent },
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() => {
+                      router.push("/email-login");
+                    }}
+                  >
+                    <View style={styles.buttonContent}>
+                      <Ionicons name="mail-outline" size={18} color="#fff" style={styles.buttonIcon} />
+                      <Text style={styles.emailEntryText}>Sign in with email</Text>
+                    </View>
+                  </Pressable>
+                )}
+
                 {passkeySupported && !showEmailForm && (
                   <Pressable
                     style={({ pressed }) => [
@@ -852,50 +892,22 @@ export default function LoginScreen() {
                 )}
 
                 {emailPasswordEnabled ? (
-                  !showEmailForm ? (
-                    <>
-                      <View style={styles.divider}>
-                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                        <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
-                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                      </View>
-                      <Pressable
-                        style={({ pressed }) => [
-                          styles.button,
-                          { backgroundColor: c.bgCard, borderColor: providerBorderColor },
-                          pressed && styles.buttonPressed,
-                        ]}
-                        onPress={() => {
-                          setShowEmailForm(true);
-                          requestAnimationFrame(() => loginScrollRef.current?.scrollTo({ y: 54, animated: true }));
-                        }}
-                      >
-                        <View style={styles.buttonContent}>
-                          <Ionicons name="mail-outline" size={17} color={c.textPrimary} style={styles.buttonIcon} />
-                          <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Email</Text>
-                        </View>
-                      </Pressable>
-                    </>
-                  ) : (
+                  showEmailForm ? (
                     <>
                       <Pressable
                         testID="login-back-to-options"
                         accessibilityRole="button"
                         accessibilityLabel="Back to sign-in options"
                         onPress={() => {
-                          setShowEmailForm(false);
+                          setLoginPane("options");
                           setEmailError("");
                         }}
                         style={styles.emailBackButton}
                       >
-                        <Ionicons name="chevron-back" size={17} color={c.textMuted} />
+                        <YaverAppIcon size={24} />
                         <Text style={[styles.emailBackText, { color: c.textMuted }]}>Sign-in options</Text>
                       </Pressable>
-                      <View style={styles.divider}>
-                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                        <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
-                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                      </View>
+                      <Text style={[styles.emailWidgetTitle, { color: c.textPrimary }]}>Sign in with email</Text>
                       <View style={styles.emailForm}>
                         {isSignUp && (
                           <TextInput
@@ -1030,7 +1042,7 @@ export default function LoginScreen() {
                         </Pressable>
                       </View>
                     </>
-                  )
+                  ) : null
                 ) : null}
               </View>
             </View>
@@ -1041,6 +1053,7 @@ export default function LoginScreen() {
               styles.footerContainer,
               isTabletLandscape && styles.footerContainerLandscape,
               isTabletPortrait && styles.footerContainerTabletPortrait,
+              showEmailForm && keyboardVisible && styles.hidden,
             ]}
           >
             <Text style={[styles.footer, { color: c.textMuted }]}>
@@ -1089,6 +1102,11 @@ const styles = StyleSheet.create({
     paddingTop: 40,
     paddingBottom: 32,
   },
+  scrollContainerKeyboard: {
+    justifyContent: "flex-start",
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
   shell: {
     width: "100%",
     alignSelf: "center",
@@ -1100,6 +1118,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 72,
     maxWidth: 1240,
+  },
+  shellEmailOnly: {
+    maxWidth: 480,
+    alignSelf: "center",
+    flexDirection: "column",
+    justifyContent: "center",
+  },
+  hidden: {
+    display: "none",
   },
   header: {
     alignItems: "center",
@@ -1182,6 +1209,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
   },
+  formCardEmailOnly: {
+    width: "100%",
+    maxWidth: 480,
+    alignSelf: "center",
+  },
   buttons: {
     gap: 0,
   },
@@ -1205,6 +1237,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  emailEntryButton: {
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  emailEntryText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
   },
   passkeySignupButton: {
     minHeight: 48,
@@ -1322,6 +1368,13 @@ const styles = StyleSheet.create({
   emailBackText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  emailWidgetTitle: {
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: "700",
+    marginTop: 8,
+    marginBottom: 18,
   },
   emailForm: {
     gap: 12,

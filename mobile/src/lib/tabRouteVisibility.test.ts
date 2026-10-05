@@ -25,8 +25,8 @@ test("every top-level tab route is explicitly visible or hidden", () => {
   assert.deepEqual(leaked, [], `undeclared routes become anonymous tab slots: ${leaked.join(", ")}`);
 });
 
-test("the phone bar exposes only Tasks, Projects, and More", () => {
-  for (const route of ["tasks", "apps", "more"]) {
+test("the developer-tool bar exposes Tasks, SSH, Studio, and More", () => {
+  for (const route of ["tasks", "ssh", "apps", "more"]) {
     assert.match(layout, new RegExp(`<Tabs\\.Screen\\s+name="${route}"`));
   }
   for (const route of ["projects", "vibing"]) {

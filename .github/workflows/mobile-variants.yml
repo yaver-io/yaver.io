@@ -17,11 +17,10 @@
 #                        (aapt2), then uploads the APK artifact. No signing
 #                        secrets needed; proves the variant compiles end-to-end.
 #
-# Apple side (gated, intentionally not built here):
-#   - tvOS: native SwiftUI app (tvos/, ADR docs/yaver-tvos-fork-adr.md Option B).
-#     No Xcode project is checked in yet (tvos/README.md = one-time target
-#     creation), so there is nothing for CI to build. Add a `build-tvos` job
-#     once tvos/YaverTV.xcodeproj exists.
+# Apple side (intentionally not built in this Android-focused workflow):
+#   - tvOS: native SwiftUI app and generated project live under `tvos/`.
+#     Its Xcode unit/UI suites are the release guard; standalone uploads use
+#     `release-apple-surfaces.yml` / `./deploy/deploy.sh tvos`.
 #   - CarPlay: part of the iOS app, gated on the carplay-* entitlement
 #     (docs/yaver-carplay-entitlement-request.md). Ships via the iOS pipeline,
 #     not a separate binary.

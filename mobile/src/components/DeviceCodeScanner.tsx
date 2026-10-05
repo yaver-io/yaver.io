@@ -19,6 +19,7 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "ex
 
 import { useColors } from "../context/ThemeContext";
 import { extractScannedDeviceCode } from "../lib/deviceCodeQr";
+import { YaverAppIcon } from "./YaverAppIcon";
 
 interface Props {
   /** Fires once with the normalized ABCD-1234 code when a valid
@@ -60,6 +61,7 @@ export default function DeviceCodeScanner({ onScanned, onClose }: Props) {
   if (!permission.granted) {
     return (
       <View style={[styles.fill, styles.center, { backgroundColor: c.bg, padding: 32 }]}>
+        <YaverAppIcon size={58} style={{ marginBottom: 20 }} />
         <Text style={[styles.title, { color: c.textPrimary }]}>Scan the code on your machine</Text>
         <Text style={[styles.body, { color: c.textSecondary }]}>
           Allow camera access to scan the QR your machine printed after running yaver auth. You can
@@ -90,6 +92,7 @@ export default function DeviceCodeScanner({ onScanned, onClose }: Props) {
       />
       {/* Framing hint + close. */}
       <View style={styles.overlay} pointerEvents="box-none">
+        <YaverAppIcon size={46} style={styles.brandMark} />
         <Text style={styles.overlayText}>Point at the QR on your machine</Text>
         <View style={styles.reticle} />
         <Pressable
@@ -122,6 +125,7 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0,0,0,0.6)",
     textShadowRadius: 6,
   },
+  brandMark: { position: "absolute", top: 42 },
   reticle: {
     width: 220,
     height: 220,

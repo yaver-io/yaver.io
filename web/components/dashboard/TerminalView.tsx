@@ -6,28 +6,14 @@ import "@xterm/xterm/css/xterm.css";
 
 type ConnState = "connecting" | "open" | "closed" | "error";
 
-// One-tap coding-agent launchers — kept in sync with the mobile app's
-// src/lib/agentLaunch.ts. Typed straight into the remote PTY in yolo mode.
-const AGENT_LAUNCHERS: ReadonlyArray<{ id: string; label: string; command: string; hint: string }> = [
-  {
-    id: "claude",
-    label: "Claude",
-    command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-claude 'claude --dangerously-skip-permissions'; else exec claude --dangerously-skip-permissions; fi",
-    hint: "Launch Claude Code in a persistent Yaver session with permission prompts skipped",
-  },
-  {
-    id: "codex",
-    label: "Codex",
-    command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-codex 'codex --dangerously-bypass-approvals-and-sandbox'; else exec codex --dangerously-bypass-approvals-and-sandbox; fi",
-    hint: "Launch Codex in a persistent Yaver session with approvals + sandbox bypassed",
-  },
-  {
-    id: "opencode",
-    label: "OpenCode",
-    command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-opencode 'opencode --auto'; else exec opencode --auto; fi",
-    hint: "Launch OpenCode in a persistent Yaver session with auto approvals",
-  },
-];
+const ATTACH_TMUX_COMMAND = 'command -v tmux >/dev/null 2>&1 && exec tmux new-session -A -s yaver-shell\r';
+
+function runnerTmuxSession(launch?: string): string {
+  return launch === "claude" ? "yaver-claude"
+    : launch === "codex" ? "yaver-codex"
+      : launch === "opencode" ? "yaver-opencode"
+        : "";
+}
 
 export default function TerminalView({
   cwd,
@@ -56,11 +42,11 @@ export default function TerminalView({
   const [closeReason, setCloseReason] = useState<string>("");
   const [attempt, setAttempt] = useState(0);
   const [dictating, setDictating] = useState(false);
-  const [runningRunner, setRunningRunner] = useState<string | null>(null);
   const [closeBusy, setCloseBusy] = useState(false);
   const [closeError, setCloseError] = useState<string>("");
   const [taskFollowUpOnly, setTaskFollowUpOnly] = useState(false);
   const [inputReason, setInputReason] = useState("");
+  const [tmuxBusy, setTmuxBusy] = useState(false);
   const [sttAvailable] = useState<boolean>(
     () => typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
   );
@@ -88,6 +74,35 @@ export default function TerminalView({
     if (onCloseTerminal) onCloseTerminal();
   }, [onCloseTerminal]);
 
+  const detachTmux = useCallback(async () => {
+    const session = tmuxSession || sshProfile?.tmuxSession || runnerTmuxSession(launch) || "yaver-shell";
+    setTmuxBusy(true);
+    setCloseError("");
+    try {
+      await agentClient.controlTmuxClient(session, "detach");
+      disconnectPty();
+    } catch (err: any) {
+      setCloseError(err?.message || "Could not detach tmux");
+    } finally {
+      setTmuxBusy(false);
+    }
+  }, [disconnectPty, launch, sshProfile?.tmuxSession, tmuxSession]);
+
+  const killTmuxPane = useCallback(async () => {
+    const session = tmuxSession || sshProfile?.tmuxSession || runnerTmuxSession(launch) || "yaver-shell";
+    if (!window.confirm(`Close the active pane in ${session}? This is Ctrl-B, X, then Y.`)) return;
+    setTmuxBusy(true);
+    setCloseError("");
+    try {
+      await agentClient.controlTmuxClient(session, "kill-pane");
+      disconnectPty();
+    } catch (err: any) {
+      setCloseError(err?.message || "Could not close tmux pane");
+    } finally {
+      setTmuxBusy(false);
+    }
+  }, [disconnectPty, launch, sshProfile?.tmuxSession, tmuxSession]);
+
   const closeTmuxTask = useCallback(async () => {
     if (!tmuxTaskId || closeBusy) return;
     const ok = window.confirm(`Close Yaver session ${tmuxSession || tmuxTaskId}? This stops the adopted terminal on the connected machine.`);
@@ -104,25 +119,6 @@ export default function TerminalView({
       setCloseBusy(false);
     }
   }, [closeBusy, onTmuxClosed, tmuxSession, tmuxTaskId]);
-
-  // Open/close toggle: tap an idle runner to launch it, tap the active one to
-  // send `/exit`. Best-effort state — reset on (re)connect since the PTY is new.
-  const toggleRunner = useCallback(
-    async (l: { id: string; label: string; command: string }) => {
-      if (status !== "open") return;
-      if (runningRunner === l.id) {
-        sendToPty("/exit\n");
-        setRunningRunner(null);
-        return;
-      }
-      // This tap already expresses the one permitted action: launch this
-      // runner. Do not spend a second generation on a hidden test first; the
-      // runner's own terminal output is the operation-level readiness signal.
-      sendToPty(`${l.command}\n`);
-      setRunningRunner(l.id);
-    },
-    [runningRunner, sendToPty, status],
-  );
 
   // Optional browser dictation → typed at the prompt (no auto-Enter).
   const toggleDictation = useCallback(() => {
@@ -203,7 +199,6 @@ export default function TerminalView({
       ws.onopen = () => {
         setStatus("open");
         setCloseReason("");
-        setRunningRunner(null); // fresh PTY
         setTaskFollowUpOnly(false);
         setInputReason("");
         term.options.disableStdin = false;
@@ -288,7 +283,6 @@ export default function TerminalView({
       };
       ws.onclose = (ev) => {
         setStatus("closed");
-        setRunningRunner(null);
         setTaskFollowUpOnly(false);
         const reason = ev.reason
           ? `${ev.reason} (code ${ev.code})`
@@ -358,36 +352,52 @@ export default function TerminalView({
 
   return (
     <div className="flex h-full w-full flex-col bg-[#0b0d10] overflow-hidden">
-      {/* One-tap agent launchers + optional dictation */}
+      {/* Shell/tmux controls + optional dictation. Coding tools are ordinary
+          commands inside the shell, not permanent product chrome. */}
       <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1.5 overflow-x-auto">
         {tmuxSession ? (
           <span className="shrink-0 rounded border border-sky-400/40 bg-sky-500/15 px-2.5 py-1 font-mono text-xs text-sky-700 dark:text-sky-200">
             Yaver session · {tmuxSession}
           </span>
-        ) : AGENT_LAUNCHERS.map((l) => {
-          const active = runningRunner === l.id;
-          return (
-            <button
-              key={l.id}
-              title={active ? `Exit ${l.label} (sends /exit)` : l.hint}
-              disabled={status !== "open"}
-              onClick={() => { void toggleRunner(l); }}
-              className={`shrink-0 rounded border px-2.5 py-1 text-xs font-semibold disabled:opacity-40 ${
-                active
-                  ? "border-violet-400 bg-violet-500 text-white hover:bg-violet-600"
-                  : "border-violet-400/50 bg-violet-500/15 text-violet-700 dark:text-violet-200 hover:bg-violet-500/25"
-              }`}
-            >
-              {active ? `■ ${l.label}` : `▷ ${l.label}`}
-            </button>
-          );
-        })}
+        ) : <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-xs text-gray-300">Shell</span>}
         <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
         {taskFollowUpOnly ? (
           <span className="shrink-0 text-xs text-amber-300" title={inputReason}>
             Observe only · reply from the task
           </span>
         ) : null}
+        <button
+          disabled={status !== "open" || taskFollowUpOnly}
+          onClick={() => sendToPty("\x02")}
+          title="Send the tmux Ctrl-B prefix"
+          className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 font-mono text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
+        >
+          ^B
+        </button>
+        <button
+          disabled={status !== "open" || taskFollowUpOnly}
+          onClick={() => sendToPty(ATTACH_TMUX_COMMAND)}
+          title="Attach to the persistent Yaver tmux session"
+          className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
+        >
+          Attach
+        </button>
+        <button
+          onClick={() => { void detachTmux(); }}
+          disabled={status !== "open" || taskFollowUpOnly || tmuxBusy}
+          title="Detach from tmux and keep the session running"
+          className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
+        >
+          Detach
+        </button>
+        <button
+          disabled={status !== "open" || taskFollowUpOnly || tmuxBusy}
+          onClick={() => { void killTmuxPane(); }}
+          title="Close active tmux pane (Ctrl-B, X, Y)"
+          className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
+        >
+          Kill pane
+        </button>
         <button
           disabled={status !== "open" || taskFollowUpOnly}
           onClick={() => sendToPty("\x03")}

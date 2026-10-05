@@ -217,7 +217,7 @@ export default function ApproveDeviceScreen() {
   // re-opens itself on the next route change.
   const goHome = useCallback(() => {
     void clearPendingDeviceCode();
-    router.replace("/(tabs)/tasks");
+    router.replace("/(tabs)/ssh");
   }, []);
 
   if (done) {

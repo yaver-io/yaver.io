@@ -102,6 +102,8 @@ func isAllowedBrowserSessionPath(path string) bool {
 		return true
 	case path == "/ws/terminal":
 		return true
+	case path == "/ws/runner":
+		return true
 	case strings.HasPrefix(path, "/proxy/"):
 		return true
 	// Live media views from the web dashboard render with an <img>/EventSource

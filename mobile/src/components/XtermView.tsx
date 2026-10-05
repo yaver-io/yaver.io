@@ -20,15 +20,17 @@
 import React, {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
 } from "react";
-import { StyleSheet, View } from "react-native";
+import { Keyboard, NativeModules, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { XTERM_CSS, XTERM_FIT_JS, XTERM_JS } from "./vendor/xtermBundle";
 import { parseBridgeMessage, writeCommand } from "../lib/xtermBridge";
+import type { SSHSoftwareKeyboardMode } from "../lib/sshPreferences";
 
 export interface XtermHandle {
   write(bytes: Uint8Array): void;
@@ -50,6 +52,8 @@ export interface XtermViewProps {
   cursor?: string;
   fontSize?: number;
   style?: object;
+  /** Whether focusing xterm may summon the Android software keyboard. */
+  softwareKeyboardMode?: SSHSoftwareKeyboardMode;
 }
 
 // The bridge script: boot xterm, wire data/resize out, expose write/fit in.
@@ -59,6 +63,7 @@ function bridgeScript(opts: {
   foreground: string;
   cursor: string;
   fontSize: number;
+  softwareKeyboardMode: SSHSoftwareKeyboardMode;
 }): string {
   return `
 (function () {
@@ -97,6 +102,19 @@ function bridgeScript(opts: {
   term.loadAddon(fit);
   term.open(document.getElementById("t"));
 
+  // xterm captures input through a hidden textarea. On Android, focusing that
+  // textarea opens the IME unless inputmode=none is already present. Keep the
+  // textarea focusable (USB/BLE and scrcpy still deliver keys) while making
+  // "Never show" preventative instead of dismissing the keyboard afterward.
+  window.__yvSetSoftwareKeyboardMode = function (mode) {
+    try {
+      if (!term.textarea) return;
+      if (mode === "never") term.textarea.setAttribute("inputmode", "none");
+      else term.textarea.removeAttribute("inputmode");
+    } catch (e) {}
+  };
+  window.__yvSetSoftwareKeyboardMode(${JSON.stringify(opts.softwareKeyboardMode)});
+
   function doFit() {
     try { fit.fit(); } catch (e) {}
     post({ t: "r", c: term.cols, r: term.rows });
@@ -108,6 +126,7 @@ function bridgeScript(opts: {
   // PTY stdout bytes → grid
   window.__yvWrite = function (b64) { term.write(b64ToBytes(b64)); };
   window.__yvFit = doFit;
+  window.__yvFocus = function () { try { term.focus(); } catch (e) {} };
   // Full reset — clears the grid AND the scrollback. Used when a raw_replay
   // snapshot (full=true) replaces the screen instead of appending.
   window.__yvReset = function () { try { term.reset(); } catch (e) {} };
@@ -116,7 +135,6 @@ function bridgeScript(opts: {
   // initial fit after layout settles, then announce ready
   requestAnimationFrame(function () {
     doFit();
-    term.focus();
     post({ t: "ready" });
   });
 })();
@@ -134,6 +152,7 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
     cursor = "#818cf8",
     fontSize = 13,
     style,
+    softwareKeyboardMode = "auto",
   },
   ref,
 ) {
@@ -143,6 +162,49 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
   // otherwise window.__yvWrite is undefined and the replay is lost.
   const readyRef = useRef(false);
   const queueRef = useRef<Uint8Array[]>([]);
+
+  const applySoftwareKeyboardMode = useCallback((mode: "always" | "never") => {
+    webRef.current?.injectJavaScript(
+      `window.__yvSetSoftwareKeyboardMode && window.__yvSetSoftwareKeyboardMode(${JSON.stringify(mode)});true;`,
+    );
+  }, []);
+
+  // Android and iOS can still raise the software IME when xterm focuses its
+  // hidden textarea even though a USB/Bluetooth keyboard is attached. Keep
+  // physical focus, but dismiss only the software keyboard after positively
+  // probing the native input-device list. Finger-only use is unchanged.
+  useEffect(() => {
+    if (softwareKeyboardMode === "never") {
+      applySoftwareKeyboardMode("never");
+      Keyboard.dismiss();
+    } else if (softwareKeyboardMode === "always") {
+      applySoftwareKeyboardMode("always");
+    } else {
+      const router = (NativeModules as any).YaverKeyboardRouter;
+      if (router && typeof router.isAttached === "function") {
+        void Promise.resolve(router.isAttached()).then((attached) => {
+          applySoftwareKeyboardMode(attached ? "never" : "always");
+          if (attached) Keyboard.dismiss();
+        }).catch(() => applySoftwareKeyboardMode("always"));
+      } else {
+        applySoftwareKeyboardMode("always");
+      }
+    }
+
+    const sub = Keyboard.addListener("keyboardDidShow", () => {
+      if (softwareKeyboardMode === "always") return;
+      if (softwareKeyboardMode === "never") {
+        Keyboard.dismiss();
+        return;
+      }
+      const router = (NativeModules as any).YaverKeyboardRouter;
+      if (!router || typeof router.isAttached !== "function") return;
+      void Promise.resolve(router.isAttached()).then((attached) => {
+        if (attached) Keyboard.dismiss();
+      }).catch(() => {});
+    });
+    return () => sub.remove();
+  }, [applySoftwareKeyboardMode, softwareKeyboardMode]);
 
   const html = useMemo(
     () =>
@@ -155,9 +217,9 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
       `<body><div id="t"></div>` +
       `<script>${XTERM_JS}</script>` +
       `<script>${XTERM_FIT_JS}</script>` +
-      `<script>${bridgeScript({ background, foreground, cursor, fontSize })}</script>` +
+      `<script>${bridgeScript({ background, foreground, cursor, fontSize, softwareKeyboardMode })}</script>` +
       `</body></html>`,
-    [background, foreground, cursor, fontSize],
+    [background, foreground, cursor, fontSize, softwareKeyboardMode],
   );
 
   useImperativeHandle(
@@ -175,7 +237,7 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
         webRef.current?.injectJavaScript("window.__yvFit && window.__yvFit();true;");
       },
       focus() {
-        webRef.current?.injectJavaScript("window.term && window.term.focus();true;");
+        webRef.current?.injectJavaScript("window.__yvFocus && window.__yvFocus();true;");
       },
       reset() {
         webRef.current?.injectJavaScript("window.__yvReset && window.__yvReset();true;");

@@ -93,6 +93,17 @@ func wsOriginAllowed(r *http.Request) bool {
 		// may not send Origin.
 		return true
 	}
+	// The relay terminates the public HTTP request and replays the upgrade to
+	// 127.0.0.1 over its authenticated QUIC tunnel. Consequently the browser's
+	// Origin is the relay host while r.Host is the local agent, so the normal
+	// same-origin comparison can never pass. X-Yaver-Via-Relay is stamped by the
+	// tunnel receiver after copying caller headers (main.go), and this handler is
+	// already behind bearer/browser-session auth. Accept that proven transport;
+	// otherwise an authorized mobile PTY gets a misleading 403 from Gorilla's
+	// upgrader after its REST authorization preflight succeeded.
+	if r.Header.Get("X-Yaver-Via-Relay") == "1" {
+		return true
+	}
 	u, err := urlpkg.Parse(origin)
 	if err != nil || u.Hostname() == "" {
 		return false

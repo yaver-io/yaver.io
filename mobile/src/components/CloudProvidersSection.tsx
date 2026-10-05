@@ -28,6 +28,7 @@ import type { LocalHetznerManagedServer } from "../lib/hetznerDirect";
 import type { HetznerActionLog } from "../lib/hetznerDirectCore";
 import ApiKeyScanner from "./ApiKeyScanner";
 import { isBoundHetznerDevice } from "../lib/hetznerDeviceBinding";
+import { Ionicons } from "@expo/vector-icons";
 
 // Featured BYO compute providers (the VM providers the agent can
 // provision on directly). Others connect via the web Accounts view.
@@ -87,15 +88,19 @@ type AccountSummary = {
 export default function CloudProvidersSection({
   c,
   token,
+  initialOpen = false,
+  hideHeader = false,
 }: {
   c: any;
   token: string | null | undefined;
+  initialOpen?: boolean;
+  hideHeader?: boolean;
 }) {
   const { user } = useAuth();
   const { activeDevice, devices } = useDevice();
   const [providers, setProviders] = useState<ProviderMeta[]>([]);
   const [accounts, setAccounts] = useState<Record<string, AccountSummary>>({});
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -462,30 +467,64 @@ export default function CloudProvidersSection({
     }
   };
 
+  const receiveFromUsbHost = async () => {
+    if (!user?.id) {
+      Alert.alert("Sign in required", "Sign in before receiving configuration from the USB host.");
+      return;
+    }
+    setBusy("hetzner-usb-receive");
+    try {
+      // `adb reverse tcp:18080 tcp:18080` makes Android loopback terminate at
+      // the attached computer's Yaver agent. The existing handoff protocol
+      // still does the security work: same-account directory binding plus a
+      // fresh phone public key, with only phone-targeted ciphertext on this
+      // cable transport. No provider token enters adb arguments or a file.
+      await receiveLocalHetznerFromConnectedEndpoint(user.id, token || "", {
+        id: "usb-cable-host",
+        name: "USB-connected computer",
+        host: "127.0.0.1",
+        port: 18080,
+        lanIps: ["127.0.0.1"],
+      });
+      await load();
+      Alert.alert("Hetzner received securely", "The USB-connected computer encrypted its token directly to this tablet. It is now stored in Android Keystore.");
+    } catch (e: any) {
+      Alert.alert(
+        "Couldn't receive over USB",
+        e?.message || "Keep the USB cable attached, start Yaver on the computer, and try again.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const hetznerConnected = accounts["hetzner"]?.connected === true;
 
   return (
-    <View style={{ marginBottom: 12 }}>
-      <Pressable
+    <View>
+      {!hideHeader ? <Pressable
         onPress={() => setOpen((v) => !v)}
         style={{
-          flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-          padding: 16, borderRadius: 12, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard,
+          flexDirection: "row", alignItems: "center", gap: 12,
+          padding: 14, borderRadius: 16, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard,
         }}
       >
+        <View style={{ width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="cloud-outline" size={21} color={c.textMuted} />
+        </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>
-            ☁ Bring your own cloud
+          <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 15 }}>
+            Bring your own cloud
           </Text>
-          <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
-            Connect your own Hetzner — run boxes on your account, pay the provider directly.
+          <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 3 }} numberOfLines={1}>
+            Hetzner on your account
           </Text>
         </View>
-        <Text style={{ color: c.textMuted }}>{open ? "▲" : "▼"}</Text>
-      </Pressable>
+        <Ionicons name={open ? "chevron-up" : "chevron-forward"} size={16} color={c.textMuted} />
+      </Pressable> : null}
 
       {open ? (
-        <View style={{ marginTop: 4, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, gap: 10 }}>
+        <View style={{ marginTop: 10, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, gap: 10 }}>
           {!loaded ? (
             <ActivityIndicator color={c.textMuted} />
           ) : (
@@ -620,6 +659,11 @@ export default function CloudProvidersSection({
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
                   iOS Keychain normally survives reinstall with the same app identity. Android uninstall/reset removes Keystore data. Create an encrypted backup and keep its recovery key separately; Yaver cannot recover either for you.
                 </Text>
+                {Platform.OS === "android" ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    USB cable retrieval uses the same one-time encrypted handoff as P2P. The provider token never enters the Android clipboard or adb command line.
+                  </Text>
+                ) : null}
                 {activeDevice ? (
                   <Text style={{ color: c.textMuted, fontSize: 11 }}>
                     No typing: {activeDevice.name} can import its active hcloud context and encrypt it directly for this device over a separate P2P channel. Your current Chat connection does not switch.
@@ -638,6 +682,13 @@ export default function CloudProvidersSection({
                     <Pressable disabled={busy !== null} onPress={() => void receiveFromEndpoint()} style={{ borderWidth: 1, borderColor: "#0ea5e9", borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
                       {busy === "hetzner-receive" ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
                         <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Get from {activeDevice.name} over P2P</Text>
+                      )}
+                    </Pressable>
+                  ) : null}
+                  {Platform.OS === "android" ? (
+                    <Pressable disabled={busy !== null} onPress={() => void receiveFromUsbHost()} style={{ borderWidth: 1, borderColor: "#0ea5e9", borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}>
+                      {busy === "hetzner-usb-receive" ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
+                        <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Get from USB-connected computer</Text>
                       )}
                     </Pressable>
                   ) : null}

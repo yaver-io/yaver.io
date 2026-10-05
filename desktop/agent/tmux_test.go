@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -723,6 +724,21 @@ func TestTmuxHTTPEndpoints(t *testing.T) {
 	// Verify session still exists
 	if !tmuxSessionExists("yaver-test-http") {
 		t.Error("tmux session should still exist after detach via HTTP")
+	}
+
+	// Tablet-safe tmux controls are performed by the box, not by timing a
+	// synthetic Ctrl-B/X/Y sequence through a WebView and relay.
+	status, body = doRequest(t, "POST", baseURL+"/tmux/client/action", token, `{"session":"yaver-test-http","action":"kill-pane"}`)
+	if status != 200 {
+		t.Fatalf("POST /tmux/client/action: expected 200, got %d: %v", status, body)
+	}
+	if tmuxSessionExists("yaver-test-http") {
+		t.Error("kill-pane control should close the only pane in the test session")
+	}
+
+	status, _ = doRequest(t, "POST", baseURL+"/tmux/client/action", token, `{"session":"bad:target","action":"detach"}`)
+	if status != http.StatusConflict {
+		t.Fatalf("unsafe tmux target: expected %d, got %d", http.StatusConflict, status)
 	}
 }
 

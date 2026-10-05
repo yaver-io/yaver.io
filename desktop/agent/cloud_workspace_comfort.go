@@ -58,16 +58,6 @@ alias gst='git status'
 alias gco='git checkout'
 alias gl='git log --oneline --decorate --graph -20'
 alias ta='tmux new-session -A -s yaver-shell "exec zsh -l"'
-
-# SSH into a Cloud Workspace always resumes one persistent workspace. Local
-# tmux does not forward its TMUX variable, so this works identically whether
-# yaver ssh was launched inside local tmux or from a plain terminal.
-if [[ -o interactive && -n "$SSH_TTY" && -z "$TMUX" ]] && command -v tmux >/dev/null 2>&1; then
-  case "$TERM" in
-    tmux*|screen*) infocmp "$TERM" >/dev/null 2>&1 || export TERM=xterm-256color ;;
-  esac
-  exec tmux new-session -A -s yaver-shell "exec zsh -l"
-fi
 `
 
 const cloudWorkspaceTmuxConf = `# Yaver Cloud Workspace defaults.

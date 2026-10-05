@@ -4,6 +4,8 @@ package main
 //
 // Subcommands:
 //   yaver wire detect              list every iPhone/iPad/Android attached over USB
+//   yaver wire open                establish the attached-device control lane
+//                                  (Android agent reverse route + optional scrcpy)
 //   yaver wire push [path]         detect framework in `path` (default cwd) and
 //                                  push it to a cable-attached device. Always
 //                                  builds a self-contained native binary — no
@@ -46,6 +48,8 @@ func runWire(args []string) {
 	switch sub {
 	case "detect", "list", "ls", "devices":
 		runWireDetect(rest)
+	case "open", "connect":
+		runWireOpen(rest)
 	case "push", "run", "dev":
 		runWirePush(rest)
 	case "-h", "--help", "help":
@@ -62,6 +66,7 @@ func wireUsage() {
 	fmt.Println()
 	fmt.Println("Subcommands:")
 	fmt.Println("  detect                       list iPhones/iPads (xcrun) + Android (adb)")
+	fmt.Println("  open                         verify Android USB agent route + open scrcpy")
 	fmt.Println("  push [path]                  detect framework + push to cable-attached device")
 	fmt.Println()
 	fmt.Println("Push flags:")
@@ -80,12 +85,92 @@ func wireUsage() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  yaver wire detect")
+	fmt.Println("  yaver wire open --platform android")
 	fmt.Println("  yaver wire push                   (cwd)")
 	fmt.Println("  yaver wire push ./mobile")
 	fmt.Println("  yaver wire push --platform android --device R5CT123")
 	fmt.Println("  yaver wire push --surface all          # what does this repo build?")
 	fmt.Println("  yaver wire push --surface watchos      # pushes the iOS host, names the phone tap")
 	fmt.Println("  yaver wire push --surface wearos       # a Wear OS watch is an ordinary adb target")
+}
+
+type wireOpenResult struct {
+	OK          bool   `json:"ok"`
+	Platform    string `json:"platform"`
+	Device      string `json:"device"`
+	AgentRoute  string `json:"agentRoute"`
+	RouteStatus int    `json:"routeStatus"`
+	Screen      string `json:"screen"`
+}
+
+// openAndroidWireLane makes the cable useful as an application transport, not
+// merely an install cable. The reverse socket lets the Android app reach this
+// host's authenticated Yaver agent at its own loopback address. We then probe
+// that exact operation from Android; an adb reverse inventory row alone is not
+// success. scrcpy is an optional, independent screen/control consumer.
+func openAndroidWireLane(ctx context.Context, device wireDevice, noScrcpy bool) (wireOpenResult, error) {
+	adb, err := resolveAndroidTool("adb")
+	if err != nil {
+		return wireOpenResult{}, err
+	}
+	if out, err := exec.CommandContext(ctx, adb, "-s", device.UDID, "reverse", "tcp:18080", "tcp:18080").CombinedOutput(); err != nil {
+		return wireOpenResult{}, fmt.Errorf("could not establish Android USB agent route: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	probe, err := exec.CommandContext(ctx, adb, "-s", device.UDID, "shell", "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", "http://127.0.0.1:18080/health").CombinedOutput()
+	status := strings.TrimSpace(string(probe))
+	if err != nil || status != "200" {
+		detail := "unexpected response"
+		if err != nil {
+			detail = err.Error()
+		}
+		return wireOpenResult{}, fmt.Errorf("Android USB route was created but the tablet could not reach the Yaver agent (HTTP %s): %s", status, detail)
+	}
+	result := wireOpenResult{OK: true, Platform: "android", Device: device.UDID, AgentRoute: "http://127.0.0.1:18080", RouteStatus: 200, Screen: "not-requested"}
+	if noScrcpy {
+		return result, nil
+	}
+	scrcpy, err := exec.LookPath("scrcpy")
+	if err != nil {
+		result.Screen = "unavailable"
+		return result, nil
+	}
+	cmd := exec.Command(scrcpy, "--serial", device.UDID, "--window-title", "Yaver · "+wireRowLabel(device), "--stay-awake")
+	if err := cmd.Start(); err != nil {
+		return wireOpenResult{}, fmt.Errorf("USB route works, but scrcpy could not start: %w", err)
+	}
+	_ = cmd.Process.Release()
+	result.Screen = "scrcpy-opened"
+	return result, nil
+}
+
+func runWireOpen(args []string) {
+	fs := flag.NewFlagSet("wire open", flag.ExitOnError)
+	deviceID := fs.String("device", "", "specific Android serial")
+	platform := fs.String("platform", "android", "device platform (currently android)")
+	noScrcpy := fs.Bool("no-scrcpy", false, "establish and verify the cable route without opening scrcpy")
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	_ = fs.Parse(args)
+	if strings.ToLower(strings.TrimSpace(*platform)) != "android" {
+		fmt.Fprintln(os.Stderr, "yaver wire open: iOS host-to-device reverse transport is not available yet; cable detect/push remain supported")
+		os.Exit(1)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	device, err := pickWireDevice(ctx, "android", *deviceID)
+	if err == nil {
+		var result wireOpenResult
+		result, err = openAndroidWireLane(ctx, device, *noScrcpy)
+		if err == nil {
+			if *jsonOut {
+				_ = json.NewEncoder(os.Stdout).Encode(result)
+			} else {
+				fmt.Printf("Connected %s over USB · agent HTTP %d · %s\n", wireRowLabel(device), result.RouteStatus, result.Screen)
+			}
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "yaver wire open: %v\n", err)
+	os.Exit(1)
 }
 
 // ---------- detect ----------

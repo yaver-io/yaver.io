@@ -95,6 +95,7 @@ import {
   isPathInsideAttachedDogfoodCheckout,
   normalizedDogfoodPath,
 } from "../../src/lib/dogfoodRenderBridge";
+import { isStudioRunnableProject, studioTargetLabel, studioTargetsForRepo } from "../../src/lib/studioProjectGroups";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -117,12 +118,12 @@ interface ProjectItem {
   gitRemote?: string;
   tags?: string[];
   isRepoRoot?: boolean;
+  monorepoRoot?: string;
+  monorepoApp?: string;
 }
 
-// Repo-level entry — monorepo root or standalone repo. Surfaced in the
-// "Repos" row above the per-framework apps list so vibe-coding can be
-// scoped to the whole repo (Go agent + web + mobile + cli) instead of
-// a single mobile/ subdir of a monorepo.
+// First-level Studio entry. Selecting one scopes the second level to the
+// runnable UI targets inside that repo; generic repo coding stays in SSH/tasks.
 interface RepoItem {
   name: string;
   path: string;
@@ -201,9 +202,6 @@ function GlyphIcon({
 // mapping. Kept in sync with hotreload.tsx so the two surfaces render
 // identical icons for the same framework.
 
-const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
-const SECOND_CLASS_MOBILE_FRAMEWORKS = ["flutter", "swift", "kotlin"];
-const WEB_FRAMEWORKS = ["nextjs", "vite", "react"];
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 const MAX_WEB_PREVIEW_LOGS = 80;
 
@@ -354,16 +352,6 @@ function appendPreviewLogLine(prev: string[], line: string, limit = MAX_WEB_PREV
 
 function isPreviewRuntimeIssueLevel(level: string): boolean {
   return level === "error" || level === "warn";
-}
-
-// "carrotbet / mobile" → ["carrotbet", "mobile"]. The trailing "/ <subdir>"
-// reads as a clumsy path fragment in a title; we split it so the subdir can
-// render as a chip next to the framework tag. No " / " → [name, ""].
-function splitProjectName(name?: string): [string, string] {
-  const n = (name || "").trim();
-  const idx = n.lastIndexOf(" / ");
-  if (idx < 0) return [n, ""];
-  return [n.slice(0, idx).trim(), n.slice(idx + 3).trim()];
 }
 
 function agentFlowGuidance(_framework?: string, _feedbackSDKInstalled?: boolean): string | null {
@@ -562,23 +550,6 @@ function projectTerms(project: ProjectItem): string[] {
     project.executionMode,
     ...(project.tags ?? []),
   ].filter(Boolean) as string[];
-}
-
-function getProjectCategory(projectOrFramework?: ProjectItem | string): "mobile" | "web" | "other" {
-  const project = typeof projectOrFramework === "string" ? undefined : projectOrFramework;
-  const framework = (typeof projectOrFramework === "string" ? projectOrFramework : projectOrFramework?.framework || "").toLowerCase();
-  const surfaces = (project?.surfaces ?? []).map((s) => s.toLowerCase());
-  const frameworks = (project?.frameworks ?? []).map((s) => s.toLowerCase());
-  if (surfaces.some((s) => s.includes("mobile") || s.includes("ios") || s.includes("android")) || frameworks.some((fw) => MOBILE_FRAMEWORKS.includes(fw) || SECOND_CLASS_MOBILE_FRAMEWORKS.includes(fw))) {
-    return "mobile";
-  }
-  if (surfaces.some((s) => s.includes("web")) || frameworks.some((fw) => WEB_FRAMEWORKS.includes(fw))) {
-    return "web";
-  }
-  if (!framework) return "other";
-  if (MOBILE_FRAMEWORKS.includes(framework) || SECOND_CLASS_MOBILE_FRAMEWORKS.includes(framework)) return "mobile";
-  if (WEB_FRAMEWORKS.includes(framework)) return "web";
-  return "other";
 }
 
 // ── Projects Tab ──────────────────────────────────────────────────
@@ -806,8 +777,11 @@ export default function AppsScreen() {
   const [stopPhase, setStopPhase] = useState<DevServerStopPhase>("confirm");
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [workspaceProjects, setWorkspaceProjects] = useState<ProjectItem[]>([]);
+  const [workspaceProjectsLoading, setWorkspaceProjectsLoading] = useState(false);
   const [shortcutProject, setShortcutProject] = useState<ProjectItem | null>(null);
   const [repos, setRepos] = useState<RepoItem[]>([]);
+  const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
@@ -833,11 +807,6 @@ export default function AppsScreen() {
   const [webViewLoading, setWebViewLoading] = useState(false);
 
   const [search, setSearch] = useState("");
-  // Default to the mobile view: Yaver is overwhelmingly used for mobile app
-  // development, and a repo tree usually holds far more non-mobile projects
-  // than mobile ones — so an unfiltered list buries the thing the user came
-  // for. "All" is one tap away.
-  const [activeFilter, setActiveFilter] = useState<string | null>("mobile");
   const [actionSheet, setActionSheet] = useState<{
     project: string;
     path: string;
@@ -1002,11 +971,14 @@ export default function AppsScreen() {
   useEffect(() => {
     if (!activeDevice?.id) return;
     setProjects([]);
+    setWorkspaceProjects([]);
+    setWorkspaceProjectsLoading(false);
     setProjectsDiscovering(false);
     setMobileDiscovery(null);
     setDevStatus(null);
     setWorkerSession(null);
     setRepos([]);
+    setSelectedRepoPath(null);
     setStartingProject(null);
     setActionSheet(null);
     setQuickActionStatus(null);
@@ -1064,32 +1036,30 @@ export default function AppsScreen() {
 
     const fetchProjects = async () => {
       try {
-        const [projectsData, reposData] = await Promise.all([
+        const [projectsData, allProjectsData, reposData] = await Promise.all([
           client.listMobileProjectsDetailed(),
+          client.listProjectsDetailed().catch(() => ({ projects: [] as ProjectItem[] })),
           client.listWorkspaceRepos().catch(() => ({ repos: [] })),
         ]);
         if (!mounted) return;
-        let projectRows = projectsData.projects;
-        // If the mobile-specific scanner is still walking or came back empty,
-        // fall back to the general project index. This is deliberately additive:
-        // /projects/mobile remains the best source for launch metadata, but the
-        // user must never stare at "No projects yet" when the agent can already
-        // list repos/projects through the generic index (observed in the
-        // Selenium/RN-web path on 2026-07-25).
-        if (projectRows.length === 0 || projectsData.discovery?.discovering) {
-          try {
-            const fallback = await client.listProjectsDetailed();
-            projectRows = mergeProjectRows([...projectRows, ...(fallback.projects as ProjectItem[])], []);
-          } catch {}
-        }
-        const merged = mergeProjectRows(projectRows, reposData.repos);
+        // Studio is frontend-wide, not mobile-only. Merge the mobile scanner's
+        // richer launch metadata with the general index so web/desktop targets
+        // remain visible even after mobile discovery has completed.
+        const projectRows = mergeProjectRows([
+          ...(projectsData.projects as ProjectItem[]),
+          ...(allProjectsData.projects as ProjectItem[]),
+        ], []);
+        const merged = mergeProjectRows(projectRows, []);
         const launchableProjects = dogfoodCheckout
           ? merged.filter((project) => !isPathInsideAttachedDogfoodCheckout(project.path, dogfoodCheckout))
           : merged;
+        const visibleRepos = dogfoodCheckout
+          ? reposData.repos.filter((repo) => !isPathInsideAttachedDogfoodCheckout(repo.path, dogfoodCheckout))
+          : reposData.repos;
         setProjects(launchableProjects);
         setProjectsDiscovering(!!projectsData.discovery?.discovering && launchableProjects.length === 0);
         setMobileDiscovery(projectsData.discovery ?? null);
-        setRepos([]);
+        setRepos(visibleRepos);
       } catch {}
     };
 
@@ -1103,6 +1073,52 @@ export default function AppsScreen() {
     // same `mounted` flag and the user has to wait up to 15s for the
     // next interval tick to fetch the new box's data.
   }, [devStatusPollEnabled, dogfoodCheckout, projectsDiscovering, activeDevice?.id]);
+
+  // The machine-wide scan is optimized for mobile discovery and can already be
+  // non-empty before it reaches a monorepo's web/desktop targets. Once a repo
+  // is chosen, its manifest is the precise source for the second level.
+  useEffect(() => {
+    const deviceId = activeDevice?.id;
+    const repoPath = selectedRepoPath;
+    if (!deviceId || !repoPath || !devStatusPollEnabled) {
+      setWorkspaceProjects([]);
+      setWorkspaceProjectsLoading(false);
+      return;
+    }
+    let mounted = true;
+    setWorkspaceProjects([]);
+    setWorkspaceProjectsLoading(true);
+    const client = connectionManager.clientFor(deviceId);
+    client.getWorkspaceApps(undefined, repoPath).then((apps) => {
+      if (!mounted) return;
+      const root = repoPath.replace(/[\\/]+$/, "");
+      setWorkspaceProjects((apps as any[])
+        .filter((app) => app?.exists !== false && app?.name && (app?.absPath || app?.path))
+        .map((app): ProjectItem => {
+          const relative = String(app.path || "").replace(/^\.\//, "").replace(/\\/g, "/");
+          return {
+            name: String(app.name),
+            path: String(app.absPath || `${root}/${relative}`),
+            framework: app.framework || app.stack,
+            frameworks: Array.isArray(app.stacks) ? app.stacks : [],
+            stack: app.stack,
+            stacks: Array.isArray(app.stacks) ? app.stacks : [],
+            surfaces: Array.isArray(app.surfaces) ? app.surfaces : [],
+            testSurfaces: Array.isArray(app.testSurfaces) ? app.testSurfaces : [],
+            role: app.kind,
+            monorepoRoot: root,
+            monorepoApp: String(app.name),
+          };
+        }));
+      setWorkspaceProjectsLoading(false);
+    }).catch(() => {
+      if (mounted) {
+        setWorkspaceProjects([]);
+        setWorkspaceProjectsLoading(false);
+      }
+    });
+    return () => { mounted = false; };
+  }, [activeDevice?.id, devStatusPollEnabled, selectedRepoPath]);
 
   // SSE auto-reload
   // Shake -> feedback SDK, for the BROWSER lane.
@@ -2411,20 +2427,33 @@ export default function AppsScreen() {
     return () => clearTimeout(id);
   }, [showWebView, bundleUrl, paintGateMode, webPreviewContentLoaded, webPreviewFailed, webPreviewServerLooksReady, webPreviewProbe, runBrowserLaneDoctor]);
 
-  const visibleProjects = projects.filter((p) => {
+  const selectedRepo = repos.find((repo) => sameProjectPath(repo.path, selectedRepoPath)) ?? null;
+  const repoProjects = selectedRepo ? studioTargetsForRepo([...projects, ...workspaceProjects], selectedRepo) : [];
+  const studioRepos = repos.filter((repo) =>
+    studioTargetsForRepo(projects, repo).length > 0 ||
+    isStudioRunnableProject({
+      name: repo.name,
+      path: repo.path,
+      framework: repo.framework,
+      frameworks: repo.subframeworks,
+      isRepoRoot: false,
+    }),
+  );
+  const visibleRepos = studioRepos.filter((repo) => {
+    if (!search.trim()) return true;
+    const q = search.trim().toLowerCase();
+    return [repo.name, repo.path, repo.framework, ...(repo.subframeworks ?? [])]
+      .filter(Boolean)
+      .some((term) => String(term).toLowerCase().includes(q));
+  });
+  const visibleProjects = repoProjects.filter((p) => {
     if (search.trim()) {
       const q = search.toLowerCase();
       const match = projectTerms(p).some((term) => term.toLowerCase().includes(q));
       if (!match) return false;
     }
-    if (activeFilter) {
-      return getProjectCategory(p) === activeFilter;
-    }
     return true;
   });
-  const activeFilterLabel = activeFilter
-    ? activeFilter[0].toUpperCase() + activeFilter.slice(1)
-    : "All";
   const scanDiagnosticLine = mobileDiscovery
     ? [
         typeof mobileDiscovery.scanMs === "number" ? `scan ${Math.round(mobileDiscovery.scanMs / 100) / 10}s` : "",
@@ -2683,89 +2712,40 @@ export default function AppsScreen() {
           </View>
         )}
 
-        {/* Repos — monorepo roots and standalone repos. Tapping one
-            opens the project screen scoped to the repo root, where
-            Chat → tasks tab inherits workDir=repo-root so codex/claude
-            can edit the WHOLE repo (Go agent + web + mobile + cli),
-            not just a per-framework subdir. */}
-        {/* Repos are hidden in the Mobile view. The sliding strip was the
-            first thing on the screen and mostly showed non-mobile repos —
-            the user is here for the mobile app. It returns under "All",
-            where browsing the whole tree is the point. */}
-        {repos.length > 0 && !activeFilter && (
-          <View style={s.reposSection}>
-            <Text style={[s.reposHeader, { color: c.textMuted }]}>
-              Repos · {repos.length}
-            </Text>
-            {/* Phone keeps the horizontal scroller (one row, swipe to
-                see more). Tablets switch to a wrapping grid so the
-                repos fan out across the wide canvas instead of
-                producing one stretched row. */}
-            {layout.isTablet ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {repos.map((repo) => (
-                  <Pressable
-                    key={repo.path}
-                    style={[
-                      s.repoCard,
-                      { backgroundColor: c.bgCard, borderColor: c.border, flexBasis: layout.layoutClass === "tablet-landscape" ? "23%" : "31%", flexGrow: 1 },
-                    ]}
-                    onPress={() => router.navigate({ pathname: "/(tabs)/project", params: { dir: repo.path } } as any)}
-                  >
-                    <View style={s.repoCardRow}>
-                      <Ionicons name="git-branch-outline" size={16} color={c.accent} />
-                      <Text style={[s.repoCardName, { color: c.textPrimary }]} numberOfLines={1}>
-                        {repo.name}
-                      </Text>
-                    </View>
-                    {repo.isMonorepo ? (
-                      <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
-                        monorepo
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                ))}
-              </View>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={s.reposRow}
-              >
-                {repos.map((repo) => (
-                  <Pressable
-                    key={repo.path}
-                    style={[s.repoCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                    onPress={() => router.navigate({ pathname: "/(tabs)/project", params: { dir: repo.path } } as any)}
-                  >
-                    <View style={s.repoCardRow}>
-                      <Ionicons name="git-branch-outline" size={16} color={c.accent} />
-                      <Text style={[s.repoCardName, { color: c.textPrimary }]} numberOfLines={1}>
-                        {repo.name}
-                      </Text>
-                    </View>
-                    {repo.isMonorepo ? (
-                      <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
-                        monorepo
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
+        {selectedRepo ? (
+          <View style={s.repoSelectionHeader}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Back to projects"
+              onPress={() => { setSelectedRepoPath(null); setSearch(""); }}
+              style={[s.repoBackButton, { backgroundColor: c.bgInput }]}
+            >
+              <Ionicons name="chevron-back" size={18} color={c.accent} />
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.repoSelectionTitle, { color: c.textPrimary }]} numberOfLines={1}>{selectedRepo.name}</Text>
+              <Text style={[s.repoSelectionMeta, { color: c.textMuted }]}>Choose what to run</Text>
+            </View>
+          </View>
+        ) : (
+          <View style={s.repoSelectionHeader}>
+            <View>
+              <Text style={[s.repoSelectionTitle, { color: c.textPrimary }]}>Projects</Text>
+              <Text style={[s.repoSelectionMeta, { color: c.textMuted }]}>Choose a project, then a frontend</Text>
+            </View>
           </View>
         )}
 
         {/* Search + Projects list. A search field over an empty list is dead
             chrome — it can only ever return nothing. Show it once there's
             something to filter (or a query still in the box to clear). */}
-        {projects.length > 0 || search.length > 0 ? (
+        {studioRepos.length > 0 || search.length > 0 ? (
           <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle, borderWidth: isDark ? 0 : 1 }]}>
             <Ionicons name="search" size={16} color={c.textMuted} />
             <TextInput
               testID="projects-search-input"
               style={[s.searchInput, { color: c.textPrimary }]}
-              placeholder="Search projects..."
+              placeholder={selectedRepo ? "Search frontends..." : "Search projects..."}
               placeholderTextColor={c.textMuted}
               value={search}
               onChangeText={setSearch}
@@ -2780,107 +2760,63 @@ export default function AppsScreen() {
           </View>
         ) : null}
 
-        {/* Category + framework filter chips */}
-        {(() => {
-          const categories = new Map<string, number>();
-          projects.forEach((p) => {
-            const cat = getProjectCategory(p);
-            categories.set(cat, (categories.get(cat) || 0) + 1);
-          });
-          const categoryOrder = ["mobile", "web", "other"] as const;
-          const categoryLabels: Record<string, string> = { mobile: "Mobile", web: "Web", other: "Other" };
-          // Always show the three category filters (Mobile / Web / Other) so the
-          // user can pivot even when the current box only has one kind — the
-          // labels are a persistent segmented control, defaulting to Mobile. The
-          // count suffix (0 included) doubles as "you have N of these here", so a
-          // zero is informative, not dead UI. Only the fully-empty pre-discovery
-          // state hides the row.
-          const visibleCategories = categoryOrder;
-          if (!search.trim() && projects.length === 0) return null;
-          return (
-            <View style={s.filterWrap}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
-              <Pressable
-                testID="projects-filter-all"
-                style={[
-                  s.filterChip,
-                  {
-                    backgroundColor: !activeFilter ? c.accent + "1f" : c.bgInput,
-                    borderColor: !activeFilter ? c.accent + "60" : isDark ? "transparent" : c.borderSubtle,
-                  },
-                ]}
-                onPress={() => setActiveFilter(null)}
-              >
-                <Text style={[s.filterChipText, { color: !activeFilter ? c.accent : c.textSecondary }]}>
-                  All
-                  <Text style={{ color: c.textMuted }}>{` · ${projects.length}`}</Text>
-                </Text>
-              </Pressable>
-              {visibleCategories.map((cat) => (
-                (() => {
-                  const chipColor = cat === "mobile" ? c.accent : cat === "web" ? c.success : c.textSecondary;
-                  return (
-                    <Pressable
-                      key={cat}
-                      testID={`projects-filter-${cat}`}
-                      style={[
-                        s.filterChip,
-                        {
-                          backgroundColor: activeFilter === cat ? chipColor + "1f" : c.bgInput,
-                          borderColor: activeFilter === cat ? chipColor + "60" : isDark ? "transparent" : c.borderSubtle,
-                        },
-                      ]}
-                      onPress={() => setActiveFilter(activeFilter === cat ? null : cat)}
-                    >
-                      <Text style={[s.filterChipText, { color: activeFilter === cat ? chipColor : c.textSecondary }]}>
-                        {categoryLabels[cat]}
-                        <Text style={{ color: c.textMuted }}>{` · ${categories.get(cat) ?? 0}`}</Text>
-                      </Text>
-                    </Pressable>
-                  );
-                })()
-              ))}
-            </ScrollView>
-            <View pointerEvents="none" style={[s.filterFade, { backgroundColor: c.bg }]} />
-            </View>
-          );
-        })()}
-
         <FlatList
           testID="projects-list"
-          // Tablets get a 2-col project grid (per the `projects` token);
-          // phone stays single column. Repos list above keeps its own
-          // 3/4-col `repos` token — they were sharing it before, which
-          // crowded long monorepo names against the chevron edge.
-          // Re-mount when column count changes — FlatList rejects mid-flight changes.
-          key={`projects-cols-${layout.gridCols("projects")}`}
-          numColumns={layout.gridCols("projects")}
-          columnWrapperStyle={layout.gridCols("projects") > 1 ? { gap: 10 } : undefined}
+          // Studio is a hierarchy, not a gallery: one dedicated row per repo
+          // and per frontend on tablets as well as phones.
+          key={selectedRepo ? "studio-targets" : "studio-repos"}
+          numColumns={1}
           refreshControl={
             <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
           }
-          data={visibleProjects}
+          data={(selectedRepo ? visibleProjects : visibleRepos) as Array<ProjectItem | RepoItem>}
           keyExtractor={(item) => item.path}
-          contentContainerStyle={[s.listContent, layout.gridCols("repos") > 1 ? null : tabletContent]}
+          contentContainerStyle={[s.listContent, tabletContent]}
           renderItem={({ item }) => {
-            const isRunning = sameProjectPath(devStatus?.workDir, item.path) || sameProjectPath(activeProjectPath, item.path);
-            const isStarting = startingProject === item.name;
-            const cols = layout.gridCols("projects");
+            if (!selectedRepo) {
+              const repo = item as RepoItem;
+              const targetCount = studioTargetsForRepo(projects, repo).length;
+              return (
+                <Pressable
+                  testID={`repo-card-${repo.name || repo.path}`}
+                  accessibilityLabel={`Project ${repo.name || repo.path}`}
+                  style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.borderSubtle },
+                    !isDark && { shadowColor: c.shadowSm }]}
+                  onPress={() => { setSelectedRepoPath(repo.path); setSearch(""); }}
+                >
+                  <View style={s.cardHeader}>
+                    <View style={s.frameworkIcon}>
+                      <Ionicons name="folder-outline" size={23} color={c.accent} />
+                    </View>
+                    <View style={s.cardTitleContainer}>
+                      <Text style={[s.projectName, { color: c.textPrimary }]}>{repo.name}</Text>
+                      <Text style={[s.cardMeta, { color: c.textMuted }]}>
+                        {targetCount > 0 ? `${targetCount} runnable frontend${targetCount === 1 ? "" : "s"}` : "Open to load frontends"}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+                  </View>
+                </Pressable>
+              );
+            }
+
+            const project = item as ProjectItem;
+            const isRunning = sameProjectPath(devStatus?.workDir, project.path) || sameProjectPath(activeProjectPath, project.path);
+            const isStarting = startingProject === project.name;
 
             return (
               <Pressable
-                testID={`project-card-${item.name || item.path}`}
-                accessibilityLabel={`Project ${item.name || item.path}`}
+                testID={`project-card-${project.name || project.path}`}
+                accessibilityLabel={`Run ${studioTargetLabel(project, selectedRepo)}`}
                 style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.borderSubtle },
                   !isDark && { shadowColor: c.shadowSm },
-                  cols > 1 ? { flex: 1, maxWidth: `${100 / cols}%` } : null,
                   isRunning && { borderColor: c.accent, borderWidth: 1.5 }]}
-                onPress={() => handleTapProject(item)}
+                onPress={() => handleTapProject(project)}
                 disabled={isStarting || loadingActions}
               >
                 <View style={s.cardHeader}>
                   <View style={s.frameworkIcon}>
-                    <FrameworkIcon framework={item.framework} size={22} />
+                    <FrameworkIcon framework={project.framework} size={22} />
                   </View>
                   <View style={s.cardTitleContainer}>
                     {(() => {
@@ -2888,20 +2824,21 @@ export default function AppsScreen() {
                       // the title. Split the trailing "/ <subdir>" out and show
                       // it as a chip next to the framework — same visual weight
                       // as the "expo"/"flutter" tag.
-                      const [repoTitle, subdir] = splitProjectName(item.name);
+                      const repoTitle = studioTargetLabel(project, selectedRepo);
+                      const subdir = "";
                       return (
                         <>
                           <Text style={[s.projectName, { color: c.textPrimary }]}>{repoTitle}</Text>
-                          {(subdir || item.framework) && (
+                          {(subdir || project.framework) && (
                             <View style={s.tagRow}>
                               {subdir ? (
                                 <View style={[s.tag, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle }]}>
                                   <Text style={[s.tagText, { color: c.textSecondary }]}>{subdir}</Text>
                                 </View>
                               ) : null}
-                              {item.framework ? (
+                              {project.framework ? (
                                 <View style={[s.tag, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle }]}>
-                                  <Text style={[s.tagText, { color: c.textSecondary }]}>{item.framework}</Text>
+                                  <Text style={[s.tagText, { color: c.textSecondary }]}>{project.framework}</Text>
                                 </View>
                               ) : null}
                             </View>
@@ -2919,7 +2856,7 @@ export default function AppsScreen() {
                       ]}
                       numberOfLines={1}
                     >
-                      {item.path}
+                      {project.path}
                     </Text>
                   </View>
                   {isStarting ? (
@@ -2930,10 +2867,10 @@ export default function AppsScreen() {
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityLabel={`Export ${item.name} as browser shortcut`}
+                          accessibilityLabel={`Export ${project.name} as browser shortcut`}
                           onPress={(event) => {
                             event.stopPropagation();
-                            setShortcutProject(item);
+                            setShortcutProject(project);
                           }}
                           hitSlop={8}
                           style={({ pressed }) => ({ width: 32, height: 32, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: c.accentSoft, opacity: pressed ? 0.7 : 1 })}
@@ -2962,14 +2899,17 @@ export default function AppsScreen() {
                 body={`Nothing named “${search.trim()}” on ${activeDevice.name || "this machine"}.`}
                 action={{ label: "Clear search", onPress: () => setSearch("") }}
               />
-            ) : projects.length > 0 ? (
+            ) : selectedRepo ? (
               <EmptyState
-                icon="filter-outline"
-                title={`No ${activeFilterLabel.toLowerCase()} projects`}
-                body={`${projects.length} project${projects.length === 1 ? "" : "s"} found on ${activeDevice.name || "this machine"}, but none match the ${activeFilterLabel} filter.`}
-                action={{ label: "Show all", onPress: () => setActiveFilter(null) }}
+                icon="apps-outline"
+                busy={workspaceProjectsLoading}
+                title={workspaceProjectsLoading ? "Loading frontends…" : "No runnable frontends"}
+                body={workspaceProjectsLoading
+                  ? `Reading ${selectedRepo.name}'s declared apps.`
+                  : `${selectedRepo.name} has no Studio frontend targets. Use SSH or Tasks for backend and generic coding work.`}
+                action={workspaceProjectsLoading ? undefined : { label: "Choose another project", onPress: () => setSelectedRepoPath(null) }}
               />
-            ) : (
+            ) : studioRepos.length === 0 ? (
               <EmptyState
                 icon="folder-open-outline"
                 busy={projectsDiscovering}
@@ -3001,7 +2941,7 @@ export default function AppsScreen() {
                       }
                 }
               />
-            )
+            ) : null
           }
         />
       </View>
@@ -3961,29 +3901,24 @@ const s = StyleSheet.create({
   },
   previewRuntimeActionBtn: { flex: 1, alignItems: "center", paddingHorizontal: 12 },
 
-  // Repos row (monorepo roots + standalone repos)
-  reposSection: { marginTop: 12, marginBottom: 4 },
-  reposHeader: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+  // Two-level Studio picker: repository first, then runnable frontend.
+  repoSelectionHeader: {
+    minHeight: 58,
     marginHorizontal: 16,
-    marginBottom: 6,
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-  reposRow: { paddingHorizontal: 16, paddingBottom: 4, gap: 8 },
-  repoCard: {
-    minWidth: 140,
-    maxWidth: 220,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 4,
+  repoBackButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  repoCardRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  repoCardName: { fontSize: 13, fontWeight: "600", flex: 1 },
-  repoCardBranch: { fontSize: 11, fontFamily: "Menlo" },
+  repoSelectionTitle: { fontSize: 20, fontWeight: "700" },
+  repoSelectionMeta: { fontSize: 12, marginTop: 2 },
 
   // Search
   searchRow: {
@@ -4003,25 +3938,6 @@ const s = StyleSheet.create({
     elevation: 1,
   },
   searchInput: { ...typography.body, flex: 1, paddingVertical: 0 },
-
-  // Filter chips
-  filterWrap: { marginHorizontal: 16, marginBottom: 8, position: "relative" },
-  // ScrollView clips to its own bounds on iOS and RN-web. This used to be
-  // 30px around 34px chips, shaving the selected outline off both edges.
-  filterRow: { height: 38, flexGrow: 0 },
-  filterFade: { position: "absolute", right: 0, top: 0, bottom: 0, width: 24, opacity: 0.9 },
-  filterRowContent: { gap: 8, alignItems: "center" as const, paddingVertical: 2, paddingRight: 8 },
-  filterChip: {
-    minHeight: 34,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "transparent",
-    justifyContent: "center" as const,
-  },
-  filterChipActive: { borderColor: "#7C66FF" },
-  filterChipText: { ...typography.bodyStrong, fontSize: 14, color: "#A8A8B0" },
-  filterChipTextActive: { color: "#7C66FF" },
 
   // Tag chips on cards
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 3 },

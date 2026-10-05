@@ -697,7 +697,11 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed, onDis
                           if (ping && !ping.ok) return "Connected (pool) · ping failed";
                           return "Connected · pinging…";
                         }
-                        return d.online ? "Live · tap to connect" : "Offline";
+                        // `online` is a recent control-plane heartbeat, not a
+                        // completed transport probe from this tablet. Do not
+                        // call it Live: the connect attempt below is the first
+                        // operation that can prove direct/relay reachability.
+                        return d.online ? "Reported online · connect to verify" : "Offline";
                       })()}
                       {activeDevice?.id === d.id ? " · Focused" : ""}
                       {versionSuffix && !outdated ? versionSuffix : ""}
