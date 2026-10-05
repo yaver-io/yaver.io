@@ -305,11 +305,6 @@ export default function HotReloadScreen() {
   const [reloadOperations, setReloadOperations] = useState<OperationState[]>([]);
   const [showRemoteBoxPicker, setShowRemoteBoxPicker] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [remoteHermesReady, setRemoteHermesReady] = useState<{
-    enabled: boolean;
-    reason?: string;
-    notes?: string[];
-  } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   // Stop UX state: "idle" → "stopping" (after Stop tapped) → "stopped" (post
   // /dev/stop with verified=true). Snaps back to "idle" after a 2s success
@@ -378,7 +373,6 @@ export default function HotReloadScreen() {
     setDevStatus(null);
     setWorkerSession(null);
     setAgentInfo(null);
-    setRemoteHermesReady(null);
     setReloadIncidents([]);
     setReloadOperations([]);
     setDevLog([]);
@@ -426,39 +420,18 @@ export default function HotReloadScreen() {
 
     const poll = async () => {
       try {
-        const [status, session, info, snapshot] = await Promise.all([
+        const [status, session, info] = await Promise.all([
           quicClient.getDevServerStatus(),
           quicClient.getMobileWorkerPreviewSession(),
           quicClient.getInfo(),
-          quicClient.capabilitySnapshot(),
         ]);
         if (mounted) setDevStatus(status?.running || status?.framework ? status : null);
         if (mounted) setWorkerSession(session);
         if (mounted) setAgentInfo(info);
-        if (mounted) {
-          const target = snapshot?.targets?.["mobile-hermes"];
-          // Hermes is an RN/Expo-only surface. If a dev server is running for a
-          // NON-RN project (Flutter, Swift, Kotlin, Next/web), never show the
-          // "Hermes reload ready" badge — those stream via WebRTC (native) or a
-          // WebView (web), not Hermes push. When no server is running, the badge
-          // reflects general agent capability. (User request 2026-07-21.)
-          const runningFw = String(status?.framework || "").trim().toLowerCase();
-          const runningNonRN = runningFw !== "" && runningFw !== "expo" && runningFw !== "react-native";
-          setRemoteHermesReady(
-            target && !runningNonRN
-              ? {
-                  enabled: !!target.enabled,
-                  reason: target.reason,
-                  notes: Array.isArray(target.notes) ? target.notes : undefined,
-                }
-              : null,
-          );
-        }
       } catch {
         if (mounted) setDevStatus(null);
         if (mounted) setWorkerSession(null);
         if (mounted) setAgentInfo(null);
-        if (mounted) setRemoteHermesReady(null);
       }
       try {
         const [operations, incidents] = await Promise.all([
@@ -1021,21 +994,6 @@ export default function HotReloadScreen() {
                 </Text>
               </View>
             ) : null}
-            {remoteHermesReady ? (
-              <View
-                style={[
-                  s.bannerPill,
-                  {
-                    backgroundColor: remoteHermesReady.enabled ? c.successBg : c.warnBg,
-                    borderColor: remoteHermesReady.enabled ? c.successBorder : c.warnBorder,
-                  },
-                ]}
-              >
-                <Text style={[s.bannerChipText, { color: remoteHermesReady.enabled ? c.success : c.warn }]}>
-                  {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
-                </Text>
-              </View>
-            ) : null}
             {agentInfo?.workDir ? (
               <Text
                 style={[
@@ -1045,11 +1003,6 @@ export default function HotReloadScreen() {
                 numberOfLines={1}
               >
                 {agentInfo.workDir}
-              </Text>
-            ) : null}
-            {!remoteHermesReady?.enabled && remoteHermesReady?.notes?.[0] ? (
-              <Text style={[s.bannerNote, { color: c.textMuted }]} numberOfLines={2}>
-                {remoteHermesReady.notes[0]}
               </Text>
             ) : null}
           </View>

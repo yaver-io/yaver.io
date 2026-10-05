@@ -4,6 +4,7 @@ import test from "node:test";
 
 test("all mobile pre-auth entry points share the canonical app-icon component", async () => {
   const mobile = await readFile(new URL("../../app/login.tsx", import.meta.url), "utf8");
+  const email = await readFile(new URL("../../app/email-login.tsx", import.meta.url), "utf8");
   const splash = await readFile(new URL("../components/YaverSplash.tsx", import.meta.url), "utf8");
   const callback = await readFile(new URL("../../app/oauth-callback.tsx", import.meta.url), "utf8");
   const twoFactor = await readFile(new URL("../../app/two-factor-challenge.tsx", import.meta.url), "utf8");
@@ -12,8 +13,8 @@ test("all mobile pre-auth entry points share the canonical app-icon component", 
   const icon = await readFile(new URL("../components/YaverAppIcon.tsx", import.meta.url), "utf8");
   const web = await readFile(new URL("../../../web/app/auth/page.tsx", import.meta.url), "utf8");
 
-  assert.match(icon, /require\("\.\.\/\.\.\/assets\/icon\.png"\)/);
-  for (const source of [mobile, splash, callback, twoFactor, tv, gate]) {
+  assert.match(icon, /require\("\.\.\/\.\.\/assets\/adaptive-icon\.png"\)/);
+  for (const source of [mobile, email, splash, callback, twoFactor, tv, gate]) {
     assert.match(source, /YaverAppIcon/);
   }
   assert.match(web, /src="\/icon-512\.png"/);
@@ -32,21 +33,27 @@ test("native splash uses the same black app icon on white", async () => {
 });
 
 test("email sign-in lifts its form and keeps the next control above the keyboard", async () => {
-  const mobile = await readFile(new URL("../../app/login.tsx", import.meta.url), "utf8");
-  assert.match(mobile, /LOGIN_FOLLOWING_CONTROL_CLEARANCE = 112/);
-  assert.match(mobile, /showEmailForm && !isTablet && styles\.headerEmailMode/);
-  assert.match(mobile, /scrollTo\(\{ y: 54, animated: true \}\)/);
+  const email = await readFile(new URL("../../app/email-login.tsx", import.meta.url), "utf8");
+  assert.match(email, /FOLLOWING_CONTROL_CLEARANCE = 112/);
+  assert.match(email, /Keyboard\.addListener\("keyboardDidShow"/);
+  assert.match(email, /keyboardVisible && styles\.contentKeyboard/);
+  assert.match(email, /contentKeyboard:[\s\S]{0,100}justifyContent: "flex-start"/);
+  assert.match(email, /scrollTo\(\{ y: 0, animated: true \}\)/);
 });
 
-test("BYO cloud is the first section in Advanced settings", async () => {
+test("BYO cloud is a More destination and no longer crowds Advanced settings", async () => {
   const settings = await readFile(new URL("../../app/(tabs)/settings.tsx", import.meta.url), "utf8");
-  const advanced = settings.indexOf('{settingsPane === "advanced"');
-  const byo = settings.indexOf("<CloudProvidersSection", advanced);
-  const testApp = settings.indexOf("{/* Test App */}", advanced);
-  const password = settings.indexOf("{/* Change Password", advanced);
+  const more = await readFile(new URL("../../app/(tabs)/more.tsx", import.meta.url), "utf8");
+  const cloud = await readFile(new URL("../../app/cloud.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(settings, /CloudProvidersSection/);
+  assert.doesNotMatch(more, /<CloudProvidersSection/);
+  assert.match(more, /router\.push\("\/cloud"/);
+  assert.match(cloud, /<CloudProvidersSection c=\{c\} token=\{token\} initialOpen hideHeader \/>/);
+});
 
-  assert.ok(advanced >= 0 && byo > advanced, "Advanced must render BYO cloud");
-  assert.ok(byo < testApp, "BYO cloud must be above Advanced diagnostics");
-  assert.ok(byo < password, "BYO cloud must be above Change Password");
-  assert.equal(settings.indexOf("<CloudProvidersSection", byo + 1), -1, "BYO cloud must render exactly once");
+test("the cloud deep link always has a working route back to More", async () => {
+  const cloud = await readFile(new URL("../../app/cloud.tsx", import.meta.url), "utf8");
+  assert.match(cloud, /router\.canGoBack\(\)/);
+  assert.match(cloud, /router\.replace\("\/\(tabs\)\/more"/);
+  assert.match(cloud, /onBack=\{leaveCloud\}/);
 });

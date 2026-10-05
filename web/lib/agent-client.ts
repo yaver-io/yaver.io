@@ -8015,6 +8015,17 @@ export class AgentClient {
     return Array.isArray(data?.sessions) ? data.sessions : [];
   }
 
+  async controlTmuxClient(session: string, action: "detach" | "kill-pane"): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tmux/client/action`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ session, action }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Tmux ${action} failed: HTTP ${res.status}`);
+  }
+
   async listRunnerSessions(): Promise<
     Array<{ name: string; runner: string; command?: string; confirmed: boolean; attached?: boolean }>
   > {

@@ -263,6 +263,18 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "wire_open",
+			"description": "Open and operation-probe the USB attached-device lane. On Android this installs an adb reverse route from tablet loopback port 18080 to the host Yaver agent, verifies /health from the device itself, and opens scrcpy unless no_scrcpy is true. This is connectivity/control only: it does not require Hermes and does not build or install an app. iOS reverse transport is reported unsupported until implemented.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"device":    map[string]interface{}{"type": "string", "description": "Specific Android serial. Empty selects the first USB-attached Android device."},
+					"platform":  map[string]interface{}{"type": "string", "enum": []string{"", "android", "ios"}, "description": "Currently android; ios returns an explicit unsupported result."},
+					"no_scrcpy": map[string]interface{}{"type": "boolean", "description": "Verify the USB agent route without opening a scrcpy window."},
+				},
+			},
+		},
+		{
 			"name":        "wire_push",
 			"description": "Build a self-contained native binary (xcodebuild Release / gradle installRelease) and install it on a USB-attached phone via the agent's host machine. No Metro / dev server is involved — JS is bundled into the .app/.apk at build time. Auto-detects the framework (Expo, React Native, Flutter, native iOS, native Android) and walks into common subdirs (mobile/, app/, apps/*, packages/*) when the path itself isn't a mobile project. Long-running (5-30 min); captures stdout/stderr to ~/.yaver/logs/wire-push-*.log and returns the path + last 30 lines so you can grep for errors. Returns {ok, exit_code, device, platform, stack, log_path, log_tail, elapsed_sec}.",
 			"inputSchema": map[string]interface{}{

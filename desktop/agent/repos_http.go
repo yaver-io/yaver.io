@@ -854,6 +854,11 @@ func (s *HTTPServer) handleRepoList(w http.ResponseWriter, r *http.Request) {
 	scanDirs := []string{
 		filepath.Join(home, "Projects"),
 		filepath.Join(home, "Workspace"),
+		// Yaver-managed source checkouts live one level below Workspace/repos.
+		// Scanning Workspace itself only sees the `repos` container, so the
+		// active workDir was the sole repo returned while its sfmg/talos-style
+		// siblings vanished from Studio.
+		filepath.Join(home, "Workspace", "repos"),
 		filepath.Join(home, "repos"),
 		filepath.Join(home, "code"),
 		filepath.Join(home, "src"),
@@ -861,6 +866,14 @@ func (s *HTTPServer) handleRepoList(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.taskMgr != nil && s.taskMgr.workDir != "" {
 		scanDirs = append(scanDirs, s.taskMgr.workDir)
+		// Custom layouts deserve the same sibling discovery as the managed
+		// layout. Never scan HOME's parent: HOME is a discovery boundary, and
+		// adding its parent would make HOME itself a selectable repo when it
+		// contains a stray .git entry. This remains bounded otherwise:
+		// scanDirForRepos only reads one level.
+		if !sameRuntimePath(s.taskMgr.workDir, home) {
+			scanDirs = append(scanDirs, filepath.Dir(s.taskMgr.workDir))
+		}
 	}
 
 	// Check cache — if all directory mod times match, return cached result

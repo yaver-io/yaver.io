@@ -35,6 +35,33 @@ func mcpWireDetect() (interface{}, error) {
 	}, nil
 }
 
+type mcpWireOpenArgs struct {
+	Device   string `json:"device"`
+	Platform string `json:"platform"`
+	NoScrcpy bool   `json:"no_scrcpy"`
+}
+
+// mcpWireOpen exposes the same operation-probed cable lane as `yaver wire
+// open`. It deliberately rejects iOS until a host-to-device reverse transport
+// is implemented and measured; iOS detect/install support is a different
+// capability and must not be presented as app-to-agent connectivity.
+func mcpWireOpen(args mcpWireOpenArgs) (interface{}, error) {
+	platform := strings.ToLower(strings.TrimSpace(args.Platform))
+	if platform == "" {
+		platform = "android"
+	}
+	if platform != "android" {
+		return nil, fmt.Errorf("iOS host-to-device reverse transport is not available yet; wire_detect and wire_push remain supported")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	device, err := pickWireDevice(ctx, platform, args.Device)
+	if err != nil {
+		return nil, err
+	}
+	return openAndroidWireLane(ctx, device, args.NoScrcpy)
+}
+
 // mcpWireDetectHint surfaces "the install paths your platform doesn't
 // have" so AI agents can suggest fixes without re-running the command.
 func mcpWireDetectHint(devices []wireDevice) string {

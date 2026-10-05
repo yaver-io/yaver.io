@@ -40,8 +40,16 @@ assert.match(src, /cardActions:\s*\{[^\n]*alignItems:\s*"center"[^\n]*justifyCon
   "Open and Stop must stay left aligned as one compact action group");
 assert.match(src, /stopBtn:\s*\{[^\n]*minWidth:\s*72/,
   "Open and Stop must have matching compact widths");
-assert.match(src, /filterRow:\s*\{\s*height:\s*38/,
-  "the chip ScrollView must be taller than its 34pt selected chips");
+assert.match(src, /const \[selectedRepoPath, setSelectedRepoPath\] = useState<string \| null>\(null\)/,
+  "Studio must keep an explicit first-level repository selection");
+assert.match(src, /Choose a project, then a frontend/,
+  "Studio must explain the repository-first hierarchy");
+assert.match(src, /studioTargetsForRepo\(\[\.\.\.projects, \.\.\.workspaceProjects\], selectedRepo\)/,
+  "the second level must combine discovered and declared frontend targets under the selected repo");
+assert.doesNotMatch(src, /projects-filter-(all|mobile|web|other)/,
+  "the old global category wall must not return to the two-level Studio picker");
+assert.match(src, /key=\{selectedRepo \? "studio-targets" : "studio-repos"\}[\s\S]{0,120}numColumns=\{1\}/,
+  "repositories and frontends must each render as dedicated full-width rows");
 assert.match(src, /previewWaitLine/,
   "the Projects preview must use the shared wait narration contract");
 assert.doesNotMatch(src, /quicClient\.getDevServerBundleUrl|doctorBrowserLane\(quicClient/,

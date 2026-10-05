@@ -30,14 +30,16 @@ import WakeProgress from "./WakeProgress";
 //     The discoverability of "tap to switch" beats hunting for a chip,
 //     and matches the Reload Remote Box card's existing affordance.
 //
-// Tab-specific affordances (Tasks' Re-auth chip, Projects' discover
-// hint, Reload's Hermes-ready badge) plug in via the `extra` slot so
+// Tab-specific affordances (Tasks' Re-auth chip and Projects' discover
+// hint) plug in via the `extra` slot so
 // the shared widget stays focused on the connection-state contract.
 
 export interface RemoteBoxBannerProps {
   /** Optional rows rendered below the main status line. Use for
    *  per-tab affordances that don't belong in the shared widget:
-   *  ping latency, runner state, re-auth chip, Hermes-ready note. */
+   *  ping latency, runner state, or a re-auth action. Preview-runtime
+   *  prerequisites do not belong here: connecting is useful for SSH/tasks
+   *  even when no native preview runtime is installed. */
   extra?: React.ReactNode;
   /** Callback fired AFTER the picker resolved with a different
    *  device. Tabs use this to clear stale state + kick a fresh

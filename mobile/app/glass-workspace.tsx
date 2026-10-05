@@ -670,13 +670,8 @@ function LogsPane(props: { nonce: number }): React.ReactElement {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function buildTerminalWsUrl(profile?: Device["sshProfile"]): string {
-  const base = quicClient.baseUrl;
-  if (!base) throw new Error("no device selected");
-  const wsBase = base.replace(/^http/, "ws");
-  const h = quicClient.getAuthHeaders();
-  const token = (h.Authorization || "").replace("Bearer ", "");
-  const params = addTerminalSSHProfile(new URLSearchParams({ token }), profile);
-  return `${wsBase}/ws/terminal?${params.toString()}`;
+  const params = addTerminalSSHProfile(new URLSearchParams(), profile);
+  return quicClient.agentWebSocketUrl("/ws/terminal", params);
 }
 
 // eslint-disable-next-line no-control-regex

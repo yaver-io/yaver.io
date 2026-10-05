@@ -1,7 +1,14 @@
 import React from "react";
 import { Image, type ImageStyle, StyleSheet, View, type ViewStyle } from "react-native";
 
-const APP_ICON = require("../../assets/icon.png");
+// Use the launcher foreground asset instead of the historically reused
+// `icon.png` module key. Metro/Expo can retain an older bitmap behind that
+// generic key across development-client updates (the tablet then showed the
+// retired back-arrow tile even though the launcher already showed Yaver's Y).
+// Cropping the adaptive safe-zone reproduces the visible launcher tile while
+// giving the canonical mark its own cache identity on every unauthenticated
+// surface.
+const APP_ICON = require("../../assets/adaptive-icon.png");
 
 /**
  * The one canonical Yaver mark used before authentication and during startup.
@@ -36,5 +43,6 @@ const styles = StyleSheet.create({
   image: {
     width: "100%",
     height: "100%",
+    transform: [{ scale: 1.67 }],
   },
 });

@@ -170,11 +170,8 @@ export default function TerminalScreen() {
 /** Build the WebSocket URL to the agent's /ws/terminal. Auth token goes in
  *  the query string since browsers + RN WebSockets can't set headers. */
 function terminalWsUrl(profile?: Device["sshProfile"]): string {
-  const base = quicClient.baseUrl.replace(/^http/, "ws");
-  const h = quicClient.getAuthHeaders();
-  const token = (h.Authorization || "").replace("Bearer ", "");
-  const params = addTerminalSSHProfile(new URLSearchParams({ token }), profile);
-  return `${base}/ws/terminal?${params.toString()}`;
+  const params = addTerminalSSHProfile(new URLSearchParams(), profile);
+  return quicClient.agentWebSocketUrl("/ws/terminal", params);
 }
 
 /** Strip the most common ANSI escape sequences. We keep newlines + tabs so

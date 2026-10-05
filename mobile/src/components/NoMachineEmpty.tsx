@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useDevice } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
@@ -25,9 +26,11 @@ export interface NoMachineEmptyProps {
   noun: string;
   /** Fired after the picker resolves, so the tab can kick a fresh scan. */
   onDeviceChange?: (deviceId: string) => void;
+  /** Keep selection inline and omit the work/runner-oriented advanced picker. */
+  inlineOnly?: boolean;
 }
 
-export default function NoMachineEmpty({ noun, onDeviceChange }: NoMachineEmptyProps) {
+export default function NoMachineEmpty({ noun, onDeviceChange, inlineOnly = false }: NoMachineEmptyProps) {
   const router = useRouter();
   const c = useColors();
   const {
@@ -177,24 +180,35 @@ export default function NoMachineEmpty({ noun, onDeviceChange }: NoMachineEmptyP
                   </View>
                 ) : null}
               </View>
-              <Text style={{ color: online ? c.success : asleep ? c.accent : c.textMuted, fontSize: 12, fontWeight: "600" }}>
-                {online ? "connect ›" : asleep ? "asleep · wake" : "offline"}
-              </Text>
+              {online ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: c.success + "66", backgroundColor: c.success + "16" }}>
+                  <Ionicons name="terminal-outline" size={13} color={c.success} />
+                  <Text style={{ color: c.success, fontSize: 11, fontWeight: "800", letterSpacing: 0.3 }}>SSH</Text>
+                </View>
+              ) : (
+                <Text style={{ color: asleep ? c.accent : c.textMuted, fontSize: 12, fontWeight: "600" }}>
+                  {asleep ? "asleep · wake" : "offline"}
+                </Text>
+              )}
             </Pressable>
           );
         })}
-        <Pressable onPress={() => setPickerVisible(true)} style={{ paddingVertical: 12, alignItems: "center" }}>
-          <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>More options</Text>
-        </Pressable>
+        {!inlineOnly ? (
+          <Pressable onPress={() => setPickerVisible(true)} style={{ paddingVertical: 12, alignItems: "center" }}>
+            <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>More options</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
-      <RemoteBoxPickerModal
-        visible={pickerVisible}
-        onClose={() => setPickerVisible(false)}
-        onSelected={(picked) => {
-          if (picked?.id) void pick(picked.id);
-        }}
-      />
+      {!inlineOnly ? (
+        <RemoteBoxPickerModal
+          visible={pickerVisible}
+          onClose={() => setPickerVisible(false)}
+          onSelected={(picked) => {
+            if (picked?.id) void pick(picked.id);
+          }}
+        />
+      ) : null}
     </>
   );
 }

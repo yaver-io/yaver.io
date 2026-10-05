@@ -35,6 +35,8 @@ export interface TaskHeaderProps {
   runnerActionLabel?: string;
   /** Tap "Logs" — already wired in tasks.tsx. */
   onOpenLogs?: () => void;
+  /** Open an interactive PTY on the task's recorded machine. */
+  onOpenSSH?: () => void;
   onBack: () => void;
   primaryAction: PrimaryAction;
   onStop?: () => void;
@@ -52,6 +54,7 @@ export function TaskHeader({
   onRunnerPress,
   runnerActionLabel,
   onOpenLogs,
+  onOpenSSH,
   onBack,
   primaryAction,
   onStop,
@@ -172,19 +175,34 @@ export function TaskHeader({
             </>
           ) : null}
         </View>
-        {onOpenLogs ? (
-          <Pressable
-            onPress={onOpenLogs}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityRole="button"
-            accessibilityLabel="Open logs"
-          >
-            <View style={styles.logsBtn}>
-              <Ionicons name="document-text-outline" size={13} color={c.brandPrimary} />
-              <Text style={[styles.logsText, { color: c.brandPrimary }]}>Logs</Text>
-            </View>
-          </Pressable>
-        ) : null}
+        <View style={styles.metaActions}>
+          {onOpenSSH ? (
+            <Pressable
+              onPress={onOpenSSH}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Open SSH terminal on this task's machine"
+            >
+              <View style={styles.logsBtn}>
+                <Ionicons name="terminal-outline" size={13} color={c.brandPrimary} />
+                <Text style={[styles.logsText, { color: c.brandPrimary }]}>SSH</Text>
+              </View>
+            </Pressable>
+          ) : null}
+          {onOpenLogs ? (
+            <Pressable
+              onPress={onOpenLogs}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Open logs"
+            >
+              <View style={styles.logsBtn}>
+                <Ionicons name="document-text-outline" size={13} color={c.brandPrimary} />
+                <Text style={[styles.logsText, { color: c.brandPrimary }]}>Logs</Text>
+              </View>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {/* Row 3: runner · model chip — surfaces "what's actually
@@ -346,6 +364,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     paddingHorizontal: 4,
+  },
+  metaActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingLeft: 8,
   },
   logsText: { fontSize: 13, fontWeight: "600" },
   chipRow: {

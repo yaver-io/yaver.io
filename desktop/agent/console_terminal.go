@@ -174,6 +174,8 @@ func terminalLaunchCommandFor(runner string, euid int) string {
 		return ""
 	}
 	argv = runnerYoloEnvPrefix(runner, euid) + argv
+	// Coding agents get a durable seat so a phone/tablet can detach and return.
+	// A raw SSH shell never reaches this builder and remains a plain login shell.
 	// argv never contains a single quote, so the tmux quoting below is safe.
 	return "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s " + session +
 		" '" + argv + "'; else exec " + argv + "; fi"

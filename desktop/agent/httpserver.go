@@ -839,6 +839,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
 	mux.HandleFunc("/session/import", s.auth(s.handleSessionImport))
 	mux.HandleFunc("/tmux/sessions", s.auth(s.handleTmuxSessions))
+	mux.HandleFunc("/tmux/client/action", s.auth(s.handleTmuxClientAction))
 	mux.HandleFunc("/tmux/session/close", s.auth(s.handleTmuxSessionCloseExact))
 	// First-class product route. /tmux/reconcile remains a compatibility alias;
 	// clients deal in Tasks, while tmux is only the local keeper mechanism.
@@ -6964,6 +6965,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "wire_detect":
 		// List USB-attached phones on the agent's host. See mcp_wire_tools.go.
 		out, err := mcpWireDetect()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
+	case "wire_open":
+		var args mcpWireOpenArgs
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("bad args: " + err.Error())
+		}
+		out, err := mcpWireOpen(args)
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
@@ -19936,6 +19948,36 @@ func (s *HTTPServer) handleTmuxSessions(w http.ResponseWriter, r *http.Request) 
 		sessions = []TmuxSession{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": sessions})
+}
+
+// POST /tmux/client/action — reliable UI controls for an attached tmux client.
+// Mobile keyboards and WebViews do not consistently deliver multi-step tmux
+// chords, so Detach and the Ctrl-B X, Y confirmation flow must not depend on
+// synthetic timing. The action is executed by the remote box itself.
+func (s *HTTPServer) handleTmuxClientAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.taskMgr.TmuxMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"ok": false, "code": "tmux_unavailable", "error": "tmux is not available on this machine",
+		})
+		return
+	}
+	var body struct {
+		Session string `json:"session"`
+		Action  string `json:"action"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "code": "invalid_request", "error": "session and action are required"})
+		return
+	}
+	if err := s.taskMgr.TmuxMgr.ControlClient(body.Session, body.Action); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{"ok": false, "code": "tmux_action_failed", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session": body.Session, "action": body.Action})
 }
 
 // POST /tmux/session/close — close one exact name+id identity and verify it is

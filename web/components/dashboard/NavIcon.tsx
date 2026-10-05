@@ -13,6 +13,12 @@
 import type { ReactElement, SVGProps } from "react";
 
 const PATHS: Record<string, ReactElement> = {
+  ssh: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 9 3 3-3 3M13 15h4" />
+    </>
+  ),
   devices: (
     <>
       <rect x="3" y="4" width="18" height="12" rx="2" />

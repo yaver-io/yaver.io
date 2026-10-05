@@ -330,15 +330,15 @@ final class VibingPlanTests: XCTestCase {
         XCTAssertFalse(tvRemoteDOMInspectionAvailable(targetId: nil))
     }
 
-    func testDOMHoverAndSelectUseTheSameClampedViewportCoordinates() {
+    func testDOMHoverAndSelectUseTheSameExclusiveClampedViewportCoordinates() {
         let size = CGSize(width: 393, height: 852)
         XCTAssertEqual(
             tvRemoteDOMPoint(normalized: CGPoint(x: 0.5, y: 0.25), sourceSize: size),
-            CGPoint(x: 197, y: 213)
+            CGPoint(x: 196, y: 213)
         )
         XCTAssertEqual(
             tvRemoteDOMPoint(normalized: CGPoint(x: -2, y: 4), sourceSize: size),
-            CGPoint(x: 0, y: 852)
+            CGPoint(x: 0, y: 851)
         )
     }
 

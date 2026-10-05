@@ -808,7 +808,7 @@ export interface DeviceState {
   /** true when agent's Convex auth session is expired (agent reachable but needs re-auth) */
   agentAuthExpired: boolean;
   /** Trigger phone-driven auth recovery for a device. */
-  recoverDeviceAuth: (device: Device) => Promise<RecoveryResult | null>;
+  recoverDeviceAuth: (device: Device, options?: { openBrowser?: boolean }) => Promise<RecoveryResult | null>;
   /** Bootstrap-pending claims (boxes that joined the user's relay but
    *  have no Convex devices row yet). Surfaced so a fresh remote
    *  install is claimable in one tap from the phone. */
@@ -3549,7 +3549,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return { ok: false, error: lastError };
   }, [token, user?.id, refreshDevices, clearDeviceUnreachable]);
 
-  const recoverDeviceAuth = useCallback(async (device: Device): Promise<RecoveryResult | null> => {
+  const recoverDeviceAuth = useCallback(async (
+    device: Device,
+    options: { openBrowser?: boolean } = {},
+  ): Promise<RecoveryResult | null> => {
     if (!token || !user?.id) {
       return { ok: false, error: "Not signed in" };
     }
@@ -3732,13 +3735,19 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // since direct host-token push landed: any caller who can pass
     // verifyHostToken (mobile signed in as the device owner) gets a
     // 1-call success in direct mode; if that fails, pair won't fix it.
+    // The device-code branch still POSTs to the SAME rate-limited endpoint.
+    // Starting it in the same tick as the rejected direct attempt guarantees
+    // a 429 and creates an endless "wait 5 seconds" loop. Let the agent's
+    // recovery window elapse before asking it to mint the QR/code.
+    await new Promise((resolve) => setTimeout(resolve, 5_200));
+
     // Jump straight to device-code, which is the equivalent of running
     // `yaver primary auth` from the desktop CLI — opens a Convex OAuth
     // page in an in-app browser for explicit re-authorization.
     const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
     if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
       appLog("info", `Opened device-code recovery for ${device.name}: ${deviceCode.userCode || "code unavailable"}`);
-      try {
+      if (options.openBrowser !== false) try {
         await WebBrowser.openBrowserAsync(deviceCode.deviceCodeUrl, {
           // iOS: dismiss button label inside the in-app Safari sheet
           dismissButtonStyle: "done",

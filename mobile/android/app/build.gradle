@@ -108,7 +108,7 @@ android {
         applicationId 'io.yaver.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 328
+        versionCode 331
         versionName "1.18.190"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
@@ -132,6 +132,12 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // Keep local cable builds beside the Play-signed app. Android
+            // cannot update a production install with the debug key, and
+            // uninstalling to make room would destroy SecureStore/Keystore
+            // state—the exact credentials and login a developer is testing.
+            applicationIdSuffix ".dev"
+            resValue "string", "app_name", "Yaver Dev"
         }
         release {
             signingConfig signingConfigs.release

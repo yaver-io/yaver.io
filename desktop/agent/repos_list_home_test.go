@@ -54,6 +54,43 @@ func TestRepoListRejectsHomeWithoutHidingWorkspaceRepos(t *testing.T) {
 	}
 }
 
+func TestRepoListFindsManagedSiblingRepos(t *testing.T) {
+	home := withHome(t)
+	managed := filepath.Join(home, "Workspace", "repos")
+	wants := []string{
+		mkRepo(t, managed, "yaver.io"),
+		mkRepo(t, managed, "sfmg"),
+		mkRepo(t, managed, "talos"),
+	}
+
+	repoCache.mu.Lock()
+	repoCache.repos = nil
+	repoCache.dirTimes = nil
+	repoCache.cachedAt = time.Time{}
+	repoCache.mu.Unlock()
+	defer func() {
+		repoCache.mu.Lock()
+		repoCache.repos = nil
+		repoCache.dirTimes = nil
+		repoCache.cachedAt = time.Time{}
+		repoCache.mu.Unlock()
+	}()
+
+	srv := &HTTPServer{taskMgr: &TaskManager{workDir: wants[0]}}
+	recorder := httptest.NewRecorder()
+	srv.handleRepoList(recorder, httptest.NewRequest("GET", "/repos/list", nil))
+
+	var got []RepoInfo
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v (%s)", err, recorder.Body.String())
+	}
+	for _, want := range wants {
+		if !containsRepoPath(got, want) {
+			t.Fatalf("managed sibling repo %q missing from /repos/list: %+v", want, got)
+		}
+	}
+}
+
 func containsRepoPath(repos []RepoInfo, want string) bool {
 	for _, repo := range repos {
 		if filepath.Clean(repo.Path) == filepath.Clean(want) {

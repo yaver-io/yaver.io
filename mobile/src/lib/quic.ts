@@ -2342,6 +2342,80 @@ export class QuicClient {
     return this.authHeaders;
   }
 
+  /** Native React Native WebSocket upgrade headers.
+   *
+   * Unlike browser WebSocket, RN's implementation accepts request headers.
+   * Prefer the same proven Authorization + relay-password path used by fetch;
+   * query credentials remain on the URL for browser/older-client fallback.
+   */
+  agentWebSocketHeaders(bearerToken?: string): Record<string, string> {
+    return {
+      ...this.authHeaders,
+      Authorization: `Bearer ${bearerToken || this.token || ""}`,
+    };
+  }
+
+  /** Mint a two-minute, path-scoped credential through the normal authenticated
+   * HTTP lane before opening a WebSocket. Besides keeping the main bearer out
+   * of the upgrade decision, this turns an opaque 1006 into the agent's exact
+   * structured 401/403 reason on every native surface. */
+  async issueWebSocketSession(pathPrefix: "/ws/terminal" | "/ws/runner"): Promise<{
+    ok: boolean;
+    token?: string;
+    status?: number;
+    error?: string;
+    code?: string;
+  }> {
+    try {
+      const res = await this.fetchWithTimeout(`${this.baseUrl}/auth/browser-session`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ pathPrefix }),
+      }, 8000);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data?.token !== "string" || !data.token) {
+        return {
+          ok: false,
+          status: res.status,
+          error: typeof data?.error === "string" ? data.error : `Authorization preflight failed (${res.status})`,
+          code: typeof data?.code === "string" ? data.code : undefined,
+        };
+      }
+      return { ok: true, token: data.token };
+    } catch (error: any) {
+      return { ok: false, error: error?.message || "Authorization preflight could not reach the agent" };
+    }
+  }
+
+  /** Build an authenticated WebSocket URL for the currently selected agent.
+   *
+   * Browser WebSocket clients cannot attach Authorization or relay-password
+   * headers, so both credentials also have query-string equivalents: the
+   * agent promotes `token`, while the relay consumes `__rp`. Native callers
+   * additionally pass agentWebSocketHeaders(), matching the working fetch
+   * path even when an intermediary drops query auth during an upgrade.
+   */
+  agentWebSocketUrl(
+    path: "/ws/terminal" | "/ws/runner",
+    params: URLSearchParams,
+    bearerToken?: string,
+  ): string {
+    const query = new URLSearchParams(params);
+    // A screen's AuthContext is the source of truth for the current signed-in
+    // session. The transport client can briefly retain an older token while a
+    // target is being switched/recovered; using that stale pooled value here
+    // made HTTP discovery succeed while /ws/terminal returned 401. Callers
+    // with a live session pass it explicitly; legacy callers still use the
+    // client's synchronized token.
+    if (!query.has("token")) query.set("token", bearerToken || this.token || "");
+    let url = `${this.baseUrl.replace(/^http/, "ws")}${path}?${query.toString()}`;
+    const relayPassword = this.resolvedRelayPasswordForUrl(url);
+    if (relayPassword) {
+      url += `&__rp=${encodeURIComponent(relayPassword)}`;
+    }
+    return url;
+  }
+
   /** Authed snapshot URL for the Remote Desktop screen frame, for an <img src>
    *  inside a WebView (which can't send headers). iOS WKWebView can't render
    *  multipart MJPEG, so the mobile viewer polls this single-JPEG endpoint. The
@@ -4542,6 +4616,8 @@ export class QuicClient {
       primarySurface?: string;
       gitRemote?: string;
       tags?: string[];
+      monorepoRoot?: string;
+      monorepoApp?: string;
     }[];
     discovery?: {
       status?: "idle" | "discovering" | "partial" | "ready";
@@ -4681,6 +4757,8 @@ export class QuicClient {
       executionMode?: string;
       primarySurface?: string;
       tags?: string[];
+      monorepoRoot?: string;
+      monorepoApp?: string;
     }[];
     discovery?: {
       status?: "idle" | "discovering" | "partial" | "ready";
@@ -4724,6 +4802,8 @@ export class QuicClient {
           role: typeof p?.role === "string" ? p.role : undefined,
           executionMode: p?.executionMode,
           primarySurface: p?.primarySurface,
+          monorepoRoot: typeof p?.monorepoRoot === "string" ? p.monorepoRoot : undefined,
+          monorepoApp: typeof p?.monorepoApp === "string" ? p.monorepoApp : undefined,
           tags: Array.from(tags),
         };
       }),
@@ -6421,6 +6501,21 @@ export class QuicClient {
         throw new Error("Session scan timed out after 8s. The machine is connected, but the Yaver session service did not answer.");
       }
       throw error;
+    }
+  }
+
+  /** Run a bounded tmux client action on the remote box. REST is intentional:
+   * tablet keyboard layers do not reliably deliver timed Ctrl-B chords. */
+  async controlTmuxClient(session: string, action: "detach" | "kill-pane"): Promise<void> {
+    this.assertConnected();
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/tmux/client/action`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ session, action }),
+    }, 8_000);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Tmux ${action} failed (${res.status})`);
     }
   }
 

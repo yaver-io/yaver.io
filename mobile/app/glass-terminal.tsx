@@ -1351,11 +1351,8 @@ function colorFor(kind: Line["kind"]): string {
 }
 
 function buildTerminalWsUrl(profile?: Device["sshProfile"]): string {
-  const base = quicClient.baseUrl.replace(/^http/, "ws");
-  const h = quicClient.getAuthHeaders();
-  const token = (h.Authorization || "").replace("Bearer ", "");
-  const params = addTerminalSSHProfile(new URLSearchParams({ token }), profile);
-  return `${base}/ws/terminal?${params.toString()}`;
+  const params = addTerminalSSHProfile(new URLSearchParams(), profile);
+  return quicClient.agentWebSocketUrl("/ws/terminal", params);
 }
 
 // eslint-disable-next-line no-control-regex

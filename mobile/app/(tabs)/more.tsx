@@ -17,6 +17,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import PairQrScanner from "../../src/components/PairQrScanner";
 import SegmentedCodeInput from "../../src/components/SegmentedCodeInput";
@@ -2238,50 +2239,20 @@ export default function MoreScreen() {
             the hero card. */}
 
         <Pressable
-          style={[
-            s.heroCard,
-            {
-              backgroundColor: c.bgCard,
-              borderColor: c.border,
-              shadowColor: c.accent,
-            },
-          ]}
-          onPress={() => router.navigate("/(tabs)/newproject" as any)}
+          style={[s.authorizeCard, { backgroundColor: c.accent + "14", borderColor: c.accent + "55" }]}
+          onPress={() => router.push("/approve-device?scan=1" as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Scan a Yaver device authorization QR code"
         >
-          <View style={[s.heroIconWrap, { backgroundColor: c.accent + "18", borderColor: c.accent + "35" }]}>
-            <Text style={[s.heroIcon, { color: c.accent }]}>{"\u26A1"}</Text>
+          <View style={[s.authorizeIcon, { backgroundColor: c.accent + "22" }]}>
+            <Ionicons name="qr-code-outline" size={26} color={c.accent} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={[s.eyebrow, { color: c.accent }]}>Start here</Text>
-            <Text style={[s.heroLabel, { color: c.textPrimary }]}>Start Project</Text>
-            <Text style={[s.heroDesc, { color: c.textMuted }]} numberOfLines={2}>
-              Describe it; Yaver creates the RN/TS app, Serverless backend, git, and runner task.
-            </Text>
+            <Text style={[s.authorizeLabel, { color: c.textPrimary }]}>Authorize remote device</Text>
+            <Text style={[s.authorizeDesc, { color: c.textMuted }]}>Scan Yaver QR from tvOS, a server, or any headless device</Text>
           </View>
-          <Text style={{ color: c.accent, fontSize: 20, fontWeight: "700" }}>{"\u203A"}</Text>
+          <Ionicons name="camera-outline" size={22} color={c.accent} />
         </Pressable>
-
-        <View style={s.quickGrid}>
-          <Pressable
-            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={openPair}
-          >
-            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u2194"}</Text>
-            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Pair Machine</Text>
-            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Scan QR or enter code</Text>
-          </Pressable>
-
-          <Pressable
-            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={handleDevices}
-          >
-            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u25CF"}</Text>
-            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Devices</Text>
-            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>
-              Manage remote boxes
-            </Text>
-          </Pressable>
-        </View>
 
         <Pressable
           style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
@@ -2305,9 +2276,25 @@ export default function MoreScreen() {
           <Text style={[s.icon, { color: c.textMuted }]}>{"🐕"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.label, { color: c.textPrimary }]}>Dogfood</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Launch, reload, tasks, and settings</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Launch, reload, sessions, and settings</Text>
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.push("/cloud" as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Open Bring your own cloud"
+        >
+          <View style={[s.icon, { alignItems: "center", justifyContent: "center" }]}>
+            <Ionicons name="cloud-outline" size={21} color={c.textMuted} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Bring your own cloud</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Hetzner on your account</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
         </Pressable>
 
         <Pressable
@@ -3295,6 +3282,19 @@ const s = StyleSheet.create({
     borderWidth: 1,
     gap: 12,
   },
+  authorizeCard: {
+    minHeight: 92,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 14,
+  },
+  authorizeIcon: { width: 48, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  authorizeLabel: { fontSize: 17, fontWeight: "700" },
+  authorizeDesc: { fontSize: 12, lineHeight: 17, marginTop: 4 },
   heroCard: {
     flexDirection: "row",
     alignItems: "center",

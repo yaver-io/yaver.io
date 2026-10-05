@@ -18,6 +18,11 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
+    // Notifee ships its native core AAR inside the npm package rather than on
+    // Maven Central. Its library plugin attempts to add this repository late,
+    // which is too late for dependency resolution with the current Expo/AGP
+    // stack. Keep the root build pointed at the operation's real artifact.
+    maven { url "$rootDir/../node_modules/@notifee/react-native/android/libs" }
   }
 }
 

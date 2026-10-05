@@ -14,6 +14,7 @@ const os = require("os");
 const path = require("path");
 const { desktop, installedDesktopCandidates } = require("./commands/desktop");
 const { codingRunnerBootstrapPlan } = require("./runner-bootstrap-policy");
+const { seedCIHostDefaults } = require("./ci-host-defaults");
 
 const CODING_RUNNER_BOOTSTRAP = [
   { command: "claude", pkg: "@anthropic-ai/claude-code", label: "Claude Code" },
@@ -145,7 +146,7 @@ function ensureLinuxHermescBuildDeps() {
   }
 }
 
-function ensureLinuxRunnerSandboxPackages() {
+function ensureLinuxRunnerSandboxPackages(completeAutomationHost = false) {
   try {
     if (process.platform !== "linux") return;
     if (typeof process.geteuid !== "function" || process.geteuid() !== 0) return;
@@ -159,6 +160,14 @@ function ensureLinuxRunnerSandboxPackages() {
     // they ssh in and `apt install tmux`. Bundling tmux into the same
     // auto-install pass as the runner sandbox deps closes that gap.
     if (!commandExists("tmux")) missing.push("tmux");
+    // An explicit YAVER_CI install is a developer-owned automation host, not a
+    // minimal runtime. These are small interactive conveniences used by the
+    // supported PTY workflow. Do not install them during routine CLI updates.
+    if (completeAutomationHost) {
+      if (!commandExists("zsh")) missing.push("zsh");
+      if (!commandExists("fzf")) missing.push("fzf");
+      if (!commandExists("git")) missing.push("git");
+    }
     if (missing.length === 0) return;
     if (!commandExists("apt-get")) {
       log(`Linux packages missing (${missing.join(", ")}) and no apt-get is available for auto-install. Run: \`yaver install tmux\` (or your distro's equivalent for the rest).`);
@@ -570,7 +579,7 @@ async function main() {
   ensurePathOnUnix();
   ensureZshenvRescue();
   addNpmGlobalBinToProcessPath();
-  ensureLinuxRunnerSandboxPackages();
+  ensureLinuxRunnerSandboxPackages(completeAutomationHost);
   ensureLinuxRunnerSandboxSupport();
   reportLinuxRunnerSandboxStatus();
   if (completeAutomationHost) {
@@ -659,6 +668,21 @@ async function main() {
   // browser. `yaver test` can offer this route when the user chooses it.
   if ((completeAutomationHost || envEnabled("YAVER_POSTINSTALL_TESTKIT")) && !envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
     await installTestRunnerTools();
+  }
+
+  if (completeAutomationHost) {
+    try {
+      const seeded = seedCIHostDefaults();
+      if (seeded.created.length > 0) {
+        log(`Seeded missing CI-host defaults: ${seeded.created.map((entry) => path.relative(os.homedir(), entry)).join(", ")}.`);
+      }
+      if (seeded.preserved.length > 0) {
+        log(`Preserved existing user configuration: ${seeded.preserved.map((entry) => path.relative(os.homedir(), entry)).join(", ")}.`);
+      }
+      for (const note of seeded.notes) log(note);
+    } catch (error) {
+      log(`Skipping respectful CI-host defaults: ${error.message}`);
+    }
   }
 
   // Free/offline voice stack — provision ffmpeg + whisper.cpp + a ggml
