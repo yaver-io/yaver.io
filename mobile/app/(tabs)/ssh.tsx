@@ -62,7 +62,7 @@ export default function SSHHomeScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: c.border }]}> 
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: c.border }]}>
         <Text style={[styles.title, { color: c.textPrimary }]}>SSH</Text>
       </View>
       <ScrollView
@@ -116,7 +116,7 @@ export default function SSHHomeScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.launchTitle, { color: c.textPrimary }]}>Open SSH</Text>
-                  <Text style={[styles.launchSubtitle, { color: c.textMuted }]}> 
+                  <Text style={[styles.launchSubtitle, { color: c.textMuted }]}>
                     {selectedDevice.alias ? `@${selectedDevice.alias}` : selectedDevice.name} · choose what starts
                   </Text>
                 </View>
