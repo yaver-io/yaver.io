@@ -142,6 +142,29 @@ if [[ "$PROFILE_APP_ID" != *."$MAS_BUNDLE_ID" ]]; then
   exit 2
 fi
 
+# Prove the profile is a macOS App Store profile, not an iOS/visionOS one that
+# merely shares the bundle id. On 2026-10-06 the only matching profile was
+# "Yaver Mini AppStore io.yaver.mobile" with Platform=["iOS","xrOS","visionOS"];
+# the app-id check passed, a universal .pkg built, signed and locally verified
+# over ~15 minutes, and App Store Connect finally rejected it (error 90282,
+# "Invalid Provisioning Profile Signature"). Fail in seconds instead. Skip the
+# check only when the profile reports no Platform at all.
+PROFILE_PLATFORMS="$(plutil -extract Platform json -o - "$PROFILE_PLIST" 2>/dev/null || true)"
+if [ -n "$PROFILE_PLATFORMS" ]; then
+  case "$PROFILE_PLATFORMS" in
+    *macOS*|*MacOS*|*OSX*|*"Mac OS X"*) ;;
+    *)
+      echo "ERROR: $PROFILE_VAR is not a macOS App Store profile (Platform=$PROFILE_PLATFORMS)." >&2
+      echo "       The bundle id matches, but this is an iOS/visionOS profile; App Store" >&2
+      echo "       Connect rejects it for macOS (90282, Invalid Provisioning Profile Signature)." >&2
+      echo "       Fix: Apple Developer → Certificates, Identifiers & Profiles → Profiles →" >&2
+      echo "            create a \"Mac App Store\" distribution profile for $MAS_BUNDLE_ID," >&2
+      echo "            download it, and point $PROFILE_VAR at it." >&2
+      exit 2
+      ;;
+  esac
+fi
+
 if [ "$UPLOAD" = "1" ]; then
   if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
     echo "ERROR: macOS TestFlight upload requires a clean committed worktree." >&2
