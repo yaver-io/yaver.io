@@ -212,6 +212,29 @@ else
 fi
 
 echo "Archiving visionOS…"
+# A listed SDK is INVENTORY; an eligible destination is the OPERATION.
+# 2026-10-06: `-showsdks` reported visionOS 26.4 and the simulator runtime was
+# installed, yet every archive failed with "visionOS 26.4 is not installed.
+# Please download and install the platform from Xcode > Settings > Components."
+# — the device platform component was absent. Probe the exact destination the
+# archive needs, and install the platform when it is missing instead of only
+# learning the truth from the archive's failure.
+if ! xcodebuild "${PROJECT_ARGS[@]}" -scheme "$SCHEME" -showdestinations 2>/dev/null \
+    | grep -q "platform:visionOS,"; then
+  if [ "${YAVER_SKIP_XCODE_PLATFORM_DOWNLOAD:-}" = "1" ]; then
+    echo "ERROR: the visionOS device platform is not installed and automatic download is disabled." >&2
+    echo "       Fix: xcodebuild -downloadPlatform visionOS -architectureVariant arm64" >&2
+    exit 1
+  fi
+  echo "Xcode lists the visionOS SDK but no eligible visionOS device destination." >&2
+  echo "Installing the visionOS platform; download progress follows." >&2
+  xcodebuild -downloadPlatform visionOS -architectureVariant arm64
+  if ! xcodebuild "${PROJECT_ARGS[@]}" -scheme "$SCHEME" -showdestinations 2>/dev/null \
+      | grep -q "platform:visionOS,"; then
+    echo "ERROR: visionOS is still not an eligible destination after installing the platform." >&2
+    exit 1
+  fi
+fi
 xcodebuild "${PROJECT_ARGS[@]}" \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
