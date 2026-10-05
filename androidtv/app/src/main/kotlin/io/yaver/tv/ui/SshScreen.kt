@@ -28,6 +28,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import io.yaver.tv.BoxTarget
 import io.yaver.tv.TV_SURFACE_ID
+import io.yaver.tv.Speech
 import io.yaver.tv.TvStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -91,17 +93,22 @@ fun SshScreen(store: TvStore, nav: NavHostController) {
 
 @Composable
 private fun TerminalPane(box: BoxTarget, token: String, launch: String, onExit: () -> Unit) {
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("yaver-studio", android.content.Context.MODE_PRIVATE) }
+    val speech = remember { Speech(context.applicationContext) }
     val controller = remember(box.id, token, launch) { AndroidTvTerminal(box, token, launch) }
     val screen by controller.screen.collectAsState()
     val status by controller.status.collectAsState()
     val error by controller.error.collectAsState()
     val focus = remember { FocusRequester() }
     var command by remember { mutableStateOf("") }
+    var fontSize by remember { mutableStateOf(preferences.getFloat("terminal-font-size", 18f)) }
+    var speaking by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
     DisposableEffect(controller) {
         controller.connect()
-        onDispose { controller.close() }
+        onDispose { speech.shutdown(); controller.close() }
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
     LaunchedEffect(screen) { scroll.scrollTo(scroll.maxValue) }
@@ -120,12 +127,28 @@ private fun TerminalPane(box: BoxTarget, token: String, launch: String, onExit: 
             Spacer(Modifier.weight(1f))
             Text(status, color = if (status.contains("ready")) TvColors.Green else TvColors.Orange,
                 fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+            TvTextButton("A−", onClick = {
+                fontSize = (fontSize - 1f).coerceAtLeast(13f)
+                preferences.edit().putFloat("terminal-font-size", fontSize).apply()
+            })
+            TvTextButton("${fontSize.toInt()}", onClick = {
+                fontSize = 18f
+                preferences.edit().putFloat("terminal-font-size", fontSize).apply()
+            })
+            TvTextButton("A+", onClick = {
+                fontSize = (fontSize + 1f).coerceAtMost(34f)
+                preferences.edit().putFloat("terminal-font-size", fontSize).apply()
+            })
+            TvTextButton(if (speaking) "Stop voice" else "Read output", onClick = {
+                if (speaking) speech.stop() else if (screen.isNotEmpty()) speech.speakSummary(screen)
+                speaking = !speaking
+            })
             TvTextButton("Reconnect", onClick = { controller.connect() })
         }
 
         Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(26.dp)) {
             Text(if (screen.isEmpty()) "Connecting to the PTY…" else screen,
-                color = Color(0xFFD1D9E3), fontSize = 18.sp, fontFamily = FontFamily.Monospace)
+                color = Color(0xFFD1D9E3), fontSize = fontSize.sp, fontFamily = FontFamily.Monospace)
         }
         error?.let {
             Text(it, color = TvColors.Red, fontSize = 16.sp, fontFamily = FontFamily.Monospace,
@@ -139,7 +162,7 @@ private fun TerminalPane(box: BoxTarget, token: String, launch: String, onExit: 
             TvTextButton("Detach", onClick = { controller.send(byteArrayOf(0x02, 0x64)) })
             OutlinedTextField(
                 value = command, onValueChange = { command = it }, singleLine = true,
-                label = { Text("Command from TV keyboard") }, modifier = Modifier.weight(1f),
+                label = { Text("Voice or command from TV keyboard") }, modifier = Modifier.weight(1f),
             )
             TvTextButton("Send", onClick = {
                 if (command.isNotEmpty()) {

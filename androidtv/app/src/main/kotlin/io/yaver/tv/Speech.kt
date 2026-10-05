@@ -18,6 +18,7 @@ import java.util.regex.Pattern
 class Speech(private val context: Context) {
     private var tts: TextToSpeech? = null
     private var ready = false
+    private var pendingText: String? = null
 
     private fun ensure(): TextToSpeech? {
         tts?.let { if (ready) return it }
@@ -26,6 +27,10 @@ class Speech(private val context: Context) {
             if (ready) {
                 tts?.language = Locale.getDefault()
                 tts?.setSpeechRate(0.85f)
+                pendingText?.let { queued ->
+                    pendingText = null
+                    tts?.speak(queued, TextToSpeech.QUEUE_FLUSH, null, "yaver-${System.currentTimeMillis()}")
+                }
             }
         }
         tts = engine
@@ -37,13 +42,17 @@ class Speech(private val context: Context) {
         val cleaned = text.trim()
         if (cleaned.isEmpty()) return
         val t = ensure() ?: return
-        if (!ready) return
+        if (!ready) {
+            pendingText = cleaned
+            return
+        }
         t.stop()
         t.speak(cleaned, TextToSpeech.QUEUE_FLUSH, null, "yaver-${System.currentTimeMillis()}")
     }
 
     /** Stop any in-flight speech. */
     fun stop() {
+        pendingText = null
         runCatching { tts?.stop() }
     }
 
@@ -54,6 +63,7 @@ class Speech(private val context: Context) {
         runCatching { tts?.shutdown() }
         tts = null
         ready = false
+        pendingText = null
     }
 
     // ── Pane summarization (mirrors watch_risk.go::watchFirstStatusClause) ─

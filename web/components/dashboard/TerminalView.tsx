@@ -56,6 +56,9 @@ export default function TerminalView({
   const [closeReason, setCloseReason] = useState<string>("");
   const [attempt, setAttempt] = useState(0);
   const [dictating, setDictating] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
+  const [fontSize, setFontSize] = useState(13);
   const [runningRunner, setRunningRunner] = useState<string | null>(null);
   const [closeBusy, setCloseBusy] = useState(false);
   const [closeError, setCloseError] = useState<string>("");
@@ -64,6 +67,28 @@ export default function TerminalView({
   const [sttAvailable] = useState<boolean>(
     () => typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
   );
+  const ttsAvailable = typeof window !== "undefined" && "speechSynthesis" in window;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const value = Number(window.localStorage.getItem(`yaver:terminal-font:${cwd || "default"}`));
+    if (Number.isFinite(value) && value >= 9 && value <= 28) setFontSize(value);
+  }, [cwd]);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = fontSize;
+    try { fitRef.current?.fit(); } catch {}
+  }, [fontSize]);
+
+  const changeFontSize = useCallback((delta: number) => {
+    setFontSize((current) => {
+      const next = delta === 0 ? 13 : Math.max(9, Math.min(28, current + delta));
+      try { window.localStorage.setItem(`yaver:terminal-font:${cwd || "default"}`, String(next)); } catch {}
+      return next;
+    });
+  }, [cwd]);
 
   // Manual reconnect — clears closed state and bumps the attempt counter
   // so the effect below re-runs and rebuilds the WebSocket.
@@ -126,7 +151,11 @@ export default function TerminalView({
 
   // Optional browser dictation → typed at the prompt (no auto-Enter).
   const toggleDictation = useCallback(() => {
-    if (!sttAvailable) return;
+    setVoiceError("");
+    if (!sttAvailable) {
+      setVoiceError("Speech input is unavailable in this browser. Use Chrome/Edge or the native Yaver app.");
+      return;
+    }
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch {}
       recognitionRef.current = null;
@@ -143,11 +172,47 @@ export default function TerminalView({
       if (text.trim()) sendToPty(text.trim());
     };
     rec.onend = () => { recognitionRef.current = null; setDictating(false); };
-    rec.onerror = () => { recognitionRef.current = null; setDictating(false); };
+    rec.onerror = (event: any) => {
+      recognitionRef.current = null;
+      setDictating(false);
+      setVoiceError(event?.error === "not-allowed" ? "Microphone access is blocked. Allow it in browser site settings." : `Speech input failed${event?.error ? `: ${event.error}` : "."}`);
+    };
     recognitionRef.current = rec;
     setDictating(true);
-    try { rec.start(); } catch { recognitionRef.current = null; setDictating(false); }
+    try { rec.start(); } catch { recognitionRef.current = null; setDictating(false); setVoiceError("Speech input could not start."); }
   }, [sttAvailable, sendToPty]);
+
+  const speakLatest = useCallback(() => {
+    setVoiceError("");
+    if (!ttsAvailable) {
+      setVoiceError("Spoken output is unavailable in this browser.");
+      return;
+    }
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    const buffer = termRef.current?.buffer?.active;
+    if (!buffer) {
+      setVoiceError("There is no terminal output to read yet.");
+      return;
+    }
+    const start = Math.max(0, buffer.length - 8);
+    const text = Array.from({ length: buffer.length - start }, (_, index) =>
+      buffer.getLine(start + index)?.translateToString(true).trim() || "",
+    ).filter(Boolean).join(". ").slice(-900);
+    if (!text) {
+      setVoiceError("There is no terminal output to read yet.");
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => { setSpeaking(false); setVoiceError("The browser could not speak the terminal output."); };
+    setSpeaking(true);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [speaking, ttsAvailable]);
 
   useEffect(() => {
     let disposed = false;
@@ -164,7 +229,7 @@ export default function TerminalView({
       if (!termRef.current) {
         const term = new Terminal({
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 13,
+          fontSize,
           cursorBlink: true,
           theme: { background: "#0b0d10", foreground: "#d1d5db" },
         });
@@ -351,6 +416,7 @@ export default function TerminalView({
   useEffect(() => {
     return () => {
       try { termRef.current?.dispose(); } catch {}
+      try { window.speechSynthesis?.cancel(); } catch {}
       termRef.current = null;
       fitRef.current = null;
     };
@@ -426,6 +492,15 @@ export default function TerminalView({
             {dictating ? "● rec" : "🎙"}
           </button>
         ) : null}
+        <button onClick={() => changeFontSize(-1)} aria-label="Zoom terminal out" className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300">A−</button>
+        <button onClick={() => changeFontSize(0)} aria-label="Reset terminal zoom" className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300">{fontSize}</button>
+        <button onClick={() => changeFontSize(1)} aria-label="Zoom terminal in" className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300">A+</button>
+        <button
+          onClick={speakLatest}
+          title={ttsAvailable ? "Read the latest terminal output" : "Spoken output is unavailable in this browser"}
+          className={`shrink-0 rounded border px-2 py-1 text-xs ${speaking ? "border-violet-400 bg-violet-500 text-white" : "border-white/10 bg-white/5 text-gray-300"}`}
+        >{speaking ? "■ speaking" : "🔊"}</button>
+        {voiceError ? <span className="shrink-0 text-xs text-rose-300">{voiceError}</span> : null}
         {closeError ? (
           <span className="shrink-0 text-xs text-rose-300">{closeError}</span>
         ) : null}

@@ -36,6 +36,7 @@ export interface XtermHandle {
   focus(): void;
   /** Clear the grid + scrollback (raw_replay full-snapshot replace). */
   reset(): void;
+  setFontSize(size: number): void;
 }
 
 export interface XtermViewProps {
@@ -111,6 +112,9 @@ function bridgeScript(opts: {
   // Full reset — clears the grid AND the scrollback. Used when a raw_replay
   // snapshot (full=true) replaces the screen instead of appending.
   window.__yvReset = function () { try { term.reset(); } catch (e) {} };
+  window.__yvFont = function (size) {
+    try { term.options.fontSize = size; doFit(); } catch (e) {}
+  };
 
   window.addEventListener("resize", doFit);
   // initial fit after layout settles, then announce ready
@@ -179,6 +183,10 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
       },
       reset() {
         webRef.current?.injectJavaScript("window.__yvReset && window.__yvReset();true;");
+      },
+      setFontSize(size: number) {
+        const safe = Math.max(9, Math.min(28, Math.round(size)));
+        webRef.current?.injectJavaScript(`window.__yvFont && window.__yvFont(${safe});true;`);
       },
     }),
     [],

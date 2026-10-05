@@ -67,6 +67,8 @@ struct TVSSHView: View {
 private struct TVTerminalScreen: View {
     @StateObject private var model: TVTerminalModel
     @State private var command = ""
+    @AppStorage("studioTerminalFontSize") private var fontSize = 19.0
+    @State private var speaking = false
     let onExit: () -> Void
 
     init(box: BoxTarget, token: String, launch: String, onExit: @escaping () -> Void) {
@@ -82,6 +84,21 @@ private struct TVTerminalScreen: View {
                 Spacer()
                 Text(model.status).font(.system(size: 16, design: .monospaced))
                     .foregroundStyle(model.connected ? .green : .orange)
+                Button("A−") { fontSize = max(13, fontSize - 1) }
+                    .accessibilityLabel("Zoom terminal out")
+                Button("\(Int(fontSize))") { fontSize = 19 }
+                    .accessibilityLabel("Reset terminal zoom")
+                Button("A+") { fontSize = min(34, fontSize + 1) }
+                    .accessibilityLabel("Zoom terminal in")
+                Button(speaking ? "Stop voice" : "Read output") {
+                    if speaking {
+                        Speech.stop()
+                        speaking = false
+                    } else if !model.screen.isEmpty {
+                        Speech.speakSummary(of: model.screen)
+                        speaking = true
+                    }
+                }
                 Button("Reconnect") { model.reconnect() }
             }
             .padding(.horizontal, 34).padding(.vertical, 18)
@@ -91,7 +108,7 @@ private struct TVTerminalScreen: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         Text(model.screen.isEmpty ? "Connecting to the PTY…" : model.screen)
-                            .font(.system(size: 19, design: .monospaced))
+                            .font(.system(size: fontSize, design: .monospaced))
                             .foregroundStyle(Color(red: 0.82, green: 0.86, blue: 0.90))
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(28)
@@ -118,7 +135,7 @@ private struct TVTerminalScreen: View {
                 macro("Ctrl-D", [0x04])
                 macro("Ctrl-B", [0x02])
                 macro("Detach tmux", [0x02, 0x64])
-                TextField("Type a command with Apple TV Remote…", text: $command)
+                TextField("Dictate or type a command with Apple TV Remote…", text: $command)
                     .textFieldStyle(.plain)
                     .font(.system(size: 18, design: .monospaced))
                     .padding(14).background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 10))
@@ -129,7 +146,7 @@ private struct TVTerminalScreen: View {
         }
         .background(Color.black)
         .onAppear { model.connect() }
-        .onDisappear { model.disconnect() }
+        .onDisappear { Speech.stop(); model.disconnect() }
     }
 
     private func macro(_ title: String, _ bytes: [UInt8]) -> some View {
