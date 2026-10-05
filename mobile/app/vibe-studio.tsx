@@ -12,8 +12,8 @@
 //   - "Device"  — a continuously streamed, interactive physical Android
 //     phone/tablet attached to the remote Yaver host.
 //
-// Configuration is shown before launch, then collapses behind one settings
-// button. The terminal is not chat: Codex, Claude Code, OpenCode, tmux and
+// Studio opens directly with seeded defaults. Its only setup control navigates
+// to the separate /studio-config page. The terminal is not chat: Codex, Claude Code, OpenCode, tmux and
 // arbitrary shell/TUI programs run inside the PTY on the selected box.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -67,7 +67,7 @@ export default function VibeStudioScreen() {
   const [lane, setLane] = useState<Lane>("device");
   const [runner, setRunner] = useState<StudioRunner>("shell");
   const [tmuxSession, setTmuxSession] = useState("yaver-studio");
-  const [launched, setLaunched] = useState(false);
+  const launched = true;
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [previewStarting, setPreviewStarting] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -97,7 +97,7 @@ export default function VibeStudioScreen() {
       const defaults = resolveStudioDefaults(saved, project.framework, project.surfaces);
       setLane(defaults.lane);
       setRunner(defaults.runner);
-      setSplitRatio(defaults.splitRatio);
+      setSplitRatio(0.3);
       setTmuxSession(defaults.tmuxSession);
     }).catch(() => {});
     return () => { alive = false; };
@@ -107,7 +107,6 @@ export default function VibeStudioScreen() {
     if (!project || !availableLanes.includes(lane)) return;
     const defaults = resolveStudioDefaults({ lane, runner, splitRatio, tmuxSession }, project.framework, project.surfaces);
     AsyncStorage.setItem(`yaver:studio:last:${project.path}`, JSON.stringify(defaults)).catch(() => {});
-    setLaunched(true);
   }, [availableLanes, lane, project, runner, splitRatio, tmuxSession]);
 
   // Load projects from the box on connect. Auto-select the first mobile/web
@@ -119,9 +118,10 @@ export default function VibeStudioScreen() {
       // The running preview is stronger evidence than the discovery inventory.
       // A nested project may already be serving while listProjects is stale or
       // has not finished scanning; keep that real workDir selectable.
-      const [list, servingStatus] = await Promise.all([
+      const [list, servingStatus, activeStudioRaw] = await Promise.all([
         quicClient.listProjects(true),
         quicClient.getDevServerStatus().catch(() => null),
+        AsyncStorage.getItem("yaver:studio:active").catch(() => null),
       ]);
       const mapped: Project[] = (list || [])
         .map((p) => ({ name: p.name, path: p.path, framework: p.framework, surfaces: p.surfaces }))
@@ -141,6 +141,8 @@ export default function VibeStudioScreen() {
         // instead of the workDir. Accept its project-name prefix so an already
         // selected preview cannot fall into a false project-picker dead end.
         const requestedProjectName = requestedProject.split(/\s+\/\s+/)[0]?.trim() || requestedProject;
+        let activeStudio: { projectPath?: string } | null = null;
+        try { activeStudio = activeStudioRaw ? JSON.parse(activeStudioRaw) : null; } catch {}
         const byParam = requestedProject
           ? mapped.find(
               (p) =>
@@ -150,6 +152,9 @@ export default function VibeStudioScreen() {
                 p.name.trim().toLowerCase() === requestedProjectName,
             )
           : undefined;
+        const bySavedDefault = activeStudio?.projectPath
+          ? mapped.find((candidate) => candidate.path === activeStudio?.projectPath)
+          : undefined;
         if (requestedProject && !byParam) {
           // The URL pinned a project the box does not have. Say so instead of
           // silently opening the first mobile project.
@@ -158,7 +163,7 @@ export default function VibeStudioScreen() {
         } else {
           setParamMissed(null);
           setProject(
-            byParam ||
+            byParam || bySavedDefault ||
               mapped.find((p) => (p.surfaces || []).includes("mobile") || /expo|react-native|flutter|mobile/i.test(p.framework || "")) ||
               mapped[0] ||
               null,
@@ -251,48 +256,14 @@ export default function VibeStudioScreen() {
   }, [connected, previewStarting, project, refreshPreviewTarget]);
 
   const headerRight = (
-    <View style={styles.headerRight}>
-      {launched && landscape ? (
-        <View style={styles.laneSwitcher}>
-          {availableLanes.filter((value) => value !== "logs").map((l) => (
-            <Pressable
-              key={l}
-              onPress={() => setLane(l)}
-              style={[styles.laneBtn, lane === l && { backgroundColor: c.accentSoft }]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: lane === l }}
-              accessibilityLabel={`${l === "device" ? "Real device" : l === "browser" ? "Browser" : "Live"} preview lane`}
-            >
-              <Text style={[styles.laneBtnText, { color: lane === l ? c.accent : c.textSecondary }]}>
-                {l === "device" ? "Device" : l === "browser" ? "Browser" : "Live"}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-      {launched ? (
-        <Pressable
-          onPress={() => setLaunched(false)}
-          style={[styles.projectBtn, { borderColor: c.border }]}
-          accessibilityRole="button"
-          accessibilityLabel="Configure Studio"
-        >
-          <Ionicons name="settings-outline" size={15} color={c.textSecondary} />
-        </Pressable>
-      ) : null}
-      {!project && (!requestedProject || Boolean(paramMissed)) ? (
-        <Pressable
-          onPress={handleRequestProject}
-          style={[styles.projectBtn, { borderColor: c.border }]}
-          accessibilityRole="button"
-          accessibilityLabel="Pick project"
-        >
-          <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }} numberOfLines={1}>
-            {loadingProjects ? "Loading projects…" : "Pick project"}
-          </Text>
-        </Pressable>
-      ) : null}
-    </View>
+    <Pressable
+      onPress={() => router.push("/studio-config" as any)}
+      style={[styles.projectBtn, { borderColor: c.border }]}
+      accessibilityRole="button"
+      accessibilityLabel="Configure Studio"
+    >
+      <Ionicons name="settings-outline" size={15} color={c.textSecondary} />
+    </Pressable>
   );
 
   const projectPicker = showProjectPicker ? (
@@ -382,7 +353,7 @@ export default function VibeStudioScreen() {
             rowWidthRef.current = e.nativeEvent.layout.width;
           }}
         >
-          <View style={[styles.leftPane, { flex: splitRatio }]} testID="studio-left-pane">
+          <View style={[styles.leftPane, { flex: 0.3 }]} testID="studio-left-pane">
             <View style={styles.deviceStage}>
               <View style={[
                 mobileTarget || lane === "device" ? styles.deviceFrame : styles.browserFrame,
@@ -453,39 +424,8 @@ export default function VibeStudioScreen() {
               </View>
             </View>
           </View>
-          {/* Drag divider — same pointer pattern as the web's split panes. */}
-          <View
-            style={styles.divider}
-            testID="studio-divider"
-            accessibilityRole="adjustable"
-            accessibilityLabel="Resize preview split"
-            accessibilityValue={{ min: 20, max: 50, now: Math.round(splitRatio * 100), text: `${Math.round(splitRatio * 100)} percent lane` }}
-            accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
-            onAccessibilityAction={(event) => {
-              const delta = event.nativeEvent.actionName === "increment" ? 0.05 : -0.05;
-              setSplitRatio((value) => Math.max(0.2, Math.min(0.5, value + delta)));
-            }}
-            onStartShouldSetResponder={() => true}
-            onResponderGrant={(e) => {
-              dividerDragRef.current = { startX: e.nativeEvent.pageX, startRatio: splitRatio };
-            }}
-            onResponderMove={(e) => {
-              const d = dividerDragRef.current;
-              if (!d) return;
-              const w = rowWidthRef.current || 1;
-              const ratio = Math.max(0.2, Math.min(0.5, d.startRatio + (e.nativeEvent.pageX - d.startX) / w));
-              setSplitRatio(ratio);
-            }}
-            onResponderRelease={() => {
-              dividerDragRef.current = null;
-            }}
-            onResponderTerminate={() => {
-              dividerDragRef.current = null;
-            }}
-          >
-            <View style={[styles.dividerKnob, { backgroundColor: c.border }]} />
-          </View>
-          <View style={[styles.rightPane, { flex: 1 - splitRatio }]} testID="studio-right-pane">
+          <View style={[styles.fixedDivider, { backgroundColor: c.border }]} />
+          <View style={[styles.rightPane, { flex: 0.7 }]} testID="studio-right-pane">
             <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} />
           </View>
         </View>
@@ -496,7 +436,6 @@ export default function VibeStudioScreen() {
         </View>
       )}
 
-      {projectPicker}
       <View style={{ height: insets.bottom }} />
     </View>
   );
@@ -559,6 +498,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     opacity: 0.45,
   },
+  fixedDivider: { width: StyleSheet.hairlineWidth, alignSelf: "stretch" },
   deviceStage: { flex: 1, alignItems: "center", justifyContent: "center", minHeight: 0 },
   deviceFrame: {
     width: "100%",

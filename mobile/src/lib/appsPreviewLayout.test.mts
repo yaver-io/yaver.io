@@ -12,6 +12,7 @@ const src = readFileSync(join(mobileRoot, "app/(tabs)/apps.tsx"), "utf8");
 const sharedPreviewSrc = readFileSync(join(mobileRoot, "src/components/DevPreview.tsx"), "utf8");
 const buildsSrc = readFileSync(join(mobileRoot, "app/(tabs)/builds.tsx"), "utf8");
 const studioSrc = readFileSync(join(mobileRoot, "app/vibe-studio.tsx"), "utf8");
+const studioConfigSrc = readFileSync(join(mobileRoot, "app/studio-config.tsx"), "utf8");
 const studioTerminalSrc = readFileSync(join(mobileRoot, "src/components/studio/StudioTerminalPane.tsx"), "utf8");
 
 assert.match(src, /<LaneStartupStatus[\s\S]{0,800}lines=\{webPreviewLogs\}/,
@@ -84,8 +85,10 @@ assert.match(studioSrc, /Promise\.all\(\[[\s\S]{0,180}listProjects\(true\)[\s\S]
   "Studio project resolution must probe the running preview, not trust discovery inventory alone");
 assert.match(studioSrc, /servingStatus\?\.workDir[\s\S]{0,300}mapped\.unshift/,
   "a serving workDir missing from discovery must remain selectable in Studio");
-assert.match(studioSrc, /\{!project\s*&&\s*\(!requestedProject\s*\|\|\s*Boolean\(paramMissed\)\)\s*\?\s*\([\s\S]{0,500}accessibilityLabel="Pick project"/,
-  "Studio must hide the duplicate project picker after resolving a project");
+assert.match(studioSrc, /router\.push\("\/studio-config"/,
+  "Studio must expose only the separate configuration route");
+assert.match(studioConfigSrc, /Studio Configuration[\s\S]*Machine[\s\S]*Project[\s\S]*Lane[\s\S]*Runner inside SSH/,
+  "the separate Studio configuration page must own machine, project, lane, and runner controls");
 assert.match(sharedPreviewSrc, /onLogStateChange\(\{[\s\S]{0,180}lines:[\s\S]{0,180}live:/,
   "the shared preview must publish its existing bounded log state to its host");
 assert.match(studioSrc, /resolveStudioDefaults/,
