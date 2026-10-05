@@ -10,6 +10,7 @@
 		0AEECA73B0908A0415B8654C /* WakeProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76EA211ABDF521DD6CC22C3 /* WakeProgressView.swift */; };
 		0B73B4DE4DEB8BA5F3F1075D /* YaverDictationField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A900B18B742454D4D6C7359 /* YaverDictationField.swift */; };
 		0F3AD5C101105E22CCC5C114 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5B1B48A87472E6256348AC5 /* AppleSignIn.swift */; };
+		14EAF6BAF9AED19B06B8BD51 /* TVTerminalBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7A90CCD7A2DB0EC3FDA0EB3 /* TVTerminalBufferTests.swift */; };
 		16587396CA5360A34F2C4342 /* Backend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62AA4F93DB55D50601FA4253 /* Backend.swift */; };
 		18F7F25A9DC46548215628BB /* YaverTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 053F14BB4784ACE0F6940C93 /* YaverTVApp.swift */; };
 		1A6CB9DFD7829D4144D6A82D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 276D29BCA1F4A3A8DD33A6D3 /* Models.swift */; };
@@ -36,6 +37,7 @@
 		82D80DF91ACD492496FBCEC1 /* yaver-login-wordmark-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 1E6E9B680E701DC27F124C4F /* yaver-login-wordmark-light.png */; };
 		852CC39FBF2CFDEF2DCD3BB1 /* AddBoxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3856FA2ADBC347EA996932EA /* AddBoxView.swift */; };
 		859933A9F2FF6DBD55DA507D /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0279D581187CF7B6DAB53B5 /* DashboardView.swift */; };
+		89B47BE583D9BB29091D01CB /* TVSSHView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB70CDEE789AA243F43BCD4 /* TVSSHView.swift */; };
 		8D8ABF84CE07DFF5DCA0C28A /* WebPreviewStreamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13B09883C3220F3715E4F3DF /* WebPreviewStreamView.swift */; };
 		8F7FD72900FD7A382640EDAA /* VibingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5FCD77426D42F65FEB0D0A /* VibingView.swift */; };
 		8FEEAFB430FCFEB954769889 /* BoxlessCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 538F76DE5F0CE7ABB59354A3 /* BoxlessCodeView.swift */; };
@@ -94,6 +96,7 @@
 /* Begin PBXFileReference section */
 		0040D8EF80EF80251239D541 /* BoxlessDeepSeekClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxlessDeepSeekClient.swift; sourceTree = "<group>"; };
 		053F14BB4784ACE0F6940C93 /* YaverTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YaverTVApp.swift; sourceTree = "<group>"; };
+		0DB70CDEE789AA243F43BCD4 /* TVSSHView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSSHView.swift; sourceTree = "<group>"; };
 		10853B34BB3F067BDF0C02E9 /* TaskComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskComposerView.swift; sourceTree = "<group>"; };
 		13160FC9012BA60947E3FE74 /* VibingPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VibingPlan.swift; sourceTree = "<group>"; };
 		13B09883C3220F3715E4F3DF /* WebPreviewStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebPreviewStreamView.swift; sourceTree = "<group>"; };
@@ -157,6 +160,7 @@
 		EF5B9FC8AC4D8A2309D225BB /* YouTubeAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeAnimation.swift; sourceTree = "<group>"; };
 		F305D583F562FDFA98285065 /* YaverTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YaverTV.entitlements; sourceTree = "<group>"; };
 		F656E1723EA3FA1FA0C7CE46 /* RemoteRuntimeWebRTCView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRuntimeWebRTCView.swift; sourceTree = "<group>"; };
+		F7A90CCD7A2DB0EC3FDA0EB3 /* TVTerminalBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTerminalBufferTests.swift; sourceTree = "<group>"; };
 		F9153BD847AA22692E65287D /* CredentialHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialHandoff.swift; sourceTree = "<group>"; };
 		FFDB79BFE45112FD1EEB7595 /* TVEmailSignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVEmailSignInTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -251,6 +255,7 @@
 				706F27D55F944D59C8ECD555 /* TasksView.swift */,
 				B66293D9C377C3A9C9D374E3 /* TVInputStatus.swift */,
 				59F5766C895CDA0075AE65E7 /* TVSettingsView.swift */,
+				0DB70CDEE789AA243F43BCD4 /* TVSSHView.swift */,
 				9FAE4341960BE9EA05DE082D /* UpdateAgentView.swift */,
 				4ED0118C15F635CF31061B51 /* VibeTurnPanel.swift */,
 				4B5FCD77426D42F65FEB0D0A /* VibingView.swift */,
@@ -314,6 +319,7 @@
 				71087255383CB959DB30A9E6 /* DeviceCodeDeliveryTests.swift */,
 				AEBBF88FEFA5E078BA41AB0E /* TaskRuntimePlanTests.swift */,
 				CEC220759259856D0FC5E298 /* TVOverlayInputStateTests.swift */,
+				F7A90CCD7A2DB0EC3FDA0EB3 /* TVTerminalBufferTests.swift */,
 				72C2006AA5DE6D7B3F706F05 /* VibingPlanTests.swift */,
 				A3E21135A06858CFDFB198C2 /* YaverDictationFieldTests.swift */,
 			);
@@ -446,6 +452,7 @@
 				EC7C19BB4F488F251D7496A2 /* CredentialHandoffInteropTests.swift in Sources */,
 				666A5E815C7F1592A0FF7AE2 /* DeviceCodeDeliveryTests.swift in Sources */,
 				B1D5377964FD0FB970A270BA /* TVOverlayInputStateTests.swift in Sources */,
+				14EAF6BAF9AED19B06B8BD51 /* TVTerminalBufferTests.swift in Sources */,
 				95EC8FC56B71667C9E11BE83 /* TaskRuntimePlanTests.swift in Sources */,
 				DC2819DC5C2145D82D127460 /* VibingPlanTests.swift in Sources */,
 				2C9A4C73F2E72A79D846BE4C /* YaverDictationFieldTests.swift in Sources */,
@@ -491,6 +498,7 @@
 				9D0BB56F661FC19E222F21AC /* TVChatPlan.swift in Sources */,
 				BA348ACA3E9B639767CD13E5 /* TVInputStatus.swift in Sources */,
 				B9052B586A74B907CB88B108 /* TVOverlayInputState.swift in Sources */,
+				89B47BE583D9BB29091D01CB /* TVSSHView.swift in Sources */,
 				7379174AE578C3B3EE112B4E /* TVSettingsView.swift in Sources */,
 				2B768810EB7C0232820C5AAB /* TaskComposerView.swift in Sources */,
 				229C96D90BE4C06BFCD7F34E /* TaskDetailView.swift in Sources */,

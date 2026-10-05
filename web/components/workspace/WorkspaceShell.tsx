@@ -1,20 +1,14 @@
 "use client";
 
-// WorkspaceShell — i3-style tiling for the flat web dashboard.
+// WorkspaceShell — lean Yaver Studio for web, desktop and browser-based XR.
 //
 // Lifted from /spatial's multi-pane logic but rendered as a plain CSS
 // Grid instead of WebGL (Three.js) so it works in any browser, on any
 // laptop, AND on AR glasses connected to an iPhone (mirrored display).
 //
-// V1 design:
-//   • Project-kind aware default pane set (mobile / web / backend /
-//     generic) — fetched once from the connected agent's
-//     /project/kind endpoint.
-//   • Fixed grid layouts (1×1, 2×1, 1×2, 2×2, 1×3). User picks via
-//     the layout switcher in the header. Resize is intentionally
-//     phase 2.
-//   • i3-style keyboard binds via useWorkspaceKeyboard.
-//   • Layout persisted in localStorage per-project so reload restores.
+// The lane stays narrow (30% by default); the real remote PTY/tmux workspace
+// owns the right side. Configuration is shown before launch, then lives behind
+// one button. There is no chat pane in Studio.
 //
 // What each kind shows by default:
 //   mobile   →  Terminal · Web preview · Clips · Tests   (2×2)
@@ -78,6 +72,9 @@ export default function WorkspaceShell(): React.ReactElement {
   const [focusId, setFocusId] = useState<string>("");
   const [showHelp, setShowHelp] = useState(false);
   const [layoutOverride, setLayoutOverride] = useState<LayoutId | null>(null);
+  const [launched, setLaunched] = useState(false);
+  const [ratio, setRatio] = useState(30);
+  const [runner, setRunner] = useState<"shell" | "codex" | "claude" | "opencode">("shell");
 
   // One-shot fetch of project kind. The agent serves /project/kind;
   // older agents return generic via the client's fallback.
@@ -101,10 +98,15 @@ export default function WorkspaceShell(): React.ReactElement {
       if (parsed && typeof parsed[workDir] === "string" && parsed[workDir] in LAYOUTS) {
         setLayoutOverride(parsed[workDir] as LayoutId);
       }
+      if (parsed?.[`${workDir}:studio`]) {
+        const saved = parsed[`${workDir}:studio`];
+        if (Number.isFinite(saved.ratio)) setRatio(Math.max(20, Math.min(50, saved.ratio)));
+        if (["shell", "codex", "claude", "opencode"].includes(saved.runner)) setRunner(saved.runner);
+      }
     } catch { /* corrupt entry, ignore */ }
   }, [workDir]);
 
-  const panes = useMemo<PaneDef[]>(() => panesForKind(kind), [kind]);
+  const panes = useMemo<PaneDef[]>(() => panesForKind(kind, workDir, runner), [kind, runner, workDir]);
   const layoutId: LayoutId = layoutOverride ?? defaultLayoutFor(panes.length);
 
   // First pane defaults to focused so xterm gets keystrokes on land.
@@ -123,6 +125,18 @@ export default function WorkspaceShell(): React.ReactElement {
     } catch { /* full quota / private mode — fine, not fatal */ }
   }, [workDir]);
 
+  const launchStudio = useCallback(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+        const obj = raw ? JSON.parse(raw) : {};
+        obj[`${workDir}:studio`] = { ratio, runner };
+        window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(obj));
+      } catch {}
+    }
+    setLaunched(true);
+  }, [ratio, runner, workDir]);
+
   useWorkspaceKeyboard({
     onSelectPane: (idx) => {
       const target = panes[idx];
@@ -139,22 +153,13 @@ export default function WorkspaceShell(): React.ReactElement {
     <div className="h-screen w-screen bg-[#0b0d10] text-zinc-200 flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-2">
-        <span className="text-sm font-semibold">yaver workspace</span>
+        <span className="text-sm font-semibold">Yaver Studio</span>
         <span className="text-xs text-zinc-500">
           kind: <span className="text-zinc-300">{kind}</span>
           {workDir ? <> · <span className="text-zinc-400">{workDir.split("/").pop()}</span></> : null}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <label className="text-xs text-zinc-500">layout</label>
-          <select
-            value={layoutId}
-            onChange={(e) => persistLayout(e.target.value as LayoutId)}
-            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5 text-xs"
-          >
-            {Object.keys(LAYOUTS).map((k) => (
-              <option key={k} value={k}>{k}</option>
-            ))}
-          </select>
+          {launched ? <button onClick={() => setLaunched(false)} aria-label="Configure Studio" className="text-xs px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800">settings</button> : null}
           <button
             onClick={() => setShowHelp((h) => !h)}
             className="text-xs px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800"
@@ -164,8 +169,17 @@ export default function WorkspaceShell(): React.ReactElement {
         </div>
       </div>
 
-      {/* Grid */}
-      <div className={`flex-1 grid gap-1 p-1 ${LAYOUTS[layoutId]}`}>
+      {!launched ? (
+        <main className="w-full max-w-2xl mx-auto p-6 flex flex-col gap-3">
+          <div><h1 className="text-xl font-semibold">Open Studio</h1><p className="text-xs text-zinc-500 mt-1">Confirm the lane and SSH workspace. These choices are remembered for this project.</p></div>
+          <ConfigLine label="Machine" value="Connected Yaver box" />
+          <ConfigLine label="Project" value={workDir || "Agent working directory"} />
+          <ConfigLine label="Lane" value={kind === "backend" ? "logs / headless" : kind === "mobile" ? "device / runtime" : "browser / runtime"} />
+          <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Runner</span><select value={runner} onChange={(event) => setRunner(event.target.value as typeof runner)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value="shell">Shell / tmux</option><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="opencode">OpenCode</option></select></label>
+          <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Layout · lane {ratio}% / SSH {100-ratio}%</span><input aria-label="Lane width" type="range" min="20" max="50" value={ratio} onChange={(event) => setRatio(Number(event.target.value))} className="w-full" /></label>
+          <button onClick={launchStudio} className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-3 text-sm font-semibold">Launch Studio</button>
+        </main>
+      ) : <div className="flex-1 grid gap-1 p-1" style={{ gridTemplateColumns: `${ratio}% minmax(0, ${100-ratio}%)` }}>
         {panes.map((p, i) => {
           const isFocused = p.id === focusId;
           return (
@@ -189,7 +203,7 @@ export default function WorkspaceShell(): React.ReactElement {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       {/* Help overlay */}
       {showHelp ? (
@@ -220,6 +234,10 @@ export default function WorkspaceShell(): React.ReactElement {
   );
 }
 
+function ConfigLine({ label, value }: { label: string; value: string }): React.ReactElement {
+  return <div className="border border-zinc-800 rounded-lg p-3"><div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div><div className="text-sm text-zinc-200 mt-1 truncate">{value}</div></div>;
+}
+
 function cycle(
   panes: PaneDef[],
   currentId: string,
@@ -234,38 +252,33 @@ function cycle(
 
 // ── Pane composition per project kind ─────────────────────────────────────
 
-function panesForKind(kind: ProjectKind): PaneDef[] {
+function panesForKind(kind: ProjectKind, cwd: string, runner: "shell" | "codex" | "claude" | "opencode"): PaneDef[] {
   switch (kind) {
     case "mobile":  return [
-      { id: "terminal", title: "terminal", render: () => <TerminalPane /> },
-      { id: "preview",  title: "preview",      render: () => <WebPreviewPane /> },
-      { id: "clips",    title: "vibe clips",   render: () => <ClipsPane /> },
-      { id: "tests",    title: "tests",        render: () => <TestsPane /> },
+      { id: "preview",  title: "device / runtime lane", render: () => <WebPreviewPane /> },
+      { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} /> },
     ];
     case "web":     return [
-      { id: "terminal", title: "terminal", render: () => <TerminalPane /> },
-      { id: "preview",  title: "live preview", render: () => <WebPreviewPane /> },
-      { id: "tests",    title: "tests",        render: () => <TestsPane /> },
-      { id: "clips",    title: "vibe clips",   render: () => <ClipsPane /> },
+      { id: "preview",  title: "browser lane", render: () => <WebPreviewPane /> },
+      { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} /> },
     ];
     case "backend": return [
-      { id: "terminal", title: "terminal", render: () => <TerminalPane /> },
-      { id: "tests",    title: "tests",        render: () => <TestsPane /> },
-      { id: "logs",     title: "logs",         render: () => <LogsPane /> },
+      { id: "logs",     title: "logs / headless lane", render: () => <LogsPane /> },
+      { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} /> },
     ];
     default:        return [
-      { id: "terminal", title: "shell",        render: () => <TerminalPane /> },
-      { id: "help",     title: "what is this", render: () => <HelpPane /> },
+      { id: "preview", title: "lane", render: () => <WebPreviewPane /> },
+      { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} /> },
     ];
   }
 }
 
 // ── Per-pane content components ───────────────────────────────────────────
 
-function TerminalPane(): React.ReactElement {
+function TerminalPane({ cwd, runner }: { cwd?: string; runner: "shell" | "codex" | "claude" | "opencode" }): React.ReactElement {
   return (
     <div className="h-full w-full">
-      <TerminalView />
+      <TerminalView cwd={cwd} launch={runner === "shell" ? undefined : runner} sshProfile={runner === "shell" ? { shell: "default", tmux: true, tmuxSession: "yaver-studio" } : undefined} />
     </div>
   );
 }

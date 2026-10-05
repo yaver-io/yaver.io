@@ -36,7 +36,7 @@ const AUTH_PROVIDER_ORIGINS = new Set([
  * /d/ is load-bearing: the dashboard reaches agents through the same-origin
  * /d/<deviceId>/ proxy when relay-backed (web/app/d/[deviceId]/route.ts).
  */
-const ALLOWED_PATH_PREFIXES = ["/auth", "/api", "/dashboard", "/d/", "/_next"];
+const ALLOWED_PATH_PREFIXES = ["/auth", "/api", "/dashboard", "/studio", "/workspace", "/d/", "/_next"];
 
 function isAllowedAppPath(pathname) {
   return ALLOWED_PATH_PREFIXES.some((prefix) => {

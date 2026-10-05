@@ -143,6 +143,7 @@ fun DashboardScreen(store: TvStore, nav: NavHostController) {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     TvTile(icon = "💬", title = "Chat", onClick = { nav.navigate(Routes.TASKS) })
                     TvTile(icon = "▶", title = "Vibing", onClick = { nav.navigate(Routes.VIBING) })
+                    TvTile(icon = ">_", title = "SSH", onClick = { nav.navigate(Routes.SSH) })
                     TvTile(icon = "🖥", title = "Devices", onClick = { nav.navigate(Routes.MACHINES) })
                     TvTile(icon = "⚙", title = "Settings", onClick = { nav.navigate(Routes.SETTINGS) })
                 }

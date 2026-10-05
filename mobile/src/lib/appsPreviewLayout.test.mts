@@ -12,7 +12,7 @@ const src = readFileSync(join(mobileRoot, "app/(tabs)/apps.tsx"), "utf8");
 const sharedPreviewSrc = readFileSync(join(mobileRoot, "src/components/DevPreview.tsx"), "utf8");
 const buildsSrc = readFileSync(join(mobileRoot, "app/(tabs)/builds.tsx"), "utf8");
 const studioSrc = readFileSync(join(mobileRoot, "app/vibe-studio.tsx"), "utf8");
-const studioChatSrc = readFileSync(join(mobileRoot, "src/components/studio/StudioChatPane.tsx"), "utf8");
+const studioTerminalSrc = readFileSync(join(mobileRoot, "src/components/studio/StudioTerminalPane.tsx"), "utf8");
 
 assert.match(src, /<LaneStartupStatus[\s\S]{0,800}lines=\{webPreviewLogs\}/,
   "the first-glance browser wait must show the newest dev-server log lines");
@@ -88,15 +88,17 @@ assert.match(studioSrc, /\{!project\s*&&\s*\(!requestedProject\s*\|\|\s*Boolean\
   "Studio must hide the duplicate project picker after resolving a project");
 assert.match(sharedPreviewSrc, /onLogStateChange\(\{[\s\S]{0,180}lines:[\s\S]{0,180}live:/,
   "the shared preview must publish its existing bounded log state to its host");
-assert.match(studioChatSrc, /accessibilityLabel=\{previewLogsExpanded \? "Hide preview logs" : "Show preview logs"\}/,
-  "tablet Studio preview logs must remain explicitly expandable");
-assert.match(studioChatSrc, />Logs<\/Text>/,
-  "tablet Studio must expose preview logs as a folded right-pane section");
-assert.match(studioSrc, /type Lane = "device" \| "browser" \| "live"/,
-  "tablet Studio must keep real-device streaming as a first-class left-pane source");
+assert.match(studioSrc, /resolveStudioDefaults/,
+  "Studio must restore capability-checked per-project defaults before launch");
+assert.match(studioSrc, /useState\(0\.3\)/,
+  "Studio must default to a narrow 30 percent lane");
+assert.doesNotMatch(studioSrc, /StudioChatPane/,
+  "Studio's right side is SSH, never a chat pane");
 assert.match(studioSrc, /<RealDevicePane projectPath=\{project\.path\} framework=\{project\.framework \|\| "react-native"\}/,
-  "the Device source must stream the selected project's physical device beside chat");
-assert.match(studioSrc, /<View style=\{\[styles\.rightPane,[\s\S]{0,240}<StudioChatPane/,
-  "the right side of landscape Studio must remain the chat pane when sources change");
+  "the Device source must stream the selected project's physical device beside SSH");
+assert.match(studioSrc, /<View style=\{\[styles\.rightPane,[\s\S]{0,240}<StudioTerminalPane/,
+  "the right side of landscape Studio must remain the SSH terminal when lanes change");
+assert.match(studioTerminalSrc, /<XtermView/,
+  "Studio SSH must use the full VT terminal renderer for tmux and coding TUIs");
 
 console.log("Projects preview layout contract ok");

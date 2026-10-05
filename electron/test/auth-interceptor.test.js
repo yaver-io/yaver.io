@@ -141,6 +141,8 @@ test("isAgentRoute accepts agent API paths and rejects non-agent paths", () => {
     "/api/auth/login",
     "/auth",
     "/dashboard",
+    "/studio",
+    "/workspace",
     "/account/settings",
     "/pricing",
     "/blog/stt-tts-voice-local-byok",

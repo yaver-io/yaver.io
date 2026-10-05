@@ -1,9 +1,8 @@
 // vibe-studio.tsx — tablet Vibe Studio.
 //
-// Landscape (tablet-landscape): true split mirroring the tvOS
-// RemoteRuntimeWebRTCView (40/58) and web VibeCodingView shapes —
-//   LEFT  ≈55%  live app view
-//   RIGHT ≈45%  chat + live console (StudioChatPane)
+// Landscape (tablet-landscape): lean Yaver Studio —
+//   LEFT  30%  selected app/runtime lane
+//   RIGHT 70%  the remote box's real SSH PTY/tmux workspace
 // The left pane has two lanes:
 //   - "Browser" — DevPreview's WebView browser lane (interactive; box only
 //     runs Metro/Vite, zero extra box load). This is the default when the
@@ -13,12 +12,9 @@
 //   - "Device"  — a continuously streamed, interactive physical Android
 //     phone/tablet attached to the remote Yaver host.
 //
-// Portrait (tablet-portrait): single-pane chat base with a "preview peek"
-// panel — swipe/expand to bring the app view above the chat, collapsible.
-//
-// Everything here is additive and reuses the shared components (DevPreview,
-// StudioChatPane, LivePreviewPane, AnsiConsoleText) — no task or preview
-// machinery is re-implemented on this screen.
+// Configuration is shown before launch, then collapses behind one settings
+// button. The terminal is not chat: Codex, Claude Code, OpenCode, tmux and
+// arbitrary shell/TUI programs run inside the PTY on the selected box.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -32,17 +28,24 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { DevPreview } from "../src/components/DevPreview";
 import { LivePreviewPane } from "../src/components/studio/LivePreviewPane";
 import { RealDevicePane } from "../src/components/studio/RealDevicePane";
-import { StudioChatPane } from "../src/components/studio/StudioChatPane";
+import { StudioTerminalPane } from "../src/components/studio/StudioTerminalPane";
 import { useResponsiveLayout } from "../src/hooks/useResponsiveLayout";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
+import {
+  resolveStudioDefaults,
+  studioLanesFor,
+  type StudioLane,
+  type StudioRunner,
+} from "../src/lib/studioWorkspace";
 
-type Lane = "device" | "browser" | "live";
+type Lane = StudioLane;
 
 type Project = { name: string; path: string; framework?: string; surfaces?: string[] };
 
@@ -62,14 +65,17 @@ export default function VibeStudioScreen() {
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [paramMissed, setParamMissed] = useState<string | null>(null);
   const [lane, setLane] = useState<Lane>("device");
-  const [peekOpen, setPeekOpen] = useState(false);
+  const [runner, setRunner] = useState<StudioRunner>("shell");
+  const [tmuxSession, setTmuxSession] = useState("yaver-studio");
+  const [launched, setLaunched] = useState(false);
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [previewStarting, setPreviewStarting] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLogState, setPreviewLogState] = useState<{ lines: string[]; live: boolean }>({ lines: [], live: false });
   // Drag-divider split ratio (web parity — WebReloadView/RuntimeLabView). The
-  // left preview pane flexes to splitRatio, the right chat pane to 1-splitRatio.
-  const [splitRatio, setSplitRatio] = useState(0.55);
+  // The streamed phone/browser lane is intentionally narrow; the terminal is
+  // the working surface and receives the remaining width.
+  const [splitRatio, setSplitRatio] = useState(0.3);
   const dividerDragRef = useRef<{ startX: number; startRatio: number } | null>(null);
   const rowWidthRef = useRef(0);
   const loadedOnceRef = useRef(false);
@@ -79,6 +85,30 @@ export default function VibeStudioScreen() {
     (project.surfaces || []).includes("mobile") ||
     /expo|react-native|flutter|ios|android|mobile/i.test(project.framework || "")
   );
+  const availableLanes = studioLanesFor(project?.framework, project?.surfaces);
+
+  useEffect(() => {
+    if (!project) return;
+    let alive = true;
+    AsyncStorage.getItem(`yaver:studio:last:${project.path}`).then((raw) => {
+      if (!alive) return;
+      let saved = null;
+      try { saved = raw ? JSON.parse(raw) : null; } catch {}
+      const defaults = resolveStudioDefaults(saved, project.framework, project.surfaces);
+      setLane(defaults.lane);
+      setRunner(defaults.runner);
+      setSplitRatio(defaults.splitRatio);
+      setTmuxSession(defaults.tmuxSession);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [project?.path]);
+
+  const launchStudio = useCallback(() => {
+    if (!project || !availableLanes.includes(lane)) return;
+    const defaults = resolveStudioDefaults({ lane, runner, splitRatio, tmuxSession }, project.framework, project.surfaces);
+    AsyncStorage.setItem(`yaver:studio:last:${project.path}`, JSON.stringify(defaults)).catch(() => {});
+    setLaunched(true);
+  }, [availableLanes, lane, project, runner, splitRatio, tmuxSession]);
 
   // Load projects from the box on connect. Auto-select the first mobile/web
   // project so the pane isn't empty on first open; the user can change it.
@@ -222,9 +252,9 @@ export default function VibeStudioScreen() {
 
   const headerRight = (
     <View style={styles.headerRight}>
-      {landscape ? (
+      {launched && landscape ? (
         <View style={styles.laneSwitcher}>
-          {(["device", "browser", "live"] as Lane[]).map((l) => (
+          {availableLanes.filter((value) => value !== "logs").map((l) => (
             <Pressable
               key={l}
               onPress={() => setLane(l)}
@@ -239,6 +269,16 @@ export default function VibeStudioScreen() {
             </Pressable>
           ))}
         </View>
+      ) : null}
+      {launched ? (
+        <Pressable
+          onPress={() => setLaunched(false)}
+          style={[styles.projectBtn, { borderColor: c.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Configure Studio"
+        >
+          <Ionicons name="settings-outline" size={15} color={c.textSecondary} />
+        </Pressable>
       ) : null}
       {!project && (!requestedProject || Boolean(paramMissed)) ? (
         <Pressable
@@ -304,10 +344,37 @@ export default function VibeStudioScreen() {
 
   return (
     <View style={[styles.safe, { backgroundColor: c.bg }]}>
-      <AppScreenHeader title="Vibing" onBack={() => router.back()} right={headerRight} />
+      <AppScreenHeader title="Studio" onBack={() => router.back()} right={headerRight} />
 
-      {landscape ? (
-        /* ── LANDSCAPE: preview LEFT / chat RIGHT ─────────────────── */
+      {!launched ? (
+        <ScrollView contentContainerStyle={styles.prelaunch}>
+          <Text style={[styles.prelaunchTitle, { color: c.textPrimary }]}>Open Studio</Text>
+          <Text style={[styles.prelaunchDetail, { color: c.textMuted }]}>Confirm the lane and remote workspace. Saved choices return automatically for this app.</Text>
+          <ConfigRow label="Machine" value={activeDevice?.alias ? `@${activeDevice.alias}` : activeDevice?.name || "No connected machine"} colors={c} />
+          <Pressable onPress={handleRequestProject} accessibilityRole="button">
+            <ConfigRow label="App / project" value={project ? `${project.name} · ${project.path}` : "Choose a project"} colors={c} />
+          </Pressable>
+          <View style={[styles.configBlock, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+            <Text style={[styles.configLabel, { color: c.textMuted }]}>LANE</Text>
+            <View style={styles.choiceRow}>
+              {availableLanes.map((value) => <Choice key={value} label={value === "live" ? "Runtime" : value} selected={lane === value} onPress={() => setLane(value)} colors={c} />)}
+            </View>
+          </View>
+          <View style={[styles.configBlock, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+            <Text style={[styles.configLabel, { color: c.textMuted }]}>RUNNER</Text>
+            <View style={styles.choiceRow}>
+              {(["shell", "codex", "claude", "opencode"] as StudioRunner[]).map((value) => <Choice key={value} label={value === "shell" ? "Shell / tmux" : value} selected={runner === value} onPress={() => setRunner(value)} colors={c} />)}
+            </View>
+          </View>
+          <ConfigRow label="Workspace" value={runner === "shell" ? `tmux · ${tmuxSession}` : `persistent ${runner} session`} colors={c} />
+          <ConfigRow label="Layout" value={`Lane ${Math.round(splitRatio * 100)}% · SSH ${Math.round((1 - splitRatio) * 100)}%`} colors={c} />
+          {paramMissed ? <Text style={{ color: c.warn, fontSize: 12 }}>{paramMissed}</Text> : null}
+          <Pressable disabled={!connected || !project} onPress={launchStudio} style={[styles.launchBtn, { backgroundColor: c.accent, opacity: connected && project ? 1 : 0.45 }]}>
+            <Text style={styles.launchText}>Launch Studio</Text>
+          </Pressable>
+        </ScrollView>
+      ) : landscape ? (
+        /* ── LANDSCAPE: lane LEFT / SSH RIGHT ────────────────────── */
         <View
           style={styles.landscapeRow}
           testID="studio-landscape-row"
@@ -350,7 +417,7 @@ export default function VibeStudioScreen() {
                         {previewError}
                       </Text>
                     ) : null}
-                    {project && connected && !previewTargetUrl ? (
+                    {lane !== "logs" && project && connected && !previewTargetUrl ? (
                       <Pressable
                         onPress={() => void startBrowserPreview()}
                         disabled={previewStarting}
@@ -365,7 +432,11 @@ export default function VibeStudioScreen() {
                       </Pressable>
                     ) : null}
                   </View>
-                  {lane === "device" && project ? (
+                  {lane === "logs" ? (
+                    <ScrollView style={styles.paneHost} contentContainerStyle={{ padding: 10 }}>
+                      <Text style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 11 }}>{previewLogState.lines.join("\n") || "No lane output yet."}</Text>
+                    </ScrollView>
+                  ) : lane === "device" && project ? (
                     <View style={styles.paneHost}>
                       <RealDevicePane projectPath={project.path} framework={project.framework || "react-native"} />
                     </View>
@@ -388,11 +459,11 @@ export default function VibeStudioScreen() {
             testID="studio-divider"
             accessibilityRole="adjustable"
             accessibilityLabel="Resize preview split"
-            accessibilityValue={{ min: 32, max: 72, now: Math.round(splitRatio * 100), text: `${Math.round(splitRatio * 100)} percent preview` }}
+            accessibilityValue={{ min: 20, max: 50, now: Math.round(splitRatio * 100), text: `${Math.round(splitRatio * 100)} percent lane` }}
             accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
             onAccessibilityAction={(event) => {
               const delta = event.nativeEvent.actionName === "increment" ? 0.05 : -0.05;
-              setSplitRatio((value) => Math.max(0.32, Math.min(0.72, value + delta)));
+              setSplitRatio((value) => Math.max(0.2, Math.min(0.5, value + delta)));
             }}
             onStartShouldSetResponder={() => true}
             onResponderGrant={(e) => {
@@ -402,7 +473,7 @@ export default function VibeStudioScreen() {
               const d = dividerDragRef.current;
               if (!d) return;
               const w = rowWidthRef.current || 1;
-              const ratio = Math.max(0.32, Math.min(0.72, d.startRatio + (e.nativeEvent.pageX - d.startX) / w));
+              const ratio = Math.max(0.2, Math.min(0.5, d.startRatio + (e.nativeEvent.pageX - d.startX) / w));
               setSplitRatio(ratio);
             }}
             onResponderRelease={() => {
@@ -415,74 +486,13 @@ export default function VibeStudioScreen() {
             <View style={[styles.dividerKnob, { backgroundColor: c.border }]} />
           </View>
           <View style={[styles.rightPane, { flex: 1 - splitRatio }]} testID="studio-right-pane">
-            <StudioChatPane
-              projectPath={project?.path}
-              projectName={project?.name}
-              onRequestProject={handleRequestProject}
-              previewLogs={previewLogState.lines}
-              previewLogsLive={previewLogState.live || previewStarting}
-            />
+            <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} />
           </View>
         </View>
       ) : (
-        /* ── PORTRAIT: chat base + preview peek ────────────────────── */
+        /* ── PORTRAIT: terminal first; lane remains available above ── */
         <View style={styles.portraitCol}>
-          <View style={styles.portraitChat}>
-            <StudioChatPane
-              projectPath={project?.path}
-              projectName={project?.name}
-              onRequestProject={handleRequestProject}
-              previewLogs={previewLogState.lines}
-              previewLogsLive={previewLogState.live || previewStarting}
-            />
-          </View>
-          {peekOpen ? (
-            <View style={[styles.peekPanel, { borderTopColor: c.border }]}>
-              <View style={[styles.peekHeader, { borderBottomColor: c.borderSubtle }]}>
-                <Text style={[styles.peekTitle, { color: c.textSecondary }]}>Preview</Text>
-                <Pressable
-                  onPress={() => setPeekOpen(false)}
-                  hitSlop={8}
-                  style={({ pressed }) => [styles.laneBtn, pressed && { opacity: 0.6 }]}
-                >
-                  <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600" }}>Collapse</Text>
-                </Pressable>
-              </View>
-              {project && previewTargetUrl ? (
-                <LivePreviewPane key={`${project.path}:${previewTargetUrl}`} project={project.name} targetUrl={previewTargetUrl} height={Math.min(360, Math.round(layout.height * 0.36))} />
-              ) : (
-                <View style={[styles.emptyPane, { borderColor: c.borderSubtle }]}>
-                  <Text style={{ color: c.textTertiary, fontSize: 13, textAlign: "center" }}>
-                    {project ? previewError || "Start the project preview to show it here." : "Pick a project to preview."}
-                  </Text>
-                  {project && connected ? (
-                    <Pressable
-                      onPress={() => void startBrowserPreview()}
-                      disabled={previewStarting}
-                      style={[styles.startPreviewBtn, { backgroundColor: c.accentSoft }]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Start project preview"
-                    >
-                      {previewStarting ? <ActivityIndicator size="small" color={c.accent} /> : null}
-                      <Text style={{ color: c.accent, fontSize: 13, fontWeight: "700" }}>
-                        {previewStarting ? "Starting preview…" : "Start preview"}
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              )}
-            </View>
-          ) : (
-            <Pressable
-              onPress={() => setPeekOpen(true)}
-              style={[styles.peekTab, { borderTopColor: c.border, backgroundColor: c.surface }]}
-              accessibilityRole="button"
-              accessibilityLabel="Open project preview"
-            >
-              <Ionicons name="expand-outline" size={14} color={c.textSecondary} />
-              <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: "600" }}>Preview</Text>
-            </Pressable>
-          )}
+          <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} />
         </View>
       )}
 
@@ -492,9 +502,27 @@ export default function VibeStudioScreen() {
   );
 }
 
+function ConfigRow({ label, value, colors }: { label: string; value: string; colors: ReturnType<typeof useColors> }) {
+  return <View style={[styles.configRow, { borderColor: colors.border, backgroundColor: colors.bgCard }]}><Text style={[styles.configLabel, { color: colors.textMuted }]}>{label.toUpperCase()}</Text><Text style={{ color: colors.textPrimary, fontSize: 13, fontWeight: "600" }} numberOfLines={2}>{value}</Text></View>;
+}
+
+function Choice({ label, selected, onPress, colors }: { label: string; selected: boolean; onPress: () => void; colors: ReturnType<typeof useColors> }) {
+  return <Pressable onPress={onPress} style={[styles.choice, { borderColor: selected ? colors.accent : colors.border, backgroundColor: selected ? colors.accentSoft : colors.bg }]}><Text style={{ color: selected ? colors.accent : colors.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "capitalize" }}>{label}</Text></Pressable>;
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+  prelaunch: { width: "100%", maxWidth: 720, alignSelf: "center", padding: 20, gap: 12 },
+  prelaunchTitle: { fontSize: 24, fontWeight: "800" },
+  prelaunchDetail: { fontSize: 13, lineHeight: 19, marginBottom: 4 },
+  configRow: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 5 },
+  configBlock: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 9 },
+  configLabel: { fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  choice: { borderWidth: 1, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 8 },
+  launchBtn: { marginTop: 4, minHeight: 48, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  launchText: { color: "#fff", fontSize: 14, fontWeight: "800" },
   laneSwitcher: {
     flexDirection: "row",
     borderWidth: StyleSheet.hairlineWidth,

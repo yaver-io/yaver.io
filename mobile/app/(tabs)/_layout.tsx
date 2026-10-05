@@ -69,6 +69,7 @@ function TabIcon({ label, focused, showGreenDot, rail }: { label: string; focuse
     Repos: { on: "folder", off: "folder-outline" },
     Builds: { on: "hammer", off: "hammer-outline" },
     Devices: { on: "desktop", off: "desktop-outline" },
+    SSH: { on: "terminal", off: "terminal-outline" },
     More: { on: "ellipsis-horizontal", off: "ellipsis-horizontal" },
     Settings: { on: "settings", off: "settings-outline" },
   };
@@ -475,6 +476,14 @@ export default function TabLayout() {
           title: "Chat",
           headerShown: false,
           tabBarIcon: ({ focused }) => <TabIcon label="Chat" focused={focused} rail={useLeftRail} />,
+        }}
+      />
+      <Tabs.Screen
+        name="ssh"
+        options={{
+          title: "SSH",
+          headerShown: false,
+          tabBarIcon: ({ focused }) => <TabIcon label="SSH" focused={focused} rail={useLeftRail} />,
         }}
       />
       <Tabs.Screen

@@ -38,7 +38,7 @@ const NON_AGENT_PATH_PREFIXES = [
   "/assets/", "/images/", "/fonts/", "/favicon", "/static/",
   "/screenshots/", "/videos/",
   "/api/",
-  "/auth", "/dashboard", "/account", "/settings",
+  "/auth", "/dashboard", "/studio", "/workspace", "/account", "/settings",
   "/pricing", "/blog", "/docs", "/download", "/faq", "/manuals", "/games",
   "/spatial", "/sitemap", "/robots",
 ];

@@ -14,6 +14,8 @@ test("allowed app paths", () => {
   assert.ok(isAllowedAppPath("/api/auth/oauth/google/callback"));
   assert.ok(isAllowedAppPath("/dashboard"));
   assert.ok(isAllowedAppPath("/dashboard/home"));
+  assert.ok(isAllowedAppPath("/studio"));
+  assert.ok(isAllowedAppPath("/workspace"));
   assert.ok(isAllowedAppPath("/d/abc123/dev/events"));
   assert.ok(isAllowedAppPath("/_next/static/chunks/x.js"));
 });
@@ -40,6 +42,7 @@ test("allowed URLs by origin", () => {
   assert.ok(isAllowedAppUrl("https://yaver.io/auth?mode=signup&return=/dashboard"));
   assert.ok(isAllowedAppUrl("https://yaver.io/d/xyz/dev/events"));
   assert.ok(isAllowedAppUrl("http://localhost:3000/dashboard"));
+  assert.ok(isAllowedAppUrl("https://yaver.io/studio"));
   assert.ok(isAllowedAppUrl("http://localhost:3000/api/auth/oauth/github/callback"));
   // Auth-provider redirects (server-side OAuth) may render in-window.
   assert.ok(isAllowedAppUrl("https://accounts.google.com/o/oauth2/v2/auth?x=1"));

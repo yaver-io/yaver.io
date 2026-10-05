@@ -24,6 +24,7 @@ export const APP_SURFACE_PREFIXES = [
   "/add-device",
   "/admin",
   "/workspace",
+  "/studio",
   "/render",
   "/dev",
   "/shortcut",
