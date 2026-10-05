@@ -160,7 +160,13 @@ jobs:
 
   android:
     needs: validate
-    if: github.event_name == 'push' || github.event.inputs.upload_playstore == 'true'
+    # Always build the AAB on a manual dispatch. Gating the JOB on
+    # upload_playstore skipped the build too, so the documented "manual runs can
+    # build-only for testing" lane (see the Play upload step's comment) could
+    # never produce an artifact: with upload_playstore=false the whole job was
+    # skipped and no signed AAB was uploaded. The Play submission itself stays
+    # gated on the input at the upload step below.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.validate.outputs.version }}
