@@ -34,6 +34,7 @@ import { isTerminalMetaFrame, resizeFrame } from "../src/lib/xtermBridge";
 import { AGENT_LAUNCHERS, closeLine, type AgentLaunch } from "../src/lib/agentLaunch";
 import { isWhisperReady, startRealtimeTranscribe } from "../src/lib/speech";
 import { OpenCodeConfigModal } from "../src/components/OpenCodeConfigModal";
+import NoMachineEmpty from "../src/components/NoMachineEmpty";
 import { addTerminalSSHProfile, type TerminalSSHProfile } from "../src/lib/sshProfile";
 
 type PTYTarget =
@@ -211,6 +212,17 @@ export default function ShellScreen() {
     };
   }, [activeDevice, token, connectionStatus, reconnectNonce, target]);
 
+  // Give the VT grid keyboard focus as soon as it is live. On a tablet with a
+  // hardware keyboard (the primary SSH-over-tablet shape) the WebView's hidden
+  // textarea must hold focus or keystrokes land nowhere, and a device-context
+  // guard cannot catch "the grid is rendered but not focused". Re-focus when a
+  // session opens and on ready; tapping the grid re-focuses it natively.
+  useEffect(() => {
+    if (status !== "open") return;
+    const t = setTimeout(() => xtermRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [status, reconnectNonce, target]);
+
   const reconnect = useCallback(() => {
     setError(null);
     setStatus("connecting");
@@ -360,17 +372,17 @@ export default function ShellScreen() {
     [activeDevice?.id, selectDevice],
   );
 
+  // No auto-connected machine (yet). Do NOT dead-end: the same auto-connect
+  // sweep Tasks relies on is already running globally, so narrate it and offer
+  // the same inline machine picker. Picking one sets activeDevice, which the
+  // PTY effect above observes and opens the shell automatically — the shell
+  // rides the Tasks auto-connect exactly as before.
   if (!activeDevice) {
     return (
-      <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 16, paddingHorizontal: 16 }}>
+      <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 12, paddingHorizontal: 12 }}>
         <AppBackButton onPress={() => router.back()} />
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "600", marginBottom: 6 }}>
-            No device connected
-          </Text>
-          <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
-            Open a device from the home screen, then come back to start a shell.
-          </Text>
+        <View style={{ flex: 1, paddingTop: 8 }}>
+          <NoMachineEmpty noun="shells" />
         </View>
       </View>
     );
@@ -452,7 +464,7 @@ export default function ShellScreen() {
           ref={xtermRef}
           onData={onTermData}
           onResize={onTermResize}
-          onReady={() => xtermRef.current?.fit()}
+          onReady={() => { xtermRef.current?.fit(); xtermRef.current?.focus(); }}
           background="#0b0d10"
           foreground="#d1d5db"
           fontSize={13}

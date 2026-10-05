@@ -8,6 +8,7 @@ import { quicClient } from "../../src/lib/quic";
 import { isTerminalMetaFrame } from "../../src/lib/xtermBridge";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { addTerminalSSHProfile } from "../../src/lib/sshProfile";
+import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 
 // Native mobile terminal — no WebView. WebSocket to /ws/terminal carries
 // PTY bytes both ways. We strip the most common ANSI escape sequences and
@@ -31,6 +32,7 @@ export default function TerminalScreen() {
   const pending = useRef<string>("");
 
   useEffect(() => {
+    if (!activeDevice) return;
     const url = terminalWsUrl(activeDevice?.sshProfile);
     try {
       const ws = new WebSocket(url);
@@ -69,7 +71,7 @@ export default function TerminalScreen() {
       setError(e.message);
     }
     return () => { wsRef.current?.close(); };
-  }, [activeDevice?.sshProfile?.shell, activeDevice?.sshProfile?.tmux, activeDevice?.sshProfile?.tmuxSession]);
+  }, [activeDevice?.id, activeDevice?.sshProfile?.shell, activeDevice?.sshProfile?.tmux, activeDevice?.sshProfile?.tmuxSession]);
 
   function send(raw: string) {
     const ws = wsRef.current;
@@ -90,6 +92,17 @@ export default function TerminalScreen() {
       <Pressable key={label} onPress={() => send(raw)} style={[styles.keyBtn, { borderColor: c.border, backgroundColor: c.bgCard }]}>
         <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 11 }}>{label}</Text>
       </Pressable>
+    );
+  }
+
+  // No auto-connected machine (yet): show the same auto-connect narration +
+  // inline picker Tasks uses instead of opening a WebSocket to an empty base
+  // URL. Picking a machine sets activeDevice, which re-runs the PTY effect.
+  if (!activeDevice) {
+    return (
+      <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 12, paddingHorizontal: 12 }}>
+        <NoMachineEmpty noun="terminals" />
+      </View>
     );
   }
 
