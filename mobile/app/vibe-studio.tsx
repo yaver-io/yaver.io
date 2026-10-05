@@ -76,6 +76,7 @@ export default function VibeStudioScreen() {
   // The streamed phone/browser lane is intentionally narrow; the terminal is
   // the working surface and receives the remaining width.
   const [splitRatio, setSplitRatio] = useState(0.3);
+  const [sshExpanded, setSshExpanded] = useState(false);
   const dividerDragRef = useRef<{ startX: number; startRatio: number } | null>(null);
   const rowWidthRef = useRef(0);
   const loadedOnceRef = useRef(false);
@@ -256,14 +257,26 @@ export default function VibeStudioScreen() {
   }, [connected, previewStarting, project, refreshPreviewTarget]);
 
   const headerRight = (
-    <Pressable
-      onPress={() => router.push("/studio-config" as any)}
-      style={[styles.projectBtn, { borderColor: c.border }]}
-      accessibilityRole="button"
-      accessibilityLabel="Configure Studio"
-    >
-      <Ionicons name="settings-outline" size={15} color={c.textSecondary} />
-    </Pressable>
+    <View style={styles.headerRight}>
+      {landscape ? (
+        <Pressable
+          onPress={() => setSshExpanded((value) => !value)}
+          style={[styles.projectBtn, { borderColor: sshExpanded ? c.accent : c.border }]}
+          accessibilityRole="button"
+          accessibilityLabel={sshExpanded ? "Show the preview pane" : "Full screen SSH"}
+        >
+          <Ionicons name={sshExpanded ? "contract-outline" : "expand-outline"} size={15} color={sshExpanded ? c.accent : c.textSecondary} />
+        </Pressable>
+      ) : null}
+      <Pressable
+        onPress={() => router.push("/studio-config" as any)}
+        style={[styles.projectBtn, { borderColor: c.border }]}
+        accessibilityRole="button"
+        accessibilityLabel="Configure Studio"
+      >
+        <Ionicons name="settings-outline" size={15} color={c.textSecondary} />
+      </Pressable>
+    </View>
   );
 
   const projectPicker = showProjectPicker ? (
@@ -353,6 +366,7 @@ export default function VibeStudioScreen() {
             rowWidthRef.current = e.nativeEvent.layout.width;
           }}
         >
+          {sshExpanded ? null : (<>
           <View style={[styles.leftPane, { flex: 0.3 }]} testID="studio-left-pane">
             <View style={styles.deviceStage}>
               <View style={[
@@ -425,8 +439,9 @@ export default function VibeStudioScreen() {
             </View>
           </View>
           <View style={[styles.fixedDivider, { backgroundColor: c.border }]} />
-          <View style={[styles.rightPane, { flex: 0.7 }]} testID="studio-right-pane">
-            <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} />
+          </>)}
+          <View style={[styles.rightPane, sshExpanded ? { flex: 1 } : { flex: 0.7 }]} testID="studio-right-pane">
+            <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} expanded={sshExpanded} onToggleFullscreen={() => setSshExpanded((value) => !value)} />
           </View>
         </View>
       ) : (

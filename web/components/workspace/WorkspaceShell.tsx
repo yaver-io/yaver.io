@@ -2,26 +2,19 @@
 
 // WorkspaceShell — lean Yaver Studio for web, desktop and browser-based XR.
 //
-// Lifted from /spatial's multi-pane logic but rendered as a plain CSS
-// Grid instead of WebGL (Three.js) so it works in any browser, on any
-// laptop, AND on AR glasses connected to an iPhone (mirrored display).
-//
 // The lane stays narrow (30% by default); the real remote PTY/tmux workspace
 // owns the right side. Configuration is shown before launch, then lives behind
 // one button. There is no chat pane in Studio.
 //
-// What each kind shows by default:
-//   mobile   →  Terminal · Web preview · Clips · Tests   (2×2)
-//   web      →  Terminal · Web preview · Tests · Clips   (2×2)
-//   backend  →  Terminal · Tests · Help                  (1×3 column)
-//   generic  →  Terminal · Help                          (2×1)
+// Two panes, always:
+//   lane      → the selected project/runtime lane (browser / device / logs)
+//   terminal  → always SSH: the remote box's real PTY/tmux workspace, never chat
 //
-// All panes render existing components so this file is mostly glue:
-//   TerminalView                → existing xterm.js + /ws/terminal
-//   WebPreviewFrame             → existing iframe + viewport picker
-//   VibeClipsPanel              → list + MP4 player (lifted from VibePreviewView)
-//   TestkitFailurePanel         → tail of testkit_last_failure
-//   HelpPanel                   → static shortcut reference
+// The `⤢ SSH` header toggle expands the terminal to the full width and the
+// `⤡ lane` toggle brings the lane back, so a small screen can still drive a
+// full-screen tmux/coding TUI. `TESTKIT`/`CLIPS`-style panes were removed in
+// the lean Studio refactor (2026-10-05); the tools live inside the SSH pane
+// instead of beside it.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -73,7 +66,7 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
   const [showHelp, setShowHelp] = useState(false);
   const [layoutOverride, setLayoutOverride] = useState<LayoutId | null>(null);
   const launched = !configuration;
-  const [ratio, setRatio] = useState(30);
+  const [sshExpanded, setSshExpanded] = useState(false);
   const [runner, setRunner] = useState<"shell" | "codex" | "claude" | "opencode">("shell");
   const [lane, setLane] = useState<"device" | "browser" | "runtime" | "logs">("browser");
   const [projects, setProjects] = useState<RemoteProject[]>([]);
@@ -107,7 +100,6 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
       }
       if (parsed?.[`${workDir}:studio`]) {
         const saved = parsed[`${workDir}:studio`];
-        setRatio(30);
         if (["shell", "codex", "claude", "opencode"].includes(saved.runner)) setRunner(saved.runner);
         if (["device", "browser", "runtime", "logs"].includes(saved.lane)) setLane(saved.lane);
         if (typeof saved.workDir === "string" && saved.workDir) setWorkDir(saved.workDir);
@@ -168,6 +160,16 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
           {workDir ? <> · <span className="text-zinc-400">{workDir.split("/").pop()}</span></> : null}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {launched ? (
+            <button
+              onClick={() => setSshExpanded((value) => !value)}
+              aria-label={sshExpanded ? "Show the lane pane" : "Full screen SSH"}
+              title={sshExpanded ? "Show the lane pane" : "Full screen SSH"}
+              className={`text-xs px-2 py-0.5 border rounded hover:bg-zinc-800 ${sshExpanded ? "border-violet-500 text-violet-300" : "border-zinc-700 text-zinc-300"}`}
+            >
+              {sshExpanded ? "⤡ lane" : "⤢ SSH"}
+            </button>
+          ) : null}
           {launched ? <a href="/studio/config" aria-label="Configure Studio" className="text-xs px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800">configuration</a> : null}
         </div>
       </div>
@@ -182,8 +184,8 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
           <ConfigLine label="Layout" value="Lane 30% / SSH 70%" />
           <button onClick={launchStudio} className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-3 text-sm font-semibold">Save and open Studio</button>
         </main>
-      ) : <div className="flex-1 grid gap-1 p-1" style={{ gridTemplateColumns: "30% minmax(0, 70%)" }}>
-        {panes.map((p, i) => {
+      ) : <div className="flex-1 grid gap-1 p-1" style={{ gridTemplateColumns: sshExpanded ? "minmax(0, 1fr)" : "30% minmax(0, 70%)" }}>
+        {(sshExpanded ? panes.filter((p) => p.id === "terminal") : panes).map((p, i) => {
           const isFocused = p.id === focusId;
           return (
             <div

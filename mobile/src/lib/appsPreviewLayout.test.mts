@@ -14,6 +14,7 @@ const buildsSrc = readFileSync(join(mobileRoot, "app/(tabs)/builds.tsx"), "utf8"
 const studioSrc = readFileSync(join(mobileRoot, "app/vibe-studio.tsx"), "utf8");
 const studioConfigSrc = readFileSync(join(mobileRoot, "app/studio-config.tsx"), "utf8");
 const studioTerminalSrc = readFileSync(join(mobileRoot, "src/components/studio/StudioTerminalPane.tsx"), "utf8");
+const workspaceShellSrc = readFileSync(join(mobileRoot, "..", "web", "components", "workspace", "WorkspaceShell.tsx"), "utf8");
 
 assert.match(src, /<LaneStartupStatus[\s\S]{0,800}lines=\{webPreviewLogs\}/,
   "the first-glance browser wait must show the newest dev-server log lines");
@@ -103,5 +104,19 @@ assert.match(studioSrc, /<View style=\{\[styles\.rightPane,[\s\S]{0,240}<StudioT
   "the right side of landscape Studio must remain the SSH terminal when lanes change");
 assert.match(studioTerminalSrc, /<XtermView/,
   "Studio SSH must use the full VT terminal renderer for tmux and coding TUIs");
+assert.match(studioSrc, /sshExpanded/,
+  "Studio must expose a full-screen SSH toggle so the lane can be hidden and restored");
+assert.match(studioSrc, /onToggleFullscreen=\{\(\) => setSshExpanded/,
+  "the full-screen toggle must be wired into the SSH terminal pane");
+assert.match(studioTerminalSrc, /STUDIO_TOOLS/,
+  "Studio SSH must offer one-tap coding-agent tools, not only typed commands");
+assert.match(studioTerminalSrc, /tmux new-window/,
+  "Studio tools must open a new tmux window instead of nesting tmux inside tmux");
+assert.match(studioTerminalSrc, /onToggleFullscreen/,
+  "the Studio terminal pane must render the full-screen toggle");
+assert.match(workspaceShellSrc, /sshExpanded/,
+  "web Studio must expose the same full-screen SSH toggle as mobile");
+assert.match(workspaceShellSrc, /gridTemplateColumns:\s*sshExpanded/,
+  "web Studio must actually change the lane/SSH split when the toggle is used");
 
 console.log("Projects preview layout contract ok");

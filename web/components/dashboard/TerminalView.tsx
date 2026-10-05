@@ -8,23 +8,32 @@ type ConnState = "connecting" | "open" | "closed" | "error";
 
 // One-tap coding-agent launchers — kept in sync with the mobile app's
 // src/lib/agentLaunch.ts. Typed straight into the remote PTY in yolo mode.
-const AGENT_LAUNCHERS: ReadonlyArray<{ id: string; label: string; command: string; hint: string }> = [
+//
+// `command` is for a plain login-shell PTY and may start a persistent tmux
+// session. `tmuxCommand` is for a PTY that is ALREADY inside a Yaver tmux
+// workspace (Studio's `profile_tmux` session): nesting `tmux new-session`
+// inside tmux fails, so the tool opens a new WINDOW in the same session
+// instead, inheriting the current pane's directory.
+const AGENT_LAUNCHERS: ReadonlyArray<{ id: string; label: string; command: string; tmuxCommand: string; hint: string }> = [
   {
     id: "claude",
     label: "Claude",
     command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-claude 'claude --dangerously-skip-permissions'; else exec claude --dangerously-skip-permissions; fi",
+    tmuxCommand: "if command -v tmux >/dev/null 2>&1; then tmux new-window -c \"#{pane_current_path}\" 'claude --dangerously-skip-permissions'; else claude --dangerously-skip-permissions; fi",
     hint: "Launch Claude Code in a persistent Yaver session with permission prompts skipped",
   },
   {
     id: "codex",
     label: "Codex",
     command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-codex 'codex --dangerously-bypass-approvals-and-sandbox'; else exec codex --dangerously-bypass-approvals-and-sandbox; fi",
+    tmuxCommand: "if command -v tmux >/dev/null 2>&1; then tmux new-window -c \"#{pane_current_path}\" 'codex --dangerously-bypass-approvals-and-sandbox'; else codex --dangerously-bypass-approvals-and-sandbox; fi",
     hint: "Launch Codex in a persistent Yaver session with approvals + sandbox bypassed",
   },
   {
     id: "opencode",
     label: "OpenCode",
     command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-opencode 'opencode --auto'; else exec opencode --auto; fi",
+    tmuxCommand: "if command -v tmux >/dev/null 2>&1; then tmux new-window -c \"#{pane_current_path}\" 'opencode --auto'; else opencode --auto; fi",
     hint: "Launch OpenCode in a persistent Yaver session with auto approvals",
   },
 ];
@@ -133,7 +142,7 @@ export default function TerminalView({
   // Open/close toggle: tap an idle runner to launch it, tap the active one to
   // send `/exit`. Best-effort state — reset on (re)connect since the PTY is new.
   const toggleRunner = useCallback(
-    async (l: { id: string; label: string; command: string }) => {
+    async (l: { id: string; label: string; command: string; tmuxCommand: string }) => {
       if (status !== "open") return;
       if (runningRunner === l.id) {
         sendToPty("/exit\n");
@@ -143,10 +152,11 @@ export default function TerminalView({
       // This tap already expresses the one permitted action: launch this
       // runner. Do not spend a second generation on a hidden test first; the
       // runner's own terminal output is the operation-level readiness signal.
-      sendToPty(`${l.command}\n`);
+      // Inside Studio's tmux workspace, open a window instead of nesting tmux.
+      sendToPty(`${sshProfile?.tmux ? l.tmuxCommand : l.command}\n`);
       setRunningRunner(l.id);
     },
-    [runningRunner, sendToPty, status],
+    [runningRunner, sendToPty, sshProfile?.tmux, status],
   );
 
   // Optional browser dictation → typed at the prompt (no auto-Enter).

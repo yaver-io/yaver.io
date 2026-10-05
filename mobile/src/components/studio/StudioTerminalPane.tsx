@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
@@ -31,6 +31,23 @@ function encodeUtf8(value: string): Uint8Array {
   }
 }
 
+// One-tap coding-agent launchers for the Studio SSH workspace. The session is
+// already the persistent tmux workspace (`profile_tmux`), so each tool opens a
+// NEW tmux window in the same session instead of nesting `tmux new-session`
+// (which fails inside tmux). When tmux is missing the tool still runs in the
+// current shell. Commands are fixed strings — never user text.
+const STUDIO_TOOLS: ReadonlyArray<{ id: string; label: string; command: string }> = [
+  { id: "claude", label: "Claude", command: "claude --dangerously-skip-permissions" },
+  { id: "codex", label: "Codex", command: "codex --dangerously-bypass-approvals-and-sandbox" },
+  { id: "opencode", label: "OpenCode", command: "opencode --auto" },
+];
+
+function studioToolCommand(command: string): string {
+  // `#{pane_current_path}` is expanded by tmux, not the shell, so the new
+  // window inherits the working directory the user is actually in.
+  return `if command -v tmux >/dev/null 2>&1; then tmux new-window -c "#{pane_current_path}" '${command}'; else ${command}; fi`;
+}
+
 function terminalUrl(baseUrl: string, token: string, cwd: string | undefined, runner: StudioRunner, tmuxSession: string): string {
   const params = new URLSearchParams({ token, term: "xterm-256color" });
   if (cwd) params.set("cwd", cwd);
@@ -42,7 +59,13 @@ function terminalUrl(baseUrl: string, token: string, cwd: string | undefined, ru
   return `${baseUrl.replace(/^http/, "ws").replace(/\/+$/, "")}/ws/terminal?${params.toString()}`;
 }
 
-export function StudioTerminalPane({ cwd, runner, tmuxSession }: { cwd?: string; runner: StudioRunner; tmuxSession: string }) {
+export function StudioTerminalPane({ cwd, runner, tmuxSession, expanded, onToggleFullscreen }: {
+  cwd?: string;
+  runner: StudioRunner;
+  tmuxSession: string;
+  expanded?: boolean;
+  onToggleFullscreen?: () => void;
+}) {
   const router = useRouter();
   const colors = useColors();
   const { token } = useAuth();
@@ -243,7 +266,54 @@ export function StudioTerminalPane({ cwd, runner, tmuxSession }: { cwd?: string;
         <Pressable accessibilityLabel="Zoom terminal in" onPress={() => changeFontSize(1)} style={styles.tool}><Text style={styles.toolText}>A+</Text></Pressable>
         <Pressable accessibilityLabel={listening ? "Stop voice input" : "Start voice input"} onPress={() => void toggleListening()} style={[styles.tool, listening && styles.toolActive]}><Text style={styles.toolText}>{listening ? "●" : "🎙"}</Text></Pressable>
         <Pressable accessibilityLabel={speaking ? "Stop spoken output" : "Read latest terminal output"} onPress={() => void speakLatest()} style={[styles.tool, speaking && styles.toolActive]}><Text style={styles.toolText}>{speaking ? "■" : "🔊"}</Text></Pressable>
+        {onToggleFullscreen ? (
+          <Pressable
+            accessibilityLabel={expanded ? "Show the preview pane" : "Full screen SSH"}
+            onPress={onToggleFullscreen}
+            style={[styles.tool, expanded && styles.toolActive]}
+          >
+            <Text style={styles.toolText}>{expanded ? "⤡" : "⤢"}</Text>
+          </Pressable>
+        ) : null}
       </View>
+      {runner === "shell" ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          style={[styles.toolsRow, { borderBottomColor: colors.border }]}
+          contentContainerStyle={styles.toolsRowContent}
+        >
+          <Text style={[styles.toolsLabel, { color: colors.textMuted }]}>TOOLS</Text>
+          {STUDIO_TOOLS.map((tool) => (
+            <Pressable
+              key={tool.id}
+              disabled={status !== "open"}
+              accessibilityLabel={`Open ${tool.label} in a new tmux window`}
+              onPress={() => send(encodeUtf8(studioToolCommand(tool.command) + "\n"))}
+              style={[styles.toolChip, status !== "open" && styles.toolDisabled]}
+            >
+              <Text style={styles.toolChipText}>{tool.label}</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            disabled={status !== "open"}
+            accessibilityLabel="Split a new tmux window"
+            onPress={() => send(encodeUtf8("tmux new-window\n"))}
+            style={[styles.toolChip, status !== "open" && styles.toolDisabled]}
+          >
+            <Text style={styles.toolChipText}>+ window</Text>
+          </Pressable>
+          <Pressable
+            disabled={status !== "open"}
+            accessibilityLabel="Split the current tmux pane vertically"
+            onPress={() => send(encodeUtf8("tmux split-window -v -c \"#{pane_current_path}\"\n"))}
+            style={[styles.toolChip, status !== "open" && styles.toolDisabled]}
+          >
+            <Text style={styles.toolChipText}>split</Text>
+          </Pressable>
+        </ScrollView>
+      ) : null}
       <XtermView
         ref={terminalRef}
         onData={send}
@@ -280,6 +350,12 @@ const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
   bar: { height: 34, paddingHorizontal: 10, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: "row", alignItems: "center", gap: 8 },
   title: { flex: 1, fontSize: 11, fontWeight: "700" },
+  toolsRow: { flexGrow: 0, borderBottomWidth: StyleSheet.hairlineWidth },
+  toolsRowContent: { alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  toolsLabel: { fontSize: 9, fontWeight: "900", letterSpacing: 1, marginRight: 2 },
+  toolChip: { minHeight: 24, borderWidth: 1, borderColor: "#2a3240", borderRadius: 6, paddingHorizontal: 9, justifyContent: "center", backgroundColor: "#171c26" },
+  toolChipText: { color: "#d7dce5", fontSize: 11, fontWeight: "700" },
+  toolDisabled: { opacity: 0.4 },
   terminal: { flex: 1 },
   failure: { position: "absolute", left: 12, right: 12, bottom: 12, borderWidth: 1, borderRadius: 10, padding: 10, flexDirection: "row", alignItems: "center", gap: 10 },
   retry: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
