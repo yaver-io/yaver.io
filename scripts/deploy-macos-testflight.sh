@@ -58,10 +58,19 @@ for tool in node npm xcrun codesign pkgutil plutil security; do
   fi
 done
 XCODEBUILD_PATH="$(xcrun -find xcodebuild 2>/dev/null || true)"
-if [ -z "$XCODEBUILD_PATH" ] || [[ "$XCODEBUILD_PATH" != *"/Xcode.app/"* ]]; then
-  echo "ERROR: full Xcode is not selected. Fix: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
-  exit 2
-fi
+# Accept ANY full Xcode bundle, not the literal /Applications/Xcode.app. Every
+# other Apple deploy (deploy-tvos.sh, apple_require_working_xcode) matches
+# */Xcode*.app/...; this lane alone required the canonical name and so refused a
+# perfectly working /Applications/Xcode-26.4.0.app on 2026-10-06 before it could
+# even read the provisioning profile. Match the shared pattern.
+case "$XCODEBUILD_PATH" in
+  */Xcode*.app/Contents/Developer/usr/bin/xcodebuild) ;;
+  *)
+    echo "ERROR: full Xcode is not selected (${XCODEBUILD_PATH:-xcodebuild not found})." >&2
+    echo "       Install/select a full Xcode with: sudo xcode-select -s <Xcode>.app/Contents/Developer" >&2
+    exit 2
+    ;;
+esac
 
 if [ -f "$HOME/.appstoreconnect/yaver.env" ]; then
   set -a

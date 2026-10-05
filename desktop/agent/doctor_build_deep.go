@@ -174,10 +174,28 @@ func xcodebuildIsRealXcode(ctx context.Context) (path string, ok bool, reason st
 	if resolved == "" {
 		return "", false, "xcrun -find xcodebuild returned empty path"
 	}
-	if !strings.Contains(resolved, "Xcode.app/") {
+	if !xcodebuildPathIsRealXcode(resolved) {
 		return resolved, false, "Xcode is not installed (resolved to " + resolved + " — Command Line Tools only)"
 	}
 	return resolved, true, ""
+}
+
+// xcodebuildPathIsRealXcode reports whether an `xcrun -find xcodebuild` result
+// points inside a full Xcode bundle, as opposed to the Command Line Tools stub.
+//
+// It must accept ANY Xcode bundle name. Matching the literal "Xcode.app/" made
+// `yaver doctor` report "Xcode is not installed" on a Mac running
+// /Applications/Xcode-26.4.0.app, where every archive and upload works — the
+// inventory (path naming) contradicted the operation. 2026-10-06 also fixed the
+// same hardcoded assumption in scripts/deploy-macos-testflight.sh.
+func xcodebuildPathIsRealXcode(resolved string) bool {
+	if resolved == "" {
+		return false
+	}
+	if strings.Contains(resolved, "/CommandLineTools/") {
+		return false
+	}
+	return strings.Contains(resolved, ".app/Contents/Developer/")
 }
 
 // javaMajorVersion runs `java -version` and parses the major component.
