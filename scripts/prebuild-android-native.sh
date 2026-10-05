@@ -32,10 +32,21 @@ verify_android_native_tree() {
   require_file "gradle/wrapper/gradle-wrapper.properties"
   # Android shows colorPrimary while handing off from the system launch
   # window. Expo's default is blue, so a stale generated tree produces a blue
-  # flash even though the splash plugin itself is dark. Keep the generated
-  # launch palette on Yaver's existing monochrome background.
+  # flash. Keep the generated launch palette on Yaver's monochrome background.
   require_text "app/src/main/res/values/colors.xml" '<color name="colorPrimary">#050506</color>'
-  require_text "app/src/main/res/values/colors.xml" '<color name="splashscreen_background">#050506</color>'
+  # The splash background is owned by mobile/app.json (expo-splash-screen).
+  # Read it from there rather than hardcoding a hex: d17bfaf intentionally moved
+  # the splash from #050506 to #FFFFFF and this guard, hardcoded to the old
+  # value, then failed every Android release with "prebuild lost the colour" for
+  # a colour that was deliberately changed. Asserting the source of truth makes
+  # a future rebrand a one-file change.
+  SPLASH_BG="$(node -e "const p=require('$MOBILE/app.json').expo||{}; const s=(p.plugins||[]).find(function(x){return Array.isArray(x)&&x[0]==='expo-splash-screen'}); process.stdout.write((s&&s[1]&&s[1].backgroundColor)||(p.splash&&p.splash.backgroundColor)||'')" 2>/dev/null || true)"
+  if [ -z "$SPLASH_BG" ]; then
+    echo "ERROR: mobile/app.json declares no splash backgroundColor to verify." >&2
+    failed=1
+  else
+    require_text "app/src/main/res/values/colors.xml" "<color name=\"splashscreen_background\">$SPLASH_BG</color>"
+  fi
 
   # Force-tracked Yaver host overlays. `expo prebuild --clean` replaces these
   # with Expo templates unless the release path restores them from HEAD.
