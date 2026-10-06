@@ -58,6 +58,50 @@ done
 apple_require_store_sdk iphoneos 26
 apple_ensure_simulator_runtime iOS iphonesimulator
 
+# Fail before dependency restoration, Expo prebuild, target injection, CocoaPods,
+# or a build-number bump when the archive cannot possibly fit. A preflight that
+# mutates the tracked Xcode project before refusing low disk is itself a failed
+# deploy. A cold archive has measured at 5.8 GB of build products; leave
+# headroom for module caches and export. A warm cache still needs room for the
+# archive and IPA. 2026-08-20: 4.3 GB free filled APFS while generating
+# AVFoundation PCM after twelve minutes.
+if [ -n "${YAVER_IOS_DERIVED_DATA:-}" ]; then
+  DERIVED="$YAVER_IOS_DERIVED_DATA"
+elif [ "$ARTIFACT_ROOT" != "/private/tmp" ] && [ "$ARTIFACT_ROOT" != "/tmp" ]; then
+  DERIVED="$ARTIFACT_ROOT/DerivedData"
+else
+  DERIVED="$HOME/.yaver/build/ios"
+fi
+CACHE_STATE="warm"
+MIN_FREE_GIB="${YAVER_IOS_MIN_FREE_GIB_WARM:-10}"
+if [ ! -d "$DERIVED/Build" ]; then
+  CACHE_STATE="COLD (first archive here — expect the slow one)"
+  MIN_FREE_GIB="${YAVER_IOS_MIN_FREE_GIB_COLD:-10}"
+fi
+mkdir -p "$DERIVED"
+AVAILABLE_KB="$(df -Pk "$DERIVED" | awk 'END { print $4 }')"
+REQUIRED_KB=$((MIN_FREE_GIB * 1024 * 1024))
+if [ -z "$AVAILABLE_KB" ] || ! [[ "$AVAILABLE_KB" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: could not measure free disk space for the TestFlight archive." >&2
+  echo "       Check: df -h '$DERIVED'" >&2
+  exit 1
+fi
+if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
+  AVAILABLE_GIB=$((AVAILABLE_KB / 1024 / 1024))
+  echo "ERROR: TestFlight build storage needs at least ${MIN_FREE_GIB} GiB free (${CACHE_STATE}); ${AVAILABLE_GIB} GiB is available at $DERIVED." >&2
+  echo "       Inspect Yaver's generated cache: du -sh '$DERIVED' '$ROOT/mobile/ios/build'" >&2
+  echo "       Reclaim only reviewed generated artifacts, then rerun ./deploy/deploy.sh ios." >&2
+  exit 1
+fi
+LOCAL_AVAILABLE_KB="$(df -Pk "$ROOT" | awk 'END { print $4 }')"
+LOCAL_REQUIRED_KB=$((2 * 1024 * 1024))
+if [ -z "$LOCAL_AVAILABLE_KB" ] || ! [[ "$LOCAL_AVAILABLE_KB" =~ ^[0-9]+$ ]] || \
+   [ "$LOCAL_AVAILABLE_KB" -lt "$LOCAL_REQUIRED_KB" ]; then
+  echo "ERROR: the checkout volume needs at least 2 GiB free for CocoaPods and generated source state." >&2
+  echo "       Check: df -h '$ROOT'" >&2
+  exit 1
+fi
+
 # Target-injection scripts are Node programs and must run only after their
 # dependencies exist. On 2026-08-18 this check lived below those scripts, so a
 # clean checkout died with a raw "Cannot find module .../node_modules/xcode"
@@ -225,57 +269,6 @@ if [ "$(printf '%s\n' "$MARKETING_VERSIONS" | wc -l | tr -d ' ')" -ne 1 ]; then
   exit 1
 fi
 APP_MARKETING_VERSION="$(printf '%s\n' "$MARKETING_VERSIONS" | head -1)"
-
-# Fail before CocoaPods work or a build-number bump when the archive cannot
-# possibly fit. A cold archive has measured at 5.8 GB of build products; leave
-# headroom for module caches and export. A warm cache needs less new space but
-# still needs room for the archive and IPA. 2026-08-20: 4.3 GB free looked
-# plausible, then the first archive filled APFS while generating the
-# AVFoundation PCM after twelve minutes and even the deploy-lease log could no
-# longer be written.
-if [ -n "${YAVER_IOS_DERIVED_DATA:-}" ]; then
-  DERIVED="$YAVER_IOS_DERIVED_DATA"
-elif [ "$ARTIFACT_ROOT" != "/private/tmp" ] && [ "$ARTIFACT_ROOT" != "/tmp" ]; then
-  DERIVED="$ARTIFACT_ROOT/DerivedData"
-else
-  DERIVED="$HOME/.yaver/build/ios"
-fi
-CACHE_STATE="warm"
-# A partially-populated DerivedData directory is not proof that the next
-# archive is incremental. 2026-08-22: a failed 4.7 GB tree selected the old
-# 3 GiB warm threshold; Xcode rebuilt the app target and filled APFS to zero.
-# Keep the warm floor high enough for another full app link + archive/export.
-MIN_FREE_GIB="${YAVER_IOS_MIN_FREE_GIB_WARM:-10}"
-if [ ! -d "$DERIVED/Build" ]; then
-  CACHE_STATE="COLD (first archive here — expect the slow one)"
-  MIN_FREE_GIB="${YAVER_IOS_MIN_FREE_GIB_COLD:-10}"
-fi
-mkdir -p "$DERIVED"
-AVAILABLE_KB="$(df -Pk "$DERIVED" | awk 'END { print $4 }')"
-REQUIRED_KB=$((MIN_FREE_GIB * 1024 * 1024))
-if [ -z "$AVAILABLE_KB" ] || ! [[ "$AVAILABLE_KB" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: could not measure free disk space for the TestFlight archive." >&2
-  echo "       Check: df -h '$DERIVED'" >&2
-  exit 1
-fi
-if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
-  AVAILABLE_GIB=$((AVAILABLE_KB / 1024 / 1024))
-  echo "ERROR: TestFlight build storage needs at least ${MIN_FREE_GIB} GiB free (${CACHE_STATE}); ${AVAILABLE_GIB} GiB is available at $DERIVED." >&2
-  echo "       Inspect Yaver's generated cache: du -sh '$DERIVED' '$ROOT/mobile/ios/build'" >&2
-  echo "       Reclaim only reviewed generated artifacts, then rerun ./deploy/deploy.sh ios." >&2
-  exit 1
-fi
-# CocoaPods and tracked generated state still live with the checkout even when
-# Xcode products are external. Preserve a small absolute floor there rather
-# than pretending an empty USB card makes a completely full source volume safe.
-LOCAL_AVAILABLE_KB="$(df -Pk "$ROOT" | awk 'END { print $4 }')"
-LOCAL_REQUIRED_KB=$((2 * 1024 * 1024))
-if [ -z "$LOCAL_AVAILABLE_KB" ] || ! [[ "$LOCAL_AVAILABLE_KB" =~ ^[0-9]+$ ]] || \
-   [ "$LOCAL_AVAILABLE_KB" -lt "$LOCAL_REQUIRED_KB" ]; then
-  echo "ERROR: the checkout volume needs at least 2 GiB free for CocoaPods and generated source state." >&2
-  echo "       Check: df -h '$ROOT'" >&2
-  exit 1
-fi
 
 cd "$ROOT/mobile/ios"
 

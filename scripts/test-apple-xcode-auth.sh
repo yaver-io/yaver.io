@@ -165,8 +165,14 @@ grep -q "UPLOAD FAILED|Validation failed|Failed to upload package" "$visionos_de
 # A clean mobile checkout has no node_modules. Dependency self-healing must run
 # before either Node-based target injector, and must include their xcode module.
 testflight_script="$ROOT/scripts/deploy-testflight.sh"
-ensure_line="$(grep -n '^ensure_mobile_dependencies$' "$testflight_script" | head -1 | cut -d: -f1)"
+disk_preflight_line="$(grep -n '^AVAILABLE_KB=' "$testflight_script" | head -1 | cut -d: -f1)"
+dependency_preflight_line="$(grep -n '^ensure_mobile_dependencies$' "$testflight_script" | head -1 | cut -d: -f1)"
 watch_inject_line="$(grep -n '^node .*add-watch-ios-target.js' "$testflight_script" | head -1 | cut -d: -f1)"
+[ -n "$disk_preflight_line" ] && [ -n "$dependency_preflight_line" ] && [ -n "$watch_inject_line" ] && \
+  [ "$disk_preflight_line" -lt "$dependency_preflight_line" ] && \
+  [ "$disk_preflight_line" -lt "$watch_inject_line" ] || \
+  fail "iOS disk preflight must run before dependency restoration or tracked target injection"
+ensure_line="$(grep -n '^ensure_mobile_dependencies$' "$testflight_script" | head -1 | cut -d: -f1)"
 [ -n "$ensure_line" ] && [ -n "$watch_inject_line" ] && [ "$ensure_line" -lt "$watch_inject_line" ] || \
   fail "mobile dependencies must be restored before Watch target injection"
 grep -q 'node_modules/xcode/package.json' "$testflight_script" || \
