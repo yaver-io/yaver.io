@@ -189,13 +189,13 @@ YAVER_MAC_BUILD_NUMBER="${YAVER_MAC_BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
 export YAVER_MAC_BUILD_NUMBER
 
 # The universal Electron merge temporarily holds both architecture bundles and
-# a third combined app on the same volume. With less than 2 GiB available,
+# a third combined app on the same volume. With less than 3 GiB available,
 # `lipo` fails late after downloading and packaging both copies. Refuse before
 # any build mutation and name the exact disposable output instead.
-MACOS_BUILD_MIN_KB=$((2 * 1024 * 1024))
+MACOS_BUILD_MIN_KB=$((3 * 1024 * 1024))
 MACOS_BUILD_FREE_KB="$(df -Pk "$ROOT" | awk 'NR == 2 { print $4 }')"
 if [ -z "$MACOS_BUILD_FREE_KB" ] || [ "$MACOS_BUILD_FREE_KB" -lt "$MACOS_BUILD_MIN_KB" ]; then
-  echo "ERROR: macOS TestFlight packaging requires at least 2 GiB free on the checkout volume; found $(( ${MACOS_BUILD_FREE_KB:-0} / 1024 )) MiB." >&2
+  echo "ERROR: macOS TestFlight packaging requires at least 3 GiB free on the checkout volume; found $(( ${MACOS_BUILD_FREE_KB:-0} / 1024 )) MiB." >&2
   echo "       Inspect the disposable output first: ls -la '$ELECTRON_DIR/dist-mas'" >&2
   echo "       Reclaim only reviewed generated artifacts, then rerun ./deploy/deploy.sh desktop-testflight." >&2
   exit 2
