@@ -132,7 +132,7 @@ grep -q 'A physical Apple TV is not required' "$tvos_deploy" || \
   fail "tvOS signing failure must route TestFlight uploads to an App Store profile"
 grep -q 'APPLE_XCODE_AUTH_MODE.*api-key' "$tvos_deploy" || \
   fail "tvOS API-key deploys must avoid the expirable Xcode account upload session"
-grep -q -- '--type appletvos --apiKey' "$tvos_deploy" || \
+grep -q -- '--platform appletvos --apiKey' "$tvos_deploy" || \
   fail "tvOS API-key deploys must validate/upload the exported IPA with altool"
 grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$tvos_deploy" || \
   fail "tvOS deploys must treat altool's server validation verdict as authoritative"
@@ -155,7 +155,7 @@ grep -q 'VISIONOS_PROVISIONING_PROFILE="${VISIONOS_PROVISIONING_PROFILE:-}"' "$v
   fail "visionOS must not default to a stale named provisioning profile"
 grep -q 'SIGNING_SETTINGS+=(CODE_SIGN_STYLE=Automatic)' "$visionos_deploy" || \
   fail "visionOS clean CI uploads must support automatic App Store provisioning"
-grep -q -- '--validate-app.*--type visionos' "$visionos_deploy" || \
+grep -q -- '--validate-app.*--platform visionos' "$visionos_deploy" || \
   fail "visionOS API-key deploys must validate the exported IPA before upload"
 grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$visionos_deploy" || \
   fail "visionOS deploys must treat Apple's server validation verdict as authoritative"
@@ -212,7 +212,7 @@ grep -q 'APPLE_XCODE_AUTH_MODE.*api-key' "$testflight_script" || \
   fail "iOS API-key deploys must avoid the expirable Xcode account upload session"
 grep -q 'EXPORT_DESTINATION="export"' "$testflight_script" || \
   fail "iOS API-key deploys must export locally before App Store authentication"
-[ "$(grep -c -- '--type ios --apiKey' "$testflight_script")" -eq 2 ] || \
+[ "$(grep -c -- '--platform ios --apiKey' "$testflight_script")" -eq 2 ] || \
   fail "iOS API-key deploys must validate/upload the exported IPA with altool"
 grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$testflight_script" || \
   fail "iOS API-key deploys must treat altool's server rejection as failure even when altool exits zero"
@@ -225,6 +225,14 @@ grep -q 'Watch/YaverWatch.app' "$testflight_script" || \
 if grep -q 'Watch/Yaver.app' "$testflight_script"; then
   fail "iOS archive validation must not regress to the colliding Yaver.app Watch product"
 fi
+
+macos_deploy="$ROOT/scripts/deploy-macos-testflight.sh"
+[ "$(grep -c -- '--platform macos' "$macos_deploy")" -eq 2 ] || \
+  fail "macOS API-key deploys must identify the altool platform for validation and upload"
+grep -q "Cannot determine the platform|ERROR:" "$macos_deploy" || \
+  fail "macOS deploys must reject textual altool errors even when altool exits zero"
+grep -q 'UPLOAD_LOG=' "$macos_deploy" || \
+  fail "macOS deploys must capture and inspect the upload verdict before reporting acceptance"
 
 # Xcode echoes its full invocation, including API-key flags. Every Apple build
 # lane that supplies those flags must filter the stream before it reaches a

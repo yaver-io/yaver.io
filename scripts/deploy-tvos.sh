@@ -349,24 +349,24 @@ if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
   echo "Validating tvOS IPA with App Store Connect…"
   VALIDATION_LOG="$(mktemp -t yaver-tvos-validation.XXXXXX)"
   if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$IPA_PATH" \
-    --type appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
+    --platform appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
     2>&1 | tee "$VALIDATION_LOG"; then
     echo "ERROR: App Store Connect tvOS validation command failed; upload was not attempted." >&2
     exit 1
   fi
-  if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+  if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package|Cannot determine the platform|ERROR:' "$VALIDATION_LOG"; then
     echo "ERROR: App Store Connect rejected tvOS validation; upload was not attempted." >&2
     exit 1
   fi
   echo "Uploading tvOS IPA to TestFlight…"
   UPLOAD_LOG="$(mktemp -t yaver-tvos-upload.XXXXXX)"
   if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$IPA_PATH" \
-    --type appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
+    --platform appletvos --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") \
     2>&1 | tee "$UPLOAD_LOG"; then
     echo "ERROR: App Store Connect tvOS upload command failed." >&2
     exit 1
   fi
-  if grep -qE 'UPLOAD FAILED|Validation failed|Failed to upload package' "$UPLOAD_LOG"; then
+  if grep -qE 'UPLOAD FAILED|Validation failed|Failed to upload package|Cannot determine the platform|ERROR:' "$UPLOAD_LOG"; then
     echo "ERROR: App Store Connect rejected the tvOS upload." >&2
     exit 1
   fi

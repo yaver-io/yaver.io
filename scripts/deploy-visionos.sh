@@ -307,28 +307,28 @@ if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
 
   echo "Validating visionOS with App Store Connect…"
   set +e
-  xcrun altool --validate-app -f "$IPA_PATH" --type visionos \
+  xcrun altool --validate-app -f "$IPA_PATH" --platform visionos \
     --apiKey "$APP_STORE_KEY_ID" \
     --apiIssuer "$APP_STORE_KEY_ISSUER" \
     --p8-file-path "$APP_STORE_KEY_PATH" 2>&1 | tee "$VALIDATION_LOG"
   validation_status=${PIPESTATUS[0]}
   set -e
   if [ "$validation_status" -ne 0 ] || \
-     grep -Eq 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+     grep -Eq 'VERIFY FAILED|Validation failed|Failed to validate package|Cannot determine the platform|ERROR:' "$VALIDATION_LOG"; then
     echo "ERROR: App Store Connect rejected the visionOS package; upload was not attempted." >&2
     exit 1
   fi
 
   echo "Uploading visionOS with the App Store Connect API key…"
   set +e
-  xcrun altool --upload-app -f "$IPA_PATH" --type visionos \
+  xcrun altool --upload-app -f "$IPA_PATH" --platform visionos \
     --apiKey "$APP_STORE_KEY_ID" \
     --apiIssuer "$APP_STORE_KEY_ISSUER" \
     --p8-file-path "$APP_STORE_KEY_PATH" 2>&1 | tee "$UPLOAD_LOG"
   upload_status=${PIPESTATUS[0]}
   set -e
   if [ "$upload_status" -ne 0 ] || \
-     grep -Eq 'UPLOAD FAILED|Validation failed|Failed to upload package' "$UPLOAD_LOG"; then
+     grep -Eq 'UPLOAD FAILED|Validation failed|Failed to upload package|Cannot determine the platform|ERROR:' "$UPLOAD_LOG"; then
     echo "ERROR: App Store Connect did not accept the visionOS upload." >&2
     exit 1
   fi

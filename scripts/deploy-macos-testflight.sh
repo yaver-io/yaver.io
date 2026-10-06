@@ -359,12 +359,17 @@ chmod 700 "$UPLOAD_AUTH_DIR"
 mkdir -m 700 "$UPLOAD_AUTH_DIR/private_keys"
 cp "$APP_STORE_KEY_PATH" "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
 chmod 600 "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
-cleanup_upload() { rm -f "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"; rmdir "$UPLOAD_AUTH_DIR/private_keys" "$UPLOAD_AUTH_DIR" 2>/dev/null || true; }
+cleanup_upload() {
+  [ -z "${VALIDATION_LOG:-}" ] || rm -f "$VALIDATION_LOG"
+  [ -z "${UPLOAD_LOG:-}" ] || rm -f "$UPLOAD_LOG"
+  rm -f "$UPLOAD_AUTH_DIR/private_keys/AuthKey_${APP_STORE_KEY_ID}.p8"
+  rmdir "$UPLOAD_AUTH_DIR/private_keys" "$UPLOAD_AUTH_DIR" 2>/dev/null || true
+}
 trap 'cleanup_upload; cleanup' EXIT
 
 echo "Validating package with App Store Connect…"
 VALIDATION_LOG="$(mktemp -t yaver-mas-validation.XXXXXX)"
-if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$PKG_PATH" --type macos \
+if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --validate-app --file "$PKG_PATH" --platform macos \
   --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") 2>&1 | tee "$VALIDATION_LOG"; then
   echo "ERROR: App Store Connect package validation command failed; upload was not attempted." >&2
   exit 1
@@ -372,11 +377,19 @@ fi
 # altool can return zero even when Apple's response says VERIFY FAILED. Treat
 # the server verdict as authoritative so a known-invalid package is never sent
 # to the upload endpoint.
-if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package' "$VALIDATION_LOG"; then
+if grep -qE 'VERIFY FAILED|Validation failed|Failed to validate package|Cannot determine the platform|ERROR:' "$VALIDATION_LOG"; then
   echo "ERROR: App Store Connect rejected package validation; upload was not attempted." >&2
   exit 1
 fi
 echo "Uploading package to macOS TestFlight…"
-(cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$PKG_PATH" --type macos \
-  --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER")
+UPLOAD_LOG="$(mktemp -t yaver-mas-upload.XXXXXX)"
+if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$PKG_PATH" --platform macos \
+  --apiKey "$APP_STORE_KEY_ID" --apiIssuer "$APP_STORE_KEY_ISSUER") 2>&1 | tee "$UPLOAD_LOG"; then
+  echo "ERROR: App Store Connect macOS upload command failed." >&2
+  exit 1
+fi
+if grep -qE 'UPLOAD FAILED|Validation failed|Failed to upload package|Cannot determine the platform|ERROR:' "$UPLOAD_LOG"; then
+  echo "ERROR: App Store Connect rejected the macOS upload." >&2
+  exit 1
+fi
 echo "Upload accepted. App Store Connect will process build $YAVER_MAC_BUILD_NUMBER before it appears in TestFlight."
