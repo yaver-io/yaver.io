@@ -70,7 +70,7 @@ test.describe("DOM mode closed loop (live)", () => {
       .toBe(true);
 
     // ── Vibing tab owns the browser-lane preview (RuntimeLabView) ──────
-    const vibing = page.getByText(/^Vibing$/).first();
+    const vibing = page.getByText(/^Studio$/).first();
     if (await vibing.isVisible().catch(() => false)) await vibing.click().catch(() => {});
     await page.waitForTimeout(6000);
 

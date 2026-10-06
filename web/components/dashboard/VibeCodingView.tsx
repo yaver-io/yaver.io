@@ -2470,7 +2470,7 @@ export default function VibeCodingView({
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-surface-800 bg-surface-900/70 px-4 py-4">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Vibing</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Studio</span>
             <StatusPill>{connectedDevice?.name || "no machine"}</StatusPill>
             {selectedProject ? <StatusPill>{selectedProject.name}</StatusPill> : null}
             {selectedRunner ? <StatusPill>{selectedRunner}</StatusPill> : null}

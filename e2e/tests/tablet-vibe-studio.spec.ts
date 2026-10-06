@@ -71,7 +71,7 @@ test("tablet vibe studio renders the landscape split", async ({ browser }) => {
   await page.waitForTimeout(12_000);
 
   // The studio screen rendered (its own header).
-  await expect(page.getByText(/^Vibing$/).first(), "tablet: /vibe-studio did not render")
+  await expect(page.getByText(/^Studio$/).first(), "tablet: /vibe-studio did not render")
     .toBeVisible({ timeout: 30_000 });
 
   // LANDSCAPE SPLIT — the lane switcher is the landscape-only control.
@@ -122,7 +122,7 @@ test("tablet vibe studio shows portrait peek without the split", async ({ browse
   });
   await page.waitForTimeout(12_000);
 
-  await expect(page.getByText(/^Vibing$/).first(), "tablet(portrait): /vibe-studio did not render")
+  await expect(page.getByText(/^Studio$/).first(), "tablet(portrait): /vibe-studio did not render")
     .toBeVisible({ timeout: 30_000 });
 
   // PORTRAIT — no landscape split: the lane switcher must NOT exist.
@@ -227,7 +227,7 @@ test("tablet vibe studio keeps the phone frame while the box has no dev server",
   });
   await page.waitForTimeout(12_000);
 
-  await expect(page.getByText(/^Vibing$/).first(), "tablet: /vibe-studio?project= did not render")
+  await expect(page.getByText(/^Studio$/).first(), "tablet: /vibe-studio?project= did not render")
     .toBeVisible({ timeout: 30_000 });
 
   // THE GUARD: the persistent phone frame renders its ready pane even though no

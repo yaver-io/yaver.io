@@ -96,7 +96,7 @@ test.describe("authenticated tablet workspaces", () => {
   test("connected Vibing landscape exposes project, preview, and enabled conversation", async ({ browser }) => {
     const { context, page } = await openAuthenticatedTablet(browser, "tabletLandscape", "/vibe-studio");
     try {
-      await expect(page.getByText(/^Vibing$/).first()).toBeVisible();
+      await expect(page.getByText(/^Studio$/).first()).toBeVisible();
       await expect(page.getByTestId("studio-left-pane")).toBeVisible();
       await expect(page.getByTestId("studio-right-pane")).toBeVisible();
       await expect(page.getByText(/^disconnected$/i)).toHaveCount(0);

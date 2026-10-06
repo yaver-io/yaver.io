@@ -553,7 +553,7 @@ async function assertSignedIn(page: Page, surface: YaverSurface) {
   const signedInChrome = surface === "mobile"
     // RN-web bottom tab bar. Roles, not prose — task output cannot forge these.
     ? page.getByText(/^Projects$/).first()
-    : page.getByText(/^(Vibing|Devices)$/).first();
+    : page.getByText(/^(Studio|Devices)$/).first();
   if (await signedInChrome.count()) return;
 
   const signInButton = page
@@ -714,7 +714,7 @@ async function runVibeArc(page: Page, target: string, surface: YaverSurface) {
       return true;
     };
   } else {
-    await page.getByText(/^Vibing$/).first().click().catch(() => {});
+    await page.getByText(/^Studio$/).first().click().catch(() => {});
   }
   await page.waitForTimeout(8000);
 

@@ -236,7 +236,7 @@ export default function VibingPage() {
       <div className="mx-auto max-w-5xl">
         <div className="mb-8 flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-surface-50">Vibing</h1>
+            <h1 className="text-3xl font-bold text-surface-50">Studio</h1>
             <p className="mt-1 text-sm text-surface-400">
               Live preview of a project running on {selectedDevice ? selectedDevice.name : "your device"}
             </p>

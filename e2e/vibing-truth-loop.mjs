@@ -93,12 +93,12 @@ try {
   await sleep(6000);
 
   let body = await text();
-  const signedIn = /Devices|Vibing|Projects/i.test(body) && !/Continue with Email/i.test(body);
+  const signedIn = /Devices|Studio|Projects/i.test(body) && !/Continue with Email/i.test(body);
   step('signs in with email + password', signedIn, ACCOUNT_HINT);
   if (!signedIn) throw new Error('sign-in did not complete');
 
   // ── open Vibing ───────────────────────────────────────────────────────────
-  await page.getByText(/^Vibing$/).first().click().catch(() => {});
+  await page.getByText(/^Studio$/).first().click().catch(() => {});
   await sleep(8000);
   body = await text();
   step('Vibing renders', body.length > 0, `${body.length} chars`);

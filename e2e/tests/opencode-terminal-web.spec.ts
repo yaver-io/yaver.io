@@ -85,7 +85,7 @@ test.describe("console-first task view closed loop (web)", () => {
     await signIn(page);
 
     // Signed-in chrome proves the dashboard rendered.
-    await expect(page.getByText(/^(Vibing|Devices)$/).first(),
+    await expect(page.getByText(/^(Studio|Devices)$/).first(),
       "dashboard must render signed-in chrome").toBeVisible({ timeout: 60_000 });
 
     // The dashboard may land on the Devices tab (auto-connect target). The

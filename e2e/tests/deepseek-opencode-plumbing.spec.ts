@@ -126,7 +126,7 @@ test.describe("deepseek opencode plumbing closed loop", () => {
     await signIn(page);
 
     // Signed in — the dashboard's own chrome (Vibing/Devices nav) proves it.
-    await expect(page.getByText(/^(Vibing|Devices)$/).first(),
+    await expect(page.getByText(/^(Studio|Devices)$/).first(),
       "dashboard must render signed-in chrome").toBeVisible({ timeout: 60_000 });
 
     await openCodingAgentModal(page);

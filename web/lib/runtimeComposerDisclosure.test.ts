@@ -1,7 +1,7 @@
 /**
  * Runtime composer progressive-disclosure guard.
  *
- * The Vibing conversation is the primary surface. Preview inspection,
+ * The Studio conversation is the primary surface. Preview inspection,
  * project memory and MCP selection remain mounted so their observers keep
  * working, but their inventory must not permanently consume conversation
  * height. The desktop GUI renders this same dashboard, so this guards both.
@@ -24,7 +24,7 @@ test("Runtime composer hides secondary project, MCP and inspect controls behind 
 });
 
 test("Runtime composer automatically chooses a real remote project when its old choice is unavailable", () => {
-  assert.match(source, /!rows\.some\(\(row\) => row\.path === selectedPath\)/);
+  assert.match(source, /!rows\.some\(\(row\) => row\.path === selectedPathRef\.current\)/);
   assert.match(source, /resolveRuntimeProjectPreference\(rows, saved\)[\s\S]*?\|\| rows\[0\]/);
   assert.ok(!source.includes('if (!next) setSelectedPath("")'), "disabling memory must not make a loaded composer project-less");
 });

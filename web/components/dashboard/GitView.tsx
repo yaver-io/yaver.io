@@ -692,7 +692,7 @@ export default function GitView({ client, connectedDeviceId, onOpenSurface, onVi
               const actions = isExpanded
                 ? [
                     {
-                      label: "Start Vibing",
+                      label: "Open Studio",
                       target: ".",
                       type: "vibing",
                       supported: true,
@@ -772,7 +772,7 @@ export default function GitView({ client, connectedDeviceId, onOpenSurface, onVi
                                   const surface = preferredSurfaceForAction(action);
                                   const supported = action.supported !== false;
                                   const label = isVibing
-                                    ? "Start Vibing"
+                                    ? "Open Studio"
                                     : isVibePrompt
                                       ? action.label
                                       : surface
@@ -790,7 +790,7 @@ export default function GitView({ client, connectedDeviceId, onOpenSurface, onVi
                                           : isVibing
                                             ? `Open ${label}`
                                             : isVibePrompt
-                                              ? "git pull --rebase via the Vibing flow on the device's primary coding agent. Conflicts get resolved by the agent."
+                                              ? "git pull --rebase via Studio on the device's primary coding agent. Conflicts get resolved by the agent."
                                               : surface
                                                 ? `Open ${label}`
                                                 : "This action isn't available from the dashboard."
