@@ -49,7 +49,7 @@ data class DeviceCodeStart(
 ) {
     /** QR target that routes a scan into the phone approver. */
     val verifyUrl: String
-        get() = "$WEB_BASE/auth/device?code=${URLEncoder.encode(userCode, "UTF-8")}"
+        get() = "${Backend.webBase}/auth/device?code=${URLEncoder.encode(userCode, "UTF-8")}"
 }
 
 sealed class EmailAuthError : Exception() {
@@ -60,6 +60,58 @@ sealed class EmailAuthError : Exception() {
 }
 
 object Backend {
+    private const val HOSTED_ORIGIN = "https://perceptive-minnow-557.eu-west-1.convex.site"
+    private const val SETTINGS_PREFS = "io.yaver.tv"
+    private const val PRIVATE_VPS_KEY = "yaver.privateVpsUrl"
+    private var appContext: Context? = null
+
+    fun configure(context: Context) { appContext = context.applicationContext }
+
+    val origin: String
+        get() = appContext?.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+            ?.getString(PRIVATE_VPS_KEY, null)
+            ?.let(::normalizePrivateVpsUrl) ?: HOSTED_ORIGIN
+
+    val webBase: String get() = privateVpsUrl() ?: WEB_BASE
+
+    fun privateVpsUrl(): String? = appContext?.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+        ?.getString(PRIVATE_VPS_KEY, null)?.let(::normalizePrivateVpsUrl)
+
+    fun savePrivateVpsUrl(value: String?): Boolean {
+        val context = appContext ?: return false
+        val prefs = context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+        if (value == null) { prefs.edit().remove(PRIVATE_VPS_KEY).apply(); return true }
+        val normalized = privateVpsUrlFromQr(value) ?: return false
+        prefs.edit().putString(PRIVATE_VPS_KEY, normalized).apply()
+        return true
+    }
+
+    fun normalizePrivateVpsUrl(value: String): String? = runCatching {
+        val uri = java.net.URI(value.trim())
+        if (uri.scheme != "https") return null
+        if (uri.host.isNullOrBlank() || uri.userInfo != null || uri.query != null || uri.fragment != null) return null
+        val path = (uri.path ?: "").trimEnd('/')
+        java.net.URI(uri.scheme, null, uri.host, uri.port, path, null, null).toString().trimEnd('/')
+    }.getOrNull()
+
+    fun privateVpsUrlFromQr(value: String): String? {
+        normalizePrivateVpsUrl(value)?.let { return it }
+        runCatching {
+            val uri = java.net.URI(value.trim())
+            if (uri.scheme == "yaver" && uri.host == "private-vps") {
+                val candidate = uri.rawQuery.orEmpty().split('&').mapNotNull {
+                    val pair = it.split('=', limit = 2)
+                    if (pair.firstOrNull() == "url") pair.getOrNull(1) else null
+                }.firstOrNull()?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                normalizePrivateVpsUrl(candidate.orEmpty())?.let { return it }
+            }
+        }
+        return runCatching {
+            val objectValue = JSONObject(value)
+            normalizePrivateVpsUrl(objectValue.optString("privateVpsUrl").ifEmpty { objectValue.optString("url") })
+        }.getOrNull()
+    }
+
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -85,7 +137,7 @@ object Backend {
             .put("deviceId", TokenStore.installationId(appContext))
         lastOwnerUserId(appContext)?.let { body.put("ownerUserIdHint", it) }
         val request = Request.Builder()
-            .url("$CONVEX_ORIGIN/auth/device-code")
+            .url("$origin/auth/device-code")
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody(JSON))
             .build()
@@ -114,7 +166,7 @@ object Backend {
      *  "Waiting for approval…". */
     suspend fun pollDeviceCode(deviceCode: String): DevicePollResult = withContext(Dispatchers.IO) {
         try {
-            val url = "$CONVEX_ORIGIN/auth/device-code/poll?device_code=${URLEncoder.encode(deviceCode, "UTF-8")}"
+            val url = "$origin/auth/device-code/poll?device_code=${URLEncoder.encode(deviceCode, "UTF-8")}"
             http.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     return@use DevicePollResult("pending", unreachableReason = "server returned HTTP ${resp.code}")
@@ -130,7 +182,7 @@ object Backend {
      *  (or times out), then closes it. Parse the last SSE data line. */
     suspend fun waitDeviceCodeEvent(deviceCode: String): DevicePollResult = withContext(Dispatchers.IO) {
         try {
-            val url = "$CONVEX_ORIGIN/auth/device-code/events?device_code=${URLEncoder.encode(deviceCode, "UTF-8")}"
+            val url = "$origin/auth/device-code/events?device_code=${URLEncoder.encode(deviceCode, "UTF-8")}"
             http.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     return@use DevicePollResult("pending", unreachableReason = "server returned HTTP ${resp.code}")
@@ -155,7 +207,7 @@ object Backend {
                 val body = JSONObject().put("deviceCode", deviceCode)
                 if (!claimHandle.isNullOrEmpty()) body.put("claimHandle", claimHandle)
                 val request = Request.Builder()
-                    .url("$CONVEX_ORIGIN/auth/device-code/claim")
+                    .url("$origin/auth/device-code/claim")
                     .header("Content-Type", "application/json")
                     .post(body.toString().toRequestBody(JSON))
                     .build()
@@ -184,7 +236,7 @@ object Backend {
             try {
                 val body = JSONObject().put("deviceCode", deviceCode).put("allow", allow)
                 val request = Request.Builder()
-                    .url("$CONVEX_ORIGIN/auth/device-code/lan-confirm")
+                    .url("$origin/auth/device-code/lan-confirm")
                     .header("Content-Type", "application/json")
                     .post(body.toString().toRequestBody(JSON))
                     .build()
@@ -210,7 +262,7 @@ object Backend {
     suspend fun refreshSession(appContext: Context, token: String): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
-                .url("$CONVEX_ORIGIN/auth/refresh")
+                .url("$origin/auth/refresh")
                 .header("Authorization", "Bearer $token")
                 .header("X-Yaver-Surface", TV_SURFACE_ID)
                 .post(ByteArray(0).toRequestBody(JSON))
@@ -235,7 +287,7 @@ object Backend {
         if (token.isEmpty()) return@withContext
         runCatching {
             val request = Request.Builder()
-                .url("$CONVEX_ORIGIN/auth/logout")
+                .url("$origin/auth/logout")
                 .header("Authorization", "Bearer $token")
                 .header("X-Yaver-Surface", TV_SURFACE_ID)
                 .post(ByteArray(0).toRequestBody(JSON))
@@ -255,7 +307,7 @@ object Backend {
             .put("email", email.trim())
             .put("password", password)
         val request = Request.Builder()
-            .url("$CONVEX_ORIGIN/auth/login")
+            .url("$origin/auth/login")
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody(JSON))
             .build()

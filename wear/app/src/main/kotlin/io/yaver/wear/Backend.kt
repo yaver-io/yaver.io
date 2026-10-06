@@ -43,6 +43,13 @@ class Backend(
          *  (it's the public backend host). Bump here and in the Swift constants
          *  together if the deployment ever moves. */
         const val DEFAULT_CONVEX_ORIGIN = "https://perceptive-minnow-557.eu-west-1.convex.site"
+
+        fun normalizePrivateVpsUrl(value: String): String? = runCatching {
+            val uri = URI(value.trim())
+            if (uri.scheme != "https") return null
+            if (uri.host.isNullOrBlank() || uri.userInfo != null || uri.query != null || uri.fragment != null) return null
+            URI(uri.scheme, null, uri.host, uri.port, (uri.path ?: "").trimEnd('/'), null, null).toString().trimEnd('/')
+        }.getOrNull()
     }
 
     private val http: OkHttpClient = OkHttpClient.Builder()

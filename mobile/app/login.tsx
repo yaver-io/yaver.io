@@ -10,6 +10,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -54,6 +55,13 @@ import {
 import { resumePendingDeviceApproval } from "../src/lib/pendingDeviceApproval";
 import { SESSION_EXPIRED_NOTICE } from "../src/lib/sessionExpiredNotice";
 import { YaverAppIcon } from "../src/components/YaverAppIcon";
+import PairQrScanner from "../src/components/PairQrScanner";
+import {
+  clearPrivateVpsUrl,
+  getPrivateVpsUrlSync,
+  setPrivateVpsUrl,
+} from "../src/lib/backendConfig";
+import { normalizePrivateVpsUrl, privateVpsUrlFromQr } from "../src/lib/privateVps";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -106,6 +114,11 @@ export default function LoginScreen() {
   const isTablet = layout.isTablet;
   const [isLoading, setIsLoading] = useState(false);
   const [showEmailForm, setShowEmailForm] = useState(false);
+  const [showServerSetup, setShowServerSetup] = useState(false);
+  const [showServerScanner, setShowServerScanner] = useState(false);
+  const [privateVpsDraft, setPrivateVpsDraft] = useState(() => getPrivateVpsUrlSync());
+  const [privateVpsError, setPrivateVpsError] = useState<string | null>(null);
+  const [privateVpsBusy, setPrivateVpsBusy] = useState(false);
   // Code sign-in. The whole flow is three bits of state: the short code to show,
   // a line saying what is happening, and a cancel flag the poll loop reads.
   const [deviceCode, setDeviceCode] = useState<{ userCode: string; secret: string } | null>(null);
@@ -186,6 +199,47 @@ export default function LoginScreen() {
     setDeviceCode(null);
     setDeviceCodeNote("");
   }, []);
+
+  const refreshAuthCapabilities = React.useCallback(async () => {
+    const config = await getAuthConfig();
+    setEmailPasswordEnabled(config.emailPasswordEnabled);
+    if (!config.emailPasswordEnabled) setShowEmailForm(false);
+  }, []);
+
+  const usePrivateVps = React.useCallback(async () => {
+    const normalized = normalizePrivateVpsUrl(privateVpsDraft);
+    if (!normalized) {
+      setPrivateVpsError("Enter an HTTPS URL without credentials, query text, or a fragment.");
+      return;
+    }
+    setPrivateVpsBusy(true);
+    setPrivateVpsError(null);
+    try {
+      cancelCodeSignIn();
+      await setPrivateVpsUrl(normalized);
+      setPrivateVpsDraft(normalized);
+      await refreshAuthCapabilities();
+      setShowServerSetup(false);
+    } catch (error) {
+      setPrivateVpsError(error instanceof Error ? error.message : "Couldn't save that server.");
+    } finally {
+      setPrivateVpsBusy(false);
+    }
+  }, [cancelCodeSignIn, privateVpsDraft, refreshAuthCapabilities]);
+
+  const useHostedServer = React.useCallback(async () => {
+    setPrivateVpsBusy(true);
+    setPrivateVpsError(null);
+    try {
+      cancelCodeSignIn();
+      await clearPrivateVpsUrl();
+      setPrivateVpsDraft("");
+      await refreshAuthCapabilities();
+      setShowServerSetup(false);
+    } finally {
+      setPrivateVpsBusy(false);
+    }
+  }, [cancelCodeSignIn, refreshAuthCapabilities]);
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -691,6 +745,65 @@ export default function LoginScreen() {
               ]}
             >
               <View style={styles.buttons}>
+                {!showEmailForm && (
+                  <View style={{ marginBottom: 12, borderWidth: 1, borderColor: providerBorderColor, borderRadius: 12, backgroundColor: c.bgCard, padding: 12 }}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose Yaver server before sign in"
+                      onPress={() => setShowServerSetup((value) => !value)}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                    >
+                      <Ionicons name="server-outline" size={18} color={c.accent} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 14 }}>Server</Text>
+                        <Text numberOfLines={1} style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+                          {getPrivateVpsUrlSync() || "Yaver hosted"}
+                        </Text>
+                      </View>
+                      <Ionicons name={showServerSetup ? "chevron-up" : "chevron-down"} size={17} color={c.textMuted} />
+                    </Pressable>
+                    {showServerSetup ? (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ color: c.textSecondary, fontSize: 12, lineHeight: 17 }}>
+                          Choose the server before Apple, Google, passkey, code, or email sign-in. This address stays only on this device.
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                          <Pressable
+                            onPress={() => setShowServerScanner(true)}
+                            style={{ minHeight: 40, paddingHorizontal: 14, borderRadius: 9, backgroundColor: c.accent, alignItems: "center", justifyContent: "center" }}
+                          >
+                            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>Scan QR</Text>
+                          </Pressable>
+                          <TextInput
+                            accessibilityLabel="Private VPS URL before sign in"
+                            value={privateVpsDraft}
+                            onChangeText={(value) => { setPrivateVpsDraft(value); setPrivateVpsError(null); }}
+                            placeholder="https://vps.example.com"
+                            placeholderTextColor={c.textMuted}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="url"
+                            style={{ flex: 1, minHeight: 40, borderWidth: 1, borderColor: c.border, borderRadius: 9, color: c.textPrimary, paddingHorizontal: 10, fontSize: 12 }}
+                          />
+                        </View>
+                        {privateVpsError ? <Text accessibilityRole="alert" style={{ color: c.error, fontSize: 11, marginTop: 7 }}>{privateVpsError}</Text> : null}
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 10 }}>
+                          <Pressable disabled={privateVpsBusy || !privateVpsDraft.trim()} onPress={() => void usePrivateVps()}>
+                            <Text style={{ color: c.accent, fontWeight: "700", opacity: privateVpsBusy || !privateVpsDraft.trim() ? 0.45 : 1 }}>Use this VPS</Text>
+                          </Pressable>
+                          {getPrivateVpsUrlSync() ? (
+                            <Pressable disabled={privateVpsBusy} onPress={() => void useHostedServer()}>
+                              <Text style={{ color: c.error, fontWeight: "700" }}>Use hosted</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                        <Text style={{ color: c.textMuted, fontSize: 10, lineHeight: 15, marginTop: 8 }}>
+                          QR codes contain only a server URL. Tokens, passwords, URL credentials, query parameters, and fragments are rejected.
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
                 {passkeySupported && !showEmailForm && (
                   <Pressable
                     style={({ pressed }) => [
@@ -1034,6 +1147,24 @@ export default function LoginScreen() {
                 ) : null}
               </View>
             </View>
+            <Modal visible={showServerScanner} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setShowServerScanner(false)}>
+              <PairQrScanner
+                title="Scan your private VPS QR"
+                instruction="Scan the server URL from your Yaver VPS setup. The QR must not contain a token or password."
+                invalidHint="That QR doesn't contain a valid private VPS URL"
+                manualLabel="Enter the URL manually"
+                accept={(value) => !!privateVpsUrlFromQr(value)}
+                onClose={() => setShowServerScanner(false)}
+                onScanned={(value) => {
+                  const parsed = privateVpsUrlFromQr(value);
+                  if (!parsed) return;
+                  setPrivateVpsDraft(parsed);
+                  setPrivateVpsError(null);
+                  setShowServerScanner(false);
+                  setShowServerSetup(true);
+                }}
+              />
+            </Modal>
           </View>
 
           <View

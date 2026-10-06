@@ -15,6 +15,8 @@ struct SettingsView: View {
     @State private var removalError: String?
     @State private var removing = false
     @State private var appearanceError: String?
+    @State private var privateVPSDraft = UserDefaults.standard.string(forKey: Backend.privateVPSKey) ?? ""
+    @State private var privateVPSError: String?
 
     /// The update request's lifecycle as far as we can HONESTLY observe it: we
     /// see it accepted, never applied. There is deliberately no `.updating`.
@@ -36,6 +38,26 @@ struct SettingsView: View {
     private var settings: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Private VPS URL", systemImage: "server.rack").font(.footnote.bold())
+                    TextField("https://vps.example.com", text: $privateVPSDraft)
+                        .textContentType(.URL)
+                    Button("Use this VPS") { savePrivateVPS() }
+                        .font(.footnote).disabled(privateVPSDraft.isEmpty)
+                    if UserDefaults.standard.string(forKey: Backend.privateVPSKey) != nil {
+                        Button("Use Yaver hosted", role: .destructive) {
+                            store.signOutStandalone()
+                            UserDefaults.standard.removeObject(forKey: Backend.privateVPSKey)
+                            privateVPSDraft = ""
+                        }.font(.footnote)
+                    }
+                    if let privateVPSError { Text(privateVPSError).font(.caption2).foregroundStyle(.orange) }
+                    Text("Local to this watch. Use your paired iPhone to read the VPS QR, then dictate or type the URL here.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+
+                Divider()
+
                 // Phone-paired status (the default, preferred transport).
                 HStack {
                     Image(systemName: store.phone.canUsePhone ? "iphone" : "iphone.slash")
@@ -162,6 +184,17 @@ struct SettingsView: View {
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    private func savePrivateVPS() {
+        guard let url = Backend.normalizedPrivateVPSURL(privateVPSDraft) else {
+            privateVPSError = "Enter a valid HTTPS URL."
+            return
+        }
+        store.signOutStandalone()
+        UserDefaults.standard.set(url.absoluteString, forKey: Backend.privateVPSKey)
+        privateVPSDraft = url.absoluteString
+        privateVPSError = nil
     }
 
     private func saveAppearance(_ theme: String) async {

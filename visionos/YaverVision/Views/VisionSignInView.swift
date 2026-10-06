@@ -36,6 +36,8 @@ struct VisionSignInView: View {
     @State private var appleBusy = false
     @State private var oauthBusy: OAuthProvider?
     @State private var pollTask: Task<Void, Never>?
+    @State private var privateVPSDraft = Backend.privateVPSURL?.absoluteString ?? ""
+    @State private var showServerSetup = false
 
     // Held for the lifetime of the view: ASWebAuthenticationSession is cancelled
     // the moment its owner is deallocated, so a locally-scoped one closes the
@@ -76,6 +78,7 @@ struct VisionSignInView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                serverPanel
                 applePanel
                 safariPanel
                 phonePanel
@@ -86,6 +89,61 @@ struct VisionSignInView: View {
         .glassBackgroundEffect()
         .task { await begin() }
         .onDisappear { pollTask?.cancel() }
+    }
+
+    // MARK: - Control plane (must be chosen before any identity leaves the device)
+
+    private var serverPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                showServerSetup.toggle()
+            } label: {
+                HStack {
+                    Label("Server", systemImage: "server.rack")
+                    Spacer()
+                    Text(Backend.privateVPSURL?.absoluteString ?? "Yaver hosted")
+                        .foregroundStyle(.secondary).lineLimit(1)
+                    Image(systemName: showServerSetup ? "chevron.up" : "chevron.down")
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showServerSetup {
+                Text("Choose this before Apple, OAuth, passkey, or email sign-in. The URL stays in local UserDefaults; passwords and session tokens are not stored with it or sent through Yaver's Cloudflare worker.")
+                    .font(.callout).foregroundStyle(.secondary)
+                TextField("https://vps.example.com", text: $privateVPSDraft)
+                    .textContentType(.URL)
+                HStack {
+                    Button("Use this VPS") { Task { await selectPrivateVPS() } }
+                        .disabled(privateVPSDraft.isEmpty)
+                    if Backend.privateVPSURL != nil {
+                        Button("Use Yaver hosted", role: .destructive) {
+                            Backend.setPrivateVPSURL(nil)
+                            privateVPSDraft = ""
+                            pollTask?.cancel()
+                            Task { await begin() }
+                        }
+                    }
+                }
+                Text("OAuth must be configured by the private deployment. The headset connects directly to that server; Cloudflare is not a credential proxy.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func selectPrivateVPS() async {
+        guard let url = Backend.normalizedPrivateVPSURL(privateVPSDraft) else {
+            error = "Enter an HTTPS URL without credentials, query text, or a fragment."
+            return
+        }
+        Backend.setPrivateVPSURL(url)
+        privateVPSDraft = url.absoluteString
+        pollTask?.cancel()
+        await begin()
+        showServerSetup = false
     }
 
     // MARK: - Fast path: the Apple ID already on this headset

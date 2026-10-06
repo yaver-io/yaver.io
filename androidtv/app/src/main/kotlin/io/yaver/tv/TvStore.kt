@@ -63,6 +63,7 @@ class TvStore(private val appContext: Context, private val scope: CoroutineScope
     private var lastOwnerUserId: String? = null
 
     init {
+        Backend.configure(appContext)
         // Load the token + persisted boxes from disk.
         _token.value = TokenStore.load(appContext)
         _boxes.value = loadBoxes()
@@ -110,6 +111,17 @@ class TvStore(private val appContext: Context, private val scope: CoroutineScope
 
     fun signOut() {
         val sessionToRevoke = _token.value
+        clearLocalSession()
+        if (sessionToRevoke.isNotEmpty()) {
+            scope.launch { Backend.revokeSession(sessionToRevoke) }
+        }
+    }
+
+    /** Server switching is local-only: do not send the old server's bearer to
+     * the newly selected origin while the asynchronous revoke is scheduled. */
+    fun signOutForServerSwitch() = clearLocalSession()
+
+    private fun clearLocalSession() {
         TokenStore.clear(appContext)
         _token.value = ""
         _boxes.value = emptyList()
@@ -119,9 +131,6 @@ class TvStore(private val appContext: Context, private val scope: CoroutineScope
         prefs.edit().remove(APPEARANCE_THEME_KEY).apply()
         prefs.edit().remove(SELECTED_BOX_ID).apply()
         prefs.edit().remove(BOXES_KEY).apply()
-        if (sessionToRevoke.isNotEmpty()) {
-            scope.launch { Backend.revokeSession(sessionToRevoke) }
-        }
     }
 
     suspend fun refreshSessionOnLaunch() {

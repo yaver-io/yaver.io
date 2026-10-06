@@ -5,6 +5,7 @@ import {
   WEB_BASE_URL as DEFAULT_WEB_BASE_URL,
 } from "../_core/constants";
 import { appLog } from "./logger";
+import { normalizePrivateVpsUrl, PRIVATE_VPS_STORAGE_KEY } from "./privateVps";
 
 const BACKEND_CONFIG_KEY = "@yaver/backend_config_v1";
 const REFRESH_TTL_MS = 15 * 60 * 1000;
@@ -17,6 +18,7 @@ let currentWebBaseUrl = normalizeOrigin(DEFAULT_WEB_BASE_URL) || DEFAULT_WEB_BAS
 // Managed-mode coding stays disabled while empty (fail-safe). A device-local
 // override (LOCAL_KEYS.gatewayUrl) takes priority for testing pre-rollout.
 let currentGatewayUrl = "";
+let privateVpsUrl = "";
 let lastRefreshAt = 0;
 
 function normalizeOrigin(value: string | null | undefined): string | null {
@@ -76,8 +78,38 @@ export function getGatewayUrlSync(): string {
   return currentGatewayUrl;
 }
 
+export function getPrivateVpsUrlSync(): string {
+  return privateVpsUrl;
+}
+
+export async function setPrivateVpsUrl(value: string): Promise<string> {
+  const normalized = normalizePrivateVpsUrl(value);
+  if (!normalized) throw new Error("Enter a valid HTTPS server URL without credentials, query text, or a fragment.");
+  privateVpsUrl = normalized;
+  currentConvexSiteUrl = normalized;
+  currentWebBaseUrl = normalized;
+  lastRefreshAt = 0;
+  await AsyncStorage.setItem(PRIVATE_VPS_STORAGE_KEY, normalized);
+  return normalized;
+}
+
+export async function clearPrivateVpsUrl(): Promise<void> {
+  privateVpsUrl = "";
+  currentConvexSiteUrl = normalizeOrigin(DEFAULT_CONVEX_SITE_URL) || DEFAULT_CONVEX_SITE_URL;
+  currentWebBaseUrl = normalizeOrigin(DEFAULT_WEB_BASE_URL) || DEFAULT_WEB_BASE_URL;
+  lastRefreshAt = 0;
+  await AsyncStorage.removeItem(PRIVATE_VPS_STORAGE_KEY);
+}
+
 export async function hydrateBackendConfigFromCache(): Promise<void> {
   try {
+    const localOverride = normalizePrivateVpsUrl(await AsyncStorage.getItem(PRIVATE_VPS_STORAGE_KEY));
+    if (localOverride) {
+      privateVpsUrl = localOverride;
+      currentConvexSiteUrl = localOverride;
+      currentWebBaseUrl = localOverride;
+      return;
+    }
     const raw = await AsyncStorage.getItem(BACKEND_CONFIG_KEY);
     if (!raw) return;
     const parsed = JSON.parse(raw) as {
@@ -96,6 +128,9 @@ export async function hydrateBackendConfigFromCache(): Promise<void> {
 }
 
 export async function refreshHostedBackendConfig(force: boolean = false): Promise<void> {
+  // A device-local private server is authoritative until the user clears it.
+  // Hosted discovery must never silently route that device back to Yaver.
+  if (privateVpsUrl) return;
   const now = Date.now();
   if (!force && now - lastRefreshAt < REFRESH_TTL_MS) return;
 

@@ -500,6 +500,17 @@ final class YaverStore: ObservableObject {
 
     func signOut() {
         let current = token
+        clearLocalSession()
+        Task { await DeviceCodeAuth.revokeSession(token: current) }
+    }
+
+    /// Switching control planes clears only this device. Revoking after the
+    /// origin changes could leak the old bearer to the new server.
+    func signOutForServerSwitch() {
+        clearLocalSession()
+    }
+
+    private func clearLocalSession() {
         token = ""
         remotelessAllowed = false
         remotelessMode = false
@@ -514,7 +525,6 @@ final class YaverStore: ObservableObject {
         storedBoxesJSON = "[]"
         appearanceTheme = "dark"
         UserDefaults.standard.removeObject(forKey: "yaver.appearance.\(appearanceSurface)")
-        Task { await DeviceCodeAuth.revokeSession(token: current) }
     }
 
     /// Clear a persisted session only when the server has proved it is no

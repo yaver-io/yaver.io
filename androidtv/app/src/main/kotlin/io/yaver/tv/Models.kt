@@ -7,7 +7,6 @@ package io.yaver.tv
  */
 
 const val AGENT_PORT = 18080
-const val CONVEX_ORIGIN = "https://perceptive-minnow-557.eu-west-1.convex.site"
 const val WEB_BASE = "https://yaver.io"
 
 fun urlAuthorityHost(host: String): String {

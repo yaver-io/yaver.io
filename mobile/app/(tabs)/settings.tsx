@@ -48,6 +48,9 @@ import { publishAutoRenderVibing } from "../../src/lib/autoRenderVibing";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useRouteParamsCompat } from "../../src/lib/useRouteParamsCompat";
 import { ENABLE_BOXLESS_UI } from "../../src/lib/launchFlags";
+import PairQrScanner from "../../src/components/PairQrScanner";
+import { clearPrivateVpsUrl, getPrivateVpsUrlSync, setPrivateVpsUrl } from "../../src/lib/backendConfig";
+import { privateVpsUrlFromQr, normalizePrivateVpsUrl } from "../../src/lib/privateVps";
 
 import {
   resolveRuntimeProjectPreference,
@@ -77,6 +80,7 @@ type SettingsRouteParams = {
 };
 
 type SettingsPane =
+  | "private-vps"
   | "coding-agent"
   | "machines"
   | "voice"
@@ -91,6 +95,7 @@ const SETTINGS_PANES: ReadonlyArray<{
   subtitle: string;
   icon: React.ComponentProps<typeof Ionicons>["name"];
 }> = [
+  { id: "private-vps", title: "Private VPS URL", subtitle: "Scan a QR code or enter your server address", icon: "server-outline" },
   { id: "coding-agent", title: "Coding Agent", subtitle: "Runner, model, sign-in, and updates", icon: "sparkles-outline" },
   { id: "machines", title: "Machines & Sandbox", subtitle: "Routing, projects, and phone runtimes", icon: "hardware-chip-outline" },
   { id: "voice", title: "Voice & Lip Reading", subtitle: "Voice, dictation, readback, and silent input", icon: "mic-outline" },
@@ -201,6 +206,10 @@ export default function SettingsScreen() {
   const [isSavingName, setIsSavingName] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPane | null>(null);
+  const [privateVpsDraft, setPrivateVpsDraft] = useState(() => getPrivateVpsUrlSync());
+  const [privateVpsMessage, setPrivateVpsMessage] = useState<string | null>(null);
+  const [privateVpsBusy, setPrivateVpsBusy] = useState(false);
+  const [showPrivateVpsScanner, setShowPrivateVpsScanner] = useState(false);
   useEffect(() => {
     if (!settingsPane) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -2136,6 +2145,109 @@ export default function SettingsScreen() {
                 </Pressable>
               </React.Fragment>
             ))}
+          </View>
+        )}
+
+        {settingsPane === "private-vps" && (
+          <View style={styles.section} accessibilityLabel="Private VPS URL settings">
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 16 }]}>
+              <Text style={[styles.aboutLabel, { color: c.textPrimary, fontWeight: "700", fontSize: 16 }]}>Private VPS URL</Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18, marginTop: 6 }}>
+                Use your own Yaver backend on this device. The address stays in local app storage and is never synced to your account.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setShowPrivateVpsScanner(true)}
+                  style={({ pressed }) => [{ flex: 1, minHeight: 46, borderRadius: 10, backgroundColor: c.accent, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.75 : 1 }]}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Scan QR</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }))}
+                  style={({ pressed }) => [{ flex: 1, minHeight: 46, borderRadius: 10, borderWidth: 1, borderColor: c.border, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.65 : 1 }]}
+                >
+                  <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Enter manually</Text>
+                </Pressable>
+              </View>
+              <TextInput
+                accessibilityLabel="Private VPS URL"
+                value={privateVpsDraft}
+                onChangeText={(value) => { setPrivateVpsDraft(value); setPrivateVpsMessage(null); }}
+                placeholder="https://vps.example.com"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                style={[styles.relayInput, { marginTop: 14, backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
+              />
+              {privateVpsMessage ? <Text accessibilityRole="alert" style={{ marginTop: 9, color: "#ef4444", fontSize: 12 }}>{privateVpsMessage}</Text> : null}
+              <Pressable
+                disabled={privateVpsBusy || !privateVpsDraft.trim()}
+                onPress={async () => {
+                  const normalized = normalizePrivateVpsUrl(privateVpsDraft);
+                  if (!normalized) {
+                    setPrivateVpsMessage("Enter a valid HTTPS URL without credentials, query text, or a fragment.");
+                    return;
+                  }
+                  setPrivateVpsBusy(true);
+                  try {
+                    disconnect();
+                    await logout();
+                    await setPrivateVpsUrl(normalized);
+                    router.replace("/login" as any);
+                  } catch (error) {
+                    setPrivateVpsMessage(error instanceof Error ? error.message : "Couldn't save the private VPS URL.");
+                  } finally {
+                    setPrivateVpsBusy(false);
+                  }
+                }}
+                style={({ pressed }) => [{ marginTop: 12, minHeight: 46, borderRadius: 10, backgroundColor: c.accent, alignItems: "center", justifyContent: "center", opacity: privateVpsBusy || !privateVpsDraft.trim() ? 0.45 : pressed ? 0.75 : 1 }]}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>{privateVpsBusy ? "Switching…" : "Use this VPS"}</Text>
+              </Pressable>
+              {getPrivateVpsUrlSync() ? (
+                <Pressable
+                  disabled={privateVpsBusy}
+                  onPress={async () => {
+                    setPrivateVpsBusy(true);
+                    try {
+                      disconnect();
+                      await logout();
+                      await clearPrivateVpsUrl();
+                      setPrivateVpsDraft("");
+                      router.replace("/login" as any);
+                    } finally {
+                      setPrivateVpsBusy(false);
+                    }
+                  }}
+                  style={({ pressed }) => [{ marginTop: 10, minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.65 : 1 }]}
+                >
+                  <Text style={{ color: "#ef4444", fontWeight: "700" }}>Use Yaver hosted server</Text>
+                </Pressable>
+              ) : null}
+              <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16, marginTop: 10 }}>
+                Switching servers signs out only this device. URLs containing usernames, passwords, query parameters, or fragments are rejected.
+              </Text>
+            </View>
+            <Modal visible={showPrivateVpsScanner} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setShowPrivateVpsScanner(false)}>
+              <PairQrScanner
+                title="Scan your private VPS QR"
+                instruction="Scan the server URL QR from your Yaver VPS setup. The QR must not contain a token or password."
+                invalidHint="That QR doesn't contain a valid private VPS URL"
+                manualLabel="Enter the URL manually"
+                accept={(value) => !!privateVpsUrlFromQr(value)}
+                onClose={() => setShowPrivateVpsScanner(false)}
+                onScanned={(value) => {
+                  const parsed = privateVpsUrlFromQr(value);
+                  if (!parsed) return;
+                  setPrivateVpsDraft(parsed);
+                  setPrivateVpsMessage(null);
+                  setShowPrivateVpsScanner(false);
+                }}
+              />
+            </Modal>
           </View>
         )}
 

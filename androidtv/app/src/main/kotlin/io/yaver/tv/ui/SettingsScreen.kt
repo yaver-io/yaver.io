@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,6 +50,7 @@ fun SettingsScreen(store: TvStore, nav: NavHostController) {
     var saved by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var runners by remember { mutableStateOf<Map<String, List<io.yaver.tv.RunnerInfo>>>(emptyMap()) }
+    var privateVpsDraft by remember { mutableStateOf(io.yaver.tv.Backend.privateVpsUrl().orEmpty()) }
 
     LaunchedEffect(Unit) {
         store.refreshDevices()
@@ -126,6 +128,41 @@ fun SettingsScreen(store: TvStore, nav: NavHostController) {
 
         error?.let { ErrorPanel(message = it) }
         saved?.let { StatusChip(it, TvColors.Green) }
+
+        SettingsRow(
+            title = "Private VPS URL",
+            detail = "Local to this Android TV · paste a scanned QR link or enter the address manually",
+        ) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = privateVpsDraft,
+                        onValueChange = { privateVpsDraft = it; error = null },
+                        label = { Text("https://vps.example.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(0.62f),
+                    )
+                    androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TvTextButton(label = "Use this VPS", onClick = {
+                            if (io.yaver.tv.Backend.savePrivateVpsUrl(privateVpsDraft)) {
+                                store.signOutForServerSwitch()
+                                saved = "Private VPS saved — sign in again"
+                            } else {
+                                error = "Enter a valid HTTPS URL without credentials, query text, or a fragment."
+                            }
+                        })
+                        if (io.yaver.tv.Backend.privateVpsUrl() != null) {
+                            TvTextButton(label = "Use Yaver hosted server", onClick = {
+                                store.signOutForServerSwitch()
+                                io.yaver.tv.Backend.savePrivateVpsUrl(null)
+                                privateVpsDraft = ""
+                                saved = "Hosted server restored — sign in again"
+                            })
+                        }
+                    }
+                }
+            }
+        }
 
         SettingsRow(
             title = "Appearance",

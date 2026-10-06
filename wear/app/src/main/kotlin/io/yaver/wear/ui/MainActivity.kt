@@ -54,6 +54,10 @@ class MainActivity : ComponentActivity() {
     private var pendingTranscriptAt: Long = 0L
     private val pendingTranscriptMaxAgeMs: Long = 10 * 60 * 1000L
 
+    private fun backend(): Backend = Backend(
+        StandaloneStore.privateVpsUrl(this).ifEmpty { Backend.DEFAULT_CONVEX_ORIGIN },
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -95,6 +99,13 @@ class MainActivity : ComponentActivity() {
                 canRemoveDevice = StandaloneStore.isReady(this),
                 onRemoveDevice = { removeStandaloneDevice() },
                 onAppearance = { setAppearance(it) },
+                privateVpsUrl = StandaloneStore.privateVpsUrl(this),
+                onPrivateVps = { value ->
+                    StandaloneStore.clear(this)
+                    StandaloneStore.setPrivateVpsUrl(this, value)
+                    sessionClient = null
+                    WatchState.setLine("VPS saved — sign in again")
+                },
             )
         }
 
@@ -108,7 +119,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 val token = StandaloneStore.token(this@MainActivity)
                 if (token.isNotEmpty()) runCatching {
-                    val saved = Backend().loadAppearance(token)
+                    val saved = backend().loadAppearance(token)
                     WatchState.setAppearanceTheme(saved)
                     StandaloneStore.setAppearanceTheme(this@MainActivity, saved)
                 }
@@ -129,7 +140,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     val token = StandaloneStore.token(this@MainActivity)
                     if (token.isEmpty()) throw PhoneBridge.PhoneUnreachableException("Phone not reachable")
-                    Backend().saveAppearance(token, next)
+                    backend().saveAppearance(token, next)
                 }
             }
             saved.onFailure {
@@ -156,7 +167,7 @@ class MainActivity : ComponentActivity() {
         val current = StandaloneStore.token(this)
         if (current.isEmpty()) return
         lifecycleScope.launch {
-            val rotated = Backend().refreshSession(current)
+            val rotated = backend().refreshSession(current)
             if (!rotated.isNullOrEmpty() && rotated != current) {
                 StandaloneStore.save(
                     ctx = this@MainActivity,
@@ -183,7 +194,7 @@ class MainActivity : ComponentActivity() {
         WatchState.setLine("Removing box…")
         lifecycleScope.launch {
             try {
-                Backend().removeConfiguredDevice(
+                backend().removeConfiguredDevice(
                     token = token,
                     boxUrl = StandaloneStore.boxUrl(this@MainActivity),
                     idHint = StandaloneStore.machineId(this@MainActivity),

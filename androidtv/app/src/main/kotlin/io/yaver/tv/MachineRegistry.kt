@@ -26,7 +26,7 @@ object MachineRegistry {
 
     private fun auth(path: String, token: String, method: String = "GET", body: JSONObject? = null): okhttp3.Response {
         val rb = Request.Builder()
-            .url("$CONVEX_ORIGIN/$path")
+            .url("${Backend.origin}/$path")
             .header("Authorization", "Bearer $token")
             .header("X-Yaver-Surface", TV_SURFACE_ID)
         val req = when (method) {
