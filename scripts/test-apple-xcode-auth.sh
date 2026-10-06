@@ -233,6 +233,10 @@ grep -q "Cannot determine the platform|ERROR:" "$macos_deploy" || \
   fail "macOS deploys must reject textual altool errors even when altool exits zero"
 grep -q 'UPLOAD_LOG=' "$macos_deploy" || \
   fail "macOS deploys must capture and inspect the upload verdict before reporting acceptance"
+grep -q 'MACOS_BUILD_MIN_KB=.*2 \* 1024 \* 1024' "$macos_deploy" || \
+  fail "macOS deploys must refuse before packaging when the universal lipo volume is too full"
+grep -q "Inspect the disposable output first" "$macos_deploy" || \
+  fail "macOS low-disk failures must name the exact generated output to inspect"
 
 # Xcode echoes its full invocation, including API-key flags. Every Apple build
 # lane that supplies those flags must filter the stream before it reaches a
