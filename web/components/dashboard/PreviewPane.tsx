@@ -1858,7 +1858,7 @@ export default function PreviewPane({
           <div className="flex h-full min-h-0 flex-col">
             <div className="border-b border-surface-800 px-3 py-2">
               <div className="flex items-baseline justify-between gap-2">
-                <div className="text-[10px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Vibing</div>
+                <div className="text-[10px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Studio</div>
                 {(() => {
                   // Pick the runner the agent will hand the next task to:
                   // prefer one explicitly marked active, else the default,

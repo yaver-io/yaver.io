@@ -1459,7 +1459,7 @@ export default function RuntimeLabView({
       ]);
       // Visible confirmation, not just the log pane — an ack the user cannot
       // see is the "Save for machine" silence all over again (2026-07-27).
-      setRuntimeProjectNote(`★ Default target saved: ${target.id}${selectedProject?.name ? ` for ${selectedProject.name}` : " (machine-wide)"}. Vibing will auto-render when the default project is set too.`);
+      setRuntimeProjectNote(`★ Default target saved: ${target.id}${selectedProject?.name ? ` for ${selectedProject.name}` : " (machine-wide)"}. Studio will auto-render when the default project is set too.`);
       appendLog(`default target saved: ${target.id}${selectedProject?.name ? ` for ${selectedProject.name}` : ""}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -3550,123 +3550,111 @@ export default function RuntimeLabView({
     >
       <div className="min-h-0 min-w-0 space-y-3 overflow-y-auto">
         {!webPreviewPanelOpen ? (
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-[260px] flex-1">
-            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">Project</span>
-            <select
-              value={selectedPath}
-              onChange={(e) => { userSelectedProjectRef.current = true; setSelectedPath(e.target.value); setRuntimeProjectNote(null); setCaps(null); setSession(null); setWebPreviewPanelOpen(false); setRuntimeControlsOpen(false); setWebPreviewUrl(null); setWebPreviewNote(null); }}
-              className="h-10 w-full rounded-md border border-[#d7dce3] bg-white px-3 text-sm text-[#1f2933] dark:border-[#2a3039] dark:bg-[#161b22] dark:text-[#e6e8ec]"
+        <section
+          data-testid="studio-launch-flow"
+          className="grid gap-3 rounded-xl border border-[#d7dce3] bg-white p-3 shadow-sm dark:border-[#2a3039] dark:bg-[#161b22] lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)]"
+        >
+          <div className="min-w-0">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1f2933] text-xs font-bold text-white dark:bg-[#e6e8ec] dark:text-[#101318]">1</span>
+              <div>
+                <h2 className="text-sm font-bold text-[#1f2933] dark:text-[#e6e8ec]">Configure</h2>
+                <p className="text-xs text-[#667085] dark:text-[#9aa3af]">Choose the project and where AI work and previews run.</p>
+              </div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <label className="min-w-0">
+                <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">Project</span>
+                <select
+                  value={selectedPath}
+                  onChange={(e) => { userSelectedProjectRef.current = true; setSelectedPath(e.target.value); setRuntimeProjectNote(null); setCaps(null); setSession(null); setWebPreviewPanelOpen(false); setRuntimeControlsOpen(false); setWebPreviewUrl(null); setWebPreviewNote(null); }}
+                  className="h-10 w-full rounded-md border border-[#d7dce3] bg-white px-3 text-sm text-[#1f2933] dark:border-[#2a3039] dark:bg-[#101318] dark:text-[#e6e8ec]"
+                >
+                  {projects.length === 0 ? <option value="">No projects found</option> : null}
+                  {projects.map((p) => (
+                    <option key={p.path} value={p.path}>{p.name} · {p.framework || "unknown"}</option>
+                  ))}
+                </select>
+              </label>
+              {onSaveMachineRoles && roleEligibleDevices.length > 0 ? (
+                <label className="min-w-0">
+                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">AI machine</span>
+                  <select
+                    value={machineRoles?.runnerDeviceId || connectedDevice?.id || ""}
+                    disabled={machinesBusy || busy}
+                    onChange={(e) => { const next = e.target.value; if (next) void setRunnerMachine(next); }}
+                    title="Which machine runs the AI coding tasks"
+                    className="h-10 w-full rounded-md border border-[#d7dce3] bg-white px-2 text-xs text-[#1f2933] dark:border-[#2a3039] dark:bg-[#101318] dark:text-[#e6e8ec]"
+                  >
+                    {!machineRoles?.runnerDeviceId && !connectedDevice?.id ? <option value="">Pick a machine</option> : null}
+                    {roleEligibleDevices.map((device) => (
+                      <option key={device.id} value={device.id}>{desktopDeviceLabel(device, desktopSurface)}{device.online === false ? " (offline)" : ""}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {onSaveMachineRoles && roleEligibleDevices.length > 0 ? (
+                <label className="min-w-0">
+                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">Render machine</span>
+                  <select
+                    value={effectiveRenderDeviceId || ""}
+                    disabled={machinesBusy || busy}
+                    onChange={(e) => void setRenderDeviceAndReprobe(e.target.value)}
+                    title="Which machine boots simulators, emulators, and previews"
+                    className="h-10 w-full rounded-md border border-[#d7dce3] bg-white px-2 text-xs text-[#1f2933] dark:border-[#2a3039] dark:bg-[#101318] dark:text-[#e6e8ec]"
+                  >
+                    {!effectiveRenderDeviceId ? <option value="">Pick a machine</option> : null}
+                    {roleEligibleDevices.map((device) => (
+                      <option key={device.id} value={device.id}>{desktopDeviceLabel(device, desktopSurface)}{device.online === false ? " (offline)" : ""}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <button type="button" onClick={() => { setProjectStartError(null); setProjectStartOpen(true); }} className="font-semibold text-sky-700 hover:text-sky-600 dark:text-sky-300">
+                + New project
+              </button>
+              <button
+                type="button"
+                disabled={!connectedDevice?.id || !selectedProject || runtimeProjectSaving || selectedProjectIsSavedDefault}
+                onClick={() => void saveRuntimeProjectDefault()}
+                className="font-semibold text-[#667085] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#9aa3af]"
+              >
+                {runtimeProjectSaving ? "Saving…" : selectedProjectIsSavedDefault ? "✓ Default project" : "Save as default"}
+              </button>
+              {renderPickNote ? <span className="text-rose-600 dark:text-rose-300">{renderPickNote}</span> : null}
+              {runnerMachineNote ? <span className={runnerMachineNote.tone === "ok" ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}>{runnerMachineNote.text}</span> : null}
+              {runtimeProjectNote ? <span className="text-[#667085] dark:text-[#9aa3af]">{runtimeProjectNote}</span> : null}
+            </div>
+          </div>
+          <div className="flex min-w-0 flex-col border-t border-[#e4e7ec] pt-3 dark:border-[#2a3039] lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${selectedProject && effectiveRenderDeviceId ? "bg-[#7c5cff] text-white" : "bg-[#eef1f5] text-[#98a2b3] dark:bg-[#242b35]"}`}>2</span>
+              <div>
+                <h2 className="text-sm font-bold text-[#1f2933] dark:text-[#e6e8ec]">Launch</h2>
+                <p className="text-xs text-[#667085] dark:text-[#9aa3af]">Open the configured project in Studio.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={!selectedProject || !connectedDevice?.id || !effectiveRenderDeviceId || webPreviewBusy}
+              onClick={() => void openWebUI()}
+              className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-[#7c5cff] px-4 text-sm font-bold text-white hover:bg-[#6a4ae6] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {projects.map((p) => (
-                <option key={p.path} value={p.path}>{p.name} · {p.framework || "unknown"}</option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() => { setProjectStartError(null); setProjectStartOpen(true); }}
-            className="inline-flex h-10 shrink-0 items-center rounded-md bg-[#075985] px-3 text-xs font-semibold text-white hover:bg-[#0c6f9f]"
-          >
-            Start a project
-          </button>
-          {/* h-10 matches the select's height exactly; shrink-0 keeps the
-              button from compressing below it when the row wraps tight. */}
-          <button
-            disabled={!selectedProject || busy}
-            onClick={() => void loadCapabilities()}
-            className="inline-flex h-10 shrink-0 items-center rounded-md bg-[#1f2933] px-3 text-xs font-semibold text-white disabled:opacity-40"
-          >
-            {busy ? "Loading targets..." : "Load Targets"}
-          </button>
-          {/* Plug-and-play primary action (2026-09-29 UX audit). Starting the
-              browser lane used to require "Load Targets" and then finding an
-              "Open" card inside the Targets panel — which is not even rendered
-              until targets load, so the left preview pane stayed empty and the
-              user saw only chrome + error banners. Selecting a project + render
-              machine is already the explicit intent, so the lane opens from a
-              single visible button on the same row. */}
-          <button
-            type="button"
-            disabled={!selectedProject || !connectedDevice?.id || webPreviewBusy}
-            onClick={() => void openWebUI()}
-            title="Open the browser lane preview for the selected project on the render machine"
-            className="inline-flex h-10 shrink-0 items-center rounded-md bg-[#7c5cff] px-3 text-xs font-semibold text-white hover:bg-[#6a4ae6] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {webPreviewBusy ? "Opening preview…" : "Open preview"}
-          </button>
-          <button
-            type="button"
-            disabled={!connectedDevice?.id || !selectedProject || runtimeProjectSaving || selectedProjectIsSavedDefault}
-            onClick={() => void saveRuntimeProjectDefault()}
-            className="inline-flex h-10 shrink-0 items-center rounded-md border border-[#d7dce3] bg-white px-3 text-xs font-semibold text-[#475467] disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#2a3039] dark:bg-[#161b22] dark:text-[#d7dce3]"
-            title="Save this project as the default runtime target for this machine"
-          >
-            {runtimeProjectSaving ? "Saving..." : selectedProjectIsSavedDefault ? "Default" : "Save default"}
-          </button>
-          {/* AI-machine picker, on the same Load Targets row as Render —
-              the runner box that executes coding tasks. Mirrors the render
-              picker: saves the account-favorite role + re-routes in one
-              shot. Added 2026-08-12 (user directive: "next to render machine
-              make AI machine too as option"); reuses setRunnerMachine so the
-              two pickers can't drift. */}
-          {onSaveMachineRoles && roleEligibleDevices.length > 0 ? (
-            <label className="shrink-0">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">AI machine</span>
-              <select
-                value={machineRoles?.runnerDeviceId || connectedDevice?.id || ""}
-                disabled={machinesBusy || busy}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next) void setRunnerMachine(next);
-                }}
-                title="Which machine runs the AI coding tasks — chat streams from this box"
-                className="h-10 rounded-md border border-[#d7dce3] bg-white px-2 text-xs text-[#1f2933] dark:border-[#2a3039] dark:bg-[#161b22] dark:text-[#e6e8ec]"
-              >
-                {!machineRoles?.runnerDeviceId ? <option value="">— pick a machine —</option> : null}
-                {roleEligibleDevices.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {desktopDeviceLabel(device, desktopSurface)}{device.online === false ? " (offline)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {/* Render-machine picker, ON the row that probes it. The Route
-              editor in the chat aside also sets this, but the box a probe is
-              about to hit must be visible and changeable where the probe is
-              launched — not two panes away. */}
-          {onSaveMachineRoles && roleEligibleDevices.length > 0 ? (
-            <label className="shrink-0">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">Render machine</span>
-              <select
-                value={effectiveRenderDeviceId || ""}
-                disabled={machinesBusy || busy}
-                onChange={(e) => void setRenderDeviceAndReprobe(e.target.value)}
-                title="Which machine boots simulators, emulators, and previews — Load Targets probes this box"
-                className="h-10 rounded-md border border-[#d7dce3] bg-white px-2 text-xs text-[#1f2933] dark:border-[#2a3039] dark:bg-[#161b22] dark:text-[#e6e8ec]"
-              >
-                {!effectiveRenderDeviceId ? <option value="">— pick a machine —</option> : null}
-                {roleEligibleDevices.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {desktopDeviceLabel(device, desktopSurface)}{device.online === false ? " (offline)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {renderPickNote ? (
-            <span className="inline-flex h-10 items-center text-xs text-rose-600 dark:text-rose-300">{renderPickNote}</span>
-          ) : null}
-          {runnerMachineNote ? (
-            <span className={`inline-flex h-10 items-center text-xs ${runnerMachineNote.tone === "ok" ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}`}>
-              {runnerMachineNote.text}
-            </span>
-          ) : null}
-          {runtimeProjectNote ? (
-            <span className="inline-flex h-10 min-w-[160px] items-center text-xs text-[#667085] dark:text-[#9aa3af]">{runtimeProjectNote}</span>
-          ) : null}
-        </div>
+              {webPreviewBusy ? "Launching Studio…" : "Launch Studio"}
+            </button>
+            <button
+              type="button"
+              disabled={!selectedProject || busy}
+              onClick={() => void loadCapabilities()}
+              className="mt-2 text-xs font-semibold text-[#667085] hover:text-[#344054] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#9aa3af] dark:hover:text-[#d7dce3]"
+            >
+              {busy ? "Checking targets…" : "Choose another target"}
+            </button>
+            {!selectedProject ? <p className="mt-2 text-center text-[11px] text-amber-700 dark:text-amber-300">Complete configuration first.</p> : null}
+          </div>
+        </section>
         ) : null}
 
         {error ? (
@@ -3870,7 +3858,7 @@ export default function RuntimeLabView({
                         title={
                           savedRuntimeTargetFor(connectedDevice?.id, selectedProject?.name)?.targetId === target.id
                             ? "Default target for this project on this machine"
-                            : "Set as default target — with a default project, Vibing renders automatically"
+                            : "Set as default target — with a default project, Studio renders automatically"
                         }
                         aria-label={`Set ${target.label} as the default target`}
                         className={`shrink-0 rounded-md px-1.5 py-1.5 text-sm ${
@@ -5199,7 +5187,7 @@ export default function RuntimeLabView({
         </div>
         <div className="hidden rounded-md border border-[#d7dce3] bg-white p-3 dark:border-[#2a3039] dark:bg-[#161b22]">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">Vibing</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-[#5d6673] dark:text-[#9aa3af]">Studio</div>
             <button
               type="button"
               onClick={() => setVibingSettingsOpen((open) => !open)}

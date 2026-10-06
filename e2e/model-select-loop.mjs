@@ -66,9 +66,9 @@ try {
   await page.waitForURL(/\/(survey|dashboard)(?:$|\?)/, { timeout: 30_000 });
   if (page.url().includes('/survey')) await page.goto(`${APP}/dashboard`);
   await sleep(6000);
-  step('signs in', /Devices|Vibing/i.test(await page.evaluate(() => document.body.innerText)), ACCOUNT_HINT);
+  step('signs in', /Devices|Studio/i.test(await page.evaluate(() => document.body.innerText)), ACCOUNT_HINT);
 
-  await page.getByText(/^Vibing$/).first().click().catch(() => {});
+  await page.getByText(/^Studio$/).first().click().catch(() => {});
   await sleep(8000);
 
   // The model select lives behind "Edit" on the session header.

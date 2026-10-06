@@ -73,7 +73,7 @@ test.describe("webrtc stream closed loop", () => {
 
     // Vibing tab is the WebRTC owner. Unanchored: the nav button's accessible
     // name is "▣ Vibing" (icon + label), so ^Vibing$ never matches it.
-    const vibingTab = page.getByRole("button", { name: /Vibing|Runtime/ });
+    const vibingTab = page.getByRole("button", { name: /Studio|Runtime/ });
     const vcount = await vibingTab.count();
     let opened = false;
     for (let i = 0; i < vcount; i++) {
@@ -118,11 +118,9 @@ test.describe("webrtc stream closed loop", () => {
     }
     await shot("project-picked");
 
-    // Load capabilities, then start the requested target.
-    // The button is literally "Load Targets" — /capabilit/i matched the helper
-    // paragraph, never the control, so the click never happened and the log never
-    // got its targets line. Read from the live DOM, not from what the code calls it.
-    const loadBtn = page.getByRole("button", { name: /load targets|capabilit/i }).first();
+    // Open the secondary target picker, then start the requested target.
+    // Read from the live DOM, not from what the code calls the capability probe.
+    const loadBtn = page.getByRole("button", { name: /choose another target/i }).first();
     if (await loadBtn.isVisible().catch(() => false)) {
       await loadBtn.click();
     }
@@ -138,7 +136,7 @@ test.describe("webrtc stream closed loop", () => {
     // showing "Load targets to boot …" and then pass on unrelated page text.
     await expect(
       page.getByRole("button", { name: /simulator|emulator|browser-window/i }).first(),
-      "Load Targets produced no target buttons",
+      "Choose another target produced no target buttons",
     ).toBeVisible({ timeout: 120_000 });
 
     const targetBtn = page

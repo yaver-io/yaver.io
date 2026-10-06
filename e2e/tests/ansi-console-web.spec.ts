@@ -80,7 +80,7 @@ test.describe("ansi console chat rendering (web)", () => {
   test("opencode task output paints console colours in the chat (orange banner, green $ prompt)", async ({ page }) => {
     await signIn(page);
 
-    await expect(page.getByText(/^(Vibing|Devices)$/).first(),
+    await expect(page.getByText(/^(Studio|Devices)$/).first(),
       "dashboard must render signed-in chrome").toBeVisible({ timeout: 60_000 });
 
     const composer = page.locator("textarea[placeholder*='Describe the task']").first();

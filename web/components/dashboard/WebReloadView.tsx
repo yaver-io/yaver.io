@@ -1953,7 +1953,7 @@ export function WebReloadView({
               title={vibingExpanded ? "Collapse" : "Expand"}
             >
               <span className="flex items-center gap-2">
-                <span>Vibing</span>
+                <span>Studio</span>
                 {activeTaskStream ? (
                   <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 text-[9px] normal-case tracking-[0.16em] text-surface-300">
                     {activeTaskStream.status}

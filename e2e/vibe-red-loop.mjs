@@ -171,10 +171,10 @@ try {
   step('AUTH — signed in', true, ACCOUNT);
 
   // ── Vibing ────────────────────────────────────────────────────────────────
-  await page.getByText(/^Vibing$/).first().click().catch(() => {});
+  await page.getByText(/^Studio$/).first().click().catch(() => {});
   await sleep(8000);
   let body = await page.evaluate(() => document.body.innerText);
-  step('OPEN Vibing', /Vibing|RUNNER|Load Targets/i.test(body));
+  step('OPEN Studio', /Studio|RUNNER|Configure/i.test(body));
 
   // ── the box must both run AND render ─────────────────────────────────────
   const bothRoles = new RegExp(`${BOX}[^\\n]*runs and renders`, 'i').test(body)

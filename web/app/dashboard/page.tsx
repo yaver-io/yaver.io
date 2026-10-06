@@ -3606,7 +3606,7 @@ export default function DashboardPage() {
     { id: "chat", label: "Chat" },
     { id: "projects", label: "Projects" },
     { id: "git", label: "Source" },
-    { id: "runtime", label: "Vibing" },
+    { id: "runtime", label: "Studio" },
     { id: "downloads", label: "Downloads" },
   ] as { id: typeof activeTab; label: string; badge?: number }[]).filter(
     (t) =>
@@ -3673,7 +3673,7 @@ export default function DashboardPage() {
 	              { id: "devices",  label: "Devices" },
 	              { id: "chat",     label: "Chat" },
 	              { id: "projects", label: "Projects" },
-	              { id: "runtime", label: "Vibing" },
+	              { id: "runtime", label: "Studio" },
 	              { id: "downloads", label: "Downloads" },
 	            ] as const).map((it) => (
               <button
@@ -3709,11 +3709,11 @@ export default function DashboardPage() {
                 <button
                   onClick={() => setSidebarVibingOpen((open) => !open)}
                   className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500 hover:text-surface-300"
-                  title={sidebarVibingOpen ? "Fold the Vibing list" : "Unfold the Vibing list"}
+                  title={sidebarVibingOpen ? "Fold the Studio list" : "Unfold the Studio list"}
                   aria-expanded={sidebarVibingOpen}
                 >
                   <span aria-hidden className="inline-block w-2 text-[9px]">{sidebarVibingOpen ? "▾" : "▸"}</span>
-                  Vibing
+                  Studio
                   <span className="rounded-full bg-surface-800 px-1.5 text-[9px] normal-case tracking-normal text-surface-400">
                     {sidebarTmuxSeats.length + sidebarConvexRows.filter((r) => r.status === "open").length}
                   </span>
@@ -3721,7 +3721,7 @@ export default function DashboardPage() {
                 <button
                   onClick={() => setActiveTab("runtime")}
                   className="text-[10px] text-surface-500 hover:text-surface-300"
-                  title="Open the Vibing tab"
+                  title="Open Studio"
                 >
                   see all &rarr;
                 </button>
@@ -3779,7 +3779,7 @@ export default function DashboardPage() {
                   </div>
                 )) : null}
                 {isConnected && sidebarTmuxSeats.length > 6 ? (
-                  <p className="px-2 text-[9px] text-surface-500">+{sidebarTmuxSeats.length - 6} more in Vibing</p>
+                  <p className="px-2 text-[9px] text-surface-500">+{sidebarTmuxSeats.length - 6} more in Studio</p>
                 ) : null}
                 {/* Cross-device ledger rows: other machines + closed seats.
                     Muted vs the connected box's live sessions; attach only
@@ -3855,7 +3855,7 @@ export default function DashboardPage() {
             {machineRoles.favorite?.runnerDeviceId && machineRoles.favorite?.renderDeviceId && machineRoles.favorite.renderDeviceId !== machineRoles.favorite.runnerDeviceId ? (
               <button
                 onClick={() => setActiveTab("runtime")}
-                title="Machine roles — AI tasks and rendering run on different boxes. Click to open Vibing."
+                title="Machine roles — AI tasks and rendering run on different boxes. Click to open Studio."
                 className="mb-1.5 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-3 py-2 text-left shadow-sm hover:border-indigo-500/50"
               >
                 {(["runner", "render"] as const).map((role) => {

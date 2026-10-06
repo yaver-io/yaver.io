@@ -79,7 +79,7 @@ try {
   await sleep(6000);
 
   let body = await text();
-  const signedIn = /Devices|Vibing|Projects/i.test(body) && !/Continue with Email/i.test(body);
+  const signedIn = /Devices|Studio|Projects/i.test(body) && !/Continue with Email/i.test(body);
   step('signs in with email + password', signedIn, ACCOUNT_HINT);
   if (!signedIn) throw new Error('sign-in did not complete');
 
@@ -108,7 +108,7 @@ try {
     claimsAlive ? (namesCause ? 'cause stated' : 'SILENT — no cause given') : 'n/a');
 
   // ── Vibing must agree with Devices about the same machine ────────────────
-  await page.getByText(/^Vibing$/).first().click().catch(() => {});
+  await page.getByText(/^Studio$/).first().click().catch(() => {});
   await sleep(6000);
   const vibing = await text();
 

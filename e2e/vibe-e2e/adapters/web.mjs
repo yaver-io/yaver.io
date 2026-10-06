@@ -54,9 +54,9 @@ export function makeWebAdapter(driver, framesDir) {
         await driver.executeScript("arguments[0].click()", submit);
       } catch { await pwIn.sendKeys(Key.RETURN); }
       // Land on the dashboard.
-      await driver.wait(until.elementLocated(By.xpath("//*[contains(text(),'Devices') or contains(text(),'Vibing')]")), 45000);
+      await driver.wait(until.elementLocated(By.xpath("//*[contains(text(),'Devices') or contains(text(),'Studio')]")), 45000);
       await driver.get(APP + "/dashboard");
-      await driver.wait(until.elementLocated(By.xpath("//*[contains(text(),'Devices') or contains(text(),'Vibing')]")), 30000);
+      await driver.wait(until.elementLocated(By.xpath("//*[contains(text(),'Devices') or contains(text(),'Studio')]")), 30000);
       await snap("dashboard");
     },
 
@@ -90,9 +90,9 @@ export function makeWebAdapter(driver, framesDir) {
     },
 
     async openVibing() {
-      // The left-nav "Vibing" item (exact case; "VIBING 4" is a section header).
+      // The left-nav Studio item (exact case; the session list may share the label).
       const nav = await driver.wait(until.elementLocated(
-        By.xpath("//nav//*[normalize-space(text())='Vibing'] | //a[normalize-space(.)='Vibing'] | //*[self::button or @role='button'][normalize-space(.)='Vibing']"),
+        By.xpath("//nav//*[normalize-space(text())='Studio'] | //a[normalize-space(.)='Studio'] | //*[self::button or @role='button'][normalize-space(.)='Studio']"),
       ), 20000);
       await driver.executeScript("arguments[0].click()", nav);
       // Confirm we actually landed on Vibing: its composer / reload controls appear.

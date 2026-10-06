@@ -65,7 +65,7 @@ try {
   // because its check was a negation that is trivially true on a page
   // containing neither string. A false pass in the harness itself, which is the
   // exact failure this suite exists to catch.
-  step('dashboard loads', /Sign in to continue|Continue with|Devices|Projects|Vibing/i.test(txt), txt.slice(0, 70));
+  step('dashboard loads', /Sign in to continue|Continue with|Devices|Projects|Studio/i.test(txt), txt.slice(0, 70));
 
   const gate = page.getByRole('button', { name: /^sign in$/i }).first();
   if (await gate.isVisible().catch(() => false)) {
@@ -90,14 +90,14 @@ try {
     for (let i = 0; i < 16; i++) {
       await sleep(4000);
       txt = await body();
-      if (/Devices|Projects|Vibing|Chat/i.test(txt)) break;
+      if (/Devices|Projects|Studio|Chat/i.test(txt)) break;
     }
   } else {
     txt = await body();
   }
   // POSITIVE assertion. "the login strings are absent" was satisfied by a page
   // that had never shown them; reaching the app is the only honest proof.
-  step('sign in', /Devices|Projects|Vibing|Chat/i.test(txt), EMAIL);
+  step('sign in', /Devices|Projects|Studio|Chat/i.test(txt), EMAIL);
 
   // The device must be VISIBLE before connecting — "not listed" and "listed but
   // unreachable" are different failures and the report should say which.

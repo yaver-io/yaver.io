@@ -77,7 +77,7 @@ export function MachineRolesCard({
       setNote(
         runnerId === (renderId || runnerId)
           ? `Saved: ${runnerName} runs tasks and renders (single-box).`
-          : `Saved: ${runnerName} runs the AI tasks · ${renderName} builds and renders. Vibing chat will stream from the runner, previews from the renderer.`,
+          : `Saved: ${runnerName} runs the AI tasks · ${renderName} builds and renders. Studio chat will stream from the runner, previews from the renderer.`,
       );
     } catch (err) {
       setNote(`Could not save: ${err instanceof Error ? err.message : String(err)}`);
