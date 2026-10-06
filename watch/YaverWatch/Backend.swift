@@ -17,9 +17,26 @@ enum Backend {
     // Public Convex deployment origin. Mirrors mobile/src/_core/constants.ts
     // CONVEX_SITE_URL — not a secret (it's the public backend host); bump here
     // and in the mobile/tvOS constants together if the deployment ever moves.
-    static let convexSiteURL = URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
-    static let webBaseURL = URL(string: "https://yaver.io")!
+    static let privateVPSKey = "yaver.privateVpsUrl"
+    static var convexSiteURL: URL {
+        if let raw = UserDefaults.standard.string(forKey: privateVPSKey),
+           let url = normalizedPrivateVPSURL(raw) { return url }
+        return URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
+    }
+    static var webBaseURL: URL {
+        if let raw = UserDefaults.standard.string(forKey: privateVPSKey),
+           let url = normalizedPrivateVPSURL(raw) { return url }
+        return URL(string: "https://yaver.io")!
+    }
     static let agentPort = 18080
+
+    static func normalizedPrivateVPSURL(_ raw: String) -> URL? {
+        guard var parts = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              parts.scheme == "https", parts.host != nil,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil else { return nil }
+        while parts.path.count > 1 && parts.path.hasSuffix("/") { parts.path.removeLast() }
+        return parts.url
+    }
 }
 
 /// Surface-scoped appearance for standalone mode. Paired mode routes through

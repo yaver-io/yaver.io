@@ -7,6 +7,95 @@ import { startAuthentication, startRegistration, browserSupportsWebAuthn } from 
 import { CONVEX_URL } from "@/lib/constants";
 import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
+import {
+  normalizePrivateVpsUrl,
+  privateVpsUrlFromQr,
+  PRIVATE_VPS_STORAGE_KEY,
+  storedPrivateVpsUrl,
+} from "@/lib/privateVps";
+
+function PrivateVpsBeforeAuth() {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [active, setActive] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const value = storedPrivateVpsUrl();
+    setActive(value);
+    setDraft(value || "");
+  }, []);
+
+  const save = (value: string | null) => {
+    if (value) localStorage.setItem(PRIVATE_VPS_STORAGE_KEY, value);
+    else localStorage.removeItem(PRIVATE_VPS_STORAGE_KEY);
+    // CONVEX_URL is intentionally process-stable. Reloading prevents one auth
+    // attempt from mixing hosted and private requests.
+    window.location.reload();
+  };
+
+  const scanImage = async (file?: File) => {
+    if (!file) return;
+    setMessage(null);
+    try {
+      const Detector = (globalThis as unknown as { BarcodeDetector?: new (options: { formats: string[] }) => { detect(source: ImageBitmap): Promise<Array<{ rawValue?: string }>> } }).BarcodeDetector;
+      if (!Detector) throw new Error("QR scanning isn't available in this browser. Enter the URL manually.");
+      const bitmap = await createImageBitmap(file);
+      const rows = await new Detector({ formats: ["qr_code"] }).detect(bitmap);
+      bitmap.close();
+      const parsed = privateVpsUrlFromQr(rows[0]?.rawValue || "");
+      if (!parsed) throw new Error("That image doesn't contain a valid private VPS URL.");
+      setDraft(parsed);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Couldn't scan that QR image.");
+    }
+  };
+
+  return (
+    <div className="mb-5 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 text-left" data-testid="private-vps-before-auth">
+      <button type="button" className="flex w-full items-center justify-between gap-3" onClick={() => setOpen((value) => !value)}>
+        <span>
+          <span className="block text-xs font-semibold uppercase tracking-wider text-violet-300">Server</span>
+          <span className="mt-1 block max-w-[280px] truncate text-xs text-surface-400">{active || "Yaver hosted"}</span>
+        </span>
+        <span className="text-sm text-surface-500" aria-hidden>{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="mt-3 border-t border-violet-500/20 pt-3">
+          <p className="text-xs leading-5 text-surface-400">
+            Choose the control plane before passkey, SSO, OAuth, or email sign-in. The URL stays in this browser; account passwords are never stored with it or sent through Yaver&apos;s Cloudflare worker.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <label className="cursor-pointer rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500">
+              Scan QR
+              <input className="sr-only" type="file" accept="image/*" capture="environment" onChange={(event) => void scanImage(event.target.files?.[0])} />
+            </label>
+            <input
+              aria-label="Private VPS URL before sign in"
+              type="url"
+              value={draft}
+              onChange={(event) => { setDraft(event.target.value); setMessage(null); }}
+              placeholder="https://vps.example.com"
+              className="min-w-0 flex-1 rounded-lg border border-surface-700 bg-surface-950 px-3 py-2 text-xs text-surface-100 placeholder-surface-600"
+            />
+          </div>
+          {message && <p role="alert" className="mt-2 text-xs text-red-400">{message}</p>}
+          <div className="mt-3 flex gap-3 text-xs font-semibold">
+            <button type="button" className="text-violet-300 disabled:opacity-40" disabled={!draft.trim()} onClick={() => {
+              const normalized = normalizePrivateVpsUrl(draft);
+              if (!normalized) { setMessage("Enter an HTTPS URL without credentials, query text, or a fragment."); return; }
+              save(normalized);
+            }}>Use this VPS</button>
+            {active && <button type="button" className="text-red-400" onClick={() => save(null)}>Use hosted</button>}
+          </div>
+          <p className="mt-2 text-[10px] leading-4 text-surface-600">
+            A self-hosted OAuth provider must be configured on that VPS. The browser goes directly to its OAuth route; Cloudflare does not proxy the password or private session.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Server error bodies for these endpoints are sometimes a short plain-text
 // message ("invalid challenge") and sometimes a full HTML 500 page or a JSON
@@ -377,7 +466,8 @@ function AuthContent() {
     if (returnUrl) {
       qs.set("return", returnUrl);
     }
-    window.location.href = `/api/auth/oauth/${provider}?${qs.toString()}`;
+    const privateBase = storedPrivateVpsUrl();
+    window.location.href = `${privateBase || ""}/api/auth/oauth/${provider}?${qs.toString()}`;
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -548,6 +638,8 @@ function AuthContent() {
             {displayError}
           </div>
         )}
+
+        <PrivateVpsBeforeAuth />
 
         <div className="space-y-3">
           {/* Passkey sign-in. Hidden when the browser doesn't support

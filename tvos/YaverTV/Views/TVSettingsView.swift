@@ -47,6 +47,29 @@ struct TVSettingsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     intro
 
+                    NavigationLink(destination: PrivateVPSSettingsView().environmentObject(store)) {
+                        HStack(spacing: 20) {
+                            Image(systemName: "server.rack")
+                                .font(.system(size: 26, weight: .semibold))
+                                .foregroundStyle(.blue)
+                                .frame(width: 48, height: 48)
+                                .background(Color.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Private VPS URL").font(.system(size: 22, weight: .semibold))
+                                Text(Backend.privateVPSURL?.absoluteString ?? "Yaver hosted server")
+                                    .font(.system(size: 15)).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 30)
+                            Text("Open").font(.system(size: 17, weight: .semibold))
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 18)
+                        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings.private-vps")
+
                     settingRow(
                         icon: store.appearanceTheme == "light" ? "sun.max.fill" : "moon.fill",
                         title: "Appearance",
@@ -716,5 +739,62 @@ struct TVSettingsView: View {
         }
         mcpServers = (loadedMCPs ?? []).map(\.name).sorted()
         liveRunners = (loadedRunners?.runners ?? []).filter(\.installed)
+    }
+}
+
+private struct PrivateVPSSettingsView: View {
+    @EnvironmentObject private var store: YaverStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = Backend.privateVPSURL?.absoluteString ?? ""
+    @State private var error: String?
+    @State private var showScanner = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            Text("Private VPS URL").font(.largeTitle.bold())
+            Text("Use your own Yaver backend on this Apple TV. The address stays in local UserDefaults and is never synced to your account.")
+                .font(.title3).foregroundStyle(.secondary).frame(maxWidth: 900, alignment: .leading)
+            HStack(spacing: 16) {
+                Button("Scan QR") { showScanner = true }.buttonStyle(.borderedProminent)
+                TextField("https://vps.example.com", text: $draft)
+                    .textContentType(.URL)
+                    .frame(maxWidth: 700)
+            }
+            if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+            HStack(spacing: 16) {
+                Button("Use this VPS") { save() }.buttonStyle(.borderedProminent).disabled(draft.isEmpty)
+                if Backend.privateVPSURL != nil {
+                    Button("Use Yaver hosted server", role: .destructive) {
+                        store.signOutForServerSwitch()
+                        Backend.setPrivateVPSURL(nil)
+                        dismiss()
+                    }
+                }
+            }
+            Text("Switching servers signs out only this Apple TV. URLs containing credentials, query parameters, or fragments are rejected.")
+                .font(.callout).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(60)
+        .sheet(isPresented: $showScanner) {
+            ContinuityQRScannerView { value in
+                if let url = Backend.privateVPSURL(fromQRCode: value) {
+                    draft = url.absoluteString
+                    error = nil
+                } else {
+                    error = "That QR doesn't contain a valid private VPS URL."
+                }
+            }
+        }
+    }
+
+    private func save() {
+        guard let url = Backend.normalizedPrivateVPSURL(draft) else {
+            error = "Enter a valid HTTPS URL without credentials, query text, or a fragment."
+            return
+        }
+        store.signOutForServerSwitch()
+        Backend.setPrivateVPSURL(url)
+        dismiss()
     }
 }

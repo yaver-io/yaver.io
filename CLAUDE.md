@@ -823,6 +823,16 @@ narrower `dogfood_status` + `dogfood_rerender` pair.
 
 ## Connection strategy
 
+All settings surfaces put **Private VPS URL** first. This is a device-local
+control-plane override, stored beside other local client preferences rather
+than in Convex. It is applied before session restoration and changing it signs
+out that client so hosted and private credentials can never be mixed. QR
+payloads contain only the server locator; credentials in URLs are rejected.
+The same selector appears before OAuth on identity-capable clients. The hosted
+Cloudflare worker must never proxy private-VPS passwords or bearer sessions;
+OAuth navigates directly to the selected deployment, which owns its provider
+configuration and callback URLs. Private control-plane origins require HTTPS.
+
 Direct-first, relay-fallback, per surface:
 
 | Surface | Strategy |

@@ -26,6 +26,7 @@
 		45D15A16832BA03672354B1F /* CredentialHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9153BD847AA22692E65287D /* CredentialHandoff.swift */; };
 		61443E7517C16C82728D68E7 /* LanApprovalBeacon.swift in Sources */ = {isa = PBXBuildFile; fileRef = C772C9E727A828940D3C13D7 /* LanApprovalBeacon.swift */; };
 		666A5E815C7F1592A0FF7AE2 /* DeviceCodeDeliveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71087255383CB959DB30A9E6 /* DeviceCodeDeliveryTests.swift */; };
+		66A1678C44E2962307038D41 /* PrivateVPSURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 929E0B24C0426B8575B8C5D1 /* PrivateVPSURLTests.swift */; };
 		6ADE17F0073254B1F4424366 /* RemoteRuntimeWebRTCView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F656E1723EA3FA1FA0C7CE46 /* RemoteRuntimeWebRTCView.swift */; };
 		6EEAC350F5A3D4E89CE1C473 /* DroidStreamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFF6CEE51B6A221D57E35F68 /* DroidStreamView.swift */; };
 		7351B37AC97FDE7A222C71CE /* SharedStorageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590AC723F5A43AA267CECC84 /* SharedStorageView.swift */; };
@@ -130,6 +131,7 @@
 		8B47351433BB0B87175F60EA /* MachineRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineRegistry.swift; sourceTree = "<group>"; };
 		8FE9E4B8D55E6F9BE758452A /* TaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailView.swift; sourceTree = "<group>"; };
 		925084532D186202A5CA57D2 /* TVWebPreviewLoopTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVWebPreviewLoopTests.swift; sourceTree = "<group>"; };
+		929E0B24C0426B8575B8C5D1 /* PrivateVPSURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateVPSURLTests.swift; sourceTree = "<group>"; };
 		9383688971427E7DF15B2D1C /* FailureSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailureSignals.swift; sourceTree = "<group>"; };
 		9CA2AA1F3D8766737B9CC697 /* TVOverlayInputState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVOverlayInputState.swift; sourceTree = "<group>"; };
 		9FAE4341960BE9EA05DE082D /* UpdateAgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateAgentView.swift; sourceTree = "<group>"; };
@@ -317,6 +319,7 @@
 			children = (
 				15A2E3F6614B8AD75EEA4B08 /* CredentialHandoffInteropTests.swift */,
 				71087255383CB959DB30A9E6 /* DeviceCodeDeliveryTests.swift */,
+				929E0B24C0426B8575B8C5D1 /* PrivateVPSURLTests.swift */,
 				AEBBF88FEFA5E078BA41AB0E /* TaskRuntimePlanTests.swift */,
 				CEC220759259856D0FC5E298 /* TVOverlayInputStateTests.swift */,
 				F7A90CCD7A2DB0EC3FDA0EB3 /* TVTerminalBufferTests.swift */,
@@ -451,6 +454,7 @@
 			files = (
 				EC7C19BB4F488F251D7496A2 /* CredentialHandoffInteropTests.swift in Sources */,
 				666A5E815C7F1592A0FF7AE2 /* DeviceCodeDeliveryTests.swift in Sources */,
+				66A1678C44E2962307038D41 /* PrivateVPSURLTests.swift in Sources */,
 				B1D5377964FD0FB970A270BA /* TVOverlayInputStateTests.swift in Sources */,
 				14EAF6BAF9AED19B06B8BD51 /* TVTerminalBufferTests.swift in Sources */,
 				95EC8FC56B71667C9E11BE83 /* TaskRuntimePlanTests.swift in Sources */,

@@ -9,6 +9,8 @@
 import Foundation
 
 enum Backend {
+    static let privateVPSKey = "yaver.privateVpsUrl"
+    private static let hostedConvexSiteURL = URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
     // Public Convex deployment origin. Mirrors mobile/src/_core/constants.ts
     // CONVEX_SITE_URL — not a secret (it's the public backend host); bump here
     // and in the mobile constant together if the deployment ever moves.
@@ -18,7 +20,9 @@ enum Backend {
         // production HTTP path against a real loopback server. Apple TV users
         // cannot set process launch arguments. Compile the seam out of release
         // builds as well, so no persisted preference can ever redirect account
-        // credentials away from Yaver's public deployment.
+        // arbitrary launch arguments from becoming a release-build redirect.
+        // The user-controlled private VPS preference below is validated and
+        // intentionally supported in release builds.
         if let raw = UserDefaults.standard.string(forKey: "yaver.tv.backendURL"),
            let override = URL(string: raw),
            let scheme = override.scheme,
@@ -26,10 +30,49 @@ enum Backend {
             return override
         }
         #endif
-        return URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
+        if let raw = UserDefaults.standard.string(forKey: privateVPSKey),
+           let override = normalizedPrivateVPSURL(raw) {
+            return override
+        }
+        return hostedConvexSiteURL
     }
-    static let webBaseURL = URL(string: "https://yaver.io")!
+    static var webBaseURL: URL { privateVPSURL ?? URL(string: "https://yaver.io")! }
     static let agentPort = 18080
+
+    static var privateVPSURL: URL? {
+        guard let raw = UserDefaults.standard.string(forKey: privateVPSKey) else { return nil }
+        return normalizedPrivateVPSURL(raw)
+    }
+
+    static func normalizedPrivateVPSURL(_ raw: String) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var parts = URLComponents(string: value),
+              parts.scheme == "https",
+              parts.host != nil,
+              parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil else { return nil }
+        while parts.path.count > 1 && parts.path.hasSuffix("/") { parts.path.removeLast() }
+        return parts.url
+    }
+
+    static func privateVPSURL(fromQRCode raw: String) -> URL? {
+        if let direct = normalizedPrivateVPSURL(raw) { return direct }
+        if let parts = URLComponents(string: raw), parts.scheme == "yaver", parts.host == "private-vps",
+           let value = parts.queryItems?.first(where: { $0.name == "url" })?.value {
+            return normalizedPrivateVPSURL(value)
+        }
+        if let data = raw.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let value = (object["privateVpsUrl"] ?? object["url"]) as? String {
+            return normalizedPrivateVPSURL(value)
+        }
+        return nil
+    }
+
+    static func setPrivateVPSURL(_ url: URL?) {
+        if let url { UserDefaults.standard.set(url.absoluteString, forKey: privateVPSKey) }
+        else { UserDefaults.standard.removeObject(forKey: privateVPSKey) }
+    }
 
     /// This frontend's surface, sent as X-Yaver-Surface on every request so the
     /// agent can adapt per surface (tv vs watch vs car vs vision). See the Go

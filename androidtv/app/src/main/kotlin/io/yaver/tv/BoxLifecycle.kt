@@ -193,7 +193,7 @@ class BoxLifecycle(private val scope: CoroutineScope) {
         withContext(Dispatchers.IO) {
             val body = JSONObject().put("machineId", machineId).toString()
             val request = Request.Builder()
-                .url("$CONVEX_ORIGIN/billing/yaver-cloud/start")
+                .url("${Backend.origin}/billing/yaver-cloud/start")
                 .header("Authorization", "Bearer $token")
                 .header("X-Yaver-Surface", TV_SURFACE_ID)
                 .header("Content-Type", "application/json")

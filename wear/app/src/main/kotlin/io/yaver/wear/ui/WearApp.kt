@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +55,8 @@ fun WearApp(
     canRemoveDevice: Boolean,
     onRemoveDevice: () -> Unit,
     onAppearance: (String) -> Unit,
+    privateVpsUrl: String,
+    onPrivateVps: (String?) -> Unit,
 ) {
     val line by WatchState.line.collectAsState()
     val phase by WatchState.phase.collectAsState()
@@ -61,6 +64,7 @@ fun WearApp(
     val wakeStatus by BoxLifecycle.status.collectAsState()
     val appearanceTheme by WatchState.appearanceTheme.collectAsState()
     var confirmRemoval by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
     // Wall-clock bound on Phase.Working: the only prior exit was a later
     // phone→watch push, so a lost Data Layer message or a phone that died
@@ -120,6 +124,12 @@ fun WearApp(
                     onCancel = { confirmRemoval = false },
                 )
 
+                showSettings -> PrivateVpsSettingsScreen(
+                    initial = privateVpsUrl,
+                    onSave = { onPrivateVps(it); showSettings = false },
+                    onClose = { showSettings = false },
+                )
+
                 else -> MainScreen(
                     line = line,
                     phase = phase,
@@ -130,6 +140,7 @@ fun WearApp(
                     onRemoveDevice = { confirmRemoval = true },
                     appearanceTheme = appearanceTheme,
                     onAppearance = onAppearance,
+                    onSettings = { showSettings = true },
                 )
             }
         }
@@ -147,6 +158,7 @@ private fun MainScreen(
     onRemoveDevice: () -> Unit,
     appearanceTheme: String,
     onAppearance: (String) -> Unit,
+    onSettings: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -194,6 +206,11 @@ private fun MainScreen(
                         style = MaterialTheme.typography.caption2,
                     )
                 }
+                Chip(
+                    label = { Text("Private VPS URL") },
+                    onClick = onSettings,
+                    colors = ChipDefaults.secondaryChipColors(),
+                )
                 // Quick one-tap intents (the "complication" equivalents on-screen).
                 Spacer(modifier = Modifier.height(8.dp))
                 QuickIntentChip("Run tests", WatchProtocol.FixedIntent.RUN_TESTS, onIntent)
@@ -207,6 +224,42 @@ private fun MainScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PrivateVpsSettingsScreen(
+    initial: String,
+    onSave: (String?) -> Unit,
+    onClose: () -> Unit,
+) {
+    var draft by remember { mutableStateOf(initial) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Column(
+        modifier = Modifier.fillMaxSize().padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Private VPS URL", style = MaterialTheme.typography.title3)
+        BasicTextField(
+            value = draft,
+            onValueChange = { draft = it; error = null },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.caption1.copy(color = MaterialTheme.colors.onBackground),
+            modifier = Modifier.background(MaterialTheme.colors.surface).padding(6.dp),
+        )
+        if (error != null) Text(error!!, color = MaterialTheme.colors.error, style = MaterialTheme.typography.caption2)
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onClick = {
+                val normalized = io.yaver.wear.Backend.normalizePrivateVpsUrl(draft)
+                if (normalized == null) error = "Invalid URL" else onSave(normalized)
+            }) { Text("Save") }
+            Button(onClick = onClose) { Text("Back") }
+        }
+        if (initial.isNotEmpty()) {
+            Chip(label = { Text("Use Yaver hosted") }, onClick = { onSave(null) })
+        }
+        Text("Read the QR on your phone, then dictate the URL", style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center)
     }
 }
 

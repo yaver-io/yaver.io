@@ -27,6 +27,7 @@ object StandaloneStore {
     private const val KEY_RELAY_BASE_URL = "yaver.watch.relayBaseUrl"
     private const val KEY_RELAY_PASSWORD = "yaver.watch.relayPassword"
     private const val KEY_APPEARANCE = "yaver.watch.appearance"
+    private const val KEY_PRIVATE_VPS_URL = "yaver.privateVpsUrl"
 
     private fun prefs(ctx: Context): SharedPreferences {
         val app = ctx.applicationContext
@@ -91,6 +92,18 @@ object StandaloneStore {
     fun appearanceTheme(ctx: Context): String =
         if (prefs(ctx).getString(KEY_APPEARANCE, "dark") == "light") "light" else "dark"
 
+    fun privateVpsUrl(ctx: Context): String = prefs(ctx).getString(KEY_PRIVATE_VPS_URL, "") ?: ""
+
+    fun setPrivateVpsUrl(ctx: Context, value: String?): Boolean {
+        if (value == null) {
+            prefs(ctx).edit().remove(KEY_PRIVATE_VPS_URL).apply()
+            return true
+        }
+        val normalized = Backend.normalizePrivateVpsUrl(value) ?: return false
+        prefs(ctx).edit().putString(KEY_PRIVATE_VPS_URL, normalized).apply()
+        return true
+    }
+
     fun setAppearanceTheme(ctx: Context, theme: String) {
         prefs(ctx).edit().putString(KEY_APPEARANCE, if (theme == "light") "light" else "dark").apply()
     }
@@ -123,7 +136,10 @@ object StandaloneStore {
     /** Clear all standalone creds (sign out). */
     fun clear(ctx: Context) {
         val appearance = appearanceTheme(ctx)
-        prefs(ctx).edit().clear().putString(KEY_APPEARANCE, appearance).apply()
+        val privateVps = privateVpsUrl(ctx)
+        prefs(ctx).edit().clear().putString(KEY_APPEARANCE, appearance)
+            .apply { if (privateVps.isNotEmpty()) putString(KEY_PRIVATE_VPS_URL, privateVps) }
+            .apply()
     }
 
     /** True when standalone transport is viable: opted in + has token + has box URL. */

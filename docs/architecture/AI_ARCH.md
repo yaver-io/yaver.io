@@ -35,6 +35,36 @@ The intended product shape is:
 - at least one reachability path stays usable even if agent auth is stale
 - mobile app is the recovery tool, not SSH
 
+## Device-local private VPS selection
+
+Every client settings surface exposes **Private VPS URL** first. The value is
+device-local (`AsyncStorage`, browser `localStorage`, Apple `UserDefaults`, or
+Android `SharedPreferences`) and is never written to Convex. It replaces the
+control-plane origin before auth restoration, so auth, device registry,
+settings, and device-code calls all use one origin for the lifetime of the
+process. Changing or clearing it signs out only that client and requires a
+fresh sign-in against the newly selected server.
+
+Accepted QR payloads are a plain HTTPS URL,
+`yaver://private-vps?url=<encoded-url>`, or JSON with `privateVpsUrl`. Clients
+reject embedded credentials, query parameters, fragments, cleartext HTTP, and
+non-HTTPS schemes. QR payloads are locators only; tokens and passwords never
+belong in them. Mobile scans with its camera, web accepts a captured/uploaded QR image,
+and tvOS uses Continuity Camera. Camera-less watch, Wear, Android TV, and
+visionOS surfaces keep manual URL entry available locally.
+
+The selector is also available before identity UI on OAuth-capable clients.
+Account email/password remains the private deployment's normal `/auth/login`
+contract; it is not HTTP Basic authentication for the proxy. Native clients
+keep session credentials in their existing secure store and the browser keeps
+its existing origin-scoped session. The Yaver Cloudflare worker never receives,
+stores, or forwards a private VPS password. Browser OAuth navigates directly to
+the selected deployment's `/api/auth/oauth/*` route, so that deployment must
+configure its own provider credentials and exact callback URLs. Turning the
+hosted worker into an arbitrary authenticated upstream proxy is forbidden: it
+would create an SSRF/open-proxy seam, cross tenant boundaries, and violate the
+zero-knowledge gateway contract.
+
 ## Desktop Agent Lifecycle
 
 Primary entrypoint:

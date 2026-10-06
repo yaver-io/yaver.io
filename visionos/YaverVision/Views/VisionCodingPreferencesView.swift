@@ -16,6 +16,7 @@ struct VisionCodingPreferencesView: View {
     @State private var saving = false
     @State private var notice: String?
     @State private var error: String?
+    @State private var privateVPSDraft = Backend.privateVPSURL?.absoluteString ?? ""
 
     private var deviceId: String? { store.runnerBox()?.id }
 
@@ -71,6 +72,23 @@ struct VisionCodingPreferencesView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Private VPS URL") {
+                    TextField("https://vps.example.com", text: $privateVPSDraft)
+                        .textContentType(.URL)
+                    HStack {
+                        Button("Use this VPS") { savePrivateVPS() }.disabled(privateVPSDraft.isEmpty)
+                        if Backend.privateVPSURL != nil {
+                            Button("Use Yaver hosted", role: .destructive) {
+                                store.signOutForServerSwitch()
+                                Backend.setPrivateVPSURL(nil)
+                                privateVPSDraft = ""
+                            }
+                        }
+                    }
+                    Text("Local to this headset. Use your phone to read the VPS QR, then enter the URL here. Switching servers signs out this headset.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
                 Section {
                     if loading {
                         ProgressView("Reading this machine…")
@@ -157,6 +175,17 @@ struct VisionCodingPreferencesView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func savePrivateVPS() {
+        guard let url = Backend.normalizedPrivateVPSURL(privateVPSDraft) else {
+            error = "Enter a valid HTTPS URL without credentials, query text, or a fragment."
+            return
+        }
+        store.signOutForServerSwitch()
+        Backend.setPrivateVPSURL(url)
+        privateVPSDraft = url.absoluteString
+        notice = "Private VPS saved — sign in again"
     }
 
     private func chooseRunner(_ runner: AgentRunnerSummary) async {

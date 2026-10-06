@@ -15,9 +15,22 @@ import { parsePairUrl } from "../lib/pairDevice";
 interface Props {
   onScanned: (pairUrl: string) => void;
   onClose: () => void;
+  accept?: (value: string) => boolean;
+  title?: string;
+  instruction?: string;
+  invalidHint?: string;
+  manualLabel?: string;
 }
 
-export default function PairQrScanner({ onScanned, onClose }: Props) {
+export default function PairQrScanner({
+  onScanned,
+  onClose,
+  accept = (value) => !!parsePairUrl(value),
+  title = "Scan the QR on your machine",
+  instruction = "Run yaver auth pair on the machine, then allow camera access to scan the QR it prints.",
+  invalidHint = "That isn't a Yaver pairing QR",
+  manualLabel = "Enter a code or link instead",
+}: Props) {
   const c = useColors();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanHint, setScanHint] = React.useState("Point at the QR shown by yaver auth pair");
@@ -27,14 +40,14 @@ export default function PairQrScanner({ onScanned, onClose }: Props) {
     (result: BarcodeScanningResult) => {
       if (handledRef.current) return;
       const raw = (result?.data ?? "").trim();
-      if (!parsePairUrl(raw)) {
-        setScanHint("That isn't a Yaver pairing QR");
+      if (!accept(raw)) {
+        setScanHint(invalidHint);
         return;
       }
       handledRef.current = true;
       onScanned(raw);
     },
-    [onScanned],
+    [accept, invalidHint, onScanned],
   );
 
   if (!permission) {
@@ -48,8 +61,8 @@ export default function PairQrScanner({ onScanned, onClose }: Props) {
   if (!permission.granted) {
     return (
       <View style={[styles.fill, styles.center, { backgroundColor: c.bg, padding: 32 }]}>
-        <Text style={[styles.title, { color: c.textPrimary }]}>Scan the QR on your machine</Text>
-        <Text style={[styles.body, { color: c.textSecondary }]}>Run yaver auth pair on the machine, then allow camera access to scan the QR it prints.</Text>
+        <Text style={[styles.title, { color: c.textPrimary }]}>{title}</Text>
+        <Text style={[styles.body, { color: c.textSecondary }]}>{instruction}</Text>
         <Pressable
           onPress={() => void (permission.canAskAgain ? requestPermission() : Linking.openSettings())}
           style={({ pressed }) => [styles.primaryBtn, { backgroundColor: c.accent }, pressed && { opacity: 0.85 }]}
@@ -57,7 +70,7 @@ export default function PairQrScanner({ onScanned, onClose }: Props) {
           <Text style={styles.primaryBtnText}>{permission.canAskAgain ? "Allow camera" : "Open phone settings"}</Text>
         </Pressable>
         <Pressable onPress={onClose} style={({ pressed }) => [styles.linkBtn, pressed && { opacity: 0.6 }]}>
-          <Text style={[styles.linkText, { color: c.textSecondary }]}>Enter a code or link instead</Text>
+          <Text style={[styles.linkText, { color: c.textSecondary }]}>{manualLabel}</Text>
         </Pressable>
       </View>
     );
