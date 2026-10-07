@@ -18,7 +18,7 @@ export default function PlainVoice(){
  const cancelled=()=>!alive.current||stopped.current;
  const speak=(text:string)=>new Promise<void>(resolve=>{if(cancelled()){resolve();return;}state("speaking");Speech.speak(text,{onDone:resolve,onStopped:resolve,onError:()=>resolve()});});
  const listen=async(ms:number)=>{
-  state("listening");const rec=await startRealtimeTranscribe(()=>{});if(cancelled()){await rec.stop();return "";}recording.current=rec;
+  state("listening");const rec=await startRealtimeTranscribe(()=>{},{keepRecordingInBackground:true,sliceSec:1});if(cancelled()){await rec.stop();return "";}recording.current=rec;
   await new Promise(resolve=>setTimeout(resolve,ms));if(cancelled())return "";
   recording.current=null;const text=(await rec.stop()).trim();await prepareNonInterruptingPlaybackAudioMode();return text;
  };
@@ -44,7 +44,7 @@ export default function PlainVoice(){
     setStatus("Latest pane output");await speak(output?"Latest pane output. "+output:"No new readable output yet. Say read pane to check again.");
    }
   }catch(error){if(!cancelled()){const message=error instanceof Error?error.message:"SSH failed. Check the connection on your phone.";setStatus(message);await speak(message);}}
-  finally{running.current=false;await prepareNonInterruptingPlaybackAudioMode();if(alive.current){state("ready");setBusy(false);}}
+  finally{running.current=false;await prepareNonInterruptingPlaybackAudioMode().catch(()=>{});if(alive.current){state("ready");setBusy(false);}}
  };
  useEffect(()=>{alive.current=true;const unsubscribe=carVoiceEntryBus.subscribe(()=>void start());void start();return()=>{alive.current=false;stopped.current=true;unsubscribe();void recording.current?.stop().catch(()=>{});void Speech.stop();void prepareNonInterruptingPlaybackAudioMode();state("ready");};},[]);
  return <SafeAreaView style={{flex:1,backgroundColor:c.bg,padding:24}}>
