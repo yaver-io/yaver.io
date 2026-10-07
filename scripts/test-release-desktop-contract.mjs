@@ -33,4 +33,10 @@ assert.doesNotMatch(
   "macos-latest must not silently move the signed arm64 lane to an unproven image",
 );
 
+const helper = workflow.indexOf("run: node scripts/build-plain-ssh.mjs");
+assert.ok(helper >= 0, "CI must compile the native SSH helper before packaging");
+for (const platform of ["mac", "linux"]) {
+  assert.ok(helper < workflow.indexOf(`npx electron-builder --${platform}`),
+    `${platform} packaging must include the freshly built SSH helper`);
+}
 console.log("Desktop release contract passed.");

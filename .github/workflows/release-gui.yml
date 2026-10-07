@@ -106,6 +106,14 @@ jobs:
       - name: Install Linux packaging tools
         if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libopenjp2-tools rpm
+      - name: Setup Go for the native SSH helper
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mobile/native/plain-ssh/core/go.mod
+          cache-dependency-path: mobile/native/plain-ssh/core/go.sum
+      - name: Build native SSH helper
+        working-directory: electron
+        run: node scripts/build-plain-ssh.mjs
       - name: Download agent binary into the bundle
         if: ${{ !inputs.skip_agent_bundle }}
         working-directory: electron

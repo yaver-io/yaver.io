@@ -235,3 +235,13 @@ The background refresh path also captures the session before its network
 request. A delayed response cannot replace a different account signed in
 during that request; persistence failure is reported as failure, not renewed
 authentication. Tests reproduce the account switch inside the refresh call.
+
+Unshipped native mesh blockers verified in `mobile/native-mesh/ios`:
+`YaverMeshModule` selects the first NetworkExtension manager instead of matching
+its provider bundle ID, persists the substituted private key in provider
+configuration, ignores Keychain write results, and acknowledges startup before
+observing connectivity. Its reconfiguration path discards provider errors.
+These reference files must not be wired into any release unchanged. A native
+TV tunnel needs scoped manager ownership, extension-accessible Keychain storage,
+error propagation, a supported packet-tunnel build and an on-device handshake
+probe before it can honestly offer `up/down/status`.
