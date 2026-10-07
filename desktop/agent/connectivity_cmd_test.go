@@ -43,3 +43,21 @@ func TestConnectivityHelpDoesNotConnect(t *testing.T) {
 	runMeshDown([]string{"--help"})
 	runConnectivityStatus([]string{"--help"})
 }
+
+func TestConnectivityStatusUsesOverlayAddressAndMeasuredPath(t *testing.T) {
+	now := time.Unix(2000, 0)
+	text := connectivityStatusText(map[string]interface{}{
+		"selfName": "local", "selfOS": "linux",
+		"dataPlane": map[string]interface{}{"running": true, "selfIp": "100.96.0.1", "peers": []interface{}{
+			map[string]interface{}{"MeshIP": "100.96.0.2", "Name": "remote", "Owner": "owner", "OS": "linux", "Path": "relay", "Endpoint": "127.0.0.1:1234", "LastHandshakeUnix": float64(1999), "TxBytes": float64(10), "RxBytes": float64(20)},
+		}},
+	}, now)
+	rows := strings.Split(strings.TrimSpace(text), "\n")
+	fields := strings.Fields(rows[1])
+	if fields[0] != "100.96.0.2" || fields[1] != "remote" || fields[2] != "owner" || fields[3] != "linux" {
+		t.Fatal(text)
+	}
+	if !strings.Contains(text, "active; relay, tx 10 rx 20") || strings.Contains(text, "127.0.0.1") {
+		t.Fatal(text)
+	}
+}

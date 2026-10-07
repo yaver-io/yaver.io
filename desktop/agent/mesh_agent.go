@@ -21,6 +21,7 @@ type meshPeerRow struct {
 	DeviceID         string   `json:"deviceId"`
 	OwnerUserID      string   `json:"ownerUserId"`
 	Alias            string   `json:"alias"`
+	OS               string   `json:"os"`
 	WgPublicKey      string   `json:"wgPublicKey"`
 	MeshIPv4         string   `json:"meshIPv4"`
 	Endpoints        []string `json:"endpoints"`
@@ -86,7 +87,8 @@ func buildMeshPeerSource(deviceID string) mesh.PeerSource {
 			allowed := append([]string{r.MeshIPv4 + "/32"},
 				filterAdvertisedRoutes(r.AdvertisedRoutes, r.DeviceID, useExitNode)...)
 			peers = append(peers, mesh.Peer{
-				DeviceID:         r.DeviceID,
+				DeviceID: r.DeviceID,
+				Name:     r.Alias, Owner: r.OwnerUserID, OS: r.OS, MeshIP: r.MeshIPv4,
 				PublicKey:        r.WgPublicKey,
 				Endpoint:         endpoint,
 				AllowedIPs:       allowed,

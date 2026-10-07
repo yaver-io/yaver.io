@@ -15,6 +15,7 @@ import (
 
 // Peer is one WireGuard peer derived from a meshNodes row the caller can see.
 type Peer struct {
+	Name, Owner, OS, MeshIP string
 	// DeviceID identifies the peer for relay-as-DERP routing (empty for peers
 	// that are only ever reached directly).
 	DeviceID string
@@ -71,11 +72,12 @@ func (d *Device) SetPeers(peers []Peer) error {
 
 // PeerStat is a per-peer liveness snapshot parsed from the device's UAPI.
 type PeerStat struct {
-	PublicKeyHex      string
-	Endpoint          string
-	LastHandshakeUnix int64
-	RxBytes           int64
-	TxBytes           int64
+	Name, Owner, OS, MeshIP, Path string
+	PublicKeyHex                  string
+	Endpoint                      string
+	LastHandshakeUnix             int64
+	RxBytes                       int64
+	TxBytes                       int64
 }
 
 // Stats reads the device's current per-peer handshake/throughput counters.

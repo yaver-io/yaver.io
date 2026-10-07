@@ -94,6 +94,14 @@ func (m *DERPManager) EndpointFor(peerDeviceID string) (string, error) {
 	return p.loopback.String(), nil
 }
 
+// IsPeerEndpoint observes an existing shim without creating one.
+func (m *DERPManager) IsPeerEndpoint(deviceID, endpoint string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p := m.peers[deviceID]
+	return p != nil && p.loopback.String() == endpoint
+}
+
 // pumpOutbound reads WireGuard's packets for this peer off the loopback socket
 // and forwards them over the relay.
 func (m *DERPManager) pumpOutbound(p *derpPeer) {

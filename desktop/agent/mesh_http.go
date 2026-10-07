@@ -8,6 +8,8 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 )
 
@@ -153,7 +155,8 @@ func (s *HTTPServer) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, _ := LoadConfig()
-	out := map[string]interface{}{}
+	name, _ := os.Hostname()
+	out := map[string]interface{}{"selfName": name, "selfOS": runtime.GOOS}
 	if cfg != nil && cfg.Mesh != nil {
 		out["enabled"] = cfg.Mesh.Enabled
 		out["meshIPv4"] = cfg.Mesh.MeshIPv4

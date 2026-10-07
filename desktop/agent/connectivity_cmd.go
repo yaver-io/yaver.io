@@ -6,7 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+	"text/tabwriter"
 	"time"
+	"unicode"
 )
 
 // Connectivity is deliberately independent of runners and Studio readiness.
@@ -55,23 +58,43 @@ func connectivityStatusText(res map[string]interface{}, now time.Time) string {
 		}
 		return "Disconnected. Run `yaver up` to connect. Existing SSH and Tailscale connections are independent.\n"
 	}
-	ip, _ := dp["selfIp"].(string)
-	text := fmt.Sprintf("%s  self  connected\n", ip)
-	if reason, _ := dp["lastError"].(string); reason != "" {
-		text += "Status: " + reason + "\n"
+	var buf strings.Builder
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	field := func(row map[string]interface{}, key string) string {
+		v, _ := row[key].(string)
+		v = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, v)
+		return meshOrDash(strings.Join(strings.Fields(v), "-"))
 	}
+	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t-\n", field(dp, "selfIp"), field(res, "selfName"), "self", field(res, "selfOS"))
 	peers, _ := dp["peers"].([]interface{})
 	for _, raw := range peers {
 		peer, _ := raw.(map[string]interface{})
-		endpoint, _ := peer["Endpoint"].(string)
 		handshake, _ := peer["LastHandshakeUnix"].(float64)
-		state := "idle; no recent handshake"
+		state := "idle"
 		if age := now.Unix() - int64(handshake); handshake > 0 && age >= 0 && age <= 180 {
 			state = "active"
+			if path := field(peer, "Path"); path != "-" {
+				state += "; " + path
+				if path == "direct" {
+					state += " " + field(peer, "Endpoint")
+				}
+			}
 		}
-		text += fmt.Sprintf("%s  peer  %s\n", meshOrDash(endpoint), state)
+		tx, _ := peer["TxBytes"].(float64)
+		rx, _ := peer["RxBytes"].(float64)
+		state += fmt.Sprintf(", tx %.0f rx %.0f", tx, rx)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", field(peer, "MeshIP"), field(peer, "Name"), field(peer, "Owner"), field(peer, "OS"), state)
 	}
-	return text
+	_ = w.Flush()
+	if reason, _ := dp["lastError"].(string); reason != "" {
+		fmt.Fprintf(&buf, "\n# Health check:\n# %s\n", reason)
+	}
+	return buf.String()
 }
 
 func parseConnectivityCommand(command string, args []string) bool {

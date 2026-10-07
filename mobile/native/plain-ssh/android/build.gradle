@@ -3,7 +3,7 @@ apply plugin: 'com.android.library'
 android {
     namespace 'io.yaver.plainssh'
     compileSdk rootProject.ext.compileSdkVersion
-    defaultConfig { minSdkVersion 26 }
+    defaultConfig { minSdkVersion 24 }
 }
 
 dependencies {

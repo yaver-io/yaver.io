@@ -51,6 +51,7 @@ type Manager struct {
 	// after a direct-path grace period (H2). Cleared when the peer goes live or
 	// leaves. Accessed only under m.mu (applyPeers runs locked).
 	noHsSince map[string]time.Time
+	peerInfo  map[string]Peer
 }
 
 // SetRelayTransport enables the relay-as-DERP fallback: peers with no directly
@@ -79,15 +80,20 @@ const (
 	derpFalloverAfter = 20 * time.Second
 )
 
+type peerDevice interface {
+	Stats() ([]PeerStat, error)
+	SetPeers([]Peer) error
+}
+
 // applyPeers reconciles the desired peer set onto the device:
 //   - H1: endpoints WireGuard has roamed to are preserved (a peer that moved
 //     WiFi→cellular must not have its live endpoint clobbered by the reconcile).
 //   - H2: a non-live peer's direct endpoint gets derpFalloverAfter to produce a
 //     handshake; if it doesn't, the peer falls over to its DERP relay shim so
 //     symmetric-NAT pairs still connect.
-//   - M1: DERP shims for peers that went live or left are reclaimed, so the
+//   - M1: DERP shims for peers that went direct or left are reclaimed, so the
 //     per-peer loopback socket + goroutine don't leak on churn.
-func (m *Manager) applyPeers(dev *Device, peers []Peer) error {
+func (m *Manager) applyPeers(dev peerDevice, peers []Peer) error {
 	if m.noHsSince == nil {
 		m.noHsSince = map[string]time.Time{}
 	}
@@ -102,8 +108,12 @@ func (m *Manager) applyPeers(dev *Device, peers []Peer) error {
 		if err == nil {
 			seen[lhex] = true
 		}
-		if err == nil && live[lhex] {
-			// H1: live → WireGuard owns the endpoint (roaming). Blank the
+		if stat, ok := live[lhex]; err == nil && ok {
+			if m.derp != nil && m.derp.IsPeerEndpoint(peers[i].DeviceID, stat.Endpoint) {
+				derpKeep[peers[i].DeviceID] = true
+			}
+			// H1: live → WireGuard owns the endpoint (roaming). Preserve
+			// an active relay shim as well. Blank the
 			// control-plane endpoint so renderPeers omits it, and clear the
 			// fallover timer. Do NOT DERP this peer — it is reachable now.
 			peers[i].Endpoint = ""
@@ -151,24 +161,35 @@ func (m *Manager) applyPeers(dev *Device, peers []Peer) error {
 	if m.derp != nil {
 		m.derp.ReconcilePeers(derpKeep)
 	}
-	return dev.SetPeers(peers)
+	if err := dev.SetPeers(peers); err != nil {
+		return err
+	}
+	m.peerInfo = make(map[string]Peer, len(peers))
+	for _, p := range peers {
+		key, err := keyB64ToHex(p.PublicKey)
+		if err == nil {
+			m.peerInfo[strings.ToLower(key)] = p
+		}
+	}
+	return nil
 }
 
-// livePeerKeys returns the set of peer public keys (lowercase hex) that have a
+// livePeerKeys returns snapshots keyed by public key (lowercase hex) that have a
 // handshake within endpointRoamGrace — i.e. currently reachable on their live
 // endpoint. Best-effort: on any read error it returns an empty set (all peers
 // treated as needing a control-plane endpoint), which is the safe pre-H1
 // behavior.
-func (m *Manager) livePeerKeys(dev *Device) map[string]bool {
-	live := map[string]bool{}
+func (m *Manager) livePeerKeys(dev peerDevice) map[string]PeerStat {
+	live := map[string]PeerStat{}
 	stats, err := dev.Stats()
 	if err != nil {
 		return live
 	}
-	cutoff := time.Now().Add(-endpointRoamGrace).Unix()
+	now := time.Now()
+	cutoff := now.Add(-endpointRoamGrace).Unix()
 	for _, s := range stats {
-		if s.LastHandshakeUnix > 0 && s.LastHandshakeUnix >= cutoff {
-			live[strings.ToLower(s.PublicKeyHex)] = true
+		if s.LastHandshakeUnix > 0 && s.LastHandshakeUnix >= cutoff && s.LastHandshakeUnix <= now.Unix() {
+			live[strings.ToLower(s.PublicKeyHex)] = s
 		}
 	}
 	return live
@@ -398,6 +419,15 @@ func (m *Manager) Status() Status {
 	if m.dev != nil {
 		st.IfaceName = m.dev.Name()
 		if stats, err := m.dev.Stats(); err == nil {
+			for i := range stats {
+				p := m.peerInfo[strings.ToLower(stats[i].PublicKeyHex)]
+				stats[i].Name, stats[i].Owner, stats[i].OS, stats[i].MeshIP = p.Name, p.Owner, p.OS, p.MeshIP
+				if m.derp != nil && m.derp.IsPeerEndpoint(p.DeviceID, stats[i].Endpoint) {
+					stats[i].Path = "relay"
+				} else if stats[i].Endpoint != "" {
+					stats[i].Path = "direct"
+				}
+			}
 			st.Peers = stats
 		} else {
 			st.LastErr = "Tunnel statistics unavailable: " + err.Error()

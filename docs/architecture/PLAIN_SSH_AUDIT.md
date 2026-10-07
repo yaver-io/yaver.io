@@ -245,3 +245,20 @@ These reference files must not be wired into any release unchanged. A native
 TV tunnel needs scoped manager ownership, extension-accessible Keychain storage,
 error propagation, a supported packet-tunnel build and an on-device handshake
 probe before it can honestly offer `up/down/status`.
+
+The remaining Apple upload was accepted: macOS TestFlight build
+20261007232855. Its bundled SSH executable passed signature verification with
+App Sandbox inheritance. Windows publishing is blocked by the signing
+provider reporting no active SimplySign virtual-card slots.
+
+Mesh reconciliation now preserves a working relay shim when its WireGuard
+handshake is healthy, and retires that shim after a real direct-path roam.
+The regression sends an actual UDP frame through the retained shim; removing
+the preservation guard makes delivery fail. Mesh tests also pass under the race
+detector. The concise status table follows the column layout documented in
+[Tailscale CLI](https://tailscale.com/kb/1080/cli): overlay IP, name, owner, OS,
+connection state/path and byte counters. Missing metadata stays `-`; a relay's
+loopback transport endpoint never masquerades as a peer's overlay address.
+The native Android wrapper now retains the phone app's API 24 minimum; its
+compiled Go AAR already supports API 23. The real manifest merge caught the
+previous accidental API 26 requirement.
