@@ -1,11 +1,5 @@
 import { NextResponse } from "next/server";
 
-function getConvexSiteUrl(override?: unknown): string {
-  if (typeof override === "string" && override.trim()) {
-    return override.trim();
-  }
-  return process.env.CONVEX_SITE_URL || "";
-}
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -20,9 +14,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const convexSiteUrl = getConvexSiteUrl(body?.convexUrl);
+  const convexSiteUrl = process.env.CONVEX_SITE_URL || "";
   if (!convexSiteUrl) {
     return NextResponse.json({ error: "Auth backend is not configured." }, { status: 500 });
+  }
+
+  if (body?.convexUrl && body.convexUrl !== convexSiteUrl) {
+    return NextResponse.json({ error: "Use the configured Yaver backend." }, { status: 400 });
   }
 
   const upstream = await fetch(`${convexSiteUrl}/auth/device-code/authorize`, {
@@ -31,7 +29,9 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
       Authorization: authHeader,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ userCode: body?.userCode }),
+    signal: AbortSignal.timeout(12000),
+    redirect: "error",
   });
 
   const text = await upstream.text();

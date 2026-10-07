@@ -168,3 +168,31 @@ completion, and supports read-pane, pause and repeated spoken turns. Sending
 requires a spoken readback and explicit confirmation. Physical microphone,
 CarPlay audio routing and vehicle testing remain device checks, not claims
 made by the headless SSH proof.
+
+Connectivity and device approval follow-up:
+- `yaver up/down/status` expose the mesh daemon directly; normal help stays
+  focused on connectivity. `help --all` retains advanced commands. Registration
+  without a running tunnel is not reported as connected. A failed daemon call
+  never bypasses its VPN-conflict or authorization checks via direct registration.
+- Remote runner-provider OAuth remains disabled. Old mobile browser/mirror
+  deep links now lead to SSH rather than provider sign-in or credential copying.
+- A signed-in Apple surface can review and approve another Yaver device using
+  the existing expiring device-code protocol. It shows the requesting device
+  and matching code, requires explicit approval, and issues a separate session.
+  SSH enrollment stays on a separate SSH exec channel.
+- Web approval no longer automatically authorizes an opened link. Neither its
+  page nor its forwarding endpoint accepts a backend supplied by that link.
+  The browser regression fails when automatic authorization is restored.
+- TV's primary SSH opens existing panes without Yaver auth, with a full-screen
+  live tmux screen, Raw/Pane chat, explicit raw keyboard mode, and a system
+  composer usable from the phone's Apple TV Remote keyboard. Screen snapshots
+  preserve the remote layout; this Swift lane does not claim full VT rendering.
+- The Apple mesh NetworkExtension files are scaffolding, not a shipped tvOS
+  VPN. Existing Tailscale networking works; an independent Yaver tvOS tunnel
+  still needs an actual target, supported WireGuard build, provisioning and
+  on-device data-plane validation. A success button must not substitute for it.
+
+Release evidence: shared iOS/iPadOS/CarPlay + embedded Watch build
+202608181431 was accepted by TestFlight. Later approval changes require a
+follow-up archive. Physical car audio and Apple TV Remote input remain hardware
+verification steps.

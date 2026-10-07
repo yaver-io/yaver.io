@@ -42,7 +42,7 @@ struct RootView: View {
                     Task { await store.sendConfirm(token: pending.token, reply: reply) }
                 }
             }
-            .sheet(isPresented: $plainSSH) { PlainSSHView() }
+            .sheet(isPresented: $plainSSH) { PlainSSHView(approvalBackend: Backend.convexSiteURL, approvalToken: store.token) }
             .sheet(isPresented: $showSettings) { SettingsView() }
             // Fold phone→watch background pushes (task-completion wake) into the
             // same reduce path as a direct reply.

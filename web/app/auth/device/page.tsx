@@ -4,7 +4,7 @@ import { CONVEX_URL } from "@/lib/constants";
 export const dynamic = "force-dynamic";
 
 function getConvexUrl(searchParam?: string): string {
-  return searchParam || CONVEX_URL;
+  return CONVEX_URL;
 }
 
 async function getInitialDeviceInfo(code: string, convexUrl: string): Promise<DeviceCodeInfo> {
@@ -12,6 +12,8 @@ async function getInitialDeviceInfo(code: string, convexUrl: string): Promise<De
   try {
     const res = await fetch(`${convexUrl}/auth/device-code/info?user_code=${encodeURIComponent(code)}`, {
       cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+      redirect: "error",
     });
     if (!res.ok) {
       if (res.status === 404 || res.status === 410) {

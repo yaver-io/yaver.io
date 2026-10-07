@@ -9,9 +9,14 @@ public struct PlainSSHView:View {
  @State private var host="";@State private var port="22";@State private var user="";@State private var password=""
  @State private var privateKey=""
  @State private var candidate:SSHHost?;@State private var probing=false;@State private var chat=false;@State private var draft="";@State private var account=false
- public init(){}
+ private let paneContent:((PaneModel)->AnyView)?
+ private let approvalBackend:URL?
+ private let approvalToken:String
+ public init(approvalBackend:URL? = nil, approvalToken:String = "", paneContent:((PaneModel)->AnyView)? = nil){self.approvalBackend=approvalBackend;self.approvalToken=approvalToken;self.paneContent=paneContent}
  public var body:some View {
   NavigationStack {
+   Group {
+   if model.pane != nil, let paneContent { paneContent(model) } else {
    ScrollView {
     VStack(alignment:.leading,spacing:12){
      if !model.status.isEmpty{Text(model.status).font(.caption).foregroundStyle(.secondary)}
@@ -46,6 +51,9 @@ public struct PlainSSHView:View {
        Button("Trust host and connect"){Task{await model.remember(candidate,password:password,privateKey:privateKey);self.candidate=nil;password="";privateKey=""}}
       } else {Button(probing ? "Checking host key…" : "Check host key"){Task{await probe()}}.disabled(probing || model.busy || host.isEmpty || user.isEmpty)}
      }
+     if !model.connected, let approvalBackend, !approvalToken.isEmpty {
+      DisclosureGroup("Approve a Yaver device") { DeviceApprovalView(backend:approvalBackend,token:approvalToken) }
+     }
      if model.connected {
       Button(account ? "Hide Yaver setup" : "Connect remote to Yaver"){account.toggle()}
       if account {
@@ -53,18 +61,24 @@ public struct PlainSSHView:View {
        Button("Sign this remote into Yaver"){Task{await model.enroll()}}.disabled(model.busy)
        if model.enrollment.contains("Yaver is not installed"){Button("Install Yaver on remote"){Task{await model.enroll(install:true)}}.disabled(model.busy)}
        RemoteApprovalView(output:model.enrollment)
+       if let approvalBackend { DeviceApprovalView(backend:approvalBackend,token:approvalToken,code:remoteApprovalCode).id(remoteApprovalCode) }
        if !model.enrollment.isEmpty{Text(model.enrollment).font(.system(size:11,design:.monospaced))}
       }
       Button("Detach"){model.detach()}
      }
     }.padding()
    }
-   .navigationTitle("Plain SSH")
+   }
+   }
+   .navigationTitle("SSH")
    .toolbar{ToolbarItem(placement:.cancellationAction){Button("Back"){model.detach();dismiss()}}}
   }
   .onDisappear{model.detach()}
   .onChange(of:phase){_,phase in if phase == .background{model.detach()}}
   .onChange(of:host){_,_ in candidate=nil}.onChange(of:port){_,_ in candidate=nil}.onChange(of:user){_,_ in candidate=nil}
+ }
+ private var remoteApprovalCode:String {
+  model.enrollment.components(separatedBy:.whitespacesAndNewlines).compactMap(URL.init(string:)).filter{ $0.scheme=="https" && ["yaver.io","www.yaver.io"].contains($0.host ?? "") && $0.path.hasPrefix("/auth/") }.compactMap{URLComponents(url:$0,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{$0.name=="code"})?.value}.first ?? ""
  }
  private func probe()async{probing=true;model.error="";defer{probing=false};do{guard let number=Int(port),(1...65535).contains(number) else{throw SSHFailure("Enter an SSH port between 1 and 65535.")};let fingerprint=try await SSHWire.probe(host:host,port:number,user:user);candidate=SSHHost(host:host,port:number,user:user,fingerprint:fingerprint)}catch{model.error=error.localizedDescription}}
 }

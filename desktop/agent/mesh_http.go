@@ -23,6 +23,11 @@ func (s *HTTPServer) registerMeshRoutes(mux *http.ServeMux) {
 // succeeding while the data plane fails (e.g. no privilege) is reported as a
 // warning, not a hard error — peers can still see this node.
 func (s *HTTPServer) handleMeshUp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		w.Header().Set("Allow", "POST")
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	cfg, err := LoadConfig()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "load config: "+err.Error())
@@ -99,35 +104,54 @@ func (s *HTTPServer) handleMeshUp(w http.ResponseWriter, r *http.Request) {
 // handleMeshDown tears the data plane down and marks the node offline in the
 // control plane. The vault keypair is kept so re-joining reuses the same IP.
 func (s *HTTPServer) handleMeshDown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		w.Header().Set("Allow", "POST")
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	cfg, err := LoadConfig()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "load config: "+err.Error())
 		return
 	}
-	s.meshMu.Lock()
-	if s.meshMgr != nil {
-		_ = s.meshMgr.Stop()
-		s.meshMgr = nil // drop so a later /mesh/up rebuilds with fresh config
-	}
-	s.meshMu.Unlock()
-
-	if cfg.AuthToken != "" && cfg.ConvexSiteURL != "" && cfg.DeviceID != "" {
-		_, _ = meshConvexCall(cfg, "mutation", "mesh:leaveMesh", map[string]interface{}{
-			"deviceId": cfg.DeviceID,
-		})
-	}
 	if cfg.Mesh == nil {
 		cfg.Mesh = &MeshConfig{}
 	}
 	cfg.Mesh.Enabled = false
-	cfg.Mesh.Disabled = true // explicit opt-out: don't auto-rejoin on next serve
-	_ = SaveConfig(cfg)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+	cfg.Mesh.Disabled = true
+	if err := SaveConfig(cfg); err != nil {
+		jsonError(w, http.StatusInternalServerError, "persist disconnect: "+err.Error())
+		return
+	}
+	s.meshMu.Lock()
+	if s.meshMgr != nil {
+		err = s.meshMgr.Stop()
+		if err == nil {
+			s.meshMgr = nil
+		}
+	}
+	s.meshMu.Unlock()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "stop tunnel: "+err.Error())
+		return
+	}
+	result := map[string]interface{}{"ok": true}
+	if cfg.AuthToken != "" && cfg.ConvexSiteURL != "" && cfg.DeviceID != "" {
+		if _, err := meshConvexCall(cfg, "mutation", "mesh:leaveMesh", map[string]interface{}{"deviceId": cfg.DeviceID}); err != nil {
+			result["warning"] = "Local tunnel is down; control-plane offline status could not be updated."
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleMeshStatus reports the persisted opt-in state plus the live data-plane
 // snapshot (interface, self-IP, per-peer handshake counters).
 func (s *HTTPServer) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		w.Header().Set("Allow", "GET")
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	cfg, _ := LoadConfig()
 	out := map[string]interface{}{}
 	if cfg != nil && cfg.Mesh != nil {

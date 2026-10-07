@@ -38,11 +38,12 @@ export default function DeviceCodeClient({
 }) {
   const params = useSearchParams();
   const prefillCode = params.get("code") || initialCode;
-  const convexUrl = params.get("convex") || initialConvexUrl;
-  const alreadyAuthorized = params.get("authorized") === "1";
+  const convexUrl = initialConvexUrl;
+  const alreadyAuthorized = initialDeviceInfo?.status === "authorized";
   const providerHint = (params.get("provider") || "").toLowerCase();
   const [deviceInfo, setDeviceInfo] = useState<DeviceCodeInfo>(initialDeviceInfo);
   const [code, setCode] = useState(prefillCode);
+  const [reviewedCode, setReviewedCode] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "approved" | "success" | "error">(
     initialDeviceInfo?.status === "authorized" && initialDeviceInfo.claimed ? "success" :
       alreadyAuthorized || initialDeviceInfo?.status === "authorized" ? "approved" : "idle"
@@ -146,13 +147,14 @@ export default function DeviceCodeClient({
   }, [convexUrl]);
 
   useEffect(() => {
-    if (!prefillCode) return;
+    const pollingCode = reviewedCode || prefillCode;
+    if (!pollingCode) return;
     if (status === "success") return;
 
     let cancelled = false;
     const poll = async () => {
       try {
-        const res = await fetch(`${convexUrl}/auth/device-code/info?user_code=${encodeURIComponent(prefillCode)}`, {
+        const res = await fetch(`${convexUrl}/auth/device-code/info?user_code=${encodeURIComponent(pollingCode)}`, {
           cache: "no-store",
         });
         if (!res.ok) {
@@ -165,12 +167,13 @@ export default function DeviceCodeClient({
         const data = await res.json();
         if (cancelled || !data) return;
         setDeviceInfo(data);
+        if (data.status === "pending" && data.expiresAt > Date.now() && (errorMsg === expiredCodeMessage || errorMsg === invalidOrExpiredCodeMessage)) { setStatus("idle"); setErrorMsg(""); }
         if (data.status === "authorized" && data.claimed) {
           setStatus("success");
           setErrorMsg("");
         } else if (data.status === "authorized") {
           setStatus("approved");
-          setErrorMsg("Approved. Waiting for the TV to pick up the session...");
+          setErrorMsg("Approved. Waiting for the device to finish signing in...");
         } else if (data.status === "expired") {
           setStatus("error");
           setErrorMsg(expiredCodeMessage);
@@ -186,7 +189,7 @@ export default function DeviceCodeClient({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [convexUrl, prefillCode, status]);
+  }, [convexUrl, prefillCode, reviewedCode, status, errorMsg]);
 
   useEffect(() => {
     const hintedProvider = providerHint || deviceInfo?.preferredProvider || "";
@@ -206,16 +209,9 @@ export default function DeviceCodeClient({
   }, [deviceInfo?.preferredProvider, providerHint]);
 
   useEffect(() => {
-    if (prefillCode && token && status === "idle") {
-      handleAuthorize(prefillCode, token);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillCode, token]);
-
-  useEffect(() => {
     if (alreadyAuthorized) {
       setStatus("approved");
-      setErrorMsg("Approved. Waiting for the TV to pick up the session...");
+      setErrorMsg("Approved. Waiting for the device to finish signing in...");
     }
   }, [alreadyAuthorized]);
 
@@ -323,7 +319,7 @@ export default function DeviceCodeClient({
 
   const handleAuthorize = async (userCode: string, authToken: string) => {
     const cleaned = userCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (cleaned.length < 8) {
+    if (cleaned.length !== 8) {
       setErrorMsg("Code must be 8 characters (e.g. ABCD-1234)");
       setStatus("error");
       return;
@@ -336,6 +332,15 @@ export default function DeviceCodeClient({
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
+      if (reviewedCode !== formatted) {
+        const review = await fetch(`${convexUrl}/auth/device-code/info?user_code=${encodeURIComponent(formatted)}`, { cache: "no-store", signal: controller.signal });
+        if (!review.ok) throw new Error("Request not found");
+        const info = await review.json();
+        if (info.userCode !== formatted || info.status !== "pending" || info.expiresAt <= Date.now()) {
+          setStatus("error"); setErrorMsg(invalidOrExpiredCodeMessage); return;
+        }
+        setDeviceInfo(info); setReviewedCode(formatted); setStatus("idle"); return;
+      }
       const res = await fetch(`/api/auth/device/authorize`, {
         method: "POST",
         headers: {
@@ -379,7 +384,7 @@ export default function DeviceCodeClient({
         return;
       }
 
-      setStatus("success");
+      setStatus("approved");
     } catch (error) {
       window.clearTimeout(timeout);
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -388,7 +393,7 @@ export default function DeviceCodeClient({
         setErrorMsg("Could not reach Yaver. Check your connection and try again.");
       }
       setStatus("error");
-    }
+    } finally { window.clearTimeout(timeout); }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -410,6 +415,7 @@ export default function DeviceCodeClient({
   };
 
   const handleCodeChange = (val: string) => {
+    setReviewedCode("");
     const stripped = val.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (stripped.length <= 4) {
       setCode(stripped);
@@ -711,18 +717,16 @@ export default function DeviceCodeClient({
             disabled={status === "loading" || code.replace(/-/g, "").length < 8}
             className="mt-4 w-full rounded-lg bg-surface-50 px-4 py-3 text-sm font-medium text-surface-950 transition-colors hover:bg-surface-200 disabled:opacity-50"
           >
-            {status === "loading" ? "Authorizing..." : "Authorize Device"}
+            {status === "loading" ? "Checking..." : reviewedCode ? "Approve sign-in" : "Review device"}
           </button>
         </form>
+        {reviewedCode && <p className="mt-3 text-center text-sm">Match {reviewedCode} on {deviceInfo?.machineName || "the requesting device"}. Approval gives it its own Yaver session.</p>}
+
 
         <p className="mt-6 text-center text-xs text-surface-600">
           Run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth --headless</code> to get a code
         </p>
-        <p className="mt-2 text-center text-xs text-surface-600">
-          Already signed in on another machine? Skip the OAuth flow entirely:<br />
-          <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth pair</code> on the headless box,
-          then <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth send &lt;code&gt; &lt;url&gt;</code> from the signed-in machine.
-        </p>
+
       </div>
     </div>
   );

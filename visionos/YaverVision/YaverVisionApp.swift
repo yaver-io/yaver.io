@@ -37,7 +37,7 @@ struct RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { Button("SSH · no Yaver account required") { plainSSH = true }.padding(8) }
-        .sheet(isPresented: $plainSSH) { PlainSSHView() }
+        .sheet(isPresented: $plainSSH) { PlainSSHView(approvalBackend: Backend.convexSiteURL, approvalToken: store.token) }
         .task(id: store.token) {
             guard store.isAuthenticated else { return }
             await store.refreshAppearanceSettings()

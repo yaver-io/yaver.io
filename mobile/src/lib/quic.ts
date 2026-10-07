@@ -5709,28 +5709,7 @@ export class QuicClient {
     target?: string,
     opts?: { trigger?: "auto" | "explicit" | "confirmed"; confirm?: boolean },
   ): Promise<RunnerBrowserAuthSession> {
-    this.assertConnected();
-    const base = this.peerEndpoint(target, "/runner-auth/browser/start");
-    const res = await this.fetchWithTimeout(base, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runner,
-        trigger: opts?.confirm ? "confirmed" : (opts?.trigger ?? "explicit"),
-        confirm: opts?.confirm ?? false,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data?.error || `startRunnerBrowserAuth ${res.status}`);
-    }
-    if (data?.action === "noop") {
-      throw new RunnerAlreadySignedInError(
-        String(data?.reason || `${runner} is already signed in on that machine.`),
-        data?.reauthable !== false,
-      );
-    }
-    return unwrapRunnerBrowserAuthEnvelope(data);
+    throw new Error("Remote runner OAuth is disabled. Sign in using the runner's command in SSH.");
   }
 
   async getRunnerBrowserAuthStatus(

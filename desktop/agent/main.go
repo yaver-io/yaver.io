@@ -559,8 +559,12 @@ func main() {
 		runWrap(os.Args[2:])
 	case "agent":
 		runAgentMode(os.Args[2:])
+	case "up":
+		runMeshUp(os.Args[2:])
+	case "down":
+		runMeshDown(os.Args[2:])
 	case "status":
-		runStatus()
+		runConnectivityStatus(os.Args[2:])
 	case "devices":
 		runDevices(os.Args[2:])
 	case "flight":
@@ -866,7 +870,11 @@ func main() {
 	case "monorepo":
 		runMonorepo(os.Args[2:])
 	case "help", "--help", "-h":
-		printUsage()
+		if len(os.Args) > 2 && os.Args[2] == "--all" {
+			printAdvancedUsage()
+		} else {
+			printUsage()
+		}
 	case "version", "--version", "-v":
 		fmt.Printf("yaver %s\n", version)
 		checkLatestVersion()
@@ -878,6 +886,22 @@ func main() {
 }
 
 func printUsage() {
+	fmt.Print(`Yaver — connectivity for your devices
+
+Usage:
+  yaver up           Connect Yaver Mesh
+  yaver down         Disconnect Yaver Mesh
+  yaver status       Show live connectivity (--json for scripts)
+  yaver auth         Sign in to Yaver
+  yaver auth --headless  Get a code to approve from another Yaver device
+  yaver ssh <device>  Open a remote SSH session
+
+Existing SSH over Tailscale works independently of Yaver sign-in.
+Run yaver help --all for additional commands.
+`)
+}
+
+func printAdvancedUsage() {
 	fmt.Print(`Yaver — your AI coding agent, on your phone
 
 Usage:
@@ -924,7 +948,9 @@ Usage:
   yaver mcp setup <client>  Auto-configure MCP for Claude Code, Codex, or opencode
   yaver email       Email connector setup and management (Office 365 / Gmail)
   yaver acl         Agent Communication Layer — connect to other MCP servers
-  yaver status      Show auth, relay, and connection status
+  yaver up          Connect Yaver Mesh
+  yaver down        Disconnect Yaver Mesh
+  yaver status      Show live connectivity (--json for scripts)
   yaver devices [remove <device-id>]  List your registered devices or remove one
   yaver flight [--device <alias|id>]  Read a machine's black box: did it stop gracefully, or die?
   yaver alias [set|rm|list] ...  Manage per-user device aliases (used by yaver ssh and the dashboard)

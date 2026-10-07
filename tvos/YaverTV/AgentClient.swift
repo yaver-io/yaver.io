@@ -1591,16 +1591,7 @@ actor AgentClient {
     /// runner already looks signed in — the only path allowed to reap a healthy
     /// session. Everything else is answered by the agent, not obeyed.
     func startRunnerAuth(_ runner: String, confirm: Bool = false) async throws -> RunnerAuthStartResult {
-        try await ops(
-            "runner_auth",
-            [
-                "op": "browser_start",
-                "runner": runner,
-                "trigger": confirm ? "confirmed" : "explicit",
-                "confirm": confirm,
-            ],
-            as: RunnerAuthStartResult.self
-        )
+        throw NSError(domain: "Yaver", code: 410, userInfo: [NSLocalizedDescriptionKey: "Remote runner OAuth is disabled. Sign in with the runner's command over SSH."])
     }
 
     func runnerAuthStatus(sessionId: String) async throws -> RunnerAuthStartResult {

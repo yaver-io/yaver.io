@@ -222,26 +222,18 @@ func runMeshUp(args []string) {
 	// Prefer the running daemon — it owns the long-lived WireGuard TUN, so the
 	// overlay survives this CLI process exiting. The daemon handler does the
 	// keygen + control-plane join + data-plane bring-up in one shot.
-	if res, err := localAgentRequest("POST", "/mesh/up", nil); err == nil {
-		fmt.Println("✓ Yaver Mesh: joined")
-		if ip, ok := res["meshIPv4"].(string); ok {
-			fmt.Printf("  overlay IP : %s\n", meshOrDash(ip))
-		}
-		if pk, ok := res["publicKey"].(string); ok {
-			fmt.Printf("  public key : %s\n", pk)
-		}
-		if warn, ok := res["dataPlaneWarning"].(string); ok && warn != "" {
-			fmt.Printf("\n  ⚠ data plane not active: %s\n", warn)
-			fmt.Println("    Run the agent with elevated privilege to create the TUN")
-			fmt.Println("    (the control-plane registration above is already live).")
-		} else {
-			fmt.Println("\n  Data plane active — peers reachable over the overlay IP.")
-		}
-		return
+	res, err := localAgentRequest("POST", "/mesh/up", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Yaver is not connected: %v\n", err)
+		os.Exit(1)
 	}
-	// No daemon reachable: register the control plane directly so peers can see
-	// this node, then point the user at `yaver serve` for the data plane.
-	runMeshUpDirect(args)
+	dp, _ := res["dataPlane"].(map[string]interface{})
+	if running, _ := dp["running"].(bool); !running {
+		fmt.Fprintf(os.Stderr, "Yaver is not connected: %v\n", res["dataPlaneWarning"])
+		os.Exit(1)
+	}
+	fmt.Printf("Connected. %v\n", res["meshIPv4"])
+
 }
 
 // runMeshUpDirect registers this device with the mesh control plane WITHOUT a
@@ -294,6 +286,7 @@ func runMeshUpDirect(_ []string) {
 		cfg.Mesh = &MeshConfig{}
 	}
 	cfg.Mesh.Enabled = true
+	cfg.Mesh.Disabled = false
 	cfg.Mesh.PublicKey = kp.PublicKey
 	cfg.Mesh.MeshIPv4 = assigned.MeshIPv4
 	cfg.Mesh.MeshIPv6 = assigned.MeshIPv6
@@ -317,37 +310,17 @@ func runMeshUpDirect(_ []string) {
 }
 
 func runMeshDown(_ []string) {
-	// Prefer the daemon so the live TUN is actually torn down.
-	if _, err := localAgentRequest("POST", "/mesh/down", nil); err == nil {
-		fmt.Println("✓ Yaver Mesh: left. The WireGuard private key is kept in the vault")
-		fmt.Println("  so re-joining later reuses the same overlay IP.")
-		return
-	}
-	cfg, err := LoadConfig()
+	// A refused or timed-out stop must never be reported as a disconnected VPN.
+	res, err := localAgentRequest("POST", "/mesh/down", nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Could not disconnect Yaver: %v\n", err)
 		os.Exit(1)
 	}
-	if cfg.Mesh == nil || !cfg.Mesh.Enabled {
-		fmt.Println("Yaver Mesh is already off for this device.")
-		return
+	fmt.Println("Disconnected.")
+	if warning, _ := res["warning"].(string); warning != "" {
+		fmt.Fprintln(os.Stderr, warning)
 	}
-	if cfg.AuthToken != "" && cfg.ConvexSiteURL != "" && cfg.DeviceID != "" {
-		if _, err := meshConvexCall(cfg, "mutation", "mesh:leaveMesh", map[string]interface{}{
-			"deviceId": cfg.DeviceID,
-		}); err != nil {
-			// Non-fatal: we still flip local state off so the data plane stays down.
-			fmt.Fprintf(os.Stderr, "warning: control-plane leave failed: %v\n", err)
-		}
-	}
-	cfg.Mesh.Enabled = false
-	cfg.Mesh.Disabled = true // explicit opt-out: don't auto-rejoin on next serve
-	if err := SaveConfig(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: save config: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("✓ Yaver Mesh: left. The WireGuard private key is kept in the vault")
-	fmt.Println("  so re-joining later reuses the same overlay IP.")
+
 }
 
 func runMeshStatus() {

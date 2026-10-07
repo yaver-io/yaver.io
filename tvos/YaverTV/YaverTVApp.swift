@@ -30,7 +30,7 @@ struct RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { Button("SSH · no Yaver account required") { plainSSH = true }.padding(8) }
-        .sheet(isPresented: $plainSSH) { PlainSSHView() }
+        .sheet(isPresented: $plainSSH) { PlainSSHView(approvalBackend: Backend.convexSiteURL, approvalToken: store.token, paneContent: { AnyView(TVDirectPaneScreen(model: $0)) }) }
         .task(id: store.token) { await store.refreshAppearanceSettings() }
     }
 }

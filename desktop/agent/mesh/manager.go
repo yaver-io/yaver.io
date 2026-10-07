@@ -399,6 +399,8 @@ func (m *Manager) Status() Status {
 		st.IfaceName = m.dev.Name()
 		if stats, err := m.dev.Stats(); err == nil {
 			st.Peers = stats
+		} else {
+			st.LastErr = "Tunnel statistics unavailable: " + err.Error()
 		}
 	}
 	return st

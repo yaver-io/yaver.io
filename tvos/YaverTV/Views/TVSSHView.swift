@@ -9,22 +9,15 @@
 
 import SwiftUI
 import UIKit
+import PlainSSH
 
 struct TVSSHView: View {
     @EnvironmentObject private var store: YaverStore
     @State private var launch: String?
 
     var body: some View {
-        Group {
-            if let launch, let box = store.selectedBox {
-                TVTerminalScreen(box: box, token: store.token, launch: launch) {
-                    self.launch = nil
-                }
-            } else {
-                launcher
-            }
-        }
-        .navigationTitle("SSH")
+        PlainSSHView(approvalBackend: Backend.convexSiteURL, approvalToken: store.token,
+                     paneContent: { AnyView(TVDirectPaneScreen(model: $0)) })
     }
 
     private var launcher: some View {
@@ -517,5 +510,72 @@ private final class RawKeyboardView: UIView, UIKeyInput {
             }
         }
         if !handled { super.pressesBegan(presses, with: event) }
+    }
+}
+
+
+/// TV reads the exact existing tmux pane, never creates a second runner. The
+/// system TextField exposes Apple's iPhone Remote/Continuity keyboard.
+struct TVDirectPaneScreen: View {
+    @ObservedObject var model: PaneModel
+    @State private var draft = ""
+    @State private var chat = false
+    @State private var account = false
+    @State private var rawKeyboard = false
+    @State private var fontSize = 19.0
+    @State private var inputQueue: Task<Void, Never>?
+    @State private var queuedBytes = 0
+    @EnvironmentObject private var store: YaverStore
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(model.pane?.label ?? "SSH").font(.headline)
+                Spacer()
+                Button("A−") { fontSize = max(12, fontSize - 1) }
+                Button("A+") { fontSize = min(32, fontSize + 1) }
+                Picker("Pane view", selection: $chat) { Text("Raw").tag(false); Text("Pane chat").tag(true) }.frame(width: 300)
+                Button("Read pane") { Speech.speakSummary(of: model.output) }
+                Button(rawKeyboard ? "Keyboard: raw" : "Keyboard: compose") { rawKeyboard.toggle() }
+                Button("Yaver") { rawKeyboard = false; account.toggle() }
+                Button("Detach") { model.detach() }
+            }
+            if chat && !model.lastInput.isEmpty {
+                Text(model.lastInput).padding().background(.quaternary, in: RoundedRectangle(cornerRadius: 12)).frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            ScrollView([.horizontal, .vertical]) {
+                Text(model.output.isEmpty ? "Reading pane…" : model.output)
+                    .font(.system(size: fontSize, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Text("Live tmux screen · use the iPhone Apple TV Remote keyboard or connect a Bluetooth keyboard").font(.caption).foregroundStyle(.secondary)
+            if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.caption) }
+            HStack {
+                Button("Esc") { send("\u{1b}", submit: false) }
+                Button("Tab") { send("\t", submit: false) }
+                Button("Ctrl-C") { send("\u{3}", submit: false) }
+                TextField("Type or dictate from your phone", text: $draft).onSubmit { submitDraft() }
+                Button("Send") { submitDraft() }.disabled(draft.isEmpty || !model.connected)
+            }
+            if rawKeyboard { TVKeyboardCapture { send(String(decoding: $0, as: UTF8.self), submit: false) }.frame(width: 2, height: 2).opacity(0.01).accessibilityHidden(true) }
+            // Capturing only while the explicit raw keyboard mode is focused
+            // avoids stealing focus from the system phone keyboard composer.
+        }
+        .padding(30).background(Color.black)
+        .sheet(isPresented: $account) {
+            ScrollView { VStack(spacing: 16) {
+                Button("Sign this remote into Yaver") { Task { await model.enroll() } }.disabled(model.busy)
+                Text(model.enrollment).font(.system(size: 14, design: .monospaced))
+                DeviceApprovalView(backend: Backend.convexSiteURL, token: store.token)
+                Button("Back to pane") { account = false }
+            }.padding(40) }
+        }
+        .onDisappear { Speech.stop() }
+    }
+    private func submitDraft() { let value = draft; guard !value.isEmpty else { return }; draft = ""; send(value, submit: true) }
+    private func send(_ text: String, submit: Bool) {
+        guard queuedBytes + text.utf8.count <= 32768 else { model.error = "Input queue is full. Wait for the connection before sending more."; return }
+        queuedBytes += text.utf8.count
+        let previous = inputQueue
+        inputQueue = Task { await previous?.value; guard model.error.isEmpty else { queuedBytes -= text.utf8.count; return }; await model.send(text, submit: submit); queuedBytes -= text.utf8.count }
     }
 }
