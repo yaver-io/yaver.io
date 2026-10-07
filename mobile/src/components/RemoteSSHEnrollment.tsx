@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { sshCall } from "../lib/plainSSH";
 import { useColors } from "../context/ThemeContext";
 import { approveDeviceCode, fetchDeviceCodeInfoResult, DeviceCodeInfo } from "../lib/deviceCodeApprove";
+import { confirmDeviceApprovalPresence } from "../lib/deviceApprovalPresence";
 import { useAuth } from "../context/AuthContext";
 import { getWebBaseUrlSync } from "../lib/backendConfig";
 
@@ -37,6 +38,7 @@ export default function RemoteSSHEnrollment({connectionId}:{connectionId:string}
     if(result.info.status!=="pending" || !result.info.expiresAt || result.info.expiresAt<=Date.now())throw new Error("This request is no longer pending. Start remote sign-in again.");
     setRequest({code:formatted,info:result.info});return;
    }
+   await confirmDeviceApprovalPresence(request.info.machineName || "this remote");
    const result=await approveDeviceCode(formatted,token);
    if(!result.ok)throw new Error(result.error);setRequest(null);setError("");
   }catch(cause){setError(cause instanceof Error?cause.message:"Yaver approval failed.");}finally{setApproving(false);}

@@ -196,3 +196,11 @@ Release evidence: shared iOS/iPadOS/CarPlay + embedded Watch build
 202608181431 was accepted by TestFlight. Later approval changes require a
 follow-up archive. Physical car audio and Apple TV Remote input remain hardware
 verification steps.
+
+Native phone approval (both QR/code and SSH enrollment) now shares the same OS
+user-presence gate: Face ID/Touch ID or device passcode, with cancellation and
+subsystem failures refusing approval. Devices without a configured screen lock
+are directed to set one. Face ID leaves SSH attached during iOS's temporary
+inactive state; actual backgrounding still detaches. Existing backend device
+sessions already last one year and support automatic refresh/rotation; no
+permanent shared token or blanket automatic approval was added.

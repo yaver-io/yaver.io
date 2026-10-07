@@ -14,7 +14,7 @@
 // box's own `yaver auth` poller finishes within ~5s and it comes online.
 
 import { router, useLocalSearchParams } from "expo-router";
-import * as LocalAuthentication from "expo-local-authentication";
+import { confirmDeviceApprovalPresence } from "../src/lib/deviceApprovalPresence";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -155,33 +155,11 @@ export default function ApproveDeviceScreen() {
     if (approving) return;
     setApproving(true);
     setError(null);
-    // Biometric gate: authorizing a remote machine is sensitive, so require a
-    // fresh Face ID / Touch ID or the phone passcode before it goes through —
-    // possession of an already-unlocked phone shouldn't be enough. If there is no
-    // biometric hardware/enrollment we don't lock the user out: the signed-in
-    // session token already proves account control.
     try {
-      const [hasHw, enrolled] = await Promise.all([
-        LocalAuthentication.hasHardwareAsync(),
-        LocalAuthentication.isEnrolledAsync(),
-      ]);
-      if (hasHw && enrolled) {
-        const r = await LocalAuthentication.authenticateAsync({
-          promptMessage: `Approve sign-in for ${info?.machineName || "this machine"}`,
-          disableDeviceFallback: false,
-          fallbackLabel: "Use passcode",
-          cancelLabel: "Cancel",
-        });
-        if (!r.success) {
-          setApproving(false);
-          setError("Device authentication is required to approve a sign-in.");
-          return;
-        }
-      }
-    } catch {
-      // An authentication subsystem failure is not proof of user presence.
+      await confirmDeviceApprovalPresence(info?.machineName || "this device");
+    } catch (cause) {
       setApproving(false);
-      setError("Couldn't verify this approval with your device. Try again.");
+      setError(cause instanceof Error ? cause.message : "Could not verify this approval. Try again.");
       return;
     }
     const res = await approveDeviceCode(code, token ?? "");

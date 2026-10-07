@@ -8,6 +8,7 @@ public struct PlainSSHView:View {
  @Environment(\.scenePhase) private var phase
  @State private var host="";@State private var port="22";@State private var user="";@State private var password=""
  @State private var privateKey=""
+ @State private var showApproval=false
  @State private var candidate:SSHHost?;@State private var probing=false;@State private var chat=false;@State private var draft="";@State private var account=false
  private let paneContent:((PaneModel)->AnyView)?
  private let approvalBackend:URL?
@@ -52,7 +53,8 @@ public struct PlainSSHView:View {
       } else {Button(probing ? "Checking host key…" : "Check host key"){Task{await probe()}}.disabled(probing || model.busy || host.isEmpty || user.isEmpty)}
      }
      if !model.connected, let approvalBackend, !approvalToken.isEmpty {
-      DisclosureGroup("Approve a Yaver device") { DeviceApprovalView(backend:approvalBackend,token:approvalToken) }
+      Button(showApproval ? "Hide device approval" : "Approve a Yaver device"){showApproval.toggle()}
+      if showApproval { DeviceApprovalView(backend:approvalBackend,token:approvalToken) }
      }
      if model.connected {
       Button(account ? "Hide Yaver setup" : "Connect remote to Yaver"){account.toggle()}
