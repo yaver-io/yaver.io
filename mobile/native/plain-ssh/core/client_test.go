@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -105,8 +106,13 @@ func testServer(t *testing.T) (request, *atomic.Int32, func(...string) string) {
 							if ssh.Unmarshal(r.Payload, &payload) != nil {
 								return
 							}
+							// tmux 3.7 preserves literal backslash-t in -F. The wire
+							// must contain actual tabs, independent of tmux version.
+							if strings.Contains(payload.Command, "list-panes") && strings.Contains(payload.Command, `\t`) {
+								t.Error("pane wire format contains literal backslash-t separators")
+							}
 							cmd := exec.Command("/bin/sh", "-c", payload.Command)
-							cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+							cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "LANG=C", "LC_ALL=C")
 							cmd.Stdout, cmd.Stderr = ch, ch.Stderr()
 							stdin, _ := cmd.StdinPipe()
 							if cmd.Start() != nil {
@@ -348,5 +354,36 @@ func TestEnrollmentDoesNotTypeIntoPane(t *testing.T) {
 	}
 	if strings.Contains(tmux("capture-pane", "-p", "-t", "work"), "Remote test account") {
 		t.Fatal("enrollment used the runner pane")
+	}
+}
+
+func TestInputRejectsRecycledPaneAfterAttachment(t *testing.T) {
+	r, _, tmux := testServer(t)
+	r.Op = "connect"
+	v, err := dispatch(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ID = v.(map[string]string)["id"]
+	defer dispatch(request{Op: "close", ID: r.ID})
+	v, err = dispatch(request{Op: "panes", ID: r.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := v.([]pane)[0]
+	if _, err = dispatch(request{Op: "open", ID: r.ID, Pane: p.ID, Session: p.SessionID, Identity: p.Identity}); err != nil {
+		t.Fatal(err)
+	}
+	tmux("kill-server")
+	tmux("-f", "/dev/null", "new-session", "-d", "-s", "replacement", "cat")
+	for _, op := range []string{"submit", "snapshot"} {
+		_, err = dispatch(request{Op: op, ID: r.ID, Data: base64.StdEncoding.EncodeToString([]byte("must-not-arrive"))})
+		var named codedError
+		if !errors.As(err, &named) || named.code != "TMUX_PANE_GONE" {
+			t.Fatalf("%s did not reject replacement pane: %v", op, err)
+		}
+	}
+	if strings.Contains(tmux("capture-pane", "-p", "-t", "replacement"), "must-not-arrive") {
+		t.Fatal("input reached replacement pane")
 	}
 }

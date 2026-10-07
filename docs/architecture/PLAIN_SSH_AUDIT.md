@@ -151,3 +151,20 @@ builds; Swift integration against the real SSH/tmux fixture; Electron security
 and packaging tests; Android TV and Wear OS Kotlin/Java compilation, and the current iOS XCFramework build. The browser and RN-web
 loops prove the real pane with cloud identity absent. Native SSH key support
 on Swift surfaces is narrower than the Go-based phone/desktop clients.
+
+
+Real-host follow-up (2026-10-08): the Go client authenticated to the office
+Mac over Tailscale with the existing SSH key, verified its host fingerprint
+against public keys read through the established SSH connection, listed its
+live panes and received raw output without sending input. The initial failure
+was a locale-dependent tmux format: the SSH library does not inherit the
+operator's UTF-8 locale. Every client now invokes `tmux -u`; the integration
+server uses `LANG=C`/`LC_ALL=C` to cover this. No private host details are stored
+in this audit. Composed input and snapshots also revalidate pane identity after
+attachment, preventing a restarted tmux server's reused IDs from receiving input.
+
+Car voice reads bounded current pane output, never claims a quiet screen means
+completion, and supports read-pane, pause and repeated spoken turns. Sending
+requires a spoken readback and explicit confirmation. Physical microphone,
+CarPlay audio routing and vehicle testing remain device checks, not claims
+made by the headless SSH proof.

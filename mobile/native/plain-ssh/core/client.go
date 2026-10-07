@@ -60,6 +60,8 @@ type connection struct {
 	terminal   *ssh.Session
 	stdin      io.WriteCloser
 	pane       string
+	session    string
+	identity   string
 	output     chan []byte
 	done       chan struct{}
 	closeOnce  sync.Once
@@ -146,6 +148,9 @@ func dispatch(req request) (any, error) {
 		if c.stdin == nil {
 			return nil, fail("SSH_NO_PANE", "Select a pane before sending input.")
 		}
+		if err := c.validatePane(); err != nil {
+			return nil, err
+		}
 		var random [16]byte
 		if _, err = rand.Read(random[:]); err != nil {
 			return nil, err
@@ -161,7 +166,7 @@ func dispatch(req request) (any, error) {
 		defer timer.Stop()
 		// tmux knows the CURRENT application's paste mode even when it was
 		// enabled before this phone attached. Never modify the user's buffer.
-		command := tmuxPath + "tmux load-buffer -b " + name + " - && tmux paste-buffer -d -p -b " + name + " -t " + c.pane + " && tmux send-keys -t " + c.pane + " Enter"
+		command := tmuxPath + "tmux -u load-buffer -b " + name + " - && tmux -u paste-buffer -d -p -b " + name + " -t " + c.pane + " && tmux -u send-keys -t " + c.pane + " Enter"
 		err = s.Run(command)
 		if err != nil {
 			return nil, fail("TMUX_INPUT_UNCERTAIN", "Message delivery is uncertain. Inspect the pane before retrying; nothing was replayed.")
@@ -192,11 +197,15 @@ func dispatch(req request) (any, error) {
 	case "snapshot":
 		c.mu.Lock()
 		target := c.pane
+		err := c.validatePane()
 		c.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
 		if !paneID.MatchString(target) {
 			return nil, fail("SSH_NO_PANE", "Select a pane first.")
 		}
-		data, err := c.command(tmuxPath + "tmux capture-pane -p -t " + target)
+		data, err := c.command(tmuxPath + "tmux -u capture-pane -p -t " + target)
 		return string(data), err
 	case "read":
 		select {
@@ -380,7 +389,7 @@ type pane struct {
 const tmuxPath = `PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"; export PATH; `
 
 func (c *connection) listPanes() ([]pane, error) {
-	b, err := c.command(tmuxPath + `command -v tmux >/dev/null || exit 127; tmux list-panes -a -F '#{pane_id}	#{session_id}	#{session_name}	#{window_index}	#{pane_current_command}	#{pane_width}	#{pane_height}	#{pid}:#{pane_pid}:#{session_created}'`)
+	b, err := c.command(tmuxPath + `command -v tmux >/dev/null || exit 127; tmux -u list-panes -a -F '#{pane_id}	#{session_id}	#{session_name}	#{window_index}	#{pane_current_command}	#{pane_width}	#{pane_height}	#{pid}:#{pane_pid}:#{session_created}'`)
 	if err != nil {
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) && exit.ExitStatus() == 127 {
@@ -393,7 +402,7 @@ func (c *connection) listPanes() ([]pane, error) {
 	}
 	panes := parsePanes(string(b))
 	if len(panes) == 0 && strings.TrimSpace(string(b)) != "" {
-		return nil, fail("TMUX_LIST_FORMAT", "The host returned an unreadable pane list. Check tmux and your SSH shell startup output.")
+		return nil, fail("TMUX_LIST_FORMAT", fmt.Sprintf("The host returned an unreadable pane list (%d tabs, %d escaped tabs, %d rows). Check tmux and your SSH shell startup output.", strings.Count(string(b), "\t"), strings.Count(string(b), `\t`), len(strings.Split(strings.TrimSpace(string(b)), "\n"))))
 	}
 	return panes, nil
 }
@@ -409,6 +418,21 @@ func parsePanes(raw string) []pane {
 		result = append(result, pane{f[7], f[0], f[1], f[2], f[3], f[4], w, h})
 	}
 	return result
+}
+
+// Called with c.mu held: reconnecting a tmux server can reuse a numeric pane
+// ID while the SSH transport stays alive. Never send to or read its replacement.
+func (c *connection) validatePane() error {
+	panes, err := c.listPanes()
+	if err != nil {
+		return err
+	}
+	for _, p := range panes {
+		if p.ID == c.pane && p.SessionID == c.session && p.Identity == c.identity {
+			return nil
+		}
+	}
+	return fail("TMUX_PANE_GONE", "Selected pane exited or changed. Reconnect before continuing.")
 }
 
 func (c *connection) open(session, target, identity string) error {
@@ -449,11 +473,12 @@ func (c *connection) open(session, target, identity string) error {
 	}
 	// Control mode gives raw output AND exact-pane input without touching the
 	// desktop's active pane, window, dimensions or runner. No PTY is needed.
-	if err = s.Start(tmuxPath + "exec tmux -C attach-session -f ignore-size -t '" + session + "'"); err != nil {
+	if err = s.Start(tmuxPath + "exec tmux -u -C attach-session -f ignore-size -t '" + session + "'"); err != nil {
 		s.Close()
 		return err
 	}
 	c.terminal, c.stdin, c.pane = s, stdin, target
+	c.session, c.identity = session, identity
 	go c.stream(stdout, target)
 	// capture is ordered on the same control connection as subsequent output.
 	_, err = io.WriteString(stdin, "capture-pane -p -e -t "+target+"\ndisplay-message -p -t "+target+" '#{cursor_x};#{cursor_y}'\n")

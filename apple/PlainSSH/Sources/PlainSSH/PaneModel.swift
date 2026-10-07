@@ -10,7 +10,7 @@ public struct SSHPane:Identifiable,Equatable {
 }
 public enum PaneCommands {
  public static let path="PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\"; export PATH; "
- public static let list=path+"tmux list-panes -a -F '#{pane_id}\t#{session_id}\t#{session_name}\t#{window_index}\t#{pane_current_command}\t#{pid}:#{pane_pid}:#{session_created}'"
+ public static let list=path+"tmux -u list-panes -a -F '#{pane_id}\t#{session_id}\t#{session_name}\t#{window_index}\t#{pane_current_command}\t#{pid}:#{pane_pid}:#{session_created}'"
  public static func quote(_ text:String)->String{"'"+text.replacingOccurrences(of:"'",with:"'\\''")+"'"}
  public static func valid(_ pane:String)->Bool{pane.range(of:"^%[0-9]+$",options:.regularExpression) != nil}
  public static func parse(_ text:String)->[SSHPane]{text.split(separator:"\n").compactMap{line in
@@ -55,7 +55,7 @@ public enum PaneCommands {
    poll=Task{while !Task.isCancelled && attempt==generation{do{
     // Exact-pane snapshots preserve the remote layout and desktop selection.
     guard try await list().contains(where:{$0.matches(selected)}) else{throw SSHFailure("Selected pane exited. Reconnect to select another.")}
-    output=try await wire.execute(PaneCommands.path+"tmux capture-pane -p -t "+selected.id)
+    output=try await wire.execute(PaneCommands.path+"tmux -u capture-pane -p -t "+selected.id)
     try await Task.sleep(nanoseconds:800_000_000)
    }catch{if !Task.isCancelled{self.error=error.localizedDescription;connected=false};break}}}
   }catch{self.error=error.localizedDescription};busy=false
@@ -67,8 +67,8 @@ public enum PaneCommands {
   do{guard try await list().contains(where:{$0.matches(pane)}) else{throw SSHFailure("Selected pane exited. Input was not sent.")}
    guard attempt==generation else{throw SSHFailure("Connection changed. Input was not sent.")}
    let command:String
-   if submit{let name="yaver-phone-"+UUID().uuidString;command="tmux set-buffer -b \(name) -- \(PaneCommands.quote(text)); tmux paste-buffer -d -p -b \(name) -t \(pane.id) && tmux send-keys -t \(pane.id) Enter"}
-   else{command="tmux send-keys -t \(pane.id) -H "+text.utf8.map{String(format:"%02x",$0)}.joined(separator:" ")}
+   if submit{let name="yaver-phone-"+UUID().uuidString;command="tmux -u set-buffer -b \(name) -- \(PaneCommands.quote(text)); tmux -u paste-buffer -d -p -b \(name) -t \(pane.id) && tmux -u send-keys -t \(pane.id) Enter"}
+   else{command="tmux -u send-keys -t \(pane.id) -H "+text.utf8.map{String(format:"%02x",$0)}.joined(separator:" ")}
    _=try await wire.execute(PaneCommands.path+command);if submit{lastInput=text}
   }catch{self.error=error.localizedDescription+" Inspect the pane before retrying; input is never replayed."}
  }
