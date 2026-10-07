@@ -67,6 +67,7 @@ export async function loadSSHCredentials(id: string): Promise<SSHCredentials> {
 export async function removeSSHHost(id: string): Promise<void> {
   if (Platform.OS === "web") {browserHosts=browserHosts.filter((h)=>h.id!==id);browserCredentials.delete(id);return;}
   await SecureStore.deleteItemAsync(`plainSSH.${id}`);
+  await SecureStore.deleteItemAsync(`plainSSH.car.${id}`);
   await AsyncStorage.setItem(hostsKey, JSON.stringify((await loadSSHHosts()).filter((h) => h.id !== id)));
 }
 export function sshBytes(data: string): Uint8Array { return Buffer.from(data, "base64"); }

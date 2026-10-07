@@ -1,9 +1,21 @@
+import {Platform} from "react-native";
+import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {loadSSHHosts,loadSSHCredentials,sshCall,sshInput,type SSHPane} from "./plainSSH";
 import {appendTerminalSpeechText,terminalSpeechExcerpt} from "./terminalSpeech";
 const key="yaver.plainSSH.voiceTarget.v1";
 export interface SSHVoiceTarget {hostId:string;pane:SSHPane}
-export async function saveSSHVoiceTarget(value:SSHVoiceTarget|null){if(value)await AsyncStorage.setItem(key,JSON.stringify(value));else await AsyncStorage.removeItem(key);}
+export async function saveSSHVoiceTarget(value:SSHVoiceTarget|null){
+ const previous=await loadSSHVoiceTarget();
+ if(value && Platform.OS!=="web"){
+  const credentials=await loadSSHCredentials(value.hostId);
+  // Explicit car opt-in: this device-only copy remains usable after the
+  // phone locks. It never synchronizes to iCloud or a car/head unit.
+  await SecureStore.setItemAsync(`plainSSH.car.${value.hostId}`,JSON.stringify(credentials),{keychainAccessible:SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY});
+ }
+ if(value)await AsyncStorage.setItem(key,JSON.stringify(value));else await AsyncStorage.removeItem(key);
+ if(previous && previous.hostId!==value?.hostId && Platform.OS!=="web")await SecureStore.deleteItemAsync(`plainSSH.car.${previous.hostId}`);
+}
 export async function loadSSHVoiceTarget():Promise<SSHVoiceTarget|null>{return JSON.parse(await AsyncStorage.getItem(key)||"null");}
 /** Submit only after spoken confirmation; undefined text means read-only.
  * A quiet screen is not proof that a runner finished. Return a bounded excerpt
@@ -11,7 +23,8 @@ export async function loadSSHVoiceTarget():Promise<SSHVoiceTarget|null>{return J
 export async function sendSSHVoice(text?:string,isCancelled=()=>false):Promise<string>{
  const target=await loadSSHVoiceTarget();if(!target)throw new Error("Choose a pane in Plain SSH on your phone first.");
  const host=(await loadSSHHosts()).find(item=>item.id===target.hostId);if(!host)throw new Error("The saved SSH host was removed. Choose another on your phone.");
- const credentials=await loadSSHCredentials(host.id);const {id}=await sshCall<{id:string}>({...host,...credentials,op:"connect"});
+ const saved=Platform.OS!=="web"?await SecureStore.getItemAsync(`plainSSH.car.${host.id}`):null;
+ const credentials=saved?JSON.parse(saved):await loadSSHCredentials(host.id);const {id}=await sshCall<{id:string}>({...host,...credentials,op:"connect"});
  let draining=true;
  try{
   if(isCancelled())return "";

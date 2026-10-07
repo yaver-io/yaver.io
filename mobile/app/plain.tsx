@@ -211,7 +211,7 @@ export default function PlainScreen() {
               {button("↑", () => {void send("\x1b[A").catch(() => {});}, false)}{button("↓", () => {void send("\x1b[B").catch(() => {});}, false)}{button("Enter", () => {void send("\r").catch(() => {});}, false)}
               {button(dictating ? "Stop dictation" : "Dictate", () => {void dictate();}, false)}
               {button("Read output", () => {const text = terminalSpeechExcerpt(speechText.current); if (text) Speech.speak(text);}, false)}
-              {selected && button("Use this pane in CarPlay", () => {void saveSSHVoiceTarget({hostId:selected.id,pane}).then(()=>setStatus("CarPlay will use this pane · every voice submission asks for confirmation")).catch(report);}, false)}
+              {selected && button("Use this pane in CarPlay", () => {void saveSSHVoiceTarget({hostId:selected.id,pane}).then(()=>setStatus("CarPlay uses this pane, including while the phone is locked after its first unlock · voice confirmation required")).catch(report);}, false)}
               {button("Stop reading", () => {void Speech.stop();}, false)}
               {!connection.current && selected && button("Reconnect", () => {void connect(selected, pane);}, false)}
             </ScrollView>
