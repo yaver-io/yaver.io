@@ -78,6 +78,8 @@ AAB="$ROOT/wear/app/build/outputs/bundle/release/app-release.aab"
 
 # shellcheck source=scripts/lib/android-sdk.sh
 source "$ROOT/scripts/lib/android-sdk.sh"
+source "$ROOT/scripts/lib/android-gradle-home.sh"
+yaver_configure_android_gradle_home "$ROOT"
 yaver_resolve_android_sdk
 # shellcheck source=scripts/lib/android-gradle-memory.sh
 source "$ROOT/scripts/lib/android-gradle-memory.sh"

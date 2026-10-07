@@ -262,3 +262,9 @@ loopback transport endpoint never masquerades as a peer's overlay address.
 The native Android wrapper now retains the phone app's API 24 minimum; its
 compiled Go AAR already supports API 23. The real manifest merge caught the
 previous accidental API 26 requirement.
+
+Android release cache recovery: a running Gradle daemon retained Kotlin
+workspace references after the shared workstation cache disappeared. Release
+scripts for phone, TV and Wear now use `.yaver-build/android-gradle` by default,
+respecting an explicit `GRADLE_USER_HOME` override. That generated directory is
+ignored by git. A shared-cache cleanup no longer removes Yaver's release state.

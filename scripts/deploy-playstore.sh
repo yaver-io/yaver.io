@@ -10,6 +10,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT/mobile/android"
 # shellcheck source=scripts/lib/android-sdk.sh
 source "$REPO_ROOT/scripts/lib/android-sdk.sh"
+source "$REPO_ROOT/scripts/lib/android-gradle-home.sh"
+yaver_configure_android_gradle_home "$REPO_ROOT"
 # shellcheck source=scripts/lib/java-home.sh
 source "$REPO_ROOT/scripts/lib/java-home.sh"
 # shellcheck source=scripts/lib/android-ninja-memory.sh

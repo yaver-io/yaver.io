@@ -151,3 +151,6 @@ mobile/.tmp/
 
 # local scratch media (never part of a release)
 /tmp/
+
+# Project-owned release caches; never commit generated dependencies.
+/.yaver-build/
