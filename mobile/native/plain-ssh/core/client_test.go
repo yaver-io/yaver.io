@@ -108,8 +108,8 @@ func testServer(t *testing.T) (request, *atomic.Int32, func(...string) string) {
 							}
 							// tmux 3.7 preserves literal backslash-t in -F. The wire
 							// must contain actual tabs, independent of tmux version.
-							if strings.Contains(payload.Command, "list-panes") && strings.Contains(payload.Command, `\t`) {
-								t.Error("pane wire format contains literal backslash-t separators")
+							if strings.Contains(payload.Command, "list-panes") && (!strings.Contains(payload.Command, "tmux -u list-panes") || strings.Contains(payload.Command, `\t`)) {
+								t.Error("pane wire format must force UTF-8 and contain actual tabs (tmux 3.7 C-locale regression)")
 							}
 							cmd := exec.Command("/bin/sh", "-c", payload.Command)
 							cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "LANG=C", "LC_ALL=C")
