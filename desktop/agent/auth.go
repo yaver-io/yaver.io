@@ -19,9 +19,8 @@ import (
 
 // RefreshToken extends the session expiry by 1 year and, if the
 // backend supports rotation (yaver.io Convex, Apr 2026+), returns a
-// freshly-minted bearer token. A leaked token then only lives until
-// the next daily refresh (~24 h max blast radius) — invisible to the
-// user, automatic.
+// freshly-minted bearer token. Rotation is automatic; the backend bounds
+// acceptance of the immediately previous token with its recovery grace.
 //
 // The caller is expected to persist the returned rotated token to
 // ~/.yaver/config.json atomically before considering the refresh
@@ -67,6 +66,29 @@ func RefreshToken(baseURL, token string) (string, error) {
 		return strings.TrimSpace(body.Token), nil
 	}
 	return "", nil
+}
+
+// Capture the identity before the network request, so a delayed response cannot
+// replace a different account signed in while refresh was in flight.
+func refreshSavedAuthSession(baseURL string, refresh func(string, string) (string, error)) (string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "", err
+	}
+	if cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		return "", fmt.Errorf("no saved session to refresh")
+	}
+	newToken, err := refresh(baseURL, cfg.AuthToken)
+	if err != nil {
+		return "", err
+	}
+	if newToken == "" {
+		newToken = cfg.AuthToken
+	}
+	if err := persistRotatedAuthToken(cfg, newToken); err != nil {
+		return "", err
+	}
+	return cfg.AuthToken, nil
 }
 
 func SignupWithEmail(baseURL, fullName, email, password string) (string, error) {

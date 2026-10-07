@@ -44,3 +44,40 @@ func TestInFlightRefreshCannotUndoSignOut(t *testing.T) {
 		t.Fatal("sign-out was undone")
 	}
 }
+
+func TestRefreshCannotReplaceAccountChangedDuringRequest(t *testing.T) {
+	vaultDirForTest(t)
+	if err := SaveConfig(&Config{AuthToken: "first-account"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := refreshSavedAuthSession("https://example.invalid", func(_ string, token string) (string, error) {
+		if token != "first-account" {
+			t.Fatal("wrong refresh identity")
+		}
+		if err := SaveConfig(&Config{AuthToken: "second-account"}); err != nil {
+			t.Fatal(err)
+		}
+		return "first-account-rotated", nil
+	})
+	if err == nil {
+		t.Fatal("old refresh replaced new account")
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg.AuthToken != "second-account" {
+		t.Fatal("new account was overwritten")
+	}
+}
+
+func TestRefreshRefusesSignedOutSession(t *testing.T) {
+	vaultDirForTest(t)
+	if err := SaveConfigClearingAuth(&Config{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := refreshSavedAuthSession("https://example.invalid", func(string, string) (string, error) {
+		t.Fatal("signed-out device must not refresh")
+		return "", nil
+	})
+	if err == nil {
+		t.Fatal("missing session accepted")
+	}
+}

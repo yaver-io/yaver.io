@@ -402,7 +402,7 @@ if ! (cd "$UPLOAD_AUTH_DIR" && xcrun altool --upload-app --file "$PKG_PATH" --pl
   echo "ERROR: App Store Connect macOS upload command failed." >&2
   exit 1
 fi
-if grep -qE 'UPLOAD FAILED|Validation failed|Failed to upload package|Cannot determine the platform|ERROR:' "$UPLOAD_LOG"; then
+if ! apple_upload_log_succeeded "$UPLOAD_LOG"; then
   echo "ERROR: App Store Connect rejected the macOS upload." >&2
   exit 1
 fi

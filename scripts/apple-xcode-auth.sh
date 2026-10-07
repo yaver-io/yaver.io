@@ -329,3 +329,14 @@ apple_require_store_sdk() {
     return 1
   fi
 }
+
+# altool can log an HTTP 500, retry internally, and then succeed. Require its
+# final explicit success verdict; neither exit zero nor an earlier error alone
+# describes the outcome. A later error/failure invalidates an earlier success.
+apple_upload_log_succeeded() {
+  awk '
+    /UPLOAD FAILED|Validation failed|Failed to upload package|Cannot determine the platform|ERROR:/ { ok=0 }
+    /UPLOAD SUCCEEDED with no errors/ { ok=1 }
+    END { exit(ok ? 0 : 1) }
+  ' "$1"
+}

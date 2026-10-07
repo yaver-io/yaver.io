@@ -289,7 +289,7 @@ func normalizeRelayHTTPURL(raw string) string {
 // ticks — either outcome (success or interrupted write) leaves the
 // agent authenticated.
 //
-// The cfg passed here must be a FRESHLY loaded config. We re-read it
+// The cfg passed here must be captured BEFORE requesting refresh. We re-read it
 // here to avoid stomping on other mutations (relay cache updates,
 // runner changes, device ID rotations) that may have happened on a
 // different goroutine since the caller obtained its cfg pointer.
@@ -9525,9 +9525,8 @@ func listDevicesEnsuringAuth(cfg *Config) ([]DeviceInfo, error) {
 	if newToken, rErr := RefreshToken(cfg.ConvexSiteURL, cfg.AuthToken); rErr == nil {
 		if newToken != "" {
 			if pErr := persistRotatedAuthToken(cfg, newToken); pErr != nil {
-				log.Printf("[auth] (warn) persist rotated token: %v", pErr)
+				return nil, fmt.Errorf("persist refreshed session: %w", pErr)
 			}
-			cfg.AuthToken = newToken
 		}
 		if vErr := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); vErr == nil {
 			refreshed = true
@@ -10085,36 +10084,22 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	// if the backend supports rotation, swaps the bearer token so a
 	// leak only lives until the next daily refresh.
 	refreshAndPersist := func(label string) bool {
-		newToken, err := RefreshToken(baseURL, currentToken())
+		newToken, err := refreshSavedAuthSession(baseURL, RefreshToken)
 		if err != nil {
 			log.Printf("[auth] %s token refresh failed: %v", label, err)
 			return false
 		}
-		if newToken != "" {
-			if cfg, cerr := LoadConfig(); cerr == nil && cfg != nil {
-				if perr := persistRotatedAuthToken(cfg, newToken); perr != nil {
-					log.Printf("[auth] (warn) %s — rotated but could not persist: %v", label, perr)
-				} else {
-					if taskMgr != nil {
-						taskMgr.AuthToken = newToken
-					}
-					if httpServer != nil {
-						httpServer.token = newToken
-						// Flush token→user cache — old bearer entries
-						// reference a revoked token and will make
-						// auth() hand out a stale routing decision until
-						// the old entries age out.
-						httpServer.tokenCache.Range(func(k, _ interface{}) bool {
-							httpServer.tokenCache.Delete(k)
-							return true
-						})
-					}
-					log.Printf("[auth] %s refreshed + rotated (extended 1 year).", label)
-				}
-			}
-		} else {
-			log.Printf("[auth] %s refreshed (extended 1 year).", label)
+		if taskMgr != nil {
+			taskMgr.AuthToken = newToken
 		}
+		if httpServer != nil {
+			httpServer.token = newToken
+			httpServer.tokenCache.Range(func(k, _ interface{}) bool {
+				httpServer.tokenCache.Delete(k)
+				return true
+			})
+		}
+		log.Printf("[auth] %s refreshed (extended 1 year).", label)
 		return true
 	}
 	refreshAndPersist("startup")

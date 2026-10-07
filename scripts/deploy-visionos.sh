@@ -328,7 +328,7 @@ if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
   upload_status=${PIPESTATUS[0]}
   set -e
   if [ "$upload_status" -ne 0 ] || \
-     grep -Eq 'UPLOAD FAILED|Validation failed|Failed to upload package|Cannot determine the platform|ERROR:' "$UPLOAD_LOG"; then
+     ! apple_upload_log_succeeded "$UPLOAD_LOG"; then
     echo "ERROR: App Store Connect did not accept the visionOS upload." >&2
     exit 1
   fi

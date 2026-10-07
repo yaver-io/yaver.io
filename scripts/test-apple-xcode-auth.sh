@@ -136,7 +136,7 @@ grep -q -- '--platform appletvos --apiKey' "$tvos_deploy" || \
   fail "tvOS API-key deploys must validate/upload the exported IPA with altool"
 grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$tvos_deploy" || \
   fail "tvOS deploys must treat altool's server validation verdict as authoritative"
-grep -q "UPLOAD FAILED|Validation failed|Failed to upload package" "$tvos_deploy" || \
+grep -q 'apple_upload_log_succeeded "$UPLOAD_LOG"' "$tvos_deploy" || \
   fail "tvOS deploys must not report acceptance after a server-side upload failure"
 grep -q 'PACKAGE_AUTH_SETTINGS=(-packageAuthorizationProvider netrc -scmProvider system)' "$tvos_deploy" || \
   fail "tvOS public package resolution must not block on the login keychain in headless deploys"
@@ -159,7 +159,7 @@ grep -q -- '--validate-app.*--platform visionos' "$visionos_deploy" || \
   fail "visionOS API-key deploys must validate the exported IPA before upload"
 grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$visionos_deploy" || \
   fail "visionOS deploys must treat Apple's server validation verdict as authoritative"
-grep -q "UPLOAD FAILED|Validation failed|Failed to upload package" "$visionos_deploy" || \
+grep -q 'apple_upload_log_succeeded "$UPLOAD_LOG"' "$visionos_deploy" || \
   fail "visionOS deploys must not report acceptance after a server-side upload failure"
 
 # A clean mobile checkout has no node_modules. Dependency self-healing must run
@@ -224,7 +224,7 @@ grep -q "VERIFY FAILED|Validation failed|Failed to validate package" "$testfligh
   fail "iOS API-key deploys must treat altool's server rejection as failure even when altool exits zero"
 grep -q "upload was not attempted" "$testflight_script" || \
   fail "iOS validation failure must stop before the upload endpoint"
-grep -q "UPLOAD FAILED|Validation failed|Failed to upload package" "$testflight_script" || \
+grep -q 'apple_upload_log_succeeded "$UPLOAD_LOG"' "$testflight_script" || \
   fail "iOS API-key deploys must not report success when altool's upload verdict is failure"
 grep -q 'Watch/YaverWatch.app' "$testflight_script" || \
   fail "iOS archive validation must check the collision-free YaverWatch product name"

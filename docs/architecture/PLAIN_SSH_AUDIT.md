@@ -193,9 +193,11 @@ Connectivity and device approval follow-up:
   on-device data-plane validation. A success button must not substitute for it.
 
 Release evidence: shared iOS/iPadOS/CarPlay + embedded Watch build
-202608181431 was accepted by TestFlight. Later approval changes require a
-follow-up archive. Physical car audio and Apple TV Remote input remain hardware
-verification steps.
+202608181432, tvOS build 319 and visionOS build 202608181743 were accepted by
+App Store Connect. Physical car audio and Apple TV Remote input remain hardware
+verification steps. The iOS uploader recovered internally from an HTTP 500;
+all Apple upload lanes now inspect the final explicit server verdict instead
+of treating an earlier recovered error as the outcome.
 
 Native phone approval (both QR/code and SSH enrollment) now shares the same OS
 user-presence gate: Face ID/Touch ID or device passcode, with cancellation and
@@ -217,7 +219,7 @@ the already-running boot daemon still answered authenticated HTTP 200 afterward.
 No reboot or runner restart was performed.
 
 The real Electron runtime was also driven with a fresh isolated profile and
-no Yaver account token. Its packaged native SSH IPC bridge pinned the fixture
+no Yaver account token. Its bundled native SSH IPC bridge pinned the fixture
 host, opened a real tmux pane, sent composed input, rendered that input in the
 live pane, toggled Raw/Pane chat and detached successfully. The reproducible
 arc is `e2e/verify-plain-ssh-electron.mjs`; screenshots stay outside the repo.
@@ -228,3 +230,8 @@ runners, mobile SDK tools and lab provisioning stay behind an explicit
 opt-in. Existing Studio commands remain available. Connectivity command help
 returns before any network mutation. Tests cover the default install policy,
 explicit opt-ins and help behavior.
+
+The background refresh path also captures the session before its network
+request. A delayed response cannot replace a different account signed in
+during that request; persistence failure is reported as failure, not renewed
+authentication. Tests reproduce the account switch inside the refresh call.
