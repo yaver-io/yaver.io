@@ -298,19 +298,29 @@ func persistRotatedAuthToken(cfg *Config, newToken string) error {
 		return nil
 	}
 	fresh, err := LoadConfig()
-	if err != nil || fresh == nil {
-		// Fall back to the caller's cfg — better than silently losing
-		// the rotation; any concurrent writer will just resync on its
-		// next SaveConfig.
-		fresh = cfg
+	if err != nil {
+		return fmt.Errorf("reload session before persisting rotation: %w", err)
+	}
+	if fresh == nil || cfg == nil {
+		return fmt.Errorf("session unavailable; discard refresh")
 	}
 	if fresh.AuthToken == newToken {
+		cfg.AuthToken = newToken
 		return nil
+	}
+	if fresh.AuthToken == "" || fresh.AuthToken != cfg.AuthToken {
+		return fmt.Errorf("session changed or was signed out during refresh; discard rotation")
 	}
 	// SetAuthToken stashes the prev token + rekeys vault.enc so the
 	// new token can read existing entries. Without this, every
 	// /auth/refresh ?rotate=1 cycle locks the vault.
-	return SetAuthToken(fresh, newToken)
+	if err := SetAuthToken(fresh, newToken); err != nil {
+		return err
+	}
+	cfg.AuthToken = fresh.AuthToken
+	cfg.PreviousAuthToken = fresh.PreviousAuthToken
+	cfg.PreviousAuthTokens = fresh.PreviousAuthTokens
+	return nil
 }
 
 // tryOpenAgentVault is the agent boot mirror of openVaultE — same
@@ -1276,7 +1286,7 @@ func runAuth(args []string) {
 	callbackToken := make(chan string, 1)
 
 	callbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("  Callback received: %s %s\n", r.Method, r.URL.String())
+		fmt.Printf("  Auth callback received: %s\n", r.Method)
 		t := r.URL.Query().Get("token")
 		if t != "" {
 			w.Header().Set("Content-Type", "text/html")
@@ -2056,12 +2066,8 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 		// so add a short next-steps line so a fresh user knows what to
 		// run. Headless flow already prints its own (richer) variant.
 		if !printHeadlessSteps {
-			fmt.Println("Next:")
-			fmt.Println("  yaver primary       see your devices, pick a primary")
-			fmt.Println("  yaver onboard       connect Gmail/O365/GitHub/GitLab integrations for MCP/runtime")
-			fmt.Println("  yaver code          terminal UI for AI-driven dev on this machine")
-			fmt.Println("  yaver ssh primary   SSH to your primary (auto-bootstraps keys)")
-			fmt.Println()
+			fmt.Println("This device keeps its own session and renews it automatically.")
+			fmt.Println("Run `yaver status` to check connectivity.")
 		}
 	}
 	// Register reboot persistence (systemd user unit on Linux, launchd
@@ -2073,7 +2079,6 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	// YAVER_NO_AUTO_START=1.
 	maybeRegisterAutoStartAfterAuth()
 	startServeIfStopped()
-	autoSetupMCP()
 	if printHeadlessSteps {
 		printHeadlessNextSteps()
 	}
@@ -2164,11 +2169,6 @@ func printHeadlessNextSteps() {
 	fmt.Println("    iPhone:            https://apps.apple.com/us/app/yaver-io/id6760467669")
 	fmt.Println("    Android (Play):    https://play.google.com/store/apps/details?id=io.yaver.mobile")
 	fmt.Println("  This machine will appear in its device list automatically.")
-	fmt.Println()
-	fmt.Println("Next - integrations:")
-	fmt.Println("  Run `yaver onboard` to connect Gmail/O365/GitHub/GitLab for MCP,")
-	fmt.Println("  car/watch/TV, meeting, mail, repo, and CI status workflows.")
-	fmt.Println("  Existing connections are reused; only missing providers need setup.")
 	fmt.Println()
 
 	// Bootstrap-secret nudge still needs a human decision — where to store it.

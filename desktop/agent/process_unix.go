@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	osexec "os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -903,12 +904,8 @@ func isDarwinLaunchDaemonInstalled() bool {
 // daemon for :18080. Removing the agent plist is part of installing the
 // daemon, not optional cleanup. Best-effort: the plist is per-user and the
 // daemon install already knows the home dir.
-func removeStaleDarwinLaunchAgent() {
+func removeStaleDarwinLaunchAgentFor(home, uid string) {
 	if runtime.GOOS != "darwin" {
-		return
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
 		return
 	}
 	plistPath := filepath.Join(home, darwinLaunchAgentPath)
@@ -917,8 +914,8 @@ func removeStaleDarwinLaunchAgent() {
 	}
 	// Unload first so launchd doesn't keep a dying process alive across the
 	// file removal. gui/<uid>/ is the right domain for a LaunchAgent.
-	if uid := os.Getuid(); uid >= 0 {
-		_ = osexec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, darwinLaunchdLabel)).Run()
+	if uid != "" {
+		_ = osexec.Command("launchctl", "bootout", fmt.Sprintf("gui/%s/%s", uid, darwinLaunchdLabel)).Run()
 	}
 	_ = os.Remove(plistPath)
 }
@@ -934,16 +931,12 @@ func installLaunchdDaemonService() {
 		return
 	}
 	workDir, _ := os.Getwd()
-	home, err := os.UserHomeDir()
+	account, err := launchdInstallAccount(os.Geteuid(), os.Getenv("SUDO_USER"), user.Current, user.Lookup)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving home dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Cannot resolve the Yaver account for reboot startup: %v\n", err)
 		return
 	}
-	userName := strings.TrimSpace(os.Getenv("USER"))
-	if userName == "" {
-		fmt.Fprintln(os.Stderr, "Error: $USER is empty. Run from the target account.")
-		return
-	}
+	home, userName := account.HomeDir, account.Username
 	logDir := filepath.Join(home, ".yaver")
 	_ = os.MkdirAll(logDir, 0o700)
 	plist := buildDarwinLaunchdPlist(exePath, workDir, logDir, userName, home)
@@ -953,7 +946,7 @@ func installLaunchdDaemonService() {
 	// split-brain that followed the 2026-08-12 Mac incident (daemon installed,
 	// agent plist left behind, both fighting for :18080). Removing it is part
 	// of installing the daemon, not an optional cleanup.
-	removeStaleDarwinLaunchAgent()
+
 	if os.Geteuid() != 0 {
 		stagingPath := filepath.Join(logDir, "io.yaver.agent.launchdaemon.plist")
 		if err := os.WriteFile(stagingPath, []byte(plist), 0o644); err != nil {
@@ -977,6 +970,26 @@ func installLaunchdDaemonService() {
 		fmt.Fprintf(os.Stderr, "launchctl bootstrap failed: %s%v\n", string(out), err)
 		return
 	}
+	removeStaleDarwinLaunchAgentFor(home, account.Uid)
 	fmt.Printf("LaunchDaemon installed: %s\n", darwinLaunchDaemonPath)
 	fmt.Println("Yaver will start at boot before login.")
+}
+
+// sudo must preserve the approving OS user's saved identity, never silently
+// start a new root-owned Yaver account after reboot.
+func launchdInstallAccount(euid int, sudoUser string, current func() (*user.User, error), lookup func(string) (*user.User, error)) (*user.User, error) {
+	if euid == 0 {
+		if strings.TrimSpace(sudoUser) == "" || sudoUser == "root" {
+			return nil, fmt.Errorf("run sudo from the OS account already signed in to Yaver")
+		}
+		account, err := lookup(sudoUser)
+		if err != nil {
+			return nil, err
+		}
+		if account.Uid == "0" || account.HomeDir == "" {
+			return nil, fmt.Errorf("a non-root Yaver account with a home directory is required")
+		}
+		return account, nil
+	}
+	return current()
 }

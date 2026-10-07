@@ -204,3 +204,14 @@ are directed to set one. Face ID leaves SSH attached during iOS's temporary
 inactive state; actual backgrounding still detaches. Existing backend device
 sessions already last one year and support automatic refresh/rotation; no
 permanent shared token or blanket automatic approval was added.
+
+Reboot recovery audit: refresh now accepts the immediately previous token only
+within the existing rotation grace, just like ordinary validation. Tests cover
+lost refresh responses, expired grace and revoked sessions; removing the
+recovery lookup makes the regression fail. The agent updates its live bootstrap
+config after persisting rotation and rejects in-flight refreshes after sign-out.
+The macOS boot-service installer preserves the sudo caller's account/home and
+only removes the duplicate login service after a successful boot-service install.
+On the real office host, a redundant login service was backed up and disabled;
+the already-running boot daemon still answered authenticated HTTP 200 afterward.
+No reboot or runner restart was performed.

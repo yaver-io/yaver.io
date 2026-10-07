@@ -1385,10 +1385,19 @@ export const refreshSession = mutation({
     newTokenHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const session = await ctx.db
+    let session = await ctx.db
       .query("sessions")
       .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
       .unique();
+
+    // Recover a lost rotation response using the same bounded grace as
+    // ordinary validation; reboot must not strand a still-authorized device.
+    if (!session) {
+      const previous = await ctx.db.query("sessions")
+        .withIndex("by_prevTokenHash", (q) => q.eq("prevTokenHash", args.tokenHash))
+        .unique();
+      if (previous && (previous.prevTokenValidUntil ?? 0) > Date.now()) session = previous;
+    }
 
     if (!session) return null;
 
@@ -1429,7 +1438,7 @@ export const refreshSession = mutation({
       if (!collision) {
         patch.tokenHash = args.newTokenHash;
         // Keep the just-rotated token alive for the grace window.
-        patch.prevTokenHash = args.tokenHash;
+        patch.prevTokenHash = session.tokenHash;
         patch.prevTokenValidUntil = Date.now() + ROTATION_GRACE_MS;
       }
     }
