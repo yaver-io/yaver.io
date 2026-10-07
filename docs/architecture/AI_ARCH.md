@@ -534,3 +534,14 @@ For a new AI/code agent:
 6. `mobile/src/context/DeviceContext.tsx`
 7. `mobile/src/lib/quic.ts`
 8. `backend/convex/devices.ts`
+
+
+### Direct SSH pane lane (2026-10-08 source)
+
+The phone/tablet `/plain`, web/desktop `/ssh`, and native TV/watch/vision SSH
+screens independently authenticate an SSH user and
+pins the server host key. It does not use the Yaver device registry, bearer or
+relay. Existing agent endpoints retain their authorization. The SSH tab and
+login screen expose this separate lane without replacing normal navigation.
+See [Plain SSH audit](PLAIN_SSH_AUDIT.md) for implementation, browser-companion
+constraints and verified versus unverified surfaces.

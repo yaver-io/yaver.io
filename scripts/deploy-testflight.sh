@@ -193,6 +193,9 @@ NODE
 
 ensure_mobile_dependencies
 
+# Build the shared SSH core before CocoaPods resolves its local framework.
+sh "$ROOT/mobile/native/plain-ssh/build.sh" ios
+
 # A checkout intentionally carries only the hand-maintained iOS overlays. The
 # Podfile, workspace, launch storyboard, assets, and Expo support files are
 # generated state. The canonical deploy used to assume some earlier local run

@@ -73,6 +73,7 @@
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 		FCAA90D03B4E4E9F81DA0047 /* WakeProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47E06EDB37C2459087D39E09 /* WakeProgressView.swift */; };
 		FF7DDBBE80B84B9DBDBC343D /* Backend.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAE27D0C2AC344CA8EA727F7 /* Backend.swift */; };
+		CCB1801A09E84F77A534C400 /* PlainSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A134BC5BA04348EFBB18CC3E /* PlainSSH */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -117,7 +118,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
 			dstSubfolderSpec = 16;
 			files = (
-				6359A7DA20FC42B3BB24782B /* YaverWatch.app in Embed Watch Content */,
+				6359A7DA20FC42B3BB24782B /* YaverWatch.app */,
 			);
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -217,6 +218,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CCB1801A09E84F77A534C400 /* PlainSSH in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -438,6 +440,9 @@
 			productName = YaverWatch;
 			productReference = 729EC3763C19417E8973784F /* YaverWatch.app */;
 			productType = "com.apple.product-type.application";
+			packageProductDependencies = (
+				A134BC5BA04348EFBB18CC3E /* PlainSSH */,
+			);
 		};
 		13B07F861A680F5B00A75B9A /* Yaver */ = {
 			isa = PBXNativeTarget;
@@ -541,6 +546,9 @@
 				133BF25B97134A7DBC84014B /* YaverWatch */,
 				F36BFE7B20D2433A80D39433 /* YaverActivity */,
 				1E35CA00C7B8447CA26AA5D1 /* ShareExtension */,
+			);
+			packageReferences = (
+				14A12505AC9C4F678EFA8765 /* PlainSSH */,
 			);
 		};
 /* End PBXProject section */
@@ -1135,11 +1143,7 @@
 				DEVELOPMENT_TEAM = 5SJZ4KA39A;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ../../watch/YaverWatch/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.18.190;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.watch;
@@ -1196,11 +1200,7 @@
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ../../watch/YaverWatch/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.18.190;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = io.yaver.mobile.watch;
@@ -1287,6 +1287,21 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		14A12505AC9C4F678EFA8765 /* PlainSSH */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../apple/PlainSSH";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A134BC5BA04348EFBB18CC3E /* PlainSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14A12505AC9C4F678EFA8765 /* PlainSSH */;
+			productName = PlainSSH;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 83CBB9F71A601CBA00E9B192 /* Project object */;
 }

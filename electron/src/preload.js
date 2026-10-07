@@ -103,6 +103,7 @@ if (trustedRenderer) {
 }
 
 if (trustedRenderer) contextBridge.exposeInMainWorld("yaver", Object.freeze({
+  plainSSH: (request) => ipcRenderer.invoke("yaver:plain-ssh", request),
   surface: "desktop-gui",
   platform: process.platform,
   versions: {

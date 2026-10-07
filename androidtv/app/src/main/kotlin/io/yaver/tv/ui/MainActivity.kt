@@ -23,8 +23,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         TvColors.applyTheme(app.store.appearanceTheme.value)
         setContent {
+            androidx.compose.foundation.layout.Column {
+                androidx.compose.ui.viewinterop.AndroidView(factory = { context -> android.widget.Button(context).apply { text = "SSH panes · no Yaver sign-in"; setOnClickListener { context.startActivity(android.content.Intent(context, io.yaver.plainssh.PlainSSHActivity::class.java)) } } })
+
             Surface(modifier = Modifier.fillMaxSize()) {
                 YaverTvApp(store = app.store)
+            }
+
             }
         }
     }

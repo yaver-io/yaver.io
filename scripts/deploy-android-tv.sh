@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+sh "$ROOT/mobile/native/plain-ssh/build.sh" android
 UPLOAD=0
 SKIP_BUILD=0
 PACKAGE="${TV_PACKAGE:-io.yaver.mobile}"

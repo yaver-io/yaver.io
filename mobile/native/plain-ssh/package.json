@@ -1,0 +1,7 @@
+{
+  "name": "yaver-plain-ssh",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "react-native": "index.js"
+}

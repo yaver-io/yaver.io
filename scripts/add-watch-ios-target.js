@@ -101,6 +101,7 @@ for (const k of Object.keys(native)) {
   const t = native[k];
   if (t && typeof t === "object" && stripQuotes(t.name) === TARGET) {
     repairTarget(k);
+    ensurePlainSSH(k);
     fs.writeFileSync(PROJ, proj.writeSync());
     console.log(`✓ ${TARGET} target already present — repaired settings/paths.`);
     process.exit(0);
@@ -138,6 +139,7 @@ project.attributes.TargetAttributes[targetUuid] = {
 };
 
 repairTarget(targetUuid);
+ensurePlainSSH(targetUuid);
 
 fs.writeFileSync(PROJ, proj.writeSync());
 console.log(`✓ added ${TARGET} watchOS companion target → ${path.relative(process.cwd(), PROJ)}`);
@@ -369,4 +371,23 @@ function ensureResourceCatalog(targetUuid) {
       break;
     }
   }
+}
+
+// Both the standalone watch project and the iPhone-embedded watch target
+// link the SAME account-independent SSH package.
+function ensurePlainSSH(targetUUID) {
+ const objects=proj.hash.project.objects;
+ const project=objects.PBXProject[proj.getFirstProject().uuid];
+ const locals=objects.XCLocalSwiftPackageReference ||= {};
+ let packageID=Object.keys(locals).find(id=>locals[id]?.relativePath==='"../../apple/PlainSSH"');
+ if(!packageID){packageID=proj.generateUuid();locals[packageID]={isa:"XCLocalSwiftPackageReference",relativePath:'"../../apple/PlainSSH"'};locals[packageID+"_comment"]="PlainSSH";}
+ project.packageReferences ||= [];
+ if(!project.packageReferences.some(ref=>ref.value===packageID))project.packageReferences.push({value:packageID,comment:"PlainSSH"});
+ const products=objects.XCSwiftPackageProductDependency ||= {};
+ const target=objects.PBXNativeTarget[targetUUID];target.packageProductDependencies ||= [];
+ let productID=target.packageProductDependencies.find(ref=>products[ref.value]?.productName==="PlainSSH")?.value;
+ if(!productID){productID=proj.generateUuid();products[productID]={isa:"XCSwiftPackageProductDependency",package:packageID,package_comment:"PlainSSH",productName:"PlainSSH"};products[productID+"_comment"]="PlainSSH";target.packageProductDependencies.push({value:productID,comment:"PlainSSH"});}
+ let phase=target.buildPhases.map(ref=>objects.PBXFrameworksBuildPhase?.[ref.value]).find(Boolean);
+ if(!phase){proj.addBuildPhase([],"PBXFrameworksBuildPhase","Frameworks",targetUUID);phase=target.buildPhases.map(ref=>objects.PBXFrameworksBuildPhase?.[ref.value]).find(Boolean);}
+ if(!phase.files.some(ref=>objects.PBXBuildFile[ref.value]?.productRef===productID)){const id=proj.generateUuid();objects.PBXBuildFile[id]={isa:"PBXBuildFile",productRef:productID,productRef_comment:"PlainSSH"};objects.PBXBuildFile[id+"_comment"]="PlainSSH in Frameworks";phase.files.push({value:id,comment:"PlainSSH in Frameworks"});}
 }

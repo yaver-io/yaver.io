@@ -1,82 +1,41 @@
-// XtermView — web side.
-//
-// The native XtermView renders xterm.js inside a react-native-webview
-// container (the in-app glasses terminal). react-native-webview has NO web
-// implementation — rendering it in a browser throws "React Native WebView
-// does not support this platform." That is the exact crash this file
-// prevents (2026-08-09): the browser lane of the mobile app must never die
-// on a surface it cannot serve.
-//
-// The browser has no raw-PTY transport and no WebView container, so a
-// terminal here would be a lie. We render an honest placeholder instead —
-// explainNoTransport-style: named, quiet, actionable, never a spinner that
-// pretends to load. Native is untouched: this file is only loaded for the
-// web target (additive-only, per AGENTS.md).
-//
-// The handle contract (XtermHandle: write/reset/fit) is implemented as a
-// no-op so any caller that holds the ref never crashes on the missing
-// terminal — the same "the operation did not happen, and it says so" rule
-// as the rest of the browser lane.
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { Text, View } from "react-native";
+import type { XtermHandle, XtermViewProps } from "../lib/xtermTypes";
+import "@xterm/xterm/css/xterm.css";
+export type { XtermHandle, XtermViewProps } from "../lib/xtermTypes";
 
-import { forwardRef, useImperativeHandle } from "react";
-import { StyleSheet, Text, View } from "react-native";
-
-// Defined locally (NOT imported from ./XtermView) so this file never
-// self-resolves into a cycle on the web target — the import specifier
-// "./XtermView" from XtermView.web.tsx would resolve back to this file.
-export interface XtermHandle {
-  write(bytes: Uint8Array): void;
-  fit(): void;
-  focus(): void;
-  /** Clear the grid + scrollback (raw_replay full-snapshot replace). */
-  reset(): void;
-}
-
-const WEB_TERMINAL_UNAVAILABLE =
-  "Terminal isn't available in the browser — it needs the native WebView. Open Yaver on your phone or Mac for the live terminal.";
-
-export const WEBVIEW_SUPPORTED = false;
-export const WEBVIEW_UNSUPPORTED_REASON = WEB_TERMINAL_UNAVAILABLE;
-
-const XtermViewWeb = forwardRef<XtermHandle, Record<string, unknown>>((_props, ref) => {
-  useImperativeHandle(
-    ref,
-    () => ({
-      write: () => {
-        /* no-op — no terminal in the browser; the placeholder says so */
-      },
-      fit: () => {
-        /* no-op */
-      },
-      focus: () => {
-        /* no-op */
-      },
-      reset: () => {
-        /* no-op */
-      },
-    }),
-    [],
-  );
-
-  return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Terminal unavailable on web</Text>
-      <Text style={styles.body}>{WEB_TERMINAL_UNAVAILABLE}</Text>
-    </View>
-  );
+// Browser VT rendering is independent of transport. The caller supplies an
+// authorized agent WebSocket or the explicitly enabled local SSH companion.
+const XtermViewWeb = forwardRef<XtermHandle, XtermViewProps>(function XtermViewWeb(props, ref) {
+  const mount = useRef<HTMLDivElement | null>(null);
+  const term = useRef<any>(null);
+  const fit = useRef<any>(null);
+  const latest = useRef(props); latest.current = props;
+  const pending = useRef<Uint8Array[]>([]);
+  const [failure,setFailure] = useState("");
+  useImperativeHandle(ref, () => ({
+    write(bytes) { if(term.current) term.current.write(bytes); else if(pending.current.reduce((n,b)=>n+b.length,0)+bytes.length<=1024*1024) pending.current.push(bytes); else {const message="Terminal output buffer filled. Reopen the terminal.";setFailure(message);latest.current.onError?.(message);} },
+    reset() { term.current?.reset(); },
+    submit(text) {term.current?.paste(text);term.current?.input("\r",true);},
+    focus() { term.current?.focus(); },
+    fit() { if(!latest.current.columns) fit.current?.fit(); },
+    setFontSize(size) { if(term.current) {term.current.options.fontSize=Math.max(9,Math.min(28,size));if(!latest.current.columns) fit.current?.fit();} },
+  }), []);
+  useEffect(() => {
+    let cancelled=false; let observer: ResizeObserver | undefined; let timer: ReturnType<typeof setTimeout> | undefined;
+    void Promise.all([import("@xterm/xterm"),import("@xterm/addon-fit")]).then(([{Terminal},{FitAddon}]) => {
+      if(cancelled || !mount.current) return;
+      const t=new Terminal({fontSize:latest.current.fontSize || 13,cursorBlink:true,theme:{background:latest.current.background || "#0b0e14",foreground:latest.current.foreground || "#d7dce5"}});
+      const f=new FitAddon();t.loadAddon(f);t.open(mount.current!);term.current=t;fit.current=f;
+      const resize=()=>{const p=latest.current;if(p.columns&&p.rows)t.resize(p.columns,p.rows);else f.fit();p.onResize?.(t.cols,t.rows);};
+      resize();observer=new ResizeObserver(resize);observer.observe(mount.current);
+      t.onData((data)=>latest.current.onData?.(new TextEncoder().encode(data)));
+      t.onWriteParsed(()=>{if(timer)return;timer=setTimeout(()=>{timer=undefined;const buffer=t.buffer.active;const lines=[];for(let i=Math.max(0,buffer.length-120);i<buffer.length;i++)lines.push(buffer.getLine(i)?.translateToString(true)||"");latest.current.onScreen?.(lines.join("\n").trim().slice(-24000));},180);});
+      for(const bytes of pending.current)t.write(bytes);pending.current=[];
+      latest.current.onReady?.();
+    }).catch(()=>{if(!cancelled){const message="Terminal could not load. Reload this screen to retry.";setFailure(message);latest.current.onError?.(message);}});
+    return ()=>{cancelled=true;observer?.disconnect();if(timer)clearTimeout(timer);term.current?.dispose();term.current=null;};
+  }, []);
+  return <View style={[{flex:1},props.style]}>{!!failure && <Text accessibilityRole="alert" style={{color:"#fca5a5",padding:12}}>{failure}</Text>}<div ref={mount} style={{height:"100%",width:"100%",overflow:"auto",background:props.background||"#0b0e14"}} /></View>;
 });
-
-const styles = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    minHeight: 120,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-    gap: 8,
-  },
-  title: { fontSize: 13, fontWeight: "700", color: "#94a3b8" },
-  body: { fontSize: 12, lineHeight: 18, color: "#64748b", textAlign: "center" },
-});
-
 export default XtermViewWeb;

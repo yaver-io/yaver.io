@@ -29,7 +29,7 @@ import { useDevice, type Device } from "../src/context/DeviceContext";
 import { useAuth } from "../src/context/AuthContext";
 import { quicClient } from "../src/lib/quic";
 import { AppBackButton } from "../src/components/AppBackButton";
-import XtermView, { type XtermHandle } from "../src/components/XtermView";
+import XtermView, { type XtermHandle } from "../src/components/PaneTerminalView";
 import { isTerminalMetaFrame, resizeFrame } from "../src/lib/xtermBridge";
 import { AGENT_LAUNCHERS, closeLine, type AgentLaunch } from "../src/lib/agentLaunch";
 import { isWhisperReady, startRealtimeTranscribe } from "../src/lib/speech";
@@ -397,11 +397,10 @@ export default function ShellScreen() {
             {activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}'s agent needs to sign back in
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 13, lineHeight: 19, textAlign: "center" }}>
-            The agent is reachable but its Yaver session expired. Go back and tap “Reauth this device”
-            on the attention banner, then return here.
+            This agent-backed terminal needs a Yaver session. Direct SSH uses the machine's SSH login independently.
           </Text>
-          <Pressable onPress={() => router.back()} style={[styles.reconnectBtn, { marginTop: 8 }]}>
-            <Text style={styles.reconnectText}>← Back to devices</Text>
+          <Pressable accessibilityRole="button" onPress={() => router.navigate("/plain")} style={[styles.reconnectBtn, { marginTop: 8 }]}>
+            <Text style={styles.reconnectText}>Connect with direct SSH</Text>
           </Pressable>
         </View>
       </View>
@@ -461,6 +460,7 @@ export default function ShellScreen() {
       {/* The VT grid */}
       <View style={{ flex: 1 }}>
         <XtermView
+          inputEnabled={status === "open" && !taskFollowUpOnly}
           ref={xtermRef}
           onData={onTermData}
           onResize={onTermResize}

@@ -1179,6 +1179,7 @@ function rebuildTray() {
   }[agentStatus] || "Agent · " + agentStatus;
   const menu = Menu.buildFromTemplate([
     { label: "Show Yaver", click: showWindow },
+    { label: "SSH · no Yaver sign-in", click: () => { showWindow(); void mainWindow?.loadURL(new URL("/ssh", app.isPackaged ? DASHBOARD_PRODUCTION_URL : DEV_SERVER_URL).href); } },
     { label: agentLabel, enabled: false },
     {
       label: "Task notifications",
@@ -1460,3 +1461,13 @@ if (!gotLock) {
     if (isQuitting) app.quit();
   });
 }
+
+// Direct SSH is independent of agent/cloud auth. Only the trusted top-level
+// SSH screen receives this IPC capability; remote previews and subframes do not.
+const { PlainSSH, trustedSSHCaller } = require("./plain-ssh");
+const plainSSH = new PlainSSH(path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname,"../resources"),"plain-ssh",process.platform==="win32"?"plainssh.exe":"plainssh"));
+ipcMain.handle("yaver:plain-ssh", (event, request) => {
+  if (!trustedSSHCaller(event, APP_ORIGINS)) throw new Error("Untrusted SSH caller");
+  return plainSSH.invoke(request);
+});
+app.on("before-quit",()=>plainSSH.close());

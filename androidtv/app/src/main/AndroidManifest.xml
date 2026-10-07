@@ -50,6 +50,7 @@
             android:name="io.yaver.native_runtime_surfaces"
             android:value="android-tv" />
 
+        <activity android:name="io.yaver.plainssh.PlainSSHActivity" android:exported="false" />
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

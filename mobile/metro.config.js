@@ -13,6 +13,9 @@ const path = require("path");
 const config = getDefaultConfig(__dirname);
 const mobileNodeModules = path.resolve(__dirname, "node_modules");
 const physicalMobileNodeModules = fs.realpathSync(mobileNodeModules);
+// Isolated worktrees may link individual packages instead of node_modules as
+// a whole. Metro still needs the physical dependency tree in its file map.
+const physicalExpoNodeModules = path.dirname(path.dirname(fs.realpathSync(require.resolve("expo/package.json"))));
 
 // React Native's Gradle task forwards its own worker cap to the first Metro
 // bundle, but expo-updates starts a second Metro instance directly while it
@@ -43,6 +46,7 @@ config.watchFolders = [
   // browser receives a valid logical bundle URL and Metro still answers 404
   // "none of these files exist" for files that are plainly on disk.
   ...(physicalMobileNodeModules === mobileNodeModules ? [] : [physicalMobileNodeModules]),
+  ...(physicalExpoNodeModules === physicalMobileNodeModules ? [] : [physicalExpoNodeModules]),
 ];
 
 // Files under the sibling SDK are outside `mobile/`, so Metro's normal

@@ -116,7 +116,8 @@
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "victory-native": "^41.20.2",
-    "whisper.rn": "^0.5.5"
+    "whisper.rn": "^0.5.5",
+    "yaver-plain-ssh": "file:native/plain-ssh"
   },
   "devDependencies": {
     "@babel/core": "7.29.7",
@@ -160,7 +161,10 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "node --preserve-symlinks scripts/start-web.mjs",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "ssh:build:ios": "sh native/plain-ssh/build.sh ios",
+    "ssh:build:android": "sh native/plain-ssh/build.sh android",
+    "ssh:bridge": "cd native/plain-ssh/core && go run ./cmd/bridge"
   },
   "version": "1.18.190"
 }

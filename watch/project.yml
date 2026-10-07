@@ -18,11 +18,16 @@ settings:
     SWIFT_VERSION: "5.0"          # avoid Swift 6 strict-concurrency churn for the scaffold
     DEVELOPMENT_TEAM: "5SJZ4KA39A"
     TARGETED_DEVICE_FAMILY: "4"   # watchOS
+packages:
+  PlainSSH:
+    path: ../apple/PlainSSH
 targets:
   YaverWatch:
     type: application
     platform: watchOS
     deploymentTarget: "10.0"
+    dependencies:
+      - package: PlainSSH
     sources:
       - path: YaverWatch
         excludes:

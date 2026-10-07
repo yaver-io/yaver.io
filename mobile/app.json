@@ -225,7 +225,8 @@
       "./plugins/withAndroidTV",
       "./plugins/withAndroidAutoMessaging",
       "./plugins/withWatchBridge",
-      "./plugins/withRemotelessTasks"
+      "./plugins/withRemotelessTasks",
+      "./plugins/withPlainSSH"
     ]
   }
 }

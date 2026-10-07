@@ -99,6 +99,7 @@ export function isTerminalMetaFrame(text: string): boolean {
 export type BridgeMessage =
   | { type: "ready" }
   | { type: "data"; bytes: Uint8Array }
+  | { type: "screen"; text: string }
   | { type: "resize"; cols: number; rows: number };
 
 /** Parse a postMessage payload from the WebView. Returns null on anything
@@ -110,7 +111,10 @@ export function parseBridgeMessage(raw: string): BridgeMessage | null {
   } catch {
     return null;
   }
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
   switch (o.t) {
+    case "screen":
+      return typeof o.text === "string" ? { type: "screen", text: o.text.slice(-24000) } : null;
     case "ready":
       return { type: "ready" };
     case "d":

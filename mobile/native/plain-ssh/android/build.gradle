@@ -1,0 +1,13 @@
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'io.yaver.plainssh'
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig { minSdkVersion 26 }
+}
+
+dependencies {
+    implementation 'com.facebook.react:react-android'
+    // The app packages this AAR; the bridge compiles against it here.
+    compileOnly files('../build/plainssh.aar')
+}

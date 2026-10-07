@@ -30,6 +30,7 @@ module.exports = {
   // Store payload Windows-only and carry the repository license with every
   // redistributed binary.
   extraResources: [
+    { from: "resources/plain-ssh/plainssh.exe", to: "plain-ssh/plainssh.exe" },
     { from: "resources/bin/yaver.exe", to: "bin/yaver.exe" },
     { from: "../LICENSE", to: "LICENSE.txt" },
   ],

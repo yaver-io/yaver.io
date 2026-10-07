@@ -23,6 +23,7 @@
 		2C9A4C73F2E72A79D846BE4C /* YaverDictationFieldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E21135A06858CFDFB198C2 /* YaverDictationFieldTests.swift */; };
 		3338C731056621FCCE8FE13A /* BoxLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB2DF3A66DAE025B2B780C8 /* BoxLifecycle.swift */; };
 		34141A6D2B59625100F05D4A /* SessionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A96BEDB7B91310E39E99DED2 /* SessionClient.swift */; };
+		428D4B31A200DA0AFBA4A89D /* Sodium in Frameworks */ = {isa = PBXBuildFile; productRef = EAC99382A0736A789A83F5E0 /* Sodium */; };
 		45D15A16832BA03672354B1F /* CredentialHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9153BD847AA22692E65287D /* CredentialHandoff.swift */; };
 		61443E7517C16C82728D68E7 /* LanApprovalBeacon.swift in Sources */ = {isa = PBXBuildFile; fileRef = C772C9E727A828940D3C13D7 /* LanApprovalBeacon.swift */; };
 		666A5E815C7F1592A0FF7AE2 /* DeviceCodeDeliveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71087255383CB959DB30A9E6 /* DeviceCodeDeliveryTests.swift */; };
@@ -47,7 +48,7 @@
 		9D0BB56F661FC19E222F21AC /* TVChatPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9E917EDECD2B19968A57D16 /* TVChatPlan.swift */; };
 		A2031FCCF6C82A44E0A3478B /* TVWebPreviewLoopTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925084532D186202A5CA57D2 /* TVWebPreviewLoopTests.swift */; };
 		A42FFE523F9F8963EE67AB2F /* TVEmailSignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFDB79BFE45112FD1EEB7595 /* TVEmailSignInTests.swift */; };
-		A43C8F3FEA5811AC5A281823 /* Sodium in Frameworks */ = {isa = PBXBuildFile; productRef = EAC99382A0736A789A83F5E0 /* Sodium */; };
+		A43C8F3FEA5811AC5A281823 /* LiveKitWebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 44E779189DD0B98EC6AC2052 /* LiveKitWebRTC */; };
 		A652521801330E483E8F0DEE /* FailureSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9383688971427E7DF15B2D1C /* FailureSignals.swift */; };
 		A7B9CB81DB7E411F73C9F730 /* TVChatNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E6E50DABA5FE87AF986E197 /* TVChatNavigationTests.swift */; };
 		AD43610B33A8368A49E512B9 /* YaverStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC27F01B0DAD177B10DAC04 /* YaverStore.swift */; };
@@ -65,7 +66,7 @@
 		CE7533A3ED843557F0FE12E1 /* SecureHandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C07AC346E76881B8FBB7FA9 /* SecureHandoffView.swift */; };
 		CED44BB61046463D2A93E43E /* YouTubeAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5B9FC8AC4D8A2309D225BB /* YouTubeAnimation.swift */; };
 		D299F8FE54C7BF349DB540D5 /* Speech.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EE3AEA54A8B2ABC407F2AD0 /* Speech.swift */; };
-		D35115170BD592449BB9E6A2 /* LiveKitWebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 44E779189DD0B98EC6AC2052 /* LiveKitWebRTC */; };
+		D35115170BD592449BB9E6A2 /* PlainSSH in Frameworks */ = {isa = PBXBuildFile; productRef = 43F8C9799C0C40EDF2578403 /* PlainSSH */; };
 		D7BD4B86D4F7E9BB55EFDC13 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2168C1CC5D76DE846256CFAD /* TokenStore.swift */; };
 		DC2819DC5C2145D82D127460 /* VibingPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C2006AA5DE6D7B3F706F05 /* VibingPlanTests.swift */; };
 		E0D42899FE615119C171E320 /* TaskRuntimePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F41D8521019355088BB2706 /* TaskRuntimePlan.swift */; };
@@ -161,6 +162,7 @@
 		E883FFE32672CAF75087F1E5 /* FrameworkStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameworkStyle.swift; sourceTree = "<group>"; };
 		EF5B9FC8AC4D8A2309D225BB /* YouTubeAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeAnimation.swift; sourceTree = "<group>"; };
 		F305D583F562FDFA98285065 /* YaverTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YaverTV.entitlements; sourceTree = "<group>"; };
+		F4DF69C0736F42DE766E67A5 /* PlainSSH */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PlainSSH; path = ../apple/PlainSSH; sourceTree = SOURCE_ROOT; };
 		F656E1723EA3FA1FA0C7CE46 /* RemoteRuntimeWebRTCView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRuntimeWebRTCView.swift; sourceTree = "<group>"; };
 		F7A90CCD7A2DB0EC3FDA0EB3 /* TVTerminalBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTerminalBufferTests.swift; sourceTree = "<group>"; };
 		F9153BD847AA22692E65287D /* CredentialHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialHandoff.swift; sourceTree = "<group>"; };
@@ -172,8 +174,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D35115170BD592449BB9E6A2 /* LiveKitWebRTC in Frameworks */,
-				A43C8F3FEA5811AC5A281823 /* Sodium in Frameworks */,
+				D35115170BD592449BB9E6A2 /* PlainSSH in Frameworks */,
+				A43C8F3FEA5811AC5A281823 /* LiveKitWebRTC in Frameworks */,
+				428D4B31A200DA0AFBA4A89D /* Sodium in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -288,6 +291,7 @@
 		AD227DAE013B4D6B7FE365D1 = {
 			isa = PBXGroup;
 			children = (
+				F11FA4A6D2EC2E8146CC9E91 /* Packages */,
 				9E243F830C2C328EED8D0EB7 /* yaver.io */,
 				04030A85432F4E287B1A04E7 /* YaverTV */,
 				FFF5EADFCBAE2A1555B317FD /* YaverTVTests */,
@@ -304,6 +308,14 @@
 				2F558EBFDD66510DEF9FEFB4 /* YaverTVUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F11FA4A6D2EC2E8146CC9E91 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				F4DF69C0736F42DE766E67A5 /* PlainSSH */,
+			);
+			name = Packages;
 			sourceTree = "<group>";
 		};
 		FA4DCCEE7E62C57946D09C8A /* mobile */ = {
@@ -364,6 +376,7 @@
 			);
 			name = YaverTV;
 			packageProductDependencies = (
+				43F8C9799C0C40EDF2578403 /* PlainSSH */,
 				44E779189DD0B98EC6AC2052 /* LiveKitWebRTC */,
 				EAC99382A0736A789A83F5E0 /* Sodium */,
 			);
@@ -422,6 +435,7 @@
 			packageReferences = (
 				E99B115601E2359F3CF1153A /* XCRemoteSwiftPackageReference "webrtc-xcframework" */,
 				06327D7AA3EBAF9072AB1BA9 /* XCRemoteSwiftPackageReference "swift-sodium" */,
+				E06A89A6A0F68D9FE7F09D2B /* XCLocalSwiftPackageReference "../apple/PlainSSH" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D6587CEE72510E3268F9262F /* Products */;
@@ -837,6 +851,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		E06A89A6A0F68D9FE7F09D2B /* XCLocalSwiftPackageReference "../apple/PlainSSH" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../apple/PlainSSH;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		06327D7AA3EBAF9072AB1BA9 /* XCRemoteSwiftPackageReference "swift-sodium" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -857,6 +878,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		43F8C9799C0C40EDF2578403 /* PlainSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PlainSSH;
+		};
 		44E779189DD0B98EC6AC2052 /* LiveKitWebRTC */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E99B115601E2359F3CF1153A /* XCRemoteSwiftPackageReference "webrtc-xcframework" */;

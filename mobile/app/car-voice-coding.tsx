@@ -31,8 +31,9 @@ import {
   Text,
   View,
 } from "react-native";
+import { loadSSHVoiceTarget } from "../src/lib/plainSSHVoice";
 import { mobileSessionSettings } from "../src/lib/appVersion";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
@@ -112,9 +113,16 @@ const STAGE_LABEL: Record<string, string> = {
   error: "Error",
 };
 
-export default function CarVoiceCodingScreen() {
+export default function CarVoiceCodingEntry() {
+  const [ssh,setSSH]=useState<boolean|null>(null);
+  useEffect(()=>{void loadSSHVoiceTarget().then(target=>setSSH(!!target)).catch(()=>setSSH(false));},[]);
+  if(ssh===null)return <View><ActivityIndicator /></View>;
+  return ssh ? <Redirect href="/plain-voice" /> : <CarVoiceCodingScreen />;
+}
+function CarVoiceCodingScreen() {
   const c = useColors();
   const router = useRouter();
+
   const params = useRouteParamsCompat<{
     surface?: string;
     autostart?: string;

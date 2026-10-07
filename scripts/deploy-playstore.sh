@@ -278,6 +278,9 @@ if [ "${YAVER_SKIP_SANDBOX:-0}" != "1" ]; then
   fi
 fi
 
+# Compile the shared direct-SSH core before Gradle resolves its native AAR.
+sh "$REPO_ROOT/mobile/native/plain-ssh/build.sh" android
+
 # Build release AAB.
 # We deliberately do NOT `gradlew clean` here. A clean wipes every
 # react-native-<lib>/android/build/generated/source/codegen/jni/

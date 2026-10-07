@@ -14,6 +14,7 @@
 export const APP_SURFACE_PREFIXES = [
   "/auth", // login / signup / device-code / totp / callbacks
   "/api", // route handlers (never rendered as a page, but harmless)
+  "/ssh", // account-independent direct SSH
   "/dashboard", // the app itself
   "/d/", // agent proxy (relay-backed device pages)
   "/survey", // post-signup onboarding

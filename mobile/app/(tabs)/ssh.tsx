@@ -17,6 +17,7 @@ export default function SSHHomeScreen() {
   const router = useRouter();
   const { activeDevice, devices, connectionStatus, connectedDeviceIds, selectDevice } = useDevice();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showAgent, setShowAgent] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +56,17 @@ export default function SSHHomeScreen() {
         <Text style={[styles.title, { color: c.textPrimary }]}>SSH</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Connect with direct SSH" onPress={() => router.push("/plain")}
+          style={[styles.launch, {backgroundColor:c.bgCard,borderColor:c.border}]}>
+          <Ionicons name="terminal-outline" size={22} color={c.accent} />
+          <View style={{flex:1}}><Text style={[styles.launchTitle,{color:c.textPrimary}]}>Connect with SSH</Text>
+            <Text style={[styles.launchDetail,{color:c.textMuted}]}>Your tmux panes · no Yaver sign-in required</Text></View>
+          <Ionicons name="chevron-forward" size={20} color={c.textMuted} />
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityState={{expanded:showAgent}} onPress={()=>setShowAgent(!showAgent)} style={styles.section}>
+          <Text style={{color:c.textMuted}}>Yaver agent terminals {showAgent ? "⌃" : "⌄"}</Text>
+        </Pressable>
+        {showAgent && <>
         <RemoteBoxBanner disableTap />
         {error ? <Text style={[styles.error, { color: c.error }]}>{error}</Text> : null}
         {choices.length ? (
@@ -101,6 +113,7 @@ export default function SSHHomeScreen() {
             </Pressable>
           </View>
         ) : null}
+        </>}
       </ScrollView>
     </SafeAreaView>
   );

@@ -24,6 +24,7 @@ module.exports = {
     output: "dist-microsoft-store",
   },
   extraResources: [
+    { from: "resources/plain-ssh/plainssh.exe", to: "plain-ssh/plainssh.exe" },
     { from: "resources/bin/yaver.exe", to: "bin/yaver.exe" },
     { from: "../LICENSE", to: "LICENSE.txt" },
     { from: "store/microsoft-store-channel.json", to: "yaver-store-channel.json" },

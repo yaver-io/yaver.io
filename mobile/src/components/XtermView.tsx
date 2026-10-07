@@ -30,36 +30,19 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { XTERM_CSS, XTERM_FIT_JS, XTERM_JS } from "./vendor/xtermBundle";
 import { parseBridgeMessage, writeCommand } from "../lib/xtermBridge";
 
-export interface XtermHandle {
-  write(bytes: Uint8Array): void;
-  fit(): void;
-  focus(): void;
-  /** Clear the grid + scrollback (raw_replay full-snapshot replace). */
-  reset(): void;
-  setFontSize(size: number): void;
-}
-
-export interface XtermViewProps {
-  onData?: (bytes: Uint8Array) => void;
-  onResize?: (cols: number, rows: number) => void;
-  onReady?: () => void;
-  /** Terminal background (defaults to the glasses dark surface). */
-  background?: string;
-  /** Default foreground. */
-  foreground?: string;
-  /** Cursor + selection accent (defaults to the indigo accent). */
-  cursor?: string;
-  fontSize?: number;
-  style?: object;
-}
+import type { XtermHandle, XtermViewProps } from "../lib/xtermTypes";
+export type { XtermHandle, XtermViewProps } from "../lib/xtermTypes";
 
 // The bridge script: boot xterm, wire data/resize out, expose write/fit in.
 // Kept tiny — the heavy lib is the inlined XTERM_JS above it.
 function bridgeScript(opts: {
+  screenUpdates?: boolean;
   background: string;
   foreground: string;
   cursor: string;
   fontSize: number;
+  columns?: number;
+  rows?: number;
 }): string {
   return `
 (function () {
@@ -99,16 +82,37 @@ function bridgeScript(opts: {
   term.open(document.getElementById("t"));
 
   function doFit() {
-    try { fit.fit(); } catch (e) {}
+    try {
+      ${opts.columns && opts.rows
+        ? `term.resize(${Math.max(2, Math.min(1000, Math.floor(opts.columns)))}, ${Math.max(1, Math.min(1000, Math.floor(opts.rows)))});`
+        : "fit.fit();"}
+    } catch (e) {}
     post({ t: "r", c: term.cols, r: term.rows });
   }
 
   // keystrokes (incl. escape sequences) → RN → PTY
   term.onData(function (d) { post({ t: "d", b: bytesToB64(enc.encode(d)) }); });
 
+  // Pane-chat reads the VT screen after cursor/erase operations have been
+  // applied. Never regex raw ANSI output into invented assistant messages.
+  ${opts.screenUpdates ? `
+  var screenTimer;
+  term.onWriteParsed(function () {
+    if (screenTimer) return;
+    screenTimer = setTimeout(function () {
+      screenTimer = null;
+      var buffer = term.buffer.active, lines = [];
+      for (var i = Math.max(0, buffer.length - 120); i < buffer.length; i++) {
+        lines.push(buffer.getLine(i).translateToString(true));
+      }
+      post({t: "screen", text: lines.join("\\n").trim().slice(-24000)});
+    }, 180);
+  });` : ""}
+
   // PTY stdout bytes → grid
   window.__yvWrite = function (b64) { term.write(b64ToBytes(b64)); };
   window.__yvFit = doFit;
+  window.__yvSubmit = function (text) { term.paste(text); term.input("\\r", true); };
   // Full reset — clears the grid AND the scrollback. Used when a raw_replay
   // snapshot (full=true) replaces the screen instead of appending.
   window.__yvReset = function () { try { term.reset(); } catch (e) {} };
@@ -133,10 +137,13 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
     onData,
     onResize,
     onReady,
+    onScreen,
     background = "#0b0e14",
     foreground = "#d7dce5",
     cursor = "#818cf8",
     fontSize = 13,
+    columns,
+    rows,
     style,
   },
   ref,
@@ -153,15 +160,15 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
       `<!doctype html><html><head>` +
       `<meta charset="utf-8" />` +
       `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />` +
-      `<style>${XTERM_CSS}\nhtml,body{margin:0;padding:0;height:100%;background:${background};overflow:hidden}` +
+      `<style>${XTERM_CSS}\nhtml,body{margin:0;padding:0;height:100%;background:${background};overflow:${columns ? "auto" : "hidden"}}` +
       `#t{height:100%;width:100%;padding:4px;box-sizing:border-box}` +
       `.xterm-viewport::-webkit-scrollbar{width:0;height:0}</style></head>` +
       `<body><div id="t"></div>` +
       `<script>${XTERM_JS}</script>` +
       `<script>${XTERM_FIT_JS}</script>` +
-      `<script>${bridgeScript({ background, foreground, cursor, fontSize })}</script>` +
+      `<script>${bridgeScript({ background, foreground, cursor, fontSize, columns, rows, screenUpdates: !!onScreen })}</script>` +
       `</body></html>`,
-    [background, foreground, cursor, fontSize],
+    [background, foreground, cursor, fontSize, columns, rows, !!onScreen],
   );
 
   useImperativeHandle(
@@ -183,6 +190,9 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
       },
       reset() {
         webRef.current?.injectJavaScript("window.__yvReset && window.__yvReset();true;");
+      },
+      submit(text: string) {
+        webRef.current?.injectJavaScript(`window.__yvSubmit && window.__yvSubmit(${JSON.stringify(text)});true;`);
       },
       setFontSize(size: number) {
         const safe = Math.max(9, Math.min(28, Math.round(size)));
@@ -210,12 +220,15 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
         case "data":
           onData?.(msg.bytes);
           break;
+        case "screen":
+          onScreen?.(msg.text);
+          break;
         case "resize":
           onResize?.(msg.cols, msg.rows);
           break;
       }
     },
-    [onData, onResize, onReady],
+    [onData, onResize, onReady, onScreen],
   );
 
   return (
@@ -227,7 +240,7 @@ const XtermView = forwardRef<XtermHandle, XtermViewProps>(function XtermView(
         style={styles.fill}
         onMessage={onMessage}
         // terminal owns its own scrolling + keyboard
-        scrollEnabled={false}
+        scrollEnabled={!!columns}
         overScrollMode="never"
         keyboardDisplayRequiresUserAction={false}
         hideKeyboardAccessoryView

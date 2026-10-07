@@ -13,6 +13,8 @@ settings:
     DEVELOPMENT_TEAM: "5SJZ4KA39A"
     TARGETED_DEVICE_FAMILY: "3"   # tvOS
 packages:
+  PlainSSH:
+    path: ../apple/PlainSSH
   LiveKitWebRTC:
     url: https://github.com/livekit/webrtc-xcframework.git
     # 144.7559.15 is the newest patch on the tvOS-proven 144 branch. The newer
@@ -36,6 +38,7 @@ targets:
       - path: ../mobile/assets/branding/yaver-login-wordmark-light.png
         buildPhase: resources
     dependencies:
+      - package: PlainSSH
       # Raw libwebrtc only — Yaver keeps its existing Pion/SDP signaling and
       # does not introduce a second media server. This binary ships explicit
       # tvOS device + simulator slices.

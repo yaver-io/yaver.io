@@ -95,7 +95,7 @@ export default function Header() {
   // The login page (and every /auth* step: totp, device-code, callbacks)
   // renders NO top bar at all — not even the brand bar. The user asked for a
   // bare login page; the auth card itself carries the yaver.io wordmark.
-  if (isAppSurface && pathname?.startsWith("/auth")) {
+  if (isAppSurface && (pathname?.startsWith("/auth") || pathname === "/ssh")) {
     return null;
   }
 

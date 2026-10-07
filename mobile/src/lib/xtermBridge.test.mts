@@ -103,3 +103,10 @@ test("writeCommand emits a safe injectable __yvWrite call", () => {
   assert.ok(cmd2.startsWith("window.__yvWrite(") && cmd2.endsWith(");true;"));
   assert.ok(!cmd2.includes("\n")); // no raw newline in the injected string
 });
+
+ test("screen snapshots are bounded and malformed bridge values are ignored",()=>{
+ assert.equal(parseBridgeMessage("null"),null);
+ assert.equal(parseBridgeMessage("[]"),null);
+ assert.deepEqual(parseBridgeMessage(JSON.stringify({t:"screen",text:"x".repeat(25000)})),{type:"screen",text:"x".repeat(24000)});
+ assert.equal(parseBridgeMessage('{"t":"screen","text":5}'),null);
+ });

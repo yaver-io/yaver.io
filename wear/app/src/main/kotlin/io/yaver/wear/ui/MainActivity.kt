@@ -89,6 +89,9 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            androidx.compose.foundation.layout.Column {
+                androidx.compose.ui.viewinterop.AndroidView(factory = { context -> android.widget.Button(context).apply { text = "SSH panes · no Yaver sign-in"; setOnClickListener { context.startActivity(android.content.Intent(context, io.yaver.plainssh.PlainSSHActivity::class.java)) } } })
+
             WearApp(
                 onRecord = { startDictation() },
                 onConfirm = { token -> onConfirm(token, WatchProtocol.ConfirmReply.CONFIRM) },
@@ -96,17 +99,19 @@ class MainActivity : ComponentActivity() {
                 onIntent = { intent -> onIntent(intent) },
                 onWake = { onWake() },
                 onDismissWake = { BoxLifecycle.reset() },
-                canRemoveDevice = StandaloneStore.isReady(this),
+                canRemoveDevice = StandaloneStore.isReady(this@MainActivity),
                 onRemoveDevice = { removeStandaloneDevice() },
                 onAppearance = { setAppearance(it) },
-                privateVpsUrl = StandaloneStore.privateVpsUrl(this),
+                privateVpsUrl = StandaloneStore.privateVpsUrl(this@MainActivity),
                 onPrivateVps = { value ->
-                    StandaloneStore.clear(this)
-                    StandaloneStore.setPrivateVpsUrl(this, value)
+                    StandaloneStore.clear(this@MainActivity)
+                    StandaloneStore.setPrivateVpsUrl(this@MainActivity, value)
                     sessionClient = null
                     WatchState.setLine("VPS saved — sign in again")
                 },
             )
+
+            }
         }
 
         // Probe phone reachability once so the UI can hint standalone if needed.

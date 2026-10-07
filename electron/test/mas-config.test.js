@@ -20,7 +20,8 @@ test("MAS config is sandboxed client-only and excludes the embedded agent", () =
     assert.equal(config.buildVersion, "202608160001");
     assert.deepEqual(config.mac.target, ["mas"]);
     assert.equal(config.mac.notarize, false);
-    assert.equal(config.extraResources, undefined);
+    assert.deepEqual(config.extraResources, [{from:"resources/plain-ssh",to:"plain-ssh"}]);
+    assert.equal(config.extraResources.some(entry => entry.to === "bin" || entry.from.includes("resources/bin")), false);
     assert.match(config.mas.entitlements, /entitlements\.mas\.plist$/);
   } finally {
     if (oldBuild === undefined) delete process.env.YAVER_MAC_BUILD_NUMBER;

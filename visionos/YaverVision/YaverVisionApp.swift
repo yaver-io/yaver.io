@@ -6,6 +6,7 @@
 // stare into.
 
 import SwiftUI
+import PlainSSH
 
 @main
 struct YaverVisionApp: App {
@@ -24,6 +25,7 @@ struct YaverVisionApp: App {
 }
 
 struct RootView: View {
+    @State private var plainSSH = false
     @EnvironmentObject var store: YaverStore
 
     var body: some View {
@@ -34,6 +36,8 @@ struct RootView: View {
                 VisionSignInView()
             }
         }
+        .safeAreaInset(edge: .bottom) { Button("SSH · no Yaver account required") { plainSSH = true }.padding(8) }
+        .sheet(isPresented: $plainSSH) { PlainSSHView() }
         .task(id: store.token) {
             guard store.isAuthenticated else { return }
             await store.refreshAppearanceSettings()

@@ -67,6 +67,8 @@ struct TVSSHView: View {
 private struct TVTerminalScreen: View {
     @StateObject private var model: TVTerminalModel
     @State private var command = ""
+    @State private var paneChat = false
+    @State private var lastSubmitted = ""
     @AppStorage("studioTerminalFontSize") private var fontSize = 19.0
     @State private var speaking = false
     let onExit: () -> Void
@@ -99,6 +101,10 @@ private struct TVTerminalScreen: View {
                         speaking = true
                     }
                 }
+                Picker("Terminal view", selection: $paneChat) {
+                    Text("Raw").tag(false)
+                    Text("Pane chat").tag(true)
+                }.pickerStyle(.segmented).frame(width: 260)
                 Button("Reconnect") { model.reconnect() }
             }
             .padding(.horizontal, 34).padding(.vertical, 18)
@@ -107,6 +113,12 @@ private struct TVTerminalScreen: View {
             ZStack(alignment: .topLeading) {
                 ScrollViewReader { proxy in
                     ScrollView {
+                        if paneChat && !lastSubmitted.isEmpty {
+                            Text(lastSubmitted).font(.system(size: fontSize))
+                                .padding(18).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                                .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 28)
+                        }
+                        if paneChat { Text("Live pane").font(.caption).foregroundStyle(.secondary) }
                         Text(model.screen.isEmpty ? "Connecting to the PTY…" : model.screen)
                             .font(.system(size: fontSize, design: .monospaced))
                             .foregroundStyle(Color(red: 0.82, green: 0.86, blue: 0.90))
@@ -154,7 +166,8 @@ private struct TVTerminalScreen: View {
     }
 
     private func sendCommand() {
-        guard !command.isEmpty else { return }
+        guard !command.isEmpty, model.connected else { return }
+        lastSubmitted = command
         model.send(Array(command.utf8) + [0x0d])
         command = ""
     }

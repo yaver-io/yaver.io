@@ -651,6 +651,7 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Use Plain SSH without an account" onPress={() => router.push("/plain")} style={{padding:16}}><Text style={{color:c.textPrimary}}>Use Plain SSH without an account</Text></Pressable>
       {/* Keyboard handling: let the PLATFORM do it.
         *
         * This was a KeyboardAvoidingView with behavior="padding" wrapping a

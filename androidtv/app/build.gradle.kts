@@ -22,6 +22,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
+    sourceSets["main"].java.srcDir("../../android-shared/plainssh/java")
     namespace = "io.yaver.tv"
     compileSdk = 34
 
@@ -91,6 +92,7 @@ android {
 }
 
 dependencies {
+    implementation(files("../../mobile/native/plain-ssh/build/plainssh.aar"))
     // --- Core / lifecycle ---------------------------------------------------
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.1")

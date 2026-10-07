@@ -18,6 +18,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
+    sourceSets["main"].java.srcDir("../../android-shared/plainssh/java")
     namespace = "io.yaver.wear"
     compileSdk = 35
 
@@ -82,6 +83,7 @@ android {
 }
 
 dependencies {
+    implementation(files("../../mobile/native/plain-ssh/build/plainssh.aar"))
     // --- Core / lifecycle ---------------------------------------------------
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

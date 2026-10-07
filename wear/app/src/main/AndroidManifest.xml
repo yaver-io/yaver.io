@@ -52,6 +52,7 @@
 
         <!-- The single Compose-hosting activity: raise/tap → dictate → send →
              one line + haptic. -->
+        <activity android:name="io.yaver.plainssh.PlainSSHActivity" android:exported="false" />
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

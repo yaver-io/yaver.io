@@ -2,7 +2,7 @@
   "name": "yaver-gui",
   "productName": "Yaver",
   "version": "0.1.16",
-  "description": "Desktop GUI for the Yaver web dashboard — chat, vibing, devices, and previews in a native shell.",
+  "description": "Desktop GUI for the Yaver web dashboard \u2014 chat, vibing, devices, and previews in a native shell.",
   "main": "src/main.js",
   "author": {
     "name": "SIMKAB",
@@ -15,15 +15,15 @@
     "start": "electron .",
     "dev": "YAVER_DEV=1 electron .",
     "test": "node --test test/*.test.js",
-    "pack": "node scripts/preflight-pack.mjs && electron-builder --dir",
-    "dist": "node scripts/preflight-pack.mjs && electron-builder",
-    "dist:mac": "node scripts/preflight-pack.mjs && electron-builder --mac",
-    "dist:mas": "electron-builder --config electron-builder.mas.cjs --mac mas --universal --publish never",
-    "dist:mas-dev": "YAVER_MAS_TARGET=mas-dev electron-builder --config electron-builder.mas.cjs --mac mas-dev --publish never",
-    "dist:win": "node scripts/preflight-pack.mjs --platform=win32 --arch=x64 && electron-builder --config electron-builder.windows.cjs --win --x64",
-    "dist:win:store": "electron-builder --config electron-builder.microsoft-store.cjs --win --x64 --publish never",
+    "pack": "node scripts/build-plain-ssh.mjs && node scripts/preflight-pack.mjs && electron-builder --dir",
+    "dist": "node scripts/build-plain-ssh.mjs && node scripts/preflight-pack.mjs && electron-builder",
+    "dist:mac": "node scripts/build-plain-ssh.mjs && node scripts/preflight-pack.mjs && electron-builder --mac",
+    "dist:mas": "node scripts/build-plain-ssh.mjs && electron-builder --config electron-builder.mas.cjs --mac mas --universal --publish never",
+    "dist:mas-dev": "node scripts/build-plain-ssh.mjs && YAVER_MAS_TARGET=mas-dev electron-builder --config electron-builder.mas.cjs --mac mas-dev --publish never",
+    "dist:win": "node scripts/build-plain-ssh.mjs win32 && node scripts/preflight-pack.mjs --platform=win32 --arch=x64 && electron-builder --config electron-builder.windows.cjs --win --x64",
+    "dist:win:store": "node scripts/build-plain-ssh.mjs win32 && electron-builder --config electron-builder.microsoft-store.cjs --win --x64 --publish never",
     "signing:windows:prepare": "bash scripts/prepare-jsign.sh",
-    "dist:linux": "node scripts/preflight-pack.mjs && electron-builder --linux",
+    "dist:linux": "node scripts/build-plain-ssh.mjs linux && node scripts/preflight-pack.mjs && electron-builder --linux",
     "store:windows:metadata": "node scripts/microsoft-store-package-metadata.mjs",
     "store:windows:status": "node ../scripts/microsoft-store-submission.mjs status"
   },
@@ -79,6 +79,10 @@
       {
         "from": "../LICENSE",
         "to": "LICENSE.txt"
+      },
+      {
+        "from": "resources/plain-ssh",
+        "to": "plain-ssh"
       }
     ],
     "mac": {
@@ -114,9 +118,9 @@
         "rpm",
         "tar.gz"
       ],
-      "maintainer": "Kivanç Çakmak <kivanc.cakmak@simkab.com>",
+      "maintainer": "Kivan\u00e7 \u00c7akmak <kivanc.cakmak@simkab.com>",
       "vendor": "Simkab",
-      "synopsis": "Yaver desktop GUI — sign in and vibe tasks from your computer",
+      "synopsis": "Yaver desktop GUI \u2014 sign in and vibe tasks from your computer",
       "description": "Yaver's native desktop workspace and remote development node. Includes the signed Yaver agent, task console, previews, OAuth, tray controls, and cross-device task continuity."
     },
     "deb": {

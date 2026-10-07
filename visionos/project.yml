@@ -13,11 +13,16 @@ settings:
     SWIFT_VERSION: "5.0"          # match tvOS; avoid Swift 6 concurrency churn
     DEVELOPMENT_TEAM: "5SJZ4KA39A"
     TARGETED_DEVICE_FAMILY: "7"   # visionOS
+packages:
+  PlainSSH:
+    path: ../apple/PlainSSH
 targets:
   YaverVision:
     type: application
     platform: visionOS
     deploymentTarget: "2.0"
+    dependencies:
+      - package: PlainSSH
     sources:
       - path: YaverVision
         excludes:

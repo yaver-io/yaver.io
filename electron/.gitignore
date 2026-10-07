@@ -4,3 +4,5 @@
 # moves. The fetch script repopulates this dir before electron-builder runs.
 resources/bin/
 dist/
+
+resources/plain-ssh/

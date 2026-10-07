@@ -61,6 +61,11 @@ export default function TerminalView({
   const termRef = useRef<any>(null);
   const fitRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
+  const [paneChat, setPaneChat] = useState(false);
+  const [paneScreen, setPaneScreen] = useState("");
+  const [paneDraft, setPaneDraft] = useState("");
+  const [paneInput, setPaneInput] = useState("");
+  const screenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<ConnState>("connecting");
   const [closeReason, setCloseReason] = useState<string>("");
   const [attempt, setAttempt] = useState(0);
@@ -247,6 +252,16 @@ export default function TerminalView({
         term.loadAddon(fit);
         term.open(ref.current);
         fit.fit();
+        term.onWriteParsed(() => {
+          if (screenTimerRef.current) return;
+          screenTimerRef.current = setTimeout(() => {
+            screenTimerRef.current = null;
+            const buffer = term.buffer.active;
+            const lines: string[] = [];
+            for (let i = Math.max(0, buffer.length - 120); i < buffer.length; i++) lines.push(buffer.getLine(i)?.translateToString(true) || "");
+            setPaneScreen(lines.join("\n").trim().slice(-24000));
+          }, 180);
+        });
         termRef.current = term;
         fitRef.current = fit;
         term.onData((d: string) => {
@@ -425,6 +440,7 @@ export default function TerminalView({
   // Dispose the terminal only on full component unmount.
   useEffect(() => {
     return () => {
+      if (screenTimerRef.current) clearTimeout(screenTimerRef.current);
       try { termRef.current?.dispose(); } catch {}
       try { window.speechSynthesis?.cancel(); } catch {}
       termRef.current = null;
@@ -434,6 +450,12 @@ export default function TerminalView({
 
   return (
     <div className="flex h-full w-full flex-col bg-[#0b0d10] overflow-hidden">
+      <div className="flex justify-end px-2 py-1">
+        <div role="tablist" aria-label="Terminal view" className="flex rounded-md border border-white/10 text-xs">
+          {([false, true] as const).map((chat) => <button key={String(chat)} role="tab" aria-selected={paneChat === chat}
+            onClick={() => setPaneChat(chat)} className={`rounded px-3 py-1.5 ${paneChat===chat ? "bg-white/10 text-gray-100" : "text-gray-400"}`}>{chat ? "Pane chat" : "Raw"}</button>)}
+        </div>
+      </div>
       {/* One-tap agent launchers + optional dictation */}
       <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1.5 overflow-x-auto">
         {tmuxSession ? (
@@ -516,7 +538,13 @@ export default function TerminalView({
         ) : null}
       </div>
       <div className="relative flex-1 overflow-hidden">
-        <div ref={ref} className="h-full w-full p-2" />
+        <div ref={ref} aria-hidden={paneChat} className={`h-full w-full p-2 ${paneChat ? "invisible" : ""}`} />
+        {paneChat && <div className="absolute inset-0 overflow-auto bg-[#0b0d10] p-4 space-y-3">
+          {paneInput && <div className="ml-auto max-w-[90%] w-fit whitespace-pre-wrap rounded-xl bg-white/10 p-3 text-sm text-gray-100">{paneInput}</div>}
+          <div className="rounded-xl border border-white/10 p-3"><div className="mb-2 text-xs text-gray-400">Live pane</div>
+            <pre className="whitespace-pre-wrap break-words text-sm text-gray-200">{paneScreen || "Waiting for pane output…"}</pre>
+          </div>
+        </div>}
       {(status === "closed" || status === "error") ? (
         <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-3">
           <div className="pointer-events-auto rounded border border-amber-500/40 bg-black/80 px-3 py-2 text-xs text-amber-700 dark:text-amber-200 shadow-lg backdrop-blur">
@@ -533,6 +561,20 @@ export default function TerminalView({
         </div>
       ) : null}
       </div>
+      {paneChat && <form className="flex items-end gap-2 border-t border-white/10 p-2" onSubmit={(event) => {
+        event.preventDefault();
+        if (!paneDraft || status !== "open" || taskFollowUpOnly) return;
+        // xterm honors the remote application's bracketed-paste mode. The
+        // same onData handler sends both views to the same live PTY.
+        termRef.current?.paste(paneDraft);
+        termRef.current?.input("\r", true);
+        setPaneInput(paneDraft); setPaneDraft("");
+      }}>
+        <textarea aria-label="Message to selected pane" value={paneDraft} onChange={(event) => setPaneDraft(event.target.value)}
+          placeholder={taskFollowUpOnly ? inputReason : "Type a message to this pane"} disabled={status !== "open" || taskFollowUpOnly}
+          className="max-h-32 min-h-10 flex-1 rounded border border-white/10 bg-white/5 p-2 text-sm text-gray-100" />
+        <button type="submit" disabled={!paneDraft || status !== "open" || taskFollowUpOnly} className="rounded border border-white/10 px-3 py-2 text-sm text-gray-100 disabled:opacity-40">Send</button>
+      </form>}
     </div>
   );
 }

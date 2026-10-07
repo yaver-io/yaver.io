@@ -24,6 +24,7 @@ module.exports = {
   productName: pkg.productName,
   buildVersion: buildNumber,
   files: ["src/**/*", "assets/**/*", "package.json"],
+  extraResources: [{from:"resources/plain-ssh",to:"plain-ssh"}],
   directories: {
     output: "dist-mas",
     buildResources: "assets",

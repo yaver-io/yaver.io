@@ -77,7 +77,7 @@ import {
   type ProjectKindResult,
 } from "../src/lib/projectKind";
 import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
-import XtermView, { type XtermHandle } from "../src/components/XtermView";
+import XtermView, { type XtermHandle } from "../src/components/PaneTerminalView";
 import { resizeFrame, isTerminalMetaFrame } from "../src/lib/xtermBridge";
 import { useHandsFreeVoice } from "../src/lib/voice/useHandsFreeVoice";
 import type { CreateVoiceCoreOptions } from "../src/lib/voice/createVoiceCore";
@@ -926,6 +926,7 @@ export default function GlassTerminalScreen() {
           // True VT grid: full-screen TUIs (Claude Code, tmux, vim) render
           // faithfully. Keystrokes → PTY (binary); fit → resize frame.
           <XtermView
+            inputEnabled={wsRef.current?.readyState === WebSocket.OPEN}
             ref={xtermRef}
             style={styles.body}
             background={PAL.bg}

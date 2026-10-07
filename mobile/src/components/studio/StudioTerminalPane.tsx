@@ -7,7 +7,7 @@ import { useColors } from "../../context/ThemeContext";
 import { useDevice } from "../../context/DeviceContext";
 import { quicClient } from "../../lib/quic";
 import type { StudioRunner } from "../../lib/studioWorkspace";
-import XtermView, { type XtermHandle } from "../XtermView";
+import XtermView, { type XtermHandle } from "../PaneTerminalView";
 import { isTerminalMetaFrame, resizeFrame } from "../../lib/xtermBridge";
 import { loadLocalSpeechConfig } from "../../lib/auth";
 import {
@@ -315,6 +315,7 @@ export function StudioTerminalPane({ cwd, runner, tmuxSession, expanded, onToggl
         </ScrollView>
       ) : null}
       <XtermView
+        inputEnabled={status === "open"}
         ref={terminalRef}
         onData={send}
         onResize={(cols, rows) => {

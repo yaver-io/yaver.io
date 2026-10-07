@@ -10,15 +10,18 @@
 //   if reply is working → spinner until the phone/agent wakes us with a summary
 
 import SwiftUI
+import PlainSSH
 
 struct RootView: View {
     @EnvironmentObject var store: WatchStore
     @State private var showSettings = false
+    @State private var plainSSH = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
+                    Button("SSH panes") { plainSSH = true }
                     resultLine
                     recordButton
                     catalogHint
@@ -39,6 +42,7 @@ struct RootView: View {
                     Task { await store.sendConfirm(token: pending.token, reply: reply) }
                 }
             }
+            .sheet(isPresented: $plainSSH) { PlainSSHView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             // Fold phone→watch background pushes (task-completion wake) into the
             // same reduce path as a direct reply.

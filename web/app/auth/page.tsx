@@ -633,6 +633,7 @@ function AuthContent() {
           </p>
         </div>
 
+        {!isSdkPopup && <a href="/ssh" className="mb-4 block text-center text-sm text-indigo-400">Use SSH without a Yaver account</a>}
         {displayError && (
           <div className="mb-6 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
             {displayError}

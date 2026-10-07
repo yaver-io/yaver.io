@@ -2,6 +2,7 @@
 // session token exists, then the lean-back dashboard.
 
 import SwiftUI
+import PlainSSH
 
 @main
 struct YaverTVApp: App {
@@ -17,6 +18,7 @@ struct YaverTVApp: App {
 }
 
 struct RootView: View {
+    @State private var plainSSH = false
     @EnvironmentObject var store: YaverStore
 
     var body: some View {
@@ -27,6 +29,8 @@ struct RootView: View {
                 SignInView()
             }
         }
+        .safeAreaInset(edge: .bottom) { Button("SSH · no Yaver account required") { plainSSH = true }.padding(8) }
+        .sheet(isPresented: $plainSSH) { PlainSSHView() }
         .task(id: store.token) { await store.refreshAppearanceSettings() }
     }
 }
