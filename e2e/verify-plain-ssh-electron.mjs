@@ -1,0 +1,33 @@
+import { _electron as electron } from "playwright";
+import { readFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
+if(!process.env.PLAIN_SSH_BROWSER_FIXTURE) throw new Error("Start the loopback SSH fixture and set PLAIN_SSH_BROWSER_FIXTURE.");
+const fixture=JSON.parse(readFileSync(process.env.PLAIN_SSH_BROWSER_FIXTURE,"utf8"));
+const app=await electron.launch({executablePath:path.join(root,"electron/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"),args:[path.join(root,"electron")],env:{...process.env,YAVER_ELECTRON_AUTOMATION:"1",YAVER_ELECTRON_USER_DATA_DIR:mkdtempSync(path.join(tmpdir(),"yaver-ssh-electron-"))},timeout:30000});
+try {
+ const page=await app.firstWindow();
+ await page.goto("https://yaver.io/ssh");
+ await page.waitForFunction(()=>typeof window.yaver?.plainSSH==="function");
+ assert.equal(await page.evaluate(()=>localStorage.getItem("yaver_auth_token")),null);
+ await page.getByLabel("Hostname or Tailscale address").fill(fixture.host);
+ await page.getByLabel("SSH port",{exact:true}).fill(String(fixture.port));
+ await page.getByLabel("SSH username",{exact:true}).fill(fixture.user);
+ await page.getByLabel("SSH password (optional with a key or Tailscale SSH)").fill(fixture.password);
+ await page.getByRole("button",{name:"Check host key",exact:true}).click();
+ await page.getByText(fixture.fingerprint,{exact:true}).waitFor();
+ await page.getByRole("button",{name:"Trust host and connect",exact:true}).click();
+ await page.getByRole("button",{name:/work · 0 · %/}).click();
+ await page.locator(".xterm-screen").waitFor();
+ await page.getByLabel("Message to selected pane").fill("electron-pane-proof");
+ await page.getByRole("button",{name:"Send",exact:true}).click();
+ await page.getByRole("tab",{name:"Pane chat",exact:true}).click();
+ await page.getByTestId("live-pane-output").filter({hasText:"electron-pane-proof"}).waitFor();
+ await page.screenshot({path:path.join(tmpdir(),"yaver-electron-plain-ssh.png")});
+ await page.getByRole("button",{name:"Detach",exact:true}).click();
+ await page.getByLabel("SSH username",{exact:true}).waitFor();
+ console.log("Electron native SSH: no Yaver session, pinned host, real pane output/input, Raw/Pane chat and detach passed.");
+} finally { await app.close(); }

@@ -215,3 +215,9 @@ only removes the duplicate login service after a successful boot-service install
 On the real office host, a redundant login service was backed up and disabled;
 the already-running boot daemon still answered authenticated HTTP 200 afterward.
 No reboot or runner restart was performed.
+
+The real Electron runtime was also driven with a fresh isolated profile and
+no Yaver account token. Its packaged native SSH IPC bridge pinned the fixture
+host, opened a real tmux pane, sent composed input, rendered that input in the
+live pane, toggled Raw/Pane chat and detached successfully. The reproducible
+arc is `e2e/verify-plain-ssh-electron.mjs`; screenshots stay outside the repo.
