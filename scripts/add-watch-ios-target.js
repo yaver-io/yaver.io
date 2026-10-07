@@ -379,7 +379,7 @@ function ensurePlainSSH(targetUUID) {
  const objects=proj.hash.project.objects;
  const project=objects.PBXProject[proj.getFirstProject().uuid];
  const locals=objects.XCLocalSwiftPackageReference ||= {};
- let packageID=Object.keys(locals).find(id=>locals[id]?.relativePath==='"../../apple/PlainSSH"');
+ let packageID=Object.keys(locals).find(id=>String(locals[id]?.relativePath || '').replace(/^"|"$/g,'')==='../../apple/PlainSSH');
  if(!packageID){packageID=proj.generateUuid();locals[packageID]={isa:"XCLocalSwiftPackageReference",relativePath:'"../../apple/PlainSSH"'};locals[packageID+"_comment"]="PlainSSH";}
  project.packageReferences ||= [];
  if(!project.packageReferences.some(ref=>ref.value===packageID))project.packageReferences.push({value:packageID,comment:"PlainSSH"});
