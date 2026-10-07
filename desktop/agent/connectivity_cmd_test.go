@@ -36,3 +36,10 @@ func TestMeshMutationsRejectGET(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectivityHelpDoesNotConnect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	runMeshUp([]string{"--help"})
+	runMeshDown([]string{"--help"})
+	runConnectivityStatus([]string{"--help"})
+}

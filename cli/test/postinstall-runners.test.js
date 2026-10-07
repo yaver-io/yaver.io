@@ -58,9 +58,9 @@ test("Linux global upgrades bounce both supported system service names", () => {
   assert.match(source, /systemctl restart \$\{unit\}/);
 });
 
-test("default postinstall is React Native first and heavy labs require positive opt-in", () => {
+test("Studio postinstall retains React Native tooling behind an explicit opt-in", () => {
   assert.match(source, /runAgentCommand\(\["install", "mobile"\]/,
-    "Hermes bundle push remains part of the default install");
+    "Hermes bundle push remains available for Studio installs");
   assert.match(source, /installMissingMobileTools\(\)/,
     "Expo and EAS remain part of complete React Native support");
   for (const name of ["REMOTE_RUNTIME", "VSR", "VIBE_PREVIEW", "TESTKIT", "VOICE"]) {

@@ -221,3 +221,10 @@ no Yaver account token. Its packaged native SSH IPC bridge pinned the fixture
 host, opened a real tmux pane, sent composed input, rendered that input in the
 live pane, toggled Raw/Pane chat and detached successfully. The reproducible
 arc is `e2e/verify-plain-ssh-electron.mjs`; screenshots stay outside the repo.
+
+Global CLI installation now defaults to connectivity only. Hermes, coding
+runners, mobile SDK tools and lab provisioning stay behind an explicit
+`YAVER_POSTINSTALL_STUDIO=1` or dedicated Yaver lab opt-in. Generic CI is not an
+opt-in. Existing Studio commands remain available. Connectivity command help
+returns before any network mutation. Tests cover the default install policy,
+explicit opt-ins and help behavior.

@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -12,6 +14,9 @@ func runConnectivityStatus(args []string) {
 	jsonOutput := false
 	for _, arg := range args {
 		switch arg {
+		case "--help", "-h":
+			fmt.Println("Usage: yaver status [--json]")
+			return
 		case "--json":
 			jsonOutput = true
 		case "--details":
@@ -67,4 +72,21 @@ func connectivityStatusText(res map[string]interface{}, now time.Time) string {
 		text += fmt.Sprintf("%s  peer  %s\n", meshOrDash(endpoint), state)
 	}
 	return text
+}
+
+func parseConnectivityCommand(command string, args []string) bool {
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { fmt.Fprintf(os.Stderr, "Usage: yaver %s\n", command) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return false
+		}
+		os.Exit(2)
+	}
+	if fs.NArg() != 0 {
+		fs.Usage()
+		os.Exit(2)
+	}
+	return true
 }

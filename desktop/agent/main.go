@@ -2743,8 +2743,9 @@ func runServe(args []string) {
 		} else {
 			if err := persistRotatedAuthToken(cfg, newToken); err != nil {
 				log.Printf("[auth] (warn) could not persist rotated token: %v", err)
+			} else {
+				fmt.Println("Token refreshed successfully.")
 			}
-			fmt.Println("Token refreshed successfully.")
 		}
 	}
 

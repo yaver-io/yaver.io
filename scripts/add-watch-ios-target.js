@@ -384,6 +384,15 @@ function ensurePlainSSH(targetUUID) {
  project.packageReferences ||= [];
  if(!project.packageReferences.some(ref=>ref.value===packageID))project.packageReferences.push({value:packageID,comment:"PlainSSH"});
  const products=objects.XCSwiftPackageProductDependency ||= {};
+ // CocoaPods can normalize quoted paths between deploys. Collapse only
+ // duplicate references to this exact package, preserving every other package.
+ const duplicates=Object.keys(locals).filter(id=>id!==packageID && String(locals[id]?.relativePath || '').replace(/^"|"$/g,'')==='../../apple/PlainSSH');
+ for(const id of duplicates){
+  project.packageReferences=project.packageReferences.filter(ref=>ref.value!==id);
+  for(const product of Object.values(products)){if(product && typeof product==='object' && product.package===id)product.package=packageID;}
+  delete locals[id];delete locals[id+'_comment'];
+ }
+
  const target=objects.PBXNativeTarget[targetUUID];target.packageProductDependencies ||= [];
  let productID=target.packageProductDependencies.find(ref=>products[ref.value]?.productName==="PlainSSH")?.value;
  if(!productID){productID=proj.generateUuid();products[productID]={isa:"XCSwiftPackageProductDependency",package:packageID,package_comment:"PlainSSH",productName:"PlainSSH"};products[productID+"_comment"]="PlainSSH";target.packageProductDependencies.push({value:productID,comment:"PlainSSH"});}

@@ -219,6 +219,9 @@ func meshLocalEndpoints() []string {
 }
 
 func runMeshUp(args []string) {
+	if !parseConnectivityCommand("up", args) {
+		return
+	}
 	// Prefer the running daemon — it owns the long-lived WireGuard TUN, so the
 	// overlay survives this CLI process exiting. The daemon handler does the
 	// keygen + control-plane join + data-plane bring-up in one shot.
@@ -309,7 +312,10 @@ func runMeshUpDirect(_ []string) {
 	fmt.Println("  Then `yaver mesh status` shows live peers.")
 }
 
-func runMeshDown(_ []string) {
+func runMeshDown(args []string) {
+	if !parseConnectivityCommand("down", args) {
+		return
+	}
 	// A refused or timed-out stop must never be reported as a disconnected VPN.
 	res, err := localAgentRequest("POST", "/mesh/down", nil)
 	if err != nil {

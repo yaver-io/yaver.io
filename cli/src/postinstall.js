@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-// npm postinstall hook — prefetch the Yaver agent and provision the
-// Yaver-managed Hermes reload stack on global installs so a fresh
-// Linux/WSL/macOS box can get to headless auth + Open in Yaver
-// without an extra `yaver install mobile` step.
+// npm postinstall keeps connectivity lean: prefetch the signed agent.
+// Studio/Hermes/runners are provisioned only by an explicit Studio or lab opt-in.
 //
 // Must NEVER fail npm install. This is best-effort bootstrap only.
 
@@ -13,6 +11,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { desktop, installedDesktopCandidates } = require("./commands/desktop");
+const { provisionStudio } = require("./postinstall-policy");
 const { codingRunnerBootstrapPlan } = require("./runner-bootstrap-policy");
 
 const CODING_RUNNER_BOOTSTRAP = [
@@ -534,6 +533,14 @@ async function main() {
     ensureZshenvRescue();
     addNpmGlobalBinToProcessPath();
     log("IoT edge mode enabled: installed the Go agent only; skipped mobile, Hermes, Playwright, voice, sandbox, and local coding-runner bootstrap.");
+    return;
+  }
+
+  if (!provisionStudio()) {
+    ensurePathOnUnix();
+    ensureZshenvRescue();
+    addNpmGlobalBinToProcessPath();
+    log("Connectivity ready. Use yaver up, down, status or auth. Studio tooling is opt-in (YAVER_POSTINSTALL_STUDIO=1).");
     return;
   }
 

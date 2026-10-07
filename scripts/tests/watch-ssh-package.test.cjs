@@ -6,5 +6,9 @@ for(const relativePath of ['../../apple/PlainSSH','"../../apple/PlainSSH"']){
   const proj={hash:{project:{objects}},getFirstProject:()=>({uuid:'project'}),generateUuid:()=>{throw new Error('created duplicate reference')}};
   const ensure=vm.runInNewContext(`(${source.slice(source.indexOf('function ensurePlainSSH('))})`,{proj});
   ensure('watch');ensure('watch');assert.equal(objects.PBXProject.project.packageReferences.length,1);
+  objects.XCLocalSwiftPackageReference.duplicate={relativePath:'../../apple/PlainSSH'};
+  objects.PBXProject.project.packageReferences.push({value:'duplicate'});
+  objects.XCSwiftPackageProductDependency.product.package='duplicate';
+  ensure('watch');assert.equal(objects.PBXProject.project.packageReferences.length,1);assert.equal(objects.XCSwiftPackageProductDependency.product.package,'package');
  });
 }
