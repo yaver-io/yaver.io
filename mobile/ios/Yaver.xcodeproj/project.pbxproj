@@ -56,6 +56,7 @@
 		C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B1D3AE60FAC95D8F162620 /* ExpoModulesProvider.swift */; };
 		C663E379084C45F9BB9251D2 /* YaverActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B6D3B8CC79B4516BFB9D831 /* YaverActivityAttributes.swift */; };
 		C7C722D679704DCDA96138C3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A042BE27882E4C9D8FB1D5B1 /* Assets.xcassets */; };
+		CCB1801A09E84F77A534C400 /* PlainSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A134BC5BA04348EFBB18CC3E /* PlainSSH */; };
 		CE4E8C6187884FF28E6B96C6 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7CF7F583CF4511B022ADC6 /* RootView.swift */; };
 		D0E1F2A3B4C5D6E7F8A9B0C1 /* YaverKeyboardRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */; };
 		D0E1F2A3B4C5D6E7F8A9B0C2 /* YaverKeyboardRouter.m in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */; };
@@ -73,7 +74,6 @@
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 		FCAA90D03B4E4E9F81DA0047 /* WakeProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47E06EDB37C2459087D39E09 /* WakeProgressView.swift */; };
 		FF7DDBBE80B84B9DBDBC343D /* Backend.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAE27D0C2AC344CA8EA727F7 /* Backend.swift */; };
-		CCB1801A09E84F77A534C400 /* PlainSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A134BC5BA04348EFBB18CC3E /* PlainSSH */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -437,12 +437,12 @@
 			dependencies = (
 			);
 			name = YaverWatch;
-			productName = YaverWatch;
-			productReference = 729EC3763C19417E8973784F /* YaverWatch.app */;
-			productType = "com.apple.product-type.application";
 			packageProductDependencies = (
 				A134BC5BA04348EFBB18CC3E /* PlainSSH */,
 			);
+			productName = YaverWatch;
+			productReference = 729EC3763C19417E8973784F /* YaverWatch.app */;
+			productType = "com.apple.product-type.application";
 		};
 		13B07F861A680F5B00A75B9A /* Yaver */ = {
 			isa = PBXNativeTarget;
@@ -538,6 +538,9 @@
 				Base,
 			);
 			mainGroup = 83CBB9F61A601CBA00E9B192;
+			packageReferences = (
+				14A12505AC9C4F678EFA8765 /* XCLocalSwiftPackageReference "PlainSSH" */,
+			);
 			productRefGroup = 83CBBA001A601CBA00E9B192 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -546,9 +549,6 @@
 				133BF25B97134A7DBC84014B /* YaverWatch */,
 				F36BFE7B20D2433A80D39433 /* YaverActivity */,
 				1E35CA00C7B8447CA26AA5D1 /* ShareExtension */,
-			);
-			packageReferences = (
-				14A12505AC9C4F678EFA8765 /* PlainSSH */,
 			);
 		};
 /* End PBXProject section */
@@ -1289,16 +1289,16 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		14A12505AC9C4F678EFA8765 /* PlainSSH */ = {
+		14A12505AC9C4F678EFA8765 /* XCLocalSwiftPackageReference "PlainSSH" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../apple/PlainSSH";
+			relativePath = ../../apple/PlainSSH;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		A134BC5BA04348EFBB18CC3E /* PlainSSH */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14A12505AC9C4F678EFA8765 /* PlainSSH */;
+			package = 14A12505AC9C4F678EFA8765 /* XCLocalSwiftPackageReference "PlainSSH" */;
 			productName = PlainSSH;
 		};
 /* End XCSwiftPackageProductDependency section */
