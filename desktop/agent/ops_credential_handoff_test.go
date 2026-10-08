@@ -1,16 +1,20 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/nacl/box"
+	"golang.org/x/crypto/ssh"
 )
 
 type credentialHandoffRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -200,5 +204,64 @@ func TestEndpointCredentialHandoffOfferRejectsUnregisteredPhoneKey(t *testing.T)
 	result := opsCredentialHandoffOffer(OpsContext{Server: server, Caller: "owner"}, raw)
 	if result.OK || result.Code != "handoff_binding_failed" {
 		t.Fatalf("unregistered receiver key was not rejected: %#v", result)
+	}
+}
+
+func TestMachineAccessHandoffAuthorizesPhoneAndEncryptsAddresses(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, hostPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	hostSigner, _ := ssh.NewSignerFromKey(hostPrivate)
+	hostKeyPath := filepath.Join(t.TempDir(), "ssh_host_ed25519_key.pub")
+	if err := os.WriteFile(hostKeyPath, ssh.MarshalAuthorizedKey(hostSigner.PublicKey()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalHostKeyPaths := sshHostPublicKeyPaths
+	sshHostPublicKeyPaths = []string{hostKeyPath}
+	t.Cleanup(func() { sshHostPublicKeyPaths = originalHostKeyPaths })
+	recipientPublic, recipientPrivate, _ := box.GenerateKey(rand.Reader)
+	phonePublic, _, _ := ed25519.GenerateKey(rand.Reader)
+	sshPublic, _ := ssh.NewPublicKey(phonePublic)
+	now := time.Now()
+	request := machineAccessOfferRequest{endpointHandoffRequest: endpointHandoffRequest{
+		Version: 1, Type: "yaver-credential-request", HandoffID: "machine-access-1", TargetDeviceID: "phone-1", TargetPublicKey: base64.StdEncoding.EncodeToString(recipientPublic[:]), AccountFingerprint: credentialAccountFingerprintGo("owner-1"), CreatedAt: now.UnixMilli(), ExpiresAt: now.Add(time.Minute).UnixMilli(),
+	}, SSHPublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPublic))), Label: "yaver-ios"}
+	directory, _ := json.Marshal(map[string]interface{}{"devices": []map[string]interface{}{{"deviceId": "phone-1", "publicKey": request.TargetPublicKey}}})
+	stubCredentialHandoffDirectory(t, string(directory), nil)
+	raw, _ := json.Marshal(request)
+	result := opsMachineAccessHandoffOffer(OpsContext{Server: &HTTPServer{ownerUserID: "owner-1", deviceID: "pc-1", hostname: "workstation", convexURL: "https://directory.test", token: "session"}}, raw)
+	if !result.OK {
+		t.Fatalf("offer failed: %#v", result)
+	}
+	encoded, _ := json.Marshal(result.Initial)
+	var env endpointHandoffEnvelope
+	_ = json.Unmarshal(encoded, &env)
+	senderBytes, _ := base64.StdEncoding.DecodeString(env.SenderPublicKey)
+	nonceBytes, _ := base64.StdEncoding.DecodeString(env.Nonce)
+	cipher, _ := base64.StdEncoding.DecodeString(env.Ciphertext)
+	var sender [32]byte
+	var nonce [24]byte
+	copy(sender[:], senderBytes)
+	copy(nonce[:], nonceBytes)
+	opened, ok := box.Open(nil, cipher, &nonce, &sender, recipientPrivate)
+	if !ok || !strings.Contains(string(opened), `"kind":"machine-access-bundle"`) || !strings.Contains(string(opened), `\"deviceId\":\"pc-1\"`) {
+		t.Fatalf("phone could not decrypt machine profile: %s", opened)
+	}
+	var plaintext endpointHandoffPlaintext
+	if err := json.Unmarshal(opened, &plaintext); err != nil {
+		t.Fatal(err)
+	}
+	var profile machineAccessBundle
+	if err := json.Unmarshal([]byte(plaintext.Value), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.SSHFingerprint != ssh.FingerprintSHA256(hostSigner.PublicKey()) {
+		t.Fatalf("wrong SSH host fingerprint: %q", profile.SSHFingerprint)
+	}
+	keys, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "authorized_keys"))
+	if err != nil || !strings.Contains(string(keys), "yaver-ios") {
+		t.Fatalf("phone key not authorized: %v", err)
+	}
+	if strings.Contains(string(encoded), "workstation") {
+		t.Fatal("machine profile leaked outside ciphertext")
 	}
 }

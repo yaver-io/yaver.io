@@ -22,6 +22,30 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func TestKeygenReturnsMatchingOpenSSHIdentity(t *testing.T) {
+	var got struct {
+		OK    bool                                                `json:"ok"`
+		Value struct{ PublicKey, PrivateKey, Fingerprint string } `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(Invoke(`{"op":"keygen"}`)), &got); err != nil || !got.OK {
+		t.Fatalf("keygen response: %v %#v", err, got)
+	}
+	signer, err := ssh.ParsePrivateKey([]byte(got.Value.PrivateKey))
+	if err != nil {
+		t.Fatalf("private key: %v", err)
+	}
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(got.Value.PublicKey))
+	if err != nil {
+		t.Fatalf("public key: %v", err)
+	}
+	if !bytes.Equal(signer.PublicKey().Marshal(), pub.Marshal()) {
+		t.Fatal("public/private key mismatch")
+	}
+	if ssh.FingerprintSHA256(pub) != got.Value.Fingerprint {
+		t.Fatal("fingerprint mismatch")
+	}
+}
+
 // A real SSH handshake and real isolated tmux server exercise the exact native
 // core, including authentication, raw streaming, targeting and detach survival.
 func testServer(t *testing.T) (request, *atomic.Int32, func(...string) string) {

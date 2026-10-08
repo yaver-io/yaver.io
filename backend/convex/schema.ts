@@ -463,19 +463,13 @@ export default defineSchema({
     // request signatures holding only public material — no shared secret on the
     // relay. See docs/yaver-relay-asymmetric-auth.md.
     signPublicKey: v.optional(v.string()),
-    quicHost: v.string(),
-    // Every reachable IPv4 address the agent has — preferred outbound
-    // first, then any additional LAN/Tailscale/Ethernet/VPN address it
-    // is bound to. Mobile clients race them in parallel during connect
-    // so the session attaches via whichever path actually has a route
-    // from the phone (Tailscale on cellular, Wi-Fi on same LAN, etc.).
-    // Optional for backwards-compat with agents that haven't upgraded.
+    // Legacy migration fields. New agents never send network coordinates;
+    // heartbeat removes any old values and list APIs redact them.
+    quicHost: v.optional(v.string()),
+    // Legacy migration field. New writes clear it; clients receive [] and use
+    // their Keychain/Keystore-backed device-to-device access profile instead.
     localIps: v.optional(v.array(v.string())),
-    // Public HTTPS origins that can reach this specific device, such as
-    // Cloudflare Tunnel front doors or other reverse-proxy endpoints.
-    // Optional and device-scoped so the transport resolver can treat them
-    // as first-class runtime candidates instead of guessing from account
-    // level tunnel settings.
+    // Legacy migration field; new writes clear it.
     publicEndpoints: v.optional(v.array(v.string())),
     quicPort: v.number(),
     isOnline: v.boolean(),
@@ -3739,12 +3733,12 @@ export default defineSchema({
   /** Yaver Mesh — optional WireGuard overlay control plane (desktop/agent
    *  mesh_cmd.go + desktop/agent/mesh/). STRICTLY OPT-IN: a device only gets
    *  a row here after the user runs `yaver mesh up`. Privacy contract:
-   *  PUBLIC keys + endpoints + assigned mesh IP ONLY. The WireGuard PRIVATE
+   *  PUBLIC keys + assigned mesh IP only. The WireGuard PRIVATE
    *  key never leaves the device (it lives in the vault); `wgPrivateKey` is
    *  on the Convex forbidden-field list and pinned by
-   *  desktop/agent/convex_privacy_test.go. `endpoints` are host:port UDP
-   *  candidates the peer can be reached at — the same privacy class as the
-   *  existing quicHost/publicEndpoints on the devices table. */
+   *  desktop/agent/convex_privacy_test.go. The legacy `endpoints` array is
+   *  retained empty during schema migration; endpoint coordinates are never
+   *  accepted or returned. */
   meshNodes: defineTable({
     userId: v.id("users"),
     deviceId: v.string(),
@@ -3754,8 +3748,7 @@ export default defineSchema({
     // all meshNodes so devices shared between users never collide.
     meshIPv4: v.string(),
     meshIPv6: v.optional(v.string()),
-    // host:port UDP candidates for WireGuard (LAN IPs, public endpoint,
-    // relay-DERP pseudo-endpoint). Privacy-equivalent to devices.localIps.
+    // Legacy migration field. Always empty; coordinates stay device-local.
     endpoints: v.array(v.string()),
     // Subnet-router CIDRs this node is willing to route (Phase 5).
     advertisedRoutes: v.optional(v.array(v.string())),

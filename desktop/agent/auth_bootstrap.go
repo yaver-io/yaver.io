@@ -756,7 +756,6 @@ func notifyConvexAuthExpired(cfg *Config, httpPort int) {
 		"deviceId":   cfg.DeviceID,
 		"hardwareId": HardwareID(),
 		"publicKey":  dk.PublicKeyBase64(),
-		"quicHost":   getLocalIP(),
 		"quicPort":   httpPort,
 	}
 	data, _ := json.Marshal(body)
@@ -817,7 +816,6 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 	}
 	pubKey := dk.PublicKeyBase64()
 	hwid := HardwareID()
-	host := getLocalIP()
 	hostname, _ := os.Hostname()
 	bootstrapURL := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap"
 	pendingURL := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap-pending"
@@ -855,7 +853,6 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 			"relayPassword": pw,
 			"name":          hostname,
 			"platform":      runtimeGOOS(),
-			"quicHost":      host,
 			"quicPort":      httpPort,
 			"relayLabel":    label,
 		}
@@ -879,7 +876,6 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 			"deviceId":   cfg.DeviceID,
 			"hardwareId": hwid,
 			"publicKey":  pubKey,
-			"quicHost":   host,
 			"quicPort":   httpPort,
 		}
 		data, _ := json.Marshal(body)

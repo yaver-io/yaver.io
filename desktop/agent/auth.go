@@ -993,15 +993,10 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	if storage := storageSnapshotForHeartbeat(); storage != nil {
 		payload["storage"] = storage
 	}
-	// Always include quicHost + localIps + publicEndpoints in the
-	// heartbeat payload — even if empty — so a previously-set
-	// Docker-bridge or stale public IP gets cleared on Convex.
-	// Pre-fix the omit-on-empty branch left stale values in place: a
-	// box that USED to advertise 172.18.0.1 (Docker bridge) and then
-	// upgraded to a binary that filters those out would still see the
-	// bridge address in mobile's device list because the field was
-	// just never re-sent.
-	payload["quicHost"] = quicHost
+	// Direct-connect coordinates stay on the endpoint. They are synchronized
+	// to an enrolled phone over the authenticated P2P machine-access handoff;
+	// Convex receives identity and coarse transport capability only.
+	_ = quicHost
 	// Publish whether this box currently has a LIVE relay tunnel (registered +
 	// serving), not just that it heartbeats. Convex stores this in-place on the
 	// device row (no history) so the phone/dashboard can show "online · no relay
@@ -1039,19 +1034,8 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// polls for it over the same channel `yaver auth` uses. Empty string when
 	// nothing is pending, so the field also clears itself.
 	payload["pendingAuthCode"] = currentSelfNominatedCode()
-	// Coerce nil slices to empty arrays so JSON encodes them as `[]` not
-	// `null`. The Convex http wrapper treats Array-valued localIps as
-	// "deliberate clear", but `null` short-circuits to `undefined` and
-	// skips the clear entirely — leaving stale Docker-bridge IPs frozen
-	// on the device row across upgrades.
-	if localIps == nil {
-		localIps = []string{}
-	}
-	if publicEndpoints == nil {
-		publicEndpoints = []string{}
-	}
-	payload["localIps"] = localIps
-	payload["publicEndpoints"] = publicEndpoints
+	_ = localIps
+	_ = publicEndpoints
 	if connectionPreferences == nil {
 		connectionPreferences = []ConnectionPreference{}
 	}

@@ -1,10 +1,9 @@
 import { urlHost } from "./urlHost";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { deleteSecret, getSecret, setSecret } from "./secure-storage";
 
 // connectionCache — per-device snapshot of the last working connection.
 //
-// The published `device.publicEndpoints` and `device.relayServers` lists
-// are authoritative when fresh, but they can rot: a Cloudflare tunnel
+// Direct/tunnel/relay candidates can rot: a Cloudflare tunnel
 // recycles, the relay reassigns the public URL, the relay subdomain DNS
 // loses its route. When that happens the agent is still healthy and
 // listening — only the published candidates are stale. The mobile client
@@ -15,7 +14,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // regular candidate race. If the cached path still answers /health, we
 // skip the candidate race entirely and reconnect in one round-trip.
 //
-// `hadSuccess` flips true on the first successful connect for a device
+// The full entry is secret storage because it can contain a private IP,
+// tunnel credential or relay password. `hadSuccess` flips true on the first
+// successful connect for a device
 // and never flips back. Reconnect policy reads it to switch from
 // "give up after N attempts" (never-connected) to "retry forever with
 // capped backoff" (previously-connected). The user explicitly does not
@@ -59,7 +60,7 @@ function key(deviceId: string): string {
 export async function loadConnectionCache(deviceId: string): Promise<ConnectionCacheEntry | null> {
   if (!deviceId) return null;
   try {
-    const raw = await AsyncStorage.getItem(key(deviceId));
+    const raw = await getSecret(key(deviceId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ConnectionCacheEntry;
     if (parsed?.v !== 1 || parsed.deviceId !== deviceId) return null;
@@ -72,9 +73,9 @@ export async function loadConnectionCache(deviceId: string): Promise<ConnectionC
 export async function persistConnectionCache(entry: ConnectionCacheEntry): Promise<void> {
   if (!entry?.deviceId) return;
   try {
-    await AsyncStorage.setItem(key(entry.deviceId), JSON.stringify(entry));
+    await setSecret(key(entry.deviceId), JSON.stringify(entry));
   } catch {
-    // AsyncStorage failures are non-fatal — losing the cache only
+    // Secure-storage failures are non-fatal — losing the cache only
     // costs us one extra candidate-race round-trip on the next connect.
   }
 }
@@ -82,7 +83,7 @@ export async function persistConnectionCache(entry: ConnectionCacheEntry): Promi
 export async function clearConnectionCache(deviceId: string): Promise<void> {
   if (!deviceId) return;
   try {
-    await AsyncStorage.removeItem(key(deviceId));
+    await deleteSecret(key(deviceId));
   } catch {
     // intentionally swallow — see persistConnectionCache
   }

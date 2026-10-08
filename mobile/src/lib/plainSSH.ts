@@ -2,6 +2,7 @@ import { NativeModules, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { Buffer } from "buffer";
+import { getSecret, setSecret, deleteSecret } from "./secure-storage";
 
 export interface SSHHost {
   id: string;
@@ -13,6 +14,8 @@ export interface SSHHost {
 export interface SSHCredentials { password?: string; privateKey?: string; passphrase?: string }
 export interface SSHPane { identity: string; id: string; sessionId: string; session: string; window: string; command: string; width: number; height: number }
 const hostsKey = "yaver.plainSSH.hosts.v1";
+const syncedHostsKey = "yaver.plainSSH.synced-hosts.v1";
+const syncedCredentialPrefix = "yaver.plainSSH.synced-credential.v1.";
 const bridge = NativeModules.YaverPlainSSH;
 const configuredBridge = process.env.EXPO_PUBLIC_PLAIN_SSH_BRIDGE || "";
 const bridgeURL = (() => {
@@ -49,7 +52,34 @@ export async function sshCall<T>(request: Record<string, unknown>): Promise<T> {
 export async function loadSSHHosts(): Promise<SSHHost[]> {
   if (Platform.OS === "web") return browserHosts;
   const stored = await AsyncStorage.getItem(hostsKey);
-  return stored ? JSON.parse(stored) : [];
+  const legacy: SSHHost[] = stored ? JSON.parse(stored) : [];
+  let synced: SSHHost[] = [];
+  try { synced = JSON.parse((await getSecret(syncedHostsKey)) || "[]"); } catch { /* unavailable secure store */ }
+  const merged = [...legacy.filter((host) => !synced.some((item) => item.id === host.id)), ...synced];
+  if (legacy.length > 0) {
+    await setSecret(syncedHostsKey, JSON.stringify(merged));
+    await AsyncStorage.removeItem(hostsKey);
+  }
+  return merged;
+}
+
+export interface GeneratedSSHIdentity { publicKey: string; privateKey: string; fingerprint: string }
+export async function generateSSHIdentity(): Promise<GeneratedSSHIdentity> {
+  return sshCall<GeneratedSSHIdentity>({ op: "keygen" });
+}
+
+/** Store a synchronized machine profile and its private key entirely inside
+ * iOS Keychain or Android Keystore-backed SecureStore. */
+export async function saveSyncedSSHHost(host: SSHHost, credentials: SSHCredentials): Promise<void> {
+  if (Platform.OS === "web") throw new Error("Machine access sync requires the native mobile app.");
+  await setSecret(`${syncedCredentialPrefix}${host.id}`, JSON.stringify(credentials));
+  const current: SSHHost[] = JSON.parse((await getSecret(syncedHostsKey)) || "[]");
+  await setSecret(syncedHostsKey, JSON.stringify([...current.filter((item) => item.id !== host.id), host]));
+}
+
+export async function loadSyncedSSHHosts(): Promise<SSHHost[]> {
+  if (Platform.OS === "web") return [];
+  try { return JSON.parse((await getSecret(syncedHostsKey)) || "[]"); } catch { return []; }
 }
 export async function saveSSHHost(host: SSHHost, credentials: SSHCredentials): Promise<void> {
   if (Platform.OS === "web") { if (!bridgeURL) throw new Error("Enable the local SSH companion first."); browserHosts=[...browserHosts.filter((h)=>h.id!==host.id),host]; browserCredentials.set(host.id,credentials); return; }
@@ -58,17 +88,25 @@ export async function saveSSHHost(host: SSHHost, credentials: SSHCredentials): P
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
   const hosts = await loadSSHHosts();
-  await AsyncStorage.setItem(hostsKey, JSON.stringify([...hosts.filter((h) => h.id !== host.id), host]));
+  await setSecret(syncedHostsKey, JSON.stringify([...hosts.filter((h) => h.id !== host.id), host]));
 }
 export async function loadSSHCredentials(id: string): Promise<SSHCredentials> {
   if (Platform.OS === "web") return browserCredentials.get(id) || {};
+  try {
+    const synced = await getSecret(`${syncedCredentialPrefix}${id}`);
+    if (synced) return JSON.parse(synced);
+  } catch { /* fall through to legacy credential */ }
   return JSON.parse(await SecureStore.getItemAsync(`plainSSH.${id}`) || "{}");
 }
 export async function removeSSHHost(id: string): Promise<void> {
   if (Platform.OS === "web") {browserHosts=browserHosts.filter((h)=>h.id!==id);browserCredentials.delete(id);return;}
   await SecureStore.deleteItemAsync(`plainSSH.${id}`);
   await SecureStore.deleteItemAsync(`plainSSH.car.${id}`);
-  await AsyncStorage.setItem(hostsKey, JSON.stringify((await loadSSHHosts()).filter((h) => h.id !== id)));
+  await deleteSecret(`${syncedCredentialPrefix}${id}`).catch(() => {});
+  try {
+    const synced: SSHHost[] = JSON.parse((await getSecret(syncedHostsKey)) || "[]");
+    await setSecret(syncedHostsKey, JSON.stringify(synced.filter((host) => host.id !== id)));
+  } catch { /* best effort */ }
 }
 export function sshBytes(data: string): Uint8Array { return Buffer.from(data, "base64"); }
 export function sshInput(data: string | Uint8Array): string { return Buffer.from(data).toString("base64"); }

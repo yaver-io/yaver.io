@@ -35,6 +35,20 @@ This is a code-grounded status record, not a claim that migration is complete.
 - Cloud diagnostic ingestion discards arbitrary message/detail/data bodies and
   stores only bounded event classifications. Developer-log reads require an
   authenticated owner.
+- PC-to-phone machine access now uses a direct-only, account-bound NaCl handoff.
+  The phone creates a reusable Ed25519 SSH identity locally; the PC appends only
+  its public key to the local OS account and encrypts its current LAN/private
+  overlay addresses, SSH user and port to the phone. The phone stores the
+  private key and machine profile with Expo SecureStore's stable service, which
+  maps to iOS Keychain and Android Keystore-backed encrypted storage. Convex
+  retains only the receiver's public handoff identity. The last-working mobile
+  connection cache uses the same secure service, so a successful direct IP or
+  tunnel credential is not left in AsyncStorage.
+- Agent registration, bootstrap, heartbeat and relay presence paths no longer
+  publish `quicHost`, `localIps`, `publicEndpoints` or relay peer addresses.
+  Backend writes clear legacy values and public/admin device projections redact
+  them. Mesh endpoint arrays are also kept empty. The release migration removes
+  values from offline device, pending-claim and mesh rows.
 
 ## Blocking plaintext paths
 

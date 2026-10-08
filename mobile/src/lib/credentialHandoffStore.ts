@@ -116,10 +116,33 @@ export async function acceptCredentialHandoff(args: {
 
   // Save the credential before consuming the id. If secure storage refuses the
   // write, retry remains possible and the UI must surface that concrete cause.
+  if (opened.kind === "machine-access-bundle") throw new Error("Machine access profiles require the dedicated secure-storage path.");
   await setSecret(SECRET_SLOT[opened.kind], opened.value);
   await setSecret(
     scopedKey(CONSUMED_PREFIX, args.accountFingerprint),
     JSON.stringify([...consumed.filter((id) => id !== opened.handoffId), opened.handoffId].slice(-MAX_CONSUMED_IDS)),
   );
   return { handoffId: opened.handoffId, kind: opened.kind, expiresAt: opened.expiresAt };
+}
+
+/** Open an encrypted machine profile in memory for immediate Keychain/Keystore
+ * persistence. It is never put in the generic credential slot or returned to UI. */
+export async function acceptMachineAccessHandoff(args: {
+  envelope: CredentialHandoffEnvelope;
+  deviceId: string;
+  accountFingerprint: string;
+  now?: number;
+}): Promise<string> {
+  const identity = await loadOrCreateIdentity(args.accountFingerprint);
+  const consumed = await loadConsumed(args.accountFingerprint);
+  const opened = openCredentialHandoff(args.envelope, {
+    expectedDeviceId: args.deviceId,
+    expectedAccountFingerprint: args.accountFingerprint,
+    recipientSecretKey: identity.secretKey,
+    consumedHandoffIds: new Set(consumed),
+    now: args.now,
+  });
+  if (opened.kind !== "machine-access-bundle") throw new Error("The endpoint returned the wrong machine access payload.");
+  await setSecret(scopedKey(CONSUMED_PREFIX, args.accountFingerprint), JSON.stringify([...consumed, opened.handoffId].slice(-MAX_CONSUMED_IDS)));
+  return opened.value;
 }

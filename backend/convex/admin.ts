@@ -84,7 +84,7 @@ export const exportUserBundleByEmail = internalQuery({
       .withIndex("by_userId", (q) => q.eq("userId", user._id))
       .collect();
 
-    return { user, settings, devices };
+    return { user, settings, devices: devices.map(({ quicHost: _quicHost, localIps: _localIps, publicEndpoints: _publicEndpoints, ...device }) => ({ ...device, quicHost: "" })) };
   },
 });
 
@@ -205,6 +205,9 @@ export const importUserBundle = internalMutation({
       const devicePatch = {
         userId: userDocId!,
         ...device,
+        quicHost: undefined,
+        localIps: undefined,
+        publicEndpoints: undefined,
       };
       if (existingDevice) {
         await ctx.db.patch(existingDevice._id, devicePatch);
@@ -555,7 +558,7 @@ export const fleetDevices = internalQuery({
           (d.lastHeartbeat ?? 0) > now - 5 * 60 * 1000 && !d.runnerDown,
         runnerDown: d.runnerDown === true,
         needsAuth: d.needsAuth === true,
-        publicEndpoints: d.publicEndpoints ?? [],
+        publicEndpoints: [],
         tunnelUrl: d.tunnelUrl ?? null,
       }))
       .sort((a, b) => b.lastHeartbeat - a.lastHeartbeat);

@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/nacl/box"
+	"golang.org/x/crypto/ssh"
 )
 
 const credentialHandoffLifetime = 2 * time.Minute
@@ -86,6 +88,20 @@ func init() {
 			"additionalProperties": false,
 		},
 		Handler: opsCredentialHandoffOffer,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "machine_access_handoff_offer",
+		Description: "Authorize a phone SSH public key locally and return this machine's private-network connection profile encrypted to that same phone. No key or address is written to Convex.",
+		Schema: map[string]interface{}{
+			"type": "object", "required": []string{"version", "type", "handoffId", "targetDeviceId", "targetPublicKey", "accountFingerprint", "createdAt", "expiresAt", "sshPublicKey"},
+			"properties": map[string]interface{}{
+				"version": map[string]interface{}{"type": "integer", "const": 1}, "type": map[string]interface{}{"type": "string", "const": "yaver-credential-request"},
+				"handoffId": map[string]interface{}{"type": "string"}, "targetDeviceId": map[string]interface{}{"type": "string"}, "targetPublicKey": map[string]interface{}{"type": "string"},
+				"accountFingerprint": map[string]interface{}{"type": "string"}, "createdAt": map[string]interface{}{"type": "integer"}, "expiresAt": map[string]interface{}{"type": "integer"},
+				"sshPublicKey": map[string]interface{}{"type": "string"}, "label": map[string]interface{}{"type": "string"},
+			}, "additionalProperties": false,
+		},
+		Handler: opsMachineAccessHandoffOffer,
 	})
 }
 
@@ -163,6 +179,130 @@ type endpointHandoffPlaintext struct {
 	ExpiresAt          int64  `json:"expiresAt"`
 	Kind               string `json:"kind"`
 	Value              string `json:"value"`
+}
+
+type machineAccessOfferRequest struct {
+	endpointHandoffRequest
+	SSHPublicKey string `json:"sshPublicKey"`
+	Label        string `json:"label"`
+}
+
+type machineAccessBundle struct {
+	Version        int      `json:"version"`
+	DeviceID       string   `json:"deviceId"`
+	Name           string   `json:"name"`
+	User           string   `json:"user"`
+	Port           int      `json:"port"`
+	Hosts          []string `json:"hosts"`
+	SSHFingerprint string   `json:"sshFingerprint"`
+}
+
+var sshHostPublicKeyPaths = []string{
+	"/etc/ssh/ssh_host_ed25519_key.pub",
+	"/etc/ssh/ssh_host_ecdsa_key.pub",
+	"/etc/ssh/ssh_host_rsa_key.pub",
+}
+
+func localSSHHostFingerprint() (string, error) {
+	for _, path := range sshHostPublicKeyPaths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		key, _, _, _, err := ssh.ParseAuthorizedKey(raw)
+		if err == nil {
+			return ssh.FingerprintSHA256(key), nil
+		}
+	}
+	return "", fmt.Errorf("no readable SSH host public key")
+}
+
+func validateOutboundHandoff(c OpsContext, request endpointHandoffRequest) OpsResult {
+	if c.RequestHeaders != nil && c.RequestHeaders.Get("X-Yaver-Via-Relay") == "1" {
+		return OpsResult{OK: false, Code: "secure_transport_required", Error: "machine access handoff requires a direct LAN or private-overlay connection"}
+	}
+	if c.Server == nil || strings.TrimSpace(c.Server.ownerUserID) == "" || c.Server.ownerUserID == "offline" {
+		return OpsResult{OK: false, Code: "account_required", Error: "a verified owner account is required"}
+	}
+	now := time.Now()
+	if request.Version != 1 || request.Type != "yaver-credential-request" || strings.TrimSpace(request.HandoffID) == "" || strings.TrimSpace(request.TargetDeviceID) == "" || request.ExpiresAt <= request.CreatedAt || now.UnixMilli() >= request.ExpiresAt || request.ExpiresAt-now.UnixMilli() > credentialHandoffLifetime.Milliseconds() {
+		return OpsResult{OK: false, Code: "handoff_malformed", Error: "invalid or expired credential handoff request"}
+	}
+	if request.AccountFingerprint != credentialAccountFingerprintGo(c.Server.ownerUserID) {
+		return OpsResult{OK: false, Code: "handoff_binding_failed", Error: "credential handoff account binding failed"}
+	}
+	registered, err := credentialHandoffReceiverRegistered(c.Ctx, c.Server.convexURL, c.Server.token, request)
+	if err != nil {
+		return OpsResult{OK: false, Code: "handoff_directory_unavailable", Error: "could not verify the receiving phone with the same-account handoff directory: " + err.Error()}
+	}
+	if !registered {
+		return OpsResult{OK: false, Code: "handoff_binding_failed", Error: "the receiving phone key is not registered to this Yaver account"}
+	}
+	return OpsResult{OK: true}
+}
+
+func sealEndpointHandoff(request endpointHandoffRequest, kind, value string) (endpointHandoffEnvelope, error) {
+	recipientBytes, err := base64.StdEncoding.DecodeString(request.TargetPublicKey)
+	if err != nil || len(recipientBytes) != 32 {
+		return endpointHandoffEnvelope{}, fmt.Errorf("invalid handoff public key")
+	}
+	var recipient [32]byte
+	copy(recipient[:], recipientBytes)
+	senderPublic, senderPrivate, err := box.GenerateKey(rand.Reader)
+	if err != nil {
+		return endpointHandoffEnvelope{}, err
+	}
+	var nonce [24]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		return endpointHandoffEnvelope{}, err
+	}
+	now := time.Now()
+	plain, err := json.Marshal(endpointHandoffPlaintext{Version: 1, HandoffID: request.HandoffID, TargetDeviceID: request.TargetDeviceID, AccountFingerprint: request.AccountFingerprint, CreatedAt: now.UnixMilli(), ExpiresAt: request.ExpiresAt, Kind: kind, Value: value})
+	if err != nil {
+		return endpointHandoffEnvelope{}, err
+	}
+	ciphertext := box.Seal(nil, plain, &nonce, &recipient, senderPrivate)
+	for i := range plain {
+		plain[i] = 0
+	}
+	return endpointHandoffEnvelope{Version: 1, Type: "yaver-credential-envelope", HandoffID: request.HandoffID, TargetDeviceID: request.TargetDeviceID, AccountFingerprint: request.AccountFingerprint, SenderPublicKey: base64.StdEncoding.EncodeToString(senderPublic[:]), Nonce: base64.StdEncoding.EncodeToString(nonce[:]), Ciphertext: base64.StdEncoding.EncodeToString(ciphertext)}, nil
+}
+
+func opsMachineAccessHandoffOffer(c OpsContext, raw json.RawMessage) OpsResult {
+	var offered machineAccessOfferRequest
+	if err := json.Unmarshal(raw, &offered); err != nil {
+		return OpsResult{OK: false, Code: "handoff_malformed", Error: "invalid machine access request"}
+	}
+	if checked := validateOutboundHandoff(c, offered.endpointHandoffRequest); !checked.OK {
+		return checked
+	}
+	keyType, keyBlob, err := parseAuthorizedKeyLine(offered.SSHPublicKey)
+	if err != nil {
+		return OpsResult{OK: false, Code: "ssh_key_invalid", Error: err.Error()}
+	}
+	sshAuthorizedKeysMu.Lock()
+	hostFingerprint, err := localSSHHostFingerprint()
+	if err != nil {
+		return OpsResult{OK: false, Code: "ssh_host_key_unavailable", Error: "could not read the SSH host public key; enable Remote Login/sshd and retry"}
+	}
+	_, _, err = appendAuthorizedKeyLocal(keyType, keyBlob, offered.Label)
+	sshAuthorizedKeysMu.Unlock()
+	if err != nil {
+		return OpsResult{OK: false, Code: "ssh_authorize_failed", Error: "could not authorize the phone SSH key"}
+	}
+	user, _ := agentRuntimeUserInfo()
+	bundleBytes, err := json.Marshal(machineAccessBundle{Version: 1, DeviceID: c.Server.deviceID, Name: c.Server.hostname, User: user, Port: 22, Hosts: getLocalIPs(), SSHFingerprint: hostFingerprint})
+	if err != nil {
+		return OpsResult{OK: false, Code: "crypto_unavailable", Error: "could not encode machine access profile"}
+	}
+	envelope, err := sealEndpointHandoff(offered.endpointHandoffRequest, "machine-access-bundle", string(bundleBytes))
+	for i := range bundleBytes {
+		bundleBytes[i] = 0
+	}
+	if err != nil {
+		return OpsResult{OK: false, Code: "crypto_unavailable", Error: "could not encrypt machine access profile"}
+	}
+	return OpsResult{OK: true, Initial: envelope}
 }
 
 func opsCredentialHandoffOffer(c OpsContext, raw json.RawMessage) OpsResult {

@@ -10,7 +10,7 @@ package main
 //
 // PHASE 0 (this file): control-plane only. `mesh up` generates a
 // WireGuard-compatible keypair (private half stored in the vault, never synced),
-// registers the PUBLIC key + reachable endpoints with Convex (mesh:joinMesh),
+// registers the PUBLIC key and overlay intent with Convex (mesh:joinMesh),
 // and records the assigned overlay IP. The actual data plane — a wireguard-go
 // userspace device + TUN interface — lands in Phase 1 under desktop/agent/mesh/.
 // Until then `mesh status` clearly reports the data plane as not-yet-active.
@@ -259,7 +259,9 @@ func runMeshUpDirect(_ []string) {
 		os.Exit(1)
 	}
 
-	endpoints := meshLocalEndpoints()
+	// Network coordinates are exchanged device-to-device. Convex mesh rows keep
+	// only public keys, assigned overlay identities and coarse state.
+	endpoints := []string{}
 	args := map[string]interface{}{
 		"deviceId":    cfg.DeviceID,
 		"wgPublicKey": kp.PublicKey,

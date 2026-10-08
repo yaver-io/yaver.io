@@ -1,12 +1,35 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestSendHeartbeatDoesNotPublishPrivateNetworkCoordinates(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	}))
+	defer srv.Close()
+
+	_, err := SendHeartbeat(srv.URL, "tok", "device", nil, nil,
+		"100.64.0.7", []string{"192.168.1.8", "100.64.0.7"},
+		[]string{"https://private.example.invalid"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("SendHeartbeat: %v", err)
+	}
+	for _, forbidden := range [][]byte{[]byte(`"quicHost"`), []byte(`"localIps"`), []byte(`"publicEndpoints"`), []byte("100.64.0.7"), []byte("192.168.1.8")} {
+		if bytes.Contains(body, forbidden) {
+			t.Fatalf("heartbeat leaked private network coordinate %q: %s", forbidden, body)
+		}
+	}
+}
 
 func TestSendHeartbeatCarriesCanonicalDeviceIDRepair(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

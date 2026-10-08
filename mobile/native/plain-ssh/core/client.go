@@ -6,10 +6,12 @@ package plainssh
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -99,6 +101,25 @@ func Invoke(input string) string {
 }
 
 func dispatch(req request) (any, error) {
+	if req.Op == "keygen" {
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fail("SSH_KEYGEN_FAILED", "Could not generate the phone SSH identity.")
+		}
+		sshPublic, err := ssh.NewPublicKey(public)
+		if err != nil {
+			return nil, fail("SSH_KEYGEN_FAILED", "Could not encode the phone SSH public key.")
+		}
+		block, err := ssh.MarshalPrivateKey(private, "yaver-mobile")
+		if err != nil {
+			return nil, fail("SSH_KEYGEN_FAILED", "Could not encode the phone SSH private key.")
+		}
+		return map[string]any{
+			"publicKey":   strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPublic))) + " yaver-mobile",
+			"privateKey":  string(pem.EncodeToMemory(block)),
+			"fingerprint": ssh.FingerprintSHA256(sshPublic),
+		}, nil
+	}
 	if req.Op == "closeAll" {
 		connections.Lock()
 		items := connections.items

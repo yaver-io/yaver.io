@@ -58,6 +58,17 @@ test("round trips a credential only for the intended account and device", () => 
   assert.doesNotMatch(JSON.stringify(envelope), /sk-deepseek/);
 });
 
+test("machine access bundle uses the same device-and-account-bound ciphertext", () => {
+  const recipient = nacl.box.keyPair();
+  const request = createCredentialHandoffRequest({ targetDeviceId: "phone-1", targetPublicKey: recipient.publicKey, accountFingerprint: account, now: NOW });
+  const value = JSON.stringify({ version: 1, deviceId: "pc-1", hosts: ["100.64.0.7"], user: "operator", port: 22 });
+  const envelope = sealCredentialForHandoff({ request, expectedAccountFingerprint: account, kind: "machine-access-bundle", value, now: NOW + 1 });
+  const opened = openCredentialHandoff(envelope, { expectedDeviceId: "phone-1", expectedAccountFingerprint: account, recipientSecretKey: recipient.secretKey, now: NOW + 2 });
+  assert.equal(opened.kind, "machine-access-bundle");
+  assert.equal(opened.value, value);
+  assert.doesNotMatch(JSON.stringify(envelope), /100\.64\.0\.7|operator/);
+});
+
 test("rejects wrong-account, wrong-device, replay, and expiry", () => {
   const { recipient, envelope } = fixture();
   const base = {

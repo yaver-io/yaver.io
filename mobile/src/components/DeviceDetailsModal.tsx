@@ -9,6 +9,7 @@ import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "reac
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
+import { useAuth } from "../context/AuthContext";
 import { useColors, useTheme } from "../context/ThemeContext";
 import { quicClient, type RunnerAuthStatusRow, type RunnerInfo, type ModelInfo } from "../lib/quic";
 import { getConvexSiteUrl } from "../lib/auth";
@@ -20,6 +21,7 @@ import { NetCaptureSection } from "./NetCaptureSection";
 import { StorageSection } from "./StorageSection";
 import { ProcessMonitorSection } from "./ProcessMonitorSection";
 import { DevicePowerSheet } from "./DevicePowerSheet";
+import { syncMachineAccessToPhone } from "../lib/machineAccessSync";
 
 const CODING_AGENTS: ReadonlyArray<{ id: "claude" | "codex" | "opencode"; label: string }> = [
   { id: "claude", label: "Claude Code" },
@@ -518,6 +520,7 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
   const c = useColors();
   const router = useRouter();
   const { activeDevice, connectionStatus, selectDevice } = useDevice();
+  const { token, user } = useAuth();
   const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
   const sshCommand = sshCommandForDevice(device);
   const directSSHHost = directSSHHostForDevice(device);
@@ -526,6 +529,7 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
   // action row never claims it can — the sheet asks the box and renders its
   // answer, then takes a typed confirmation.
   const [powerOpen, setPowerOpen] = useState(false);
+  const [syncingAccess, setSyncingAccess] = useState(false);
 
   return (
     <View style={{
@@ -559,6 +563,25 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
         {!isActive ? (
           <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>(connects on open)</Text>
         ) : null}
+      </Pressable>
+      <Pressable
+        disabled={syncingAccess}
+        onPress={async () => {
+          setSyncingAccess(true);
+          try {
+            const profile = await syncMachineAccessToPhone({
+              accountId: user?.id || "",
+              authToken: token || "",
+              endpoint: { id: device.id, name: device.name, host: device.host, port: device.port, lanIps: device.lanIps },
+            });
+            Alert.alert("Access synced", `${profile.name || device.name} SSH key and ${profile.hosts.length} private-network address${profile.hosts.length === 1 ? "" : "es"} are secured on this phone.`);
+          } catch (e: any) {
+            Alert.alert("Access sync failed", e?.message || String(e));
+          } finally { setSyncingAccess(false); }
+        }}
+        style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "rgba(14,165,233,0.12)", borderWidth: 1, borderColor: "rgba(14,165,233,0.45)", opacity: syncingAccess ? 0.55 : 1 }}
+      >
+        <Text style={{ color: "#7dd3fc", fontSize: 13, fontWeight: "700" }}>{syncingAccess ? "Syncing…" : "🔐  Sync Access"}</Text>
       </Pressable>
       <Pressable
         onPress={() => {

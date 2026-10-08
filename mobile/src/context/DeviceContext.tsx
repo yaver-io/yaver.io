@@ -47,6 +47,7 @@ import {
   type MobileExecutionMode,
 } from "../lib/executionMode";
 import { isHostedCloudSurfaceDevice } from "../lib/launchFlags";
+import { loadMachineAccessProfiles } from "../lib/machineAccessSync";
 
 // Auto-connect probe budget. Matches the manual switch modal (4000ms) — the
 // automatic path used to run at 3000ms, so the path the user lands on by
@@ -1391,8 +1392,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         appLog("info", `Found ${raw.length} device(s) for ${user?.email || user?.id || "unknown-user"}`);
         setDeviceListError(null);
         const connectedDeviceId = quicClient.isConnected ? activeDevice?.id : null;
+        const secureAccessProfiles = new Map((await loadMachineAccessProfiles()).map((profile) => [profile.deviceId, profile]));
         const mapped: Device[] = raw.map((d: any) => {
           const deviceId = d.deviceId || d.id;
+          const secureAccess = secureAccessProfiles.get(deviceId);
           const legacyCloudRunner = !d.deviceKind && normalizedDeviceName(d.name) === "ubuntu-4gb-hel1-1";
           // If we're actively connected to this device, trust our connection over stale heartbeat
           const isActivelyConnected = connectedDeviceId === deviceId;
@@ -1425,7 +1428,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
               Array.isArray(d.voiceHints) && d.voiceHints.length > 0
                 ? d.voiceHints.filter((h: unknown): h is string => typeof h === "string")
                 : undefined,
-            host: d.quicHost || d.host,
+            host: secureAccess?.hosts[0] || d.host || "",
             port: d.quicPort || d.port,
             online: isActivelyConnected || (() => {
               const flag = d.isOnline ?? d.online ?? false;
@@ -1465,7 +1468,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
               : undefined,
             deployCapabilitiesAt: d.deployCapabilitiesAt ?? undefined,
             hardwareProfile: d.hardwareProfile ?? undefined,
-            lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
+            lanIps: secureAccess?.hosts,
             lastTunnelEvent,
             relayConnected: typeof d.relayConnected === "boolean" ? d.relayConnected : undefined,
             controlPlaneStatus:
@@ -1479,7 +1482,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             machineStatus: typeof d.machineStatus === "string" ? d.machineStatus : undefined,
             machineWakeable: d.machineWakeable === true,
             tunnelUrl: d.tunnelUrl,
-            publicEndpoints: Array.isArray(d.publicEndpoints) ? d.publicEndpoints : undefined,
+            publicEndpoints: undefined,
             connectionPreferences: Array.isArray(d.connectionPreferences) ? d.connectionPreferences : undefined,
             priorityMode: d.priorityMode,
             deviceClass: d.deviceClass,

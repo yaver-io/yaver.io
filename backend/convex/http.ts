@@ -2213,9 +2213,9 @@ http.route({
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,
       publicKey: body.publicKey || undefined,
-      quicHost: body.quicHost,
+      quicHost: undefined,
       quicPort: body.quicPort,
-      publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
+      publicEndpoints: undefined,
       hardwareId: body.hardwareId || undefined,
       hardwareProfile: body.hardwareProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
@@ -2310,7 +2310,7 @@ http.route({
         deviceId: body.deviceId,
         hardwareId: body.hardwareId,
         publicKey: body.publicKey,
-        quicHost: body.quicHost || undefined,
+        quicHost: undefined,
         quicPort: body.quicPort || undefined,
       });
       // SECURITY (audit 2026-07-13): do NOT return the owning account's userId
@@ -2378,7 +2378,7 @@ http.route({
         relayPasswordHash,
         name: typeof body.name === "string" ? body.name : undefined,
         platform: typeof body.platform === "string" ? body.platform : undefined,
-        quicHost: typeof body.quicHost === "string" ? body.quicHost : undefined,
+        quicHost: undefined,
         quicPort: typeof body.quicPort === "number" ? body.quicPort : undefined,
         relayLabel: typeof body.relayLabel === "string" ? body.relayLabel : undefined,
       });
@@ -2593,31 +2593,10 @@ http.route({
         : body.installedRunnerIds === null
           ? []
           : undefined,
-      // Pass quicHost as-is (including ""). The mutation now treats "" as
-      // a deliberate clear (e.g. an upgraded agent retracting a stale
-      // Docker-bridge address). Pre-fix `body.quicHost || undefined`
-      // collapsed empty-string to undefined, leaving the stale value in
-      // the DB forever.
-      quicHost: typeof body.quicHost === "string" ? body.quicHost : undefined,
-      // Multi-IP rollout: the agent advertises every reachable IPv4 it has
-      // (Wi-Fi LAN, Tailscale 100.x, Ethernet, VPNs) so the mobile connect
-      // path can race them in parallel. Older agents don't send the field
-      // at all — then undefined is correct and the mutation leaves the
-      // stored list untouched.
-      // Treat both [] and null as deliberate clear. Pre-fix only Array
-      // values made it through, so a Go agent sending nil-slice → JSON
-      // null was silently ignored, leaving stale Docker-bridge IPs on
-      // the device row across upgrades.
-      localIps: Array.isArray(body.localIps)
-        ? body.localIps
-        : body.localIps === null
-          ? []
-          : undefined,
-      publicEndpoints: Array.isArray(body.publicEndpoints)
-        ? body.publicEndpoints
-        : body.publicEndpoints === null
-          ? []
-          : undefined,
+      // Legacy request fields are accepted for rolling upgrades but discarded.
+      quicHost: undefined,
+      localIps: undefined,
+      publicEndpoints: undefined,
       relayConnected:
         typeof body.relayConnected === "boolean" ? body.relayConnected : undefined,
       canReboot:
@@ -3182,14 +3161,11 @@ http.route({
     await ctx.runMutation(internal.devices.presenceUpdate, {
       deviceId: body.deviceId,
       online: body.online === true,
-      peerAddr: typeof body.peerAddr === "string" ? body.peerAddr : undefined,
+      peerAddr: undefined,
       connectedAt: typeof body.connectedAt === "number" ? body.connectedAt : undefined,
       durationSec: typeof body.durationSec === "number" ? body.durationSec : undefined,
-      // Relay-auto-provisioned <id>.dev.yaver.io URL. Stored in
-      // device.publicEndpoints so the dashboard's transport
-      // classifier picks it instantly (no waiting for next agent
-      // heartbeat). Only sent on online=true presence pushes.
-      assignedUrl: typeof body.assignedUrl === "string" ? body.assignedUrl : undefined,
+      // Legacy relay coordinates are discarded; presence is state only.
+      assignedUrl: undefined,
     });
     return jsonResponse({ ok: true });
   }),

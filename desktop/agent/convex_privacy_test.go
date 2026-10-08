@@ -230,6 +230,13 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"cronToken",
 	"baseUrl",
 	"manifestPath",
+	// Direct-connect topology is private device state. LAN, Tailscale,
+	// Headscale, VPN and public endpoint addresses are exchanged only over the
+	// authenticated device-to-device handoff channel and stored on the phone.
+	// Convex may keep identity/discovery metadata, never network coordinates.
+	"quicHost",
+	"localIps",
+	"publicEndpoints",
 }
 
 type recordedMutation struct {
@@ -616,14 +623,14 @@ func TestRemoteBuilderPairingMetadata_isAliasOnly(t *testing.T) {
 
 // TestMeshNodeFields_AreNotConvexForbidden pins the meshNodes table
 // (backend/convex/schema.ts) as public-control-plane-only. Every synced field
-// must be a public key / endpoint / overlay IP / counter / timestamp and must
+// must be a public key / overlay IP / counter / timestamp and must
 // NOT collide with the forbidden-secret list. In particular the WireGuard
 // PRIVATE key (stored in the vault as wgPrivateKey) must never appear here.
 func TestMeshNodeFields_AreNotConvexForbidden(t *testing.T) {
 	meshFields := []string{
 		// meshNodes
 		"userId", "deviceId", "wgPublicKey", "meshIPv4", "meshIPv6",
-		"endpoints", "advertisedRoutes", "isExitNode", "online",
+		"advertisedRoutes", "isExitNode", "online",
 		"lastHandshake", "updatedAt",
 	}
 	forbidden := map[string]bool{}
@@ -633,7 +640,7 @@ func TestMeshNodeFields_AreNotConvexForbidden(t *testing.T) {
 	for _, f := range meshFields {
 		if forbidden[f] {
 			t.Errorf("meshNodes field %q is on the Convex forbidden-secret "+
-				"list — mesh rows must stay public-key + endpoint only", f)
+				"list — mesh rows must stay public-key metadata only", f)
 		}
 	}
 	// And the converse: the private-key field names MUST be forbidden.
@@ -646,8 +653,8 @@ func TestMeshNodeFields_AreNotConvexForbidden(t *testing.T) {
 }
 
 // TestMeshJoinPayload_isPublicOnly feeds the exact arg shape `yaver mesh up`
-// posts to mesh:joinMesh through the recorder and asserts it carries only the
-// PUBLIC key + endpoints — never the private key under any spelling.
+// posts to mesh:joinMesh through the recorder and asserts network coordinates
+// are absent alongside every private-key spelling.
 func TestMeshJoinPayload_isPublicOnly(t *testing.T) {
 	buf, teardown := installConvexRecorder(t)
 	defer teardown()
@@ -657,7 +664,7 @@ func TestMeshJoinPayload_isPublicOnly(t *testing.T) {
 		map[string]interface{}{
 			"deviceId":    "test-device",
 			"wgPublicKey": "TUVTSF9QVUJMSUNfS0VZX0JBU0U2NF8zMmI=",
-			"endpoints":   []interface{}{"203.0.113.7:51820"}, // public only
+			"endpoints":   []interface{}{}, // legacy API shape; always empty
 		},
 	)
 	if len(*buf) != 1 {
@@ -665,6 +672,9 @@ func TestMeshJoinPayload_isPublicOnly(t *testing.T) {
 	}
 	rec := (*buf)[0]
 	assertNoForbiddenFields(t, rec)
+	if endpoints, ok := rec.Args["endpoints"].([]interface{}); !ok || len(endpoints) != 0 {
+		t.Fatalf("mesh join must not publish endpoint coordinates: %#v", rec.Args["endpoints"])
+	}
 	for k := range rec.Args {
 		switch k {
 		case "wgPrivateKey", "wg_private_key", "meshPrivateKey", "privateKey":

@@ -163,7 +163,7 @@ async function joinMeshForUser(ctx: any, userId: Id<"users">, args: JoinArgs) {
     }
     await ctx.db.patch(existing._id, {
       wgPublicKey: args.wgPublicKey,
-      endpoints: args.endpoints,
+      endpoints: [],
       meshIPv6: args.meshIPv6 ?? existing.meshIPv6,
       advertisedRoutes: routes ?? existing.advertisedRoutes,
       isExitNode: args.isExitNode ?? existing.isExitNode,
@@ -182,7 +182,7 @@ async function joinMeshForUser(ctx: any, userId: Id<"users">, args: JoinArgs) {
     wgPublicKey: args.wgPublicKey,
     meshIPv4,
     meshIPv6: args.meshIPv6,
-    endpoints: args.endpoints,
+    endpoints: [],
     advertisedRoutes: routes,
     isExitNode: args.isExitNode,
     online: true,
@@ -244,7 +244,7 @@ export const updateMeshEndpoints = mutation({
     if (!existing) return null;
     if (existing.userId !== userId) throw new Error("Forbidden: not your node");
     await ctx.db.patch(existing._id, {
-      endpoints: args.endpoints,
+      endpoints: [],
       lastHandshake: args.lastHandshake ?? existing.lastHandshake,
       online: args.online ?? true,
       updatedAt: Date.now(),
@@ -292,7 +292,7 @@ async function meshPeersForUser(ctx: any, userId: Id<"users">) {
       wgPublicKey: n.wgPublicKey,
       meshIPv4: n.meshIPv4,
       meshIPv6: n.meshIPv6,
-      endpoints: n.endpoints,
+      endpoints: [],
       advertisedRoutes: n.advertisedRoutes ?? [],
       isExitNode: n.isExitNode ?? false,
       online: n.online,

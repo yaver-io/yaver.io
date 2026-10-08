@@ -618,7 +618,7 @@ export const registerDevice = mutation({
     })),
     publicKey: v.optional(v.string()),
     signPublicKey: v.optional(v.string()),
-    quicHost: v.string(),
+    quicHost: v.optional(v.string()),
     quicPort: v.number(),
     publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
@@ -661,9 +661,9 @@ export const registerDevice = mutation({
         deviceClass: args.deviceClass,
         edgeProfile: args.edgeProfile,
         publicKey: args.publicKey,
-        quicHost: args.quicHost,
+        quicHost: undefined,
         quicPort: args.quicPort,
-        publicEndpoints: args.publicEndpoints,
+        publicEndpoints: undefined,
         isOnline: true,
         needsAuth: false,
         removed: false,
@@ -800,9 +800,9 @@ export const registerDevice = mutation({
       edgeProfile: args.edgeProfile,
       publicKey: args.publicKey,
       signPublicKey: args.signPublicKey,
-      quicHost: args.quicHost,
+      quicHost: undefined,
       quicPort: args.quicPort,
-      publicEndpoints: args.publicEndpoints,
+      publicEndpoints: undefined,
       isOnline: true,
       lastHeartbeat: Date.now(),
       createdAt: Date.now(),
@@ -1224,6 +1224,12 @@ export const heartbeat = mutation({
       needsAuth: false, // valid session → not in bootstrap mode
       runners: args.runners ?? [],
       installedRunnerIds: args.installedRunnerIds ?? [],
+      // Privacy migration: connection coordinates are device-to-device state.
+      // Clear legacy rows on the next heartbeat even when an old agent still
+      // includes these arguments through the backwards-compatible HTTP shape.
+      quicHost: undefined,
+      localIps: undefined,
+      publicEndpoints: undefined,
     };
     // Version write is gated to once per 24h OR on change. Agents may
     // send it on every heartbeat (and they do for simplicity); the
@@ -1238,24 +1244,6 @@ export const heartbeat = mutation({
         patch.agentVersion = args.agentVersion;
         patch.agentVersionReportedAt = Date.now();
       }
-    }
-    // Update stored IP if the agent reports a new one. An empty string
-    // is a deliberate clear (agent had a stale Docker-bridge address it
-    // wants to retract) — apply it instead of treating empty-string as
-    // "no opinion." Mobile reads quicHost as the direct-connect target;
-    // a stale 172.18.0.1 keeps mobile stuck CONNECTING instead of
-    // falling through to the relay.
-    if (args.quicHost !== undefined && args.quicHost !== device.quicHost) {
-      patch.quicHost = args.quicHost;
-    }
-    // Replace the full IP set on each heartbeat — interfaces come and
-    // go (Tailscale up/down, Wi-Fi switches), so a delta-merge would
-    // strand stale addresses on the record forever.
-    if (args.localIps !== undefined) {
-      patch.localIps = args.localIps;
-    }
-    if (args.publicEndpoints !== undefined) {
-      patch.publicEndpoints = args.publicEndpoints;
     }
     // In-place, last-value-only (no history): whether the box has a live relay
     // tunnel right now. Powers the "online · no relay path" distinction.
@@ -1701,10 +1689,12 @@ export const presenceUpdate = internalMutation({
       lastTunnelEvent: {
         online: args.online,
         at: Date.now(),
-        peerAddr: args.peerAddr,
         connectedAt: args.connectedAt,
         durationSec: args.durationSec,
       },
+      quicHost: undefined,
+      localIps: undefined,
+      publicEndpoints: undefined,
     };
     // Refresh lastHeartbeat on connect so heartbeat-staleness checks
     // don't fight the tunnel-up signal. On disconnect leave it alone
@@ -1712,19 +1702,44 @@ export const presenceUpdate = internalMutation({
     if (args.online) {
       patch.lastHeartbeat = Date.now();
     }
-    // Merge the relay-assigned URL into publicEndpoints. Idempotent:
-    // if it's already there, no change. Order doesn't matter for the
-    // dashboard's transport classifier — it picks the *.yaver.io
-    // subdomain by suffix match. On disconnect we LEAVE the URL in
-    // place so the dashboard can still try it (the relay just won't
-    // route until the next reconnect; the URL itself is durable).
-    if (args.online && args.assignedUrl && /^https:\/\//.test(args.assignedUrl)) {
-      const existing = (device.publicEndpoints ?? []) as string[];
-      if (!existing.includes(args.assignedUrl)) {
-        patch.publicEndpoints = [...existing, args.assignedUrl];
+    await ctx.db.patch(device._id, patch);
+  },
+});
+
+/** One-shot release migration. Network coordinates belong to the encrypted
+ * endpoint↔phone access profile and must not remain in Convex, including on
+ * devices that are currently offline and cannot clear themselves by heartbeat. */
+export const purgePrivateNetworkCoordinates = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const devices = await ctx.db.query("devices").collect();
+    const pending = await ctx.db.query("pendingDeviceClaims").collect();
+    const meshNodes = await ctx.db.query("meshNodes").collect();
+    let cleared = 0;
+    for (const device of devices) {
+      if (device.quicHost !== undefined || device.localIps !== undefined || device.publicEndpoints !== undefined || device.lastTunnelEvent?.peerAddr !== undefined) {
+        await ctx.db.patch(device._id, {
+          quicHost: undefined,
+          localIps: undefined,
+          publicEndpoints: undefined,
+          lastTunnelEvent: device.lastTunnelEvent ? { ...device.lastTunnelEvent, peerAddr: undefined } : undefined,
+        });
+        cleared++;
       }
     }
-    await ctx.db.patch(device._id, patch);
+    for (const row of pending) {
+      if (row.quicHost !== undefined) {
+        await ctx.db.patch(row._id, { quicHost: undefined });
+        cleared++;
+      }
+    }
+    for (const node of meshNodes) {
+      if (node.endpoints.length > 0) {
+        await ctx.db.patch(node._id, { endpoints: [] });
+        cleared++;
+      }
+    }
+    return { ok: true, cleared };
   },
 });
 
@@ -1871,9 +1886,9 @@ export const listMyDevices = query({
       publicKey: d.publicKey,
       hardwareId: d.hardwareId,
       hardwareProfile: d.hardwareProfile,
-      quicHost: d.quicHost,
-      localIps: d.localIps ?? [],
-      publicEndpoints: d.publicEndpoints ?? [],
+      quicHost: "",
+      localIps: [],
+      publicEndpoints: [],
       connectionPreferences: d.connectionPreferences,
       quicPort: d.quicPort,
       isOnline: deriveIsOnline(d),
@@ -1965,9 +1980,9 @@ export const recommendTaskPlacement = query({
           publicKey: device.publicKey,
           hardwareId: device.hardwareId,
           hardwareProfile: device.hardwareProfile,
-          quicHost: device.quicHost,
-          localIps: device.localIps ?? [],
-          publicEndpoints: device.publicEndpoints ?? [],
+          quicHost: "",
+          localIps: [],
+          publicEndpoints: [],
           quicPort: device.quicPort,
           isOnline: deriveIsOnline(device),
           needsAuth: device.needsAuth ?? false,
@@ -2642,10 +2657,10 @@ export const selectDevices = query({
         platform: d.platform,
         tags,
         online,
-        quicHost: d.quicHost,
+        quicHost: "",
         quicPort: d.quicPort,
-        localIps: d.localIps ?? [],
-        publicEndpoints: d.publicEndpoints ?? [],
+        localIps: [],
+        publicEndpoints: [],
       });
     }
     return { devices: out };
@@ -2706,14 +2721,13 @@ export const seedAutoPublicUrls = internalMutation({
         skipped++;
         continue;
       }
-      const url = `https://${deviceId}.${domain}`;
       const eps = (d.publicEndpoints ?? []) as string[];
-      if (eps.includes(url)) {
+      if (eps.length === 0) {
         skipped++;
         continue;
       }
       await ctx.db.patch(d._id, {
-        publicEndpoints: [...eps, url],
+        publicEndpoints: undefined,
       });
       updated++;
     }

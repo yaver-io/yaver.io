@@ -1,4 +1,4 @@
-import nacl from "./secureNacl";
+import nacl from "./secureNacl.ts";
 import util from "tweetnacl-util";
 
 const { decodeBase64, encodeBase64 } = util;
@@ -22,6 +22,7 @@ export const HANDOFF_CREDENTIAL_KINDS = [
 ] as const;
 
 export type HandoffCredentialKind = (typeof HANDOFF_CREDENTIAL_KINDS)[number];
+export type HandoffPayloadKind = HandoffCredentialKind | "machine-access-bundle";
 
 export type CredentialHandoffErrorCode =
   | "HANDOFF_MALFORMED"
@@ -71,7 +72,7 @@ interface EncryptedCredentialPayload {
   accountFingerprint: string;
   createdAt: number;
   expiresAt: number;
-  kind: HandoffCredentialKind;
+  kind: HandoffPayloadKind;
   value: string;
 }
 
@@ -105,8 +106,8 @@ function decodeKey(value: string, label: string): Uint8Array {
   }
 }
 
-function isCredentialKind(value: unknown): value is HandoffCredentialKind {
-  return typeof value === "string" && (HANDOFF_CREDENTIAL_KINDS as readonly string[]).includes(value);
+function isCredentialKind(value: unknown): value is HandoffPayloadKind {
+  return value === "machine-access-bundle" || (typeof value === "string" && (HANDOFF_CREDENTIAL_KINDS as readonly string[]).includes(value));
 }
 
 /** Opaque account binding for direct transports; the raw account id never leaves the device. */
@@ -171,7 +172,7 @@ function validateRequest(request: CredentialHandoffRequest, now: number): Uint8A
 export function sealCredentialForHandoff(args: {
   request: CredentialHandoffRequest;
   expectedAccountFingerprint: string;
-  kind: HandoffCredentialKind;
+  kind: HandoffPayloadKind;
   value: string;
   now?: number;
   senderKeyPair?: nacl.BoxKeyPair;
@@ -219,7 +220,7 @@ export function sealCredentialForHandoff(args: {
 export function openCredentialHandoff(
   envelope: CredentialHandoffEnvelope,
   options: OpenCredentialHandoffOptions,
-): { handoffId: string; kind: HandoffCredentialKind; value: string; expiresAt: number } {
+): { handoffId: string; kind: HandoffPayloadKind; value: string; expiresAt: number } {
   if (
     envelope?.version !== CREDENTIAL_HANDOFF_VERSION ||
     envelope.type !== "yaver-credential-envelope" ||

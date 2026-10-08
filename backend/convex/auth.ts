@@ -335,7 +335,7 @@ async function mergeUserInto(
         name: device.name || existingTargetDevice.name,
         platform: device.platform,
         publicKey: device.publicKey || existingTargetDevice.publicKey,
-        quicHost: device.quicHost || existingTargetDevice.quicHost,
+        quicHost: undefined,
         quicPort: device.quicPort || existingTargetDevice.quicPort,
         isOnline: device.isOnline,
         runnerDown: device.runnerDown ?? existingTargetDevice.runnerDown,
