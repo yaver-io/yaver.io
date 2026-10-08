@@ -54,6 +54,10 @@ var tvClientEndpoints = []struct {
 	{http.MethodGet, "/remote-runtime/capabilities"},
 	{http.MethodGet, "/remote-runtime/turn-credentials"},
 	{http.MethodPost, "/remote-runtime/sessions/r1/control"},
+	// Read-only shared-storage browsing; credentials and mutations stay local.
+	{http.MethodGet, "/shared-storage/profiles"},
+	{http.MethodGet, "/shared-storage/list"},
+	{http.MethodGet, "/shared-storage/search"},
 	// Pixels: the whole point of a TV.
 	{http.MethodGet, "/droid/frame"},
 	{http.MethodGet, "/capture/frame.jpg"},
@@ -107,6 +111,9 @@ var companionDeniedEndpoints = []struct {
 	// stolen TV/vision token must not uninstall or stop the user's box.
 	{http.MethodPost, "/machine/remove"},
 	{http.MethodPost, "/projects/refresh"},
+	{http.MethodPost, "/shared-storage/profiles"},
+	{http.MethodPost, "/shared-storage/list"},
+	{http.MethodPost, "/shared-storage/search"},
 }
 
 // watchClientEndpoints is the same contract for the watch scope. Source of

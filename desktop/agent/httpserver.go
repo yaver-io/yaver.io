@@ -1978,6 +1978,11 @@ func companionSessionAllowed(method, path, scope string) bool {
 			return true
 		case method == http.MethodGet && (path == "/remote-runtime/capabilities" || path == "/remote-runtime/turn-credentials"):
 			return true
+		// Shared-storage browsing returns profile capability receipts and object
+		// metadata/search hits only; provider credentials remain agent-local.
+		// Keep this GET-only so a stolen companion token cannot mutate storage.
+		case method == http.MethodGet && (path == "/shared-storage/profiles" || path == "/shared-storage/list" || path == "/shared-storage/search"):
+			return true
 		case method == http.MethodGet && strings.HasPrefix(path, "/tasks/"):
 			return true
 		case method == http.MethodPost && (path == "/ops" || path == "/runner/session/turn"):
