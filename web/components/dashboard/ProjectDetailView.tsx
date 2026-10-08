@@ -427,13 +427,14 @@ function projectFromRepo(repo: WorkspaceRepo): ProjectSummary {
   };
 }
 
-function targetGroup(target: RemoteRuntimeTarget): "browser" | "simulator" | "container" | "device" | "advanced" | "unavailable" {
+function targetGroup(target: RemoteRuntimeTarget): "browser" | "simulator" | "container" | "device" | "computer" | "advanced" | "unavailable" {
   if (!target.enabled) return "unavailable";
   const id = String(target.id || "").toLowerCase();
   const surface = String(target.surface || "").toLowerCase();
   if (surface === "browser" || id === "browser-window") return "browser";
   if (id.includes("redroid")) return "container";
   if (id.includes("device")) return "device";
+  if (id === "physical-pc-kvm" || surface === "desktop") return "computer";
   if (["phone", "tablet"].includes(surface) && (id.includes("simulator") || id.includes("emulator"))) return "simulator";
   return "advanced";
 }
@@ -443,6 +444,7 @@ const targetGroupLabels: Record<ReturnType<typeof targetGroup>, string> = {
   simulator: "Phone / tablet simulators",
   container: "Android containers",
   device: "Physical devices",
+  computer: "Computers",
   advanced: "Watch / TV / XR / car",
   unavailable: "Unavailable",
 };

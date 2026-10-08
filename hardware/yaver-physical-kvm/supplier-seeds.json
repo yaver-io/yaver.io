@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-10-08",
+  "policy": "Seeds are candidate parts, not approved suppliers. Re-verify exact model, seller, authenticity, stock, price, returns, and regulatory documents before each batch.",
+  "parts": [
+    {
+      "bomItem": "Raspberry Pi 4 Model B 4GB",
+      "region": "TR",
+      "supplier": "Amazon Turkey",
+      "url": "https://www.amazon.com.tr/dp/B07TC2BK1X",
+      "supplierId": "B07TC2BK1X",
+      "observedTitle": "Raspberry Pi 4 4 GB",
+      "observedModel": "SC15185",
+      "observed": "2026-10-08",
+      "status": "candidate-no-featured-offer",
+      "requiredChecks": [
+        "4 GB Raspberry Pi 4 Model B, not a different variation",
+        "authorized/reputable seller and genuine board",
+        "new condition with return coverage",
+        "batch availability and landed cost",
+        "board compliance markings and documentation"
+      ]
+    }
+  ]
+}

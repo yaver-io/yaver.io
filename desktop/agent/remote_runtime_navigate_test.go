@@ -117,8 +117,9 @@ func TestAllRuntimeTargetsImplementNavigate(t *testing.T) {
 		"browser":         browserWindowTarget{},
 		"iosDevice":       iosDeviceTarget{},
 		"streamSource":    streamSourceTarget{},
+		"physicalPC":      physicalPCKVMTarget{},
 	}
-	if len(targets) < 6 {
-		t.Fatalf("expected at least 6 targets, got %d", len(targets))
+	if len(targets) < 7 {
+		t.Fatalf("expected at least 7 targets, got %d", len(targets))
 	}
 }

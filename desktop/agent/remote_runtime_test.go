@@ -30,6 +30,7 @@ func TestExecutionModeForFramework(t *testing.T) {
 		// guard that previously shipped ExecutionModeUnsupported — the
 		// "inventory says surfaces, operation says unsupported" false green.
 		{"unity", ExecutionModeNativeWebRTC, "webrtc"},
+		{"desktop", ExecutionModeNativeWebRTC, "webrtc"},
 	}
 	for _, tc := range cases {
 		if got := executionModeForFramework(tc.framework); got != tc.wantMode {

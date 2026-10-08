@@ -1,0 +1,85 @@
+name: Release Physical KVM
+
+on:
+  push:
+    tags:
+      - "hardware-kvm/v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-physical-kvm
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build-test-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/agent/go.mod
+          cache-dependency-path: desktop/agent/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install firmware toolchain
+        run: |
+          pip install "platformio==6.1.18"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openscad
+      - name: Validate tag and version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < hardware/yaver-physical-kvm/VERSION)"
+          if [[ "$GITHUB_REF" == refs/tags/hardware-kvm/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/hardware-kvm/v}"
+            test "$TAG_VERSION" = "$VERSION" || {
+              echo "tag $TAG_VERSION != hardware version $VERSION" >&2
+              exit 1
+            }
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Go tests
+        working-directory: desktop/agent
+        run: go test -run 'TestPhysicalKVM|TestValidatePhysicalKVM|TestCapture|TestBrowserJPEGFrames|TestExecutionMode' .
+      - name: Validate provisioning scripts
+        run: bash -n hardware/yaver-physical-kvm/*.sh scripts/build-physical-kvm-release.sh
+      - name: Build release artifacts
+        run: ./scripts/build-physical-kvm-release.sh
+      - name: Require complete hardware package
+        run: |
+          OUT="dist/physical-kvm/v${{ steps.version.outputs.version }}"
+          test -s "$OUT/yaver-kvm-v0-base.stl"
+          test -s "$OUT/yaver-kvm-v0-lid.stl"
+          test -x "$OUT/install-pi.sh"
+          test -x "$OUT/configure-private-link.sh"
+          test -x "$OUT/commission-m5.sh"
+          test -s "$OUT/checksums.txt"
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/physical-kvm/v${{ steps.version.outputs.version }}/*
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-kvm-v${{ steps.version.outputs.version }}
+          path: dist/physical-kvm/v${{ steps.version.outputs.version }}/*
+          if-no-files-found: error
+      - name: Create GitHub prerelease
+        if: startsWith(github.ref, 'refs/tags/hardware-kvm/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "hardware-kvm/v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Yaver Physical KVM v$VERSION" \
+            --prerelease \
+            --notes "Open-source v0 appliance: Raspberry Pi 4B 4 GB + UVC HDMI capture + factory-flashable M5Stack AtomS3U USB HID bridge. Includes the Linux ARM64 Yaver agent, factory/OTA firmware images, checksums, BOM, and parametric ventilated enclosure CAD. Prerelease until the documented hardware-in-loop matrix passes on production hardware." \
+            dist/physical-kvm/v$VERSION/*

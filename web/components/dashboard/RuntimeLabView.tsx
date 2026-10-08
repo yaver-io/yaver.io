@@ -938,17 +938,19 @@ function isPrimaryRuntimeTarget(target: RemoteRuntimeTarget): boolean {
   if (surface === "browser") return true;
   if (["phone", "tablet"].includes(surface) && (id.includes("simulator") || id.includes("emulator"))) return true;
   if (id === "browser-window") return true;
+  if (id === "physical-pc-kvm") return true;
   if (["ios-simulator", "ipados-simulator", "android-emulator"].includes(id)) return true;
   return false;
 }
 
-function runtimeTargetGroup(target: RemoteRuntimeTarget): "browser" | "simulator" | "container" | "device" | "advanced" | "unavailable" {
+function runtimeTargetGroup(target: RemoteRuntimeTarget): "browser" | "simulator" | "container" | "device" | "computer" | "advanced" | "unavailable" {
   if (!target.enabled) return "unavailable";
   const id = String(target.id || "").toLowerCase();
   const surface = String(target.surface || "").toLowerCase();
   if (surface === "browser" || id === "browser-window") return "browser";
   if (id.includes("redroid")) return "container";
   if (id.includes("device")) return "device";
+  if (id === "physical-pc-kvm" || surface === "desktop") return "computer";
   if (["phone", "tablet"].includes(surface) && (id.includes("simulator") || id.includes("emulator"))) return "simulator";
   if (id.includes("simulator") || id.includes("emulator")) return "advanced";
   return "advanced";
@@ -962,6 +964,7 @@ const runtimeGroupLabels: Record<ReturnType<typeof runtimeTargetGroup>, string> 
   simulator: "Phone / tablet simulators",
   container: "Android containers",
   device: "Physical devices",
+  computer: "Computers",
   advanced: "Watch / TV / XR / car",
   unavailable: "Unavailable",
 };

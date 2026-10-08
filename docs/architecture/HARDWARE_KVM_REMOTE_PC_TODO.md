@@ -1,11 +1,12 @@
 # Yaver Physical Computer Runtime — Architecture and TODO
 
-Status: design handoff for a Yaver-owned implementation. Code remains the
-source of truth; re-audit current routes and types before development.
+Status: v0.1 implementation is present in the current working tree; hardware
+and full release verification remain open. Code remains the source of truth;
+re-audit current routes and types before extending it.
 
 ## Goal
 
-Generalize the Raspberry Pi + UVC HDMI capture + M5StickS3 USB HID pattern into
+Generalize the Raspberry Pi + UVC HDMI capture + M5Stack AtomS3U USB HID pattern into
 a Yaver physical-computer runtime. OpenCode is the first runner, especially for
 software-development work, but the target is generic computer use: browsers,
 Linux and Windows applications, terminals, IDEs, installers, long-running
@@ -41,20 +42,25 @@ Yaver client
     <-> authenticated bidirectional session
     <-> Yaver Go agent on local Raspberry Pi
           | UVC HDMI frames
-          + Wi-Fi/BLE -> Yaver M5StickS3 -> USB HID -> physical PC
+          + Wi-Fi -> Yaver M5Stack AtomS3U -> USB HID -> physical PC
 ```
 
 ## Hardware kit
 
 - Raspberry Pi 4/5 with supported power and storage.
 - UVC-compatible HDMI capture card.
-- M5StickS3 running Yaver-owned composite keyboard/mouse firmware.
+- M5Stack AtomS3U running Yaver-owned composite keyboard/mouse firmware. The
+  earlier M5StickS3 name was a design error: AtomS3U is the supported M5Stack
+  board with native USB OTG and a physical button.
 - HDMI cable from the controlled PC to the capture card.
 - Data-capable USB cable from M5 directly to the controlled PC.
 - Network for the Pi and 2.4 GHz Wi-Fi for the M5.
 
-The base topology needs no USB hub. BLE is for nearby commissioning; the
-authenticated runtime channel uses Wi-Fi. Proximity alone never grants input.
+The base topology needs no USB hub. V0 commissioning uses a device-specific
+local SoftAP; the authenticated runtime channel uses Wi-Fi. Proximity alone
+never grants input. Runtime device binding, capture/session state, and actions
+remain agent-local; Convex is not a KVM data plane and is used only by the
+existing account/OAuth bootstrap.
 
 ## Runtime contract
 
@@ -152,32 +158,37 @@ Continuous video does not belong in durable task records.
 - [ ] Define explicit fully-on-prem, user-VPS, and mixed configuration profiles
   with the same security behavior and no vendor-hosted dependency assumption.
 
-### 1. Yaver M5StickS3 firmware
+### 1. Yaver M5Stack AtomS3U firmware
 
-- [ ] Build Yaver-owned composite CDC/keyboard/mouse firmware and identifiers.
-- [ ] Add physical arm/lock, visible status, nonce probe, leased session,
+- [x] Build Yaver-owned composite keyboard/relative+absolute mouse firmware and identifiers.
+- [x] Add physical arm/lock, USB/event status, nonce probe, leased session,
   watchdog release-all, dedupe, bounded queue, and text redaction.
-- [ ] Add nearby BLE commissioning with paced USB fallback.
-- [ ] Add guarded complete-image builds, partition verification, checksums,
-  signed OTA manifest, rollback, and hardware tests.
+- [x] Add local device-specific SoftAP commissioning for the factory image.
+- [x] Add guarded complete-image/OTA builds, checksums, credential-authenticated
+  locally-armed OTA, explicit dual-OTA-slot partitioning, and a GitHub prerelease.
+- [ ] Add public-key-signed OTA manifests and complete physical hardware tests
+  before GA; v0.1 remains explicitly prerelease until then.
 
 ### 2. Raspberry Pi Go agent
 
-- [ ] Add stable `/dev/v4l/by-id` discovery and operation-level UVC probe.
+- [x] Add stable `/dev/v4l/by-id` discovery and operation-level fresh-frame probe.
 - [ ] Implement single-owner capture and fan-out to freshness, WebRTC,
   screenshots, evidence, and OBS output.
-- [ ] Implement authenticated M5 discovery, bind/rebind/revoke, ambiguity
-  rejection, exclusive leases, and typed HID actions.
+- [x] Implement authenticated M5 discovery, unique-candidate Wi-Fi auto-pair,
+  explicit bind/revoke, ambiguity rejection, controller-identity binding,
+  exclusive leases, and typed HID actions. Cloud-signed same-owner assignment
+  remains a follow-on to the local credential + physical-arm v0 flow.
 - [ ] Implement correlated frames/actions, acknowledgements, idempotency,
   expiry, backpressure, bounded reconnect, and fail-closed release.
-- [ ] Add `yaver kvm status|discover|pair|unpair|doctor|release-all` and bounded
+- [x] Add `yaver kvm status|discover|pair|unpair|doctor|release-all|firmware` and bounded
   MCP/runner tools without exposing MQTT topics or raw USB reports.
-- [ ] Report capture and input readiness independently in health/inventory.
+- [x] Report capture and input readiness independently in runtime capabilities
+  and as one typed full-loop status for CLI, HTTP, and ops/MCP consumers.
 
 ### 3. OpenCode runner
 
-- [ ] Register the physical PC as a remote-runtime target, not a raw shell.
-- [ ] Give OpenCode bounded observe/action operations and current-frame input.
+- [x] Register the physical PC as a remote-runtime target, not a raw shell.
+- [x] Give Codex/Claude Code/OpenCode bounded observe/action operations and current-frame input.
 - [ ] Require each visual action to reference its source frame and wait for a
   newer frame before judging success.
 - [ ] Add time/action/no-change budgets, confirmations, semantic narration,
@@ -187,7 +198,7 @@ Continuous video does not belong in durable task records.
 
 ### 4. Clients, self-hosting, and OBS
 
-- [ ] Add the physical-PC panel to web/desktop/mobile using existing session
+- [x] Add the physical-PC target to web/desktop/mobile using existing session
   and WebRTC contracts; provide status/approval-only behavior elsewhere.
 - [ ] Add onboarding for on-prem, user-VPS, and mixed deployments, including
   TLS, firewall, NAT/relay, rotation, backup, update, and recovery checks.
@@ -213,7 +224,7 @@ Continuous video does not belong in durable task records.
 
 Use a fully user-owned Linux setup: runner on a local machine or user VPS, Pi
 beside the PC, and a local test website requiring no third-party account. Show
-fresh video, acquire a five-second input lease, open Chromium via HID, submit a
+fresh video, acquire a ten-second input lease, open Chromium via HID, submit a
 known value, wait for a newer frame, verify through a typed test endpoint, and
 return a structured summary. Repeat with capture unplugged, M5 USB unplugged,
 two candidates, expired lease, runner crash, relay loss, and user takeover.

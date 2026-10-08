@@ -315,8 +315,10 @@ export default function RemoteRuntimeScreen() {
                 <Text style={[styles.meta, { color: c.textMuted }]}>
                   {target.id === "browser-window"
                     ? "Opens the app's web version on this computer."
-                    : target.id === "desktop"
+                    : target.id === "desktop-screen"
                       ? "Uses the screen and apps already open on this computer."
+                      : target.id === "physical-pc-kvm"
+                        ? "Uses the HDMI picture and USB keyboard/mouse bridge connected to this computer."
                       : target.displaySurface || target.surface || "Optional device preview"}
                 </Text>
                 {target.reason ? <Text style={[styles.reason, { color: "#fca5a5" }]}>{target.reason}</Text> : null}
@@ -332,7 +334,7 @@ export default function RemoteRuntimeScreen() {
                     {busyTargetId === target.id
                       ? "Opening..."
                       : target.enabled
-                        ? (target.id === "desktop" ? "Connect" : "Open App")
+                        ? (["desktop-screen", "physical-pc-kvm"].includes(target.id) ? "Connect" : "Open App")
                         : "Unavailable"}
                   </Text>
                 </Pressable>

@@ -52,6 +52,7 @@ type captureStreamer struct {
 	cmd    *exec.Cmd
 
 	lastErr     string
+	lastFrameAt time.Time
 	blackStreak int  // consecutive near-black frames
 	hdcpBlocked bool // set when the black streak crosses the threshold
 }
@@ -88,8 +89,35 @@ func ffmpegPath() string {
 func captureDevices() []map[string]interface{} {
 	out := []map[string]interface{}{}
 	if runtime.GOOS == "linux" {
+		// Prefer stable udev identities. /dev/videoN numbering changes across
+		// boots and USB reconnects, which made a sealed appliance point at the
+		// wrong camera while still reporting that "a video device" existed.
+		stable, _ := filepath.Glob("/dev/v4l/by-id/*-video-index0")
+		if len(stable) == 0 {
+			stable, _ = filepath.Glob("/dev/v4l/by-path/*-video-index0")
+		}
+		if len(stable) == 0 {
+			stable, _ = filepath.Glob("/dev/v4l/by-id/*")
+		}
+		seenResolved := map[string]bool{}
+		for _, p := range stable {
+			resolved, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				continue
+			}
+			if seenResolved[resolved] {
+				continue
+			}
+			seenResolved[resolved] = true
+			out = append(out, map[string]interface{}{
+				"path": p, "name": filepath.Base(p), "stable": true,
+			})
+		}
 		entries, _ := filepath.Glob("/dev/video*")
 		for _, p := range entries {
+			if seenResolved[p] {
+				continue
+			}
 			name := p
 			// /sys/class/video4linux/<dev>/name holds the human label.
 			base := filepath.Base(p)
@@ -98,10 +126,40 @@ func captureDevices() []map[string]interface{} {
 					name = n
 				}
 			}
-			out = append(out, map[string]interface{}{"path": p, "name": name})
+			out = append(out, map[string]interface{}{"path": p, "name": name, "stable": false})
 		}
 	}
 	return out
+}
+
+func automaticCaptureDevice() (string, error) {
+	if runtime.GOOS != "linux" {
+		return "0", nil
+	}
+	stablePaths := []string{}
+	fallback := []string{}
+	for _, device := range captureDevices() {
+		if isStable, _ := device["stable"].(bool); isStable {
+			if path, _ := device["path"].(string); path != "" {
+				stablePaths = append(stablePaths, path)
+			}
+		} else if path, _ := device["path"].(string); path != "" {
+			fallback = append(fallback, path)
+		}
+	}
+	if len(stablePaths) == 1 {
+		return stablePaths[0], nil
+	}
+	if len(stablePaths) > 1 {
+		return "", fmt.Errorf("KVM_CAPTURE_AMBIGUOUS: found %d stable video inputs; select the intended capture card", len(stablePaths))
+	}
+	if len(fallback) == 1 {
+		return fallback[0], nil
+	}
+	if len(fallback) > 1 {
+		return "", fmt.Errorf("KVM_CAPTURE_AMBIGUOUS: found %d video inputs without stable identities; select the intended capture card", len(fallback))
+	}
+	return "", fmt.Errorf("KVM_CAPTURE_NOT_FOUND: no UVC video input is present")
 }
 
 // ffmpegInputArgs builds the platform-specific ffmpeg input for a device.
@@ -138,10 +196,10 @@ func (g *captureStreamer) start(device string, fps, w, h, quality int) error {
 		return fmt.Errorf("ffmpeg not found — install it (Debian/Pi: sudo apt install ffmpeg)")
 	}
 	if strings.TrimSpace(device) == "" {
-		if runtime.GOOS == "linux" {
-			device = "/dev/video0"
-		} else {
-			device = "0"
+		var err error
+		device, err = automaticCaptureDevice()
+		if err != nil {
+			return err
 		}
 	}
 	if w <= 0 {
@@ -159,6 +217,7 @@ func (g *captureStreamer) start(device string, fps, w, h, quality int) error {
 	g.lastErr = ""
 	g.blackStreak = 0
 	g.hdcpBlocked = false
+	g.lastFrameAt = time.Time{}
 
 	args := append(ffmpegInputArgs(device, g.fps, w, h),
 		"-f", "mjpeg",
@@ -237,6 +296,7 @@ func (g *captureStreamer) readLoop(ctx context.Context, stdout io.Reader) {
 			black := frameCount%4 == 0 && isMostlyBlack(buf) // sample every 4th frame
 			g.mu.Lock()
 			g.latest = buf
+			g.lastFrameAt = time.Now()
 			if frameCount%4 == 0 {
 				if black {
 					g.blackStreak++
@@ -295,6 +355,7 @@ func (g *captureStreamer) stop() {
 	}
 	g.on = false
 	g.latest = nil
+	g.lastFrameAt = time.Time{}
 	g.cmd = nil
 }
 
@@ -329,6 +390,10 @@ func (g *captureStreamer) status() map[string]interface{} {
 		"streamUrl": "/capture/stream",
 		"frameUrl":  "/capture/frame.jpg",
 		"ffmpeg":    ffmpegPath() != "",
+	}
+	if !g.lastFrameAt.IsZero() {
+		st["lastFrameAt"] = g.lastFrameAt.UTC().Format(time.RFC3339Nano)
+		st["frameAgeMs"] = time.Since(g.lastFrameAt).Milliseconds()
 	}
 	if g.hdcpBlocked {
 		// Terse diagnostic only — we keep streaming the (black) frames anyway.

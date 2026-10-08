@@ -640,6 +640,8 @@ func main() {
 		runVault(os.Args[2:])
 	case "appletv":
 		runAppleTV(os.Args[2:])
+	case "kvm":
+		runKVMCmd(os.Args[2:])
 	case "runner":
 		runRunner(os.Args[2:])
 	case "runner-auth":

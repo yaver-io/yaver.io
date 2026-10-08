@@ -55,6 +55,9 @@ func TestBrowserJPEGFramesUseInteractiveCadenceWithoutChangingDeviceFallbacks(t 
 	if got := remoteRuntimeJPEGFrameInterval("browser-window"); got > 150*time.Millisecond {
 		t.Fatalf("browser frame interval = %s, want an interactive browser-first lane", got)
 	}
+	if got := remoteRuntimeJPEGFrameInterval(physicalKVMTargetID); got > 150*time.Millisecond {
+		t.Fatalf("physical KVM frame interval = %s, want interactive capture-card cadence", got)
+	}
 	if got := remoteRuntimeJPEGFrameInterval("android-emulator"); got != 700*time.Millisecond {
 		t.Fatalf("Android screenshot interval = %s, want conservative device cadence", got)
 	}

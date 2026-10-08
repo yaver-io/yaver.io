@@ -283,8 +283,8 @@ func executionModeForFramework(framework string) ProjectExecutionMode {
 		// on Skia/Impeller in its own process. The web dashboard's
 		// RemoteRuntimeViewer streams the running emulator/simulator.
 		return ExecutionModeNativeWebRTC
-	case "unity":
-		// Unity is treated as a generic remote-PC view: no Unity SDK, no
+	case "unity", "desktop":
+		// Unity and desktop are generic remote-PC views: no application SDK, no
 		// editor bridge — the built player runs on the box's display and
 		// the desktop-screen target streams that display over the same
 		// WebRTC/JPEG pipeline that ships every other native runtime.
@@ -716,17 +716,13 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			// other arm here it is framework-independent; "desktop" is a
 			// pseudo-framework so the existing picker plumbing can reach it
 			// without a parallel capabilities endpoint.
-			caps.Targets = []RemoteRuntimeTarget{
-				probeDesktopScreenTarget(),
-			}
+			caps.Targets = []RemoteRuntimeTarget{probeDesktopScreenTarget(), probePhysicalPCKVMTarget()}
 		case "unity":
 			// Generic remote-PC view: the built Unity player runs on the
 			// box's display; the desktop-screen ffmpeg grab streams it over
 			// the same WebRTC/JPEG pipeline. No Unity SDK, no editor bridge
 			// — the same "yet another remote PC" lane as "desktop".
-			caps.Targets = []RemoteRuntimeTarget{
-				probeDesktopScreenTarget(),
-			}
+			caps.Targets = []RemoteRuntimeTarget{probeDesktopScreenTarget(), probePhysicalPCKVMTarget()}
 		}
 	}
 
@@ -1200,6 +1196,11 @@ func (m *RemoteRuntimeManager) CreateWith(workDir, framework, targetID, transpor
 	now := time.Now().UTC().Format(time.RFC3339)
 	frameTransport := "webrtc-datachannel-jpeg-v1"
 	note := "Remote runtime session created. Waiting for simulator or emulator attach."
+	if selected.ID == physicalKVMTargetID {
+		note = "Physical PC session created. Waiting for a fresh HDMI frame and locally armed USB input."
+	} else if selected.ID == desktopScreenTargetID {
+		note = "Computer session created. Waiting for the first desktop frame."
+	}
 	if transportMode == "relay-jpeg-poll" {
 		frameTransport = "relay-jpeg-poll-v1"
 		note = "Remote runtime session created in relay mode. Frames will be fetched over Yaver relay-compatible HTTP."
@@ -2590,6 +2591,8 @@ func runGuestUnsupportedReason(targetID string) string {
 		return "run-guest is for native runtime targets; browser-window uses the browser dev-server lane."
 	case desktopScreenTargetID:
 		return "run-guest is for mobile runtime targets; desktop-screen streams the host desktop/app directly."
+	case physicalKVMTargetID:
+		return "run-guest is for app runtimes; physical-pc-kvm drives an already-running enrolled computer."
 	default:
 		return fmt.Sprintf("run-guest not supported for target %q", targetID)
 	}

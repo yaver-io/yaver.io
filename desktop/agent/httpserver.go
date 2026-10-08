@@ -607,6 +607,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// non-protected sources only; HDCP-protected input is reported, not streamed.
 	mux.HandleFunc("/capture/stream", s.auth(s.handleCaptureStream))
 	mux.HandleFunc("/capture/frame.jpg", s.auth(s.handleCaptureFrame))
+	// Physical-PC KVM — local Pi + UVC capture + independently authenticated
+	// M5Stack AtomS3U HID bridge. No Convex data-plane dependency.
+	mux.HandleFunc("/kvm/status", s.auth(s.handlePhysicalKVMStatus))
+	mux.HandleFunc("/kvm/discover", s.auth(s.handlePhysicalKVMDiscover))
+	mux.HandleFunc("/kvm/pair", s.auth(s.handlePhysicalKVMPair))
+	mux.HandleFunc("/kvm/session/", s.auth(s.handlePhysicalKVMSession))
+	mux.HandleFunc("/kvm/action", s.auth(s.handlePhysicalKVMAction))
+	mux.HandleFunc("/kvm/capture", s.auth(s.handlePhysicalKVMCapture))
+	mux.HandleFunc("/kvm/release-all", s.auth(s.handlePhysicalKVMReleaseAll))
+	mux.HandleFunc("/kvm/firmware", s.auth(s.handlePhysicalKVMFirmware))
 	// Apple TV now-playing metadata SSE (delta push to phone / car / glass).
 	mux.HandleFunc("/appletv/nowplaying/stream", s.auth(s.handleAppleTVNowPlayingStream))
 	// Phone-camera-as-source: a signed-in phone pushes its own frames here; the

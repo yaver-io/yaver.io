@@ -634,7 +634,7 @@ func (live *remoteRuntimeLiveState) startFramePump(mgr *RemoteRuntimeManager) {
 // conservative cadence. captureInFlight above is the hard backpressure guard:
 // a slow host skips ticks rather than piling up goroutines or frames.
 func remoteRuntimeJPEGFrameInterval(targetID string) time.Duration {
-	if targetID == "browser-window" {
+	if targetID == "browser-window" || targetID == physicalKVMTargetID {
 		return 125 * time.Millisecond
 	}
 	return 700 * time.Millisecond
@@ -770,6 +770,23 @@ func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byt
 	if strings.TrimSpace(deviceID) == "" {
 		return nil, 0, 0, fmt.Errorf("device is not attached yet")
 	}
+	tgt, terr := runtimeTargetFor(targetID)
+	if terr != nil {
+		return nil, 0, 0, fmt.Errorf("unsupported target %q", targetID)
+	}
+	if direct, ok := tgt.(interface {
+		JPEGFrame(context.Context, string) ([]byte, int, int, error)
+	}); ok {
+		payload, width, height, err := direct.JPEGFrame(ctx, deviceID)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		live.mu.Lock()
+		live.lastFrame = append(live.lastFrame[:0], payload...)
+		live.lastFrameAt = time.Now().UTC()
+		live.mu.Unlock()
+		return payload, width, height, nil
+	}
 	tmpDir, err := os.MkdirTemp("", "yaver-rr-*")
 	if err != nil {
 		return nil, 0, 0, err
@@ -777,10 +794,6 @@ func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byt
 	defer os.RemoveAll(tmpDir)
 	pngPath := filepath.Join(tmpDir, "frame.png")
 
-	tgt, terr := runtimeTargetFor(targetID)
-	if terr != nil {
-		return nil, 0, 0, fmt.Errorf("unsupported target %q", targetID)
-	}
 	if err := tgt.Screenshot(ctx, deviceID, pngPath); err != nil {
 		return nil, 0, 0, err
 	}
