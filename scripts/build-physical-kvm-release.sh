@@ -26,15 +26,18 @@ PIO_DATA_DIR="$(jq -r '.core_dir.value' <<<"$PIO_INFO")"
 PIO_PYTHON="$(jq -r '.python_exe.value' <<<"$PIO_INFO")"
 ESPTOOL="$PIO_DATA_DIR/packages/tool-esptoolpy/esptool.py"
 BOOT_APP="$PIO_DATA_DIR/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
-test -f "$BOOT_APP" || { echo "PlatformIO boot_app0.bin not found at $BOOT_APP" >&2; exit 1; }
-test -f "$ESPTOOL" || { echo "PlatformIO esptool.py not found at $ESPTOOL" >&2; exit 1; }
 test -x "$PIO_PYTHON" || { echo "PlatformIO Python not found at $PIO_PYTHON" >&2; exit 1; }
 
 mkdir -p "$OUT"
 
 (
   cd "$FW"
+  # A clean PlatformIO runner does not install the ESP32 framework or esptool
+  # until the first project build. Resolve their package-owned artifacts only
+  # after `pio run`; checking before it made release CI depend on a warm cache.
   pio run
+  test -f "$BOOT_APP" || { echo "PlatformIO boot_app0.bin not found after firmware build at $BOOT_APP" >&2; exit 1; }
+  test -f "$ESPTOOL" || { echo "PlatformIO esptool.py not found after firmware build at $ESPTOOL" >&2; exit 1; }
   BUILD=.pio/build/m5stack-atoms3u
   "$PIO_PYTHON" "$ESPTOOL" --chip esp32s3 merge_bin \
     --output "$OUT/yaver-kvm-atoms3u-$VERSION.factory.bin" \
