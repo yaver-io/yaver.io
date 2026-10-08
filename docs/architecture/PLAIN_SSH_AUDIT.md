@@ -280,3 +280,15 @@ helper before packaging, with a regression check for that step.
 The local RN-web SSH entry was also checked in a fresh full iPhone device
 context without a Yaver token: its host/user inputs and optional-auth screen
 remain usable. This is browser evidence, not physical phone/CarPlay testing.
+
+Android phone/shared Auto/XR build 333, Wear OS 334 and Android TV 335 built,
+passed the expected upload-certificate verification, and were uploaded and
+saved to their respective Play internal tracks. Auto source checks and the
+shared bundle's XR compatibility manifest checks passed. These releases are
+**not yet rolled out**: Play requires sending the saved changes for review in
+Publishing overview. The uploader now handles that explicit API rejection by
+saving the edit with `changesNotSentForReview`, reporting the console action,
+and avoiding a false published verdict. An interrupted edit can be resumed
+only with explicit matching track version codes; unrelated errors still fail.
+The regression fails when the review-only flag is removed.
+See Google's [edit commit contract](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit).
