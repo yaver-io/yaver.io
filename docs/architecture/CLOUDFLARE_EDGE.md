@@ -133,6 +133,17 @@ Before a wider rollout, verify:
 6. HTTP, SSE, and binary WebSocket traffic reaches the same agent endpoints.
 7. Direct LAN and user-owned relay paths still work when managed edge is absent.
 
+The production device-limit negative control is opt-in because it briefly
+creates a uniquely namespaced synthetic identity in D1. It registers two test
+devices, proves the third is denied, proves reconnect still works, lists the
+exact cleanup candidates, deletes only that identity and its rows, then proves
+the synthetic session is revoked:
+
+```bash
+cd cloudflare/edge
+YAVER_EDGE_DEVICE_LIMIT_E2E=1 npm run verify:device-limit:remote
+```
+
 Do not remove the legacy free relay or delete Convex data until released clients
 and signed agents have converged on this route and those checks pass from real
 user surfaces. Do not treat a healthy Worker as proof that an installed agent is

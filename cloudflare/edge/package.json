@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "bootstrap:current-account": "node scripts/bootstrap-current-account.mjs",
+    "verify:device-limit:remote": "node scripts/verify-device-limit.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/*.test.ts"
   },
