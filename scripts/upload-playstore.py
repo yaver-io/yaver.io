@@ -166,6 +166,26 @@ def is_form_factor_track(track: str):
     return ":" in track
 
 
+def commit_release_edit(service, package, edit_id):
+    """Save a review-gated edit without claiming it is available to testers."""
+    try:
+        service.edits().commit(packageName=package, editId=edit_id).execute()
+        return False
+    except Exception as exc:
+        if (getattr(getattr(exc, "resp", None), "status", None) != 400
+                or "changesNotSentForReview" not in str(exc)):
+            raise
+    service.edits().commit(
+        packageName=package, editId=edit_id, changesNotSentForReview=True,
+    ).execute()
+    print(
+        "PLAY REVIEW REQUIRED: edit saved, but not sent for review. Open "
+        f"{package} > Publishing overview in Google Play Console and send "
+        "the changes for review. This is not a completed rollout.", flush=True,
+    )
+    return True
+
+
 def main():
     # Keep SDK imports inside the executable path. Pure preflight helpers and
     # their tests must remain runnable before run-playstore-upload.sh bootstraps
@@ -190,6 +210,25 @@ def main():
 
     credentials = Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES)
     service = build("androidpublisher", "v3", credentials=credentials)
+
+    resume_edit = os.environ.get("PLAY_RESUME_EDIT_ID", "")
+    if resume_edit:
+        expected_codes = {str(code) for code in version_code_hints if code}
+        if not expected_codes:
+            raise SystemExit("Resuming requires explicit PLAY_VERSION_CODES")
+        track = service.edits().tracks().get(
+            packageName=PACKAGE, editId=resume_edit, track=TRACK,
+        ).execute()
+        actual_codes = {
+            str(code) for release in track.get("releases", [])
+            for code in release.get("versionCodes", [])
+        }
+        if actual_codes != expected_codes:
+            raise SystemExit("Refusing resume: track version codes do not match")
+        review_required = commit_release_edit(service, PACKAGE, resume_edit)
+        if not review_required:
+            print(f"Resumed edit committed to {TRACK}.", flush=True)
+        return
 
     # Create an edit
     edit = service.edits().insert(body={}, packageName=PACKAGE).execute()
@@ -333,7 +372,7 @@ def main():
 
     # Commit the edit
     try:
-        service.edits().commit(packageName=PACKAGE, editId=edit_id).execute()
+        review_required = commit_release_edit(service, PACKAGE, edit_id)
     except HttpError as exc:
         detail = str(exc)
         if "Foreground Service permissions" in detail:
@@ -359,7 +398,8 @@ def main():
                 flush=True,
             )
         raise
-    print(f"Edit committed! Builds {','.join(version_codes)} are on {TRACK} track.", flush=True)
+    if not review_required:
+        print(f"Edit committed! Builds {','.join(version_codes)} are on {TRACK} track.", flush=True)
 
     # Best-effort local-Mac cache bookkeeping. This script lives only in
     # ~/.local/bin on the dev machine; on CI runners it isn't on PATH, and a

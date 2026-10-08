@@ -2,6 +2,7 @@ import importlib.util
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "upload-playstore.py")
@@ -11,6 +12,37 @@ SPEC.loader.exec_module(MODULE)
 
 
 class UploadPlayStoreTest(unittest.TestCase):
+    def test_commit_recovers_only_explicit_review_gate(self):
+        service = Mock()
+        failure = RuntimeError("Set changesNotSentForReview to true")
+        failure.resp = Mock(status=400)
+        service.edits.return_value.commit.return_value.execute.side_effect = [failure, {}]
+        self.assertTrue(MODULE.commit_release_edit(service, "example.app", "edit"))
+        self.assertEqual(service.edits.return_value.commit.call_count, 2)
+        service.edits.return_value.commit.assert_called_with(
+            packageName="example.app", editId="edit", changesNotSentForReview=True,
+        )
+
+    def test_commit_propagates_unrelated_failure_and_failed_recovery(self):
+        for failures in ([RuntimeError("denied")], [self.review_gate(), RuntimeError("denied")]):
+            service = Mock()
+            service.edits.return_value.commit.return_value.execute.side_effect = failures
+            with self.assertRaisesRegex(RuntimeError, "denied"):
+                MODULE.commit_release_edit(service, "example.app", "edit")
+
+    @staticmethod
+    def review_gate():
+        failure = RuntimeError("Set changesNotSentForReview to true")
+        failure.resp = Mock(status=400)
+        return failure
+
+    def test_commit_success_does_not_retry(self):
+        service = Mock()
+        self.assertFalse(MODULE.commit_release_edit(service, "example.app", "edit"))
+        service.edits.return_value.commit.assert_called_once_with(
+            packageName="example.app", editId="edit",
+        )
+
     def test_default_gradle_fallback_is_the_real_mobile_app(self):
         self.assertTrue(MODULE.DEFAULT_GRADLE_PATH.endswith(
             os.path.join("mobile", "android", "app", "build.gradle")
