@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestRuntimeRelayConfigsFallsBackToCachedRelays(t *testing.T) {
+func TestRuntimeRelayConfigsReplacesRetiredCachedFreeRelayWithHostedEdge(t *testing.T) {
 	cfg := &Config{
 		CachedRelayPassword: "cached-global",
 		CachedRelayServers: []RelayServerConfig{
@@ -18,8 +18,8 @@ func TestRuntimeRelayConfigsFallsBackToCachedRelays(t *testing.T) {
 	}
 
 	got := runtimeRelayConfigs(cfg)
-	if len(got) != 1 || got[0].ID != "public-free" {
-		t.Fatalf("runtimeRelayConfigs() = %+v, want cached relay", got)
+	if len(got) != 1 || got[0].ID != hostedEdgeRelayID || got[0].HttpURL != hostedEdgeRelayURL || got[0].QuicAddr != "" {
+		t.Fatalf("runtimeRelayConfigs() = %+v, want HTTP-only hosted edge", got)
 	}
 	if pw := runtimeRelayPassword(cfg); pw != "cached-global" {
 		t.Fatalf("runtimeRelayPassword() = %q, want cached-global", pw)
@@ -40,8 +40,8 @@ func TestRuntimeRelayConfigsAppendsCachedFallbackRelays(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("runtimeRelayConfigs() len = %d, want 2: %+v", len(got), got)
 	}
-	if got[0].ID != "private" || got[1].ID != "public-free" {
-		t.Fatalf("runtimeRelayConfigs() = %+v, want private first then public fallback", got)
+	if got[0].ID != "private" || got[1].ID != hostedEdgeRelayID {
+		t.Fatalf("runtimeRelayConfigs() = %+v, want private first then hosted edge", got)
 	}
 }
 
@@ -60,8 +60,19 @@ func TestRuntimeRelayConfigsDedupesCachedFallbackRelays(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("runtimeRelayConfigs() len = %d, want 2: %+v", len(got), got)
 	}
-	if got[0].ID != "private" || got[1].ID != "public-free" {
-		t.Fatalf("runtimeRelayConfigs() = %+v, want duplicate skipped and public fallback appended", got)
+	if got[0].ID != "private" || got[1].ID != hostedEdgeRelayID {
+		t.Fatalf("runtimeRelayConfigs() = %+v, want duplicate skipped and hosted edge appended", got)
+	}
+}
+
+func TestRuntimeRelayConfigsKeepsUserOwnedRelayBesideHostedEdge(t *testing.T) {
+	cfg := &Config{RelayServers: []RelayServerConfig{{
+		ID: "user-owned", HttpURL: "https://relay.user.example",
+	}}}
+
+	got := runtimeRelayConfigs(cfg)
+	if len(got) != 2 || got[0].ID != "user-owned" || got[1].ID != hostedEdgeRelayID {
+		t.Fatalf("runtimeRelayConfigs() = %+v, want user-owned relay plus hosted edge", got)
 	}
 }
 

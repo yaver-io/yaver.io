@@ -1,0 +1,35 @@
+name = "yaver-edge"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+routes = [{ pattern = "edge.yaver.io", custom_domain = true }]
+
+# This identifier names Yaver's D1 database; it is public routing metadata, not
+# a credential. Account authentication remains exclusively in Wrangler's
+# operator-owned credential store.
+[[d1_databases]]
+binding = "DB"
+database_name = "yaver-edge"
+database_id = "943343e7-e0c1-4348-8b40-a853c9b799ea"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "DEVICE_TUNNELS"
+class_name = "DeviceTunnel"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DeviceTunnel"]
+
+[vars]
+SESSION_DAYS = "365"
+TUNNEL_REQUEST_TIMEOUT_MS = "900000"
+# Launch default. This can be changed and redeployed without changing the API
+# contract or rebuilding any Yaver client.
+FREE_OWNED_DEVICE_LIMIT = "2"
+
+# Denial-of-wallet guardrails. Ordinary routing uses one D1 query and one
+# Durable Object subrequest; authenticated fleet presence is capped at 100
+# devices and therefore stays below this explicit ceiling.
+[limits]
+cpu_ms = 50
+subrequests = 128

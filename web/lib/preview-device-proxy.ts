@@ -23,6 +23,6 @@ export function previewDeviceProxyHeaders(
     if (value) headers.set(name, value);
   }
   headers.set("Authorization", `Bearer ${authToken}`);
-  headers.set("X-Relay-Password", relayPassword);
+  if (relayPassword) headers.set("X-Relay-Password", relayPassword);
   return headers;
 }

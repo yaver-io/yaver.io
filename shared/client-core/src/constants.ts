@@ -35,6 +35,11 @@ export const CONVEX_SITE_URL =
 // because the web app and Convex live on different origins.
 export const WEB_BASE_URL = 'https://yaver.io';
 
+// Stable managed transport/control-plane edge. Clients use the same
+// /d/<deviceId>/... paths as every self-hosted relay and never receive
+// Cloudflare account, tunnel, or API credentials.
+export const YAVER_EDGE_URL = 'https://edge.yaver.io';
+
 // ── Transport ─────────────────────────────────────────────────────────
 
 /** Default HTTP port `yaver serve` listens on. */

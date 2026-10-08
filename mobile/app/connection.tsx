@@ -16,6 +16,7 @@ import WakeProgress from "../src/components/WakeProgress";
 import { quicClient } from "../src/lib/quic";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
 import { getConvexSiteUrl } from "../src/lib/auth";
+import { YAVER_EDGE_URL } from "../src/_core/constants";
 import {
   getDeviceNetwork,
   netInfoAvailable,
@@ -132,7 +133,7 @@ async function runYaverDoctor(
   // Relay reachability — fall back to the public relay when the account has
   // none configured (so the row is never empty).
   const relayUrls = relays.map((r) => r.httpUrl).filter(Boolean) as string[];
-  if (relayUrls.length === 0) relayUrls.push("https://public.yaver.io");
+  if (relayUrls.length === 0) relayUrls.push(YAVER_EDGE_URL);
   const relay: ProbeResult[] = await Promise.all(
     relayUrls.map(async (u) => {
       const host = u.replace(/^https?:\/\//, "");

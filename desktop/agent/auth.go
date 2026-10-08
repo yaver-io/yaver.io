@@ -647,6 +647,23 @@ func configuredPublicEndpoints(cfg *Config) []string {
 		seen[assigned] = true
 		out = append(out, assigned)
 	}
+	// Publish path-style endpoints for every active HTTP relay, including the
+	// built-in Cloudflare edge. No provider credential or bearer is placed in
+	// the URL; clients authenticate each request normally.
+	if deviceID := strings.TrimSpace(cfg.DeviceID); deviceID != "" {
+		for _, relay := range runtimeRelayConfigs(cfg) {
+			base := strings.TrimRight(strings.TrimSpace(relay.HttpURL), "/")
+			if base == "" {
+				continue
+			}
+			endpoint := base + "/d/" + urlpkg.PathEscape(deviceID)
+			if seen[endpoint] {
+				continue
+			}
+			seen[endpoint] = true
+			out = append(out, endpoint)
+		}
+	}
 	// Manual list from config.json wins on first-position so
 	// `yaver ssh @alias` and the dashboard SSH/Shell tooltip resolve
 	// to the operator-provided host even when Cloudflare is wired

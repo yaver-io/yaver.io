@@ -83,3 +83,23 @@ func TestApplyRelayServersDropsRemovedRelay(t *testing.T) {
 		t.Error("relay-b was removed from config but its tunnel is still active")
 	}
 }
+
+func TestApplyRelayServersAcceptsHTTPOnlyHostedEdge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rm := &relayManager{
+		parentCtx:      ctx,
+		deviceID:       "dev-http-edge",
+		activeTunnels:  make(map[string]context.CancelFunc),
+		healthStatus:   make(map[string]*RelayHealthStatus),
+		attemptCancels: make(map[string]context.CancelFunc),
+	}
+
+	rm.applyRelayServers([]RelayServerInfo{{
+		ID: hostedEdgeRelayID, HttpURL: hostedEdgeRelayURL,
+	}}, map[string]string{})
+
+	if _, ok := rm.activeTunnels[hostedEdgeRelayURL]; !ok {
+		t.Fatalf("HTTP-only hosted edge was not started: %+v", rm.activeTunnels)
+	}
+}

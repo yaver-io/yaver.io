@@ -1,0 +1,23 @@
+{
+  "name": "@yaver/edge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Yaver's zero-content Cloudflare identity and tunnel edge",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "bootstrap:current-account": "node scripts/bootstrap-current-account.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@cloudflare/workers-types": "^5.20261007.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.148.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  }
+}

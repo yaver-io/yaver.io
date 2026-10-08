@@ -32,6 +32,7 @@ import (
 	osuser "os/user"
 
 	"github.com/google/uuid"
+	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/quic-go/quic-go"
 	"github.com/yaver-io/agent/ghost"
 	"github.com/yaver-io/agent/machine"
@@ -127,7 +128,8 @@ func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[s
 	var relayServers []RelayServerInfo
 	passwords := make(map[string]string)
 	for _, rs := range servers {
-		if strings.TrimSpace(rs.QuicAddr) == "" {
+		key := relayConfigKey(rs.QuicAddr, rs.HttpURL, rs.ID)
+		if key == "" {
 			continue
 		}
 		relayServers = append(relayServers, RelayServerInfo{
@@ -139,10 +141,37 @@ func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[s
 			SpkiPin:  rs.SpkiPin,
 		})
 		if rs.Password != "" {
-			passwords[rs.QuicAddr] = rs.Password
+			passwords[key] = rs.Password
 		}
 	}
 	return relayServers, passwords
+}
+
+const hostedEdgeRelayID = "yaver-edge"
+const hostedEdgeRelayURL = "https://edge.yaver.io"
+
+func relayConfigKey(quicAddr, httpURL, id string) string {
+	if key := strings.TrimSpace(quicAddr); key != "" {
+		return key
+	}
+	if key := normalizeRelayHTTPURL(httpURL); key != "" {
+		return key
+	}
+	return strings.TrimSpace(id)
+}
+
+func relayInfoKey(rs RelayServerInfo) string {
+	return relayConfigKey(rs.QuicAddr, rs.HttpURL, rs.ID)
+}
+
+func hostedEdgeRelayConfig() RelayServerConfig {
+	return RelayServerConfig{
+		ID:       hostedEdgeRelayID,
+		HttpURL:  hostedEdgeRelayURL,
+		Region:   "global",
+		Priority: 1,
+		Label:    "Yaver Edge",
+	}
 }
 
 func appendRelayConfigs(dst []RelayServerConfig, src []RelayServerConfig) []RelayServerConfig {
@@ -183,7 +212,21 @@ func runtimeRelayConfigs(cfg *Config) []RelayServerConfig {
 	if cfg == nil {
 		return nil
 	}
-	return appendRelayConfigs(append([]RelayServerConfig{}, cfg.RelayServers...), cfg.CachedRelayServers)
+	// The hosted Cloudflare edge is a product default, not configuration fetched
+	// from Convex. This keeps a newly installed or offline-starting agent on the
+	// same stable /d/<deviceId>/... API without giving it Cloudflare credentials.
+	// Explicit private/user-owned relays remain additive.
+	cached := make([]RelayServerConfig, 0, len(cfg.CachedRelayServers))
+	for _, rs := range cfg.CachedRelayServers {
+		// `public-free` is the retired Yaver-owned Hetzner relay. Do not keep
+		// dialing it merely because an older agent cached platform config.
+		if strings.EqualFold(strings.TrimSpace(rs.ID), "public-free") {
+			continue
+		}
+		cached = append(cached, rs)
+	}
+	result := appendRelayConfigs(append([]RelayServerConfig{}, cfg.RelayServers...), cached)
+	return appendRelayConfigs(result, []RelayServerConfig{hostedEdgeRelayConfig()})
 }
 
 // relayWSFallbackEnabled gates the Cloudflare/WebSocket relay fallback. It is
@@ -1357,15 +1400,14 @@ func runAuth(args []string) {
 		if cfg.DeviceID == "" {
 			cfg.DeviceID = uuid.New().String()
 		}
-		// Clear any manually configured relay — use per-user relay from backend
-		cfg.RelayServers = nil
-		cfg.RelayPassword = ""
+		// Preserve any explicitly configured user-owned relay. The managed edge
+		// is additive and needs no relay password or Cloudflare credential.
 		if err := SetAuthToken(cfg, t); err != nil {
 			log.Fatalf("save config: %v", err)
 		}
 		fmt.Println()
 		fmt.Println("Signed in successfully.")
-		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
+		fmt.Println("  Yaver Edge: edge.yaver.io (included, no setup needed)")
 		fmt.Println()
 		startServeIfStopped()
 		autoSetupMCP()
@@ -2057,7 +2099,7 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	maybeSetSelfAsPrimaryAfterAuth(cfg)
 	if printSuccess {
 		fmt.Println("Signed in successfully.")
-		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
+		fmt.Println("  Yaver Edge: edge.yaver.io (included, no setup needed)")
 		if shouldEnableHeadlessKeepAwake(cfg) {
 			fmt.Println("  Headless keep-awake: enabled while `yaver serve` is running")
 		}
@@ -3040,6 +3082,23 @@ func runServe(args []string) {
 	} else {
 		log.Printf("Skipping device registration (offline mode)")
 	}
+	if !offlineMode && devicePubKey != "" {
+		// Register only the device's public routing identity with the managed
+		// edge. The agent authenticates with its Yaver bearer; it never receives
+		// or stores Cloudflare account/tunnel credentials.
+		if _, err := RegisterDevice(hostedEdgeRelayURL, RegisterDeviceRequest{
+			Token:        cfg.AuthToken,
+			DeviceID:     cfg.DeviceID,
+			Name:         hostname,
+			Platform:     platform,
+			PublicKey:    devicePubKey,
+			AgentVersion: version,
+		}); err != nil {
+			log.Printf("Warning: managed edge device registration failed: %v", err)
+		} else {
+			log.Printf("Managed edge device registration complete.")
+		}
+	}
 
 	// Fetch platform config (relay servers, runners, models) from Convex
 	var relayServers []RelayServerInfo
@@ -3056,23 +3115,16 @@ func runServe(args []string) {
 		}
 	}
 
-	if !*noRelay && (len(cfg.RelayServers) > 0 || len(cfg.CachedRelayServers) > 0) {
+	if !*noRelay {
 		// Use configured relays first, then cached/platform relays as a lower
 		// priority fallback. The free relay is the universal off-LAN fallback;
 		// ignoring it just because a private relay is configured leaves devices
 		// "online" but unreachable when the private QUIC path is down.
 		relayCfg := runtimeRelayConfigs(cfg)
-		if len(cfg.RelayServers) > 0 {
-			log.Printf("Using %d configured relay server(s) plus %d cached fallback relay server(s):", len(cfg.RelayServers), len(relayCfg)-len(cfg.RelayServers))
-		} else {
-			log.Printf("Using %d cached relay server(s):", len(relayCfg))
-		}
+		log.Printf("Using %d relay endpoint(s), including the hosted edge default:", len(relayCfg))
 		relayServers, relayPasswords = relayInfosFromConfig(relayCfg)
 		for _, rs := range relayServers {
-			log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
-		}
-		if len(relayServers) == 0 {
-			log.Printf("Ignoring %d relay server(s) without QUIC addresses", len(relayCfg))
+			log.Printf("  [%s] %s (%s)", rs.ID, relayInfoKey(rs), rs.Region)
 		}
 	}
 
@@ -8801,11 +8853,9 @@ func isYaverHTTPRelayHost(host string) bool {
 	}
 	label := strings.TrimSuffix(host, ".yaver.io")
 	label = strings.TrimSuffix(label, ".dev")
-	// The shared relay gateway public.yaver.io terminates HTTPS only — ssh
-	// never works against it. It fronts per-device tunnels at /d/<id> (the
-	// path is stripped by the caller's "/d/" skip; this also covers a bare
-	// "public.yaver.io" endpoint without a path).
-	if label == "public" {
+	// Managed HTTP gateways terminate HTTPS only — SSH never works against
+	// them. They front per-device tunnels at /d/<id>.
+	if label == "public" || label == "edge" {
 		return true
 	}
 	if len(label) != 36 || strings.Count(label, "-") != 4 {
@@ -9884,7 +9934,7 @@ func getLocalIPs() []string {
 			// Security blocks HTTP to public addresses with -1022, and
 			// even if it didn't, no mobile on the user's home Wi-Fi can
 			// reach the cloud VM's public IP via direct route. The
-			// relay path (https://public.yaver.io/d/<id>) is the only
+			// edge path (https://edge.yaver.io/d/<id>) is the only
 			// off-LAN path that works. Keep RFC1918 (and other private
 			// ranges) — those are real LAN addresses for home agents.
 			var s string
@@ -10583,13 +10633,17 @@ type relayTunnelResponse struct {
 }
 
 type relayWSTunnelFrame struct {
-	Type     string               `json:"type"`
-	ID       string               `json:"id,omitempty"`
-	Register *relayRegisterMsg    `json:"register,omitempty"`
-	OK       bool                 `json:"ok,omitempty"`
-	Message  string               `json:"message,omitempty"`
-	Request  *relayTunnelRequest  `json:"request,omitempty"`
-	Response *relayTunnelResponse `json:"response,omitempty"`
+	Type        string               `json:"type"`
+	ID          string               `json:"id,omitempty"`
+	Register    *relayRegisterMsg    `json:"register,omitempty"`
+	OK          bool                 `json:"ok,omitempty"`
+	Message     string               `json:"message,omitempty"`
+	Request     *relayTunnelRequest  `json:"request,omitempty"`
+	Response    *relayTunnelResponse `json:"response,omitempty"`
+	StatusCode  int                  `json:"statusCode,omitempty"`
+	Headers     map[string]string    `json:"headers,omitempty"`
+	Data        []byte               `json:"data,omitempty"`
+	MessageType int                  `json:"messageType,omitempty"`
 }
 
 // RelayHealthStatus holds the latest health check result for a relay server.
@@ -10669,7 +10723,7 @@ type relayManager struct {
 	mu                sync.Mutex
 	globalPassword    string
 	convexSiteURL     string
-	activeTunnels     map[string]context.CancelFunc // keyed by QuicAddr
+	activeTunnels     map[string]context.CancelFunc // keyed by QUIC addr or HTTP URL
 	healthStatus      map[string]*RelayHealthStatus // keyed by httpUrl
 	lastSettingsRelay string                        // last relayUrl from user settings (for change detection)
 	relayExposeMgr    *RelayExposeManager
@@ -10682,7 +10736,7 @@ type relayManager struct {
 	// which holds the per-tunnel goroutine's cancel (cancelling that
 	// would tear the tunnel down for good rather than restart it).
 	attemptCancelsMu sync.Mutex
-	attemptCancels   map[string]context.CancelFunc // keyed by QuicAddr
+	attemptCancels   map[string]context.CancelFunc // keyed by QUIC addr or HTTP URL
 
 	// noTunnelSince is when the watchdog first observed zero live relay tunnels
 	// despite relays being configured. Only touched from healthCheckLoop's
@@ -10759,13 +10813,18 @@ func (rm *relayManager) applyRelayServers(servers []RelayServerInfo, passwords m
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	// Build desired set
-	desired := make(map[string]string) // QuicAddr -> password
+	desired := make(map[string]RelayServerInfo)
 	for _, rs := range servers {
-		pw := passwords[rs.QuicAddr]
+		key := relayInfoKey(rs)
+		if key == "" {
+			continue
+		}
+		pw := passwords[key]
 		if pw == "" {
 			pw = rm.globalPassword
 		}
-		desired[rs.QuicAddr] = pw
+		desired[key] = rs
+		passwords[key] = pw
 	}
 
 	// Stop tunnels that are no longer in config
@@ -10778,14 +10837,18 @@ func (rm *relayManager) applyRelayServers(servers []RelayServerInfo, passwords m
 	}
 
 	// Start new tunnels
-	for addr, pw := range desired {
-		if _, ok := rm.activeTunnels[addr]; ok {
+	for key, rs := range desired {
+		if _, ok := rm.activeTunnels[key]; ok {
 			continue // already running
 		}
 		tunnelCtx, tunnelCancel := context.WithCancel(rm.parentCtx)
-		rm.activeTunnels[addr] = tunnelCancel
-		log.Printf("[RELAY] Starting tunnel to %s...", addr)
-		go runRelayTunnel(tunnelCtx, addr, rm.agentAddr, rm.deviceID, rm.authToken, pw, rm.relayExposeMgr, rm)
+		rm.activeTunnels[key] = tunnelCancel
+		log.Printf("[RELAY] Starting tunnel to %s...", key)
+		if strings.TrimSpace(rs.QuicAddr) == "" {
+			go runRelayWebSocketTunnel(tunnelCtx, rs, rm.agentAddr, rm.deviceID, rm.authToken, passwords[key], rm)
+			continue
+		}
+		go runRelayTunnel(tunnelCtx, rs.QuicAddr, rm.agentAddr, rm.deviceID, rm.authToken, passwords[key], rm.relayExposeMgr, rm)
 	}
 }
 
@@ -10828,10 +10891,7 @@ func (rm *relayManager) reloadNow() {
 		log.Printf("[RELAY] Config reload failed: %v", err)
 		return
 	}
-	relayCfg := cfg.RelayServers
-	if len(relayCfg) == 0 {
-		relayCfg = cfg.CachedRelayServers
-	}
+	relayCfg := runtimeRelayConfigs(cfg)
 	servers, passwords := relayInfosFromConfig(relayCfg)
 	if cfg.RelayPassword != "" {
 		rm.setGlobalPassword(cfg.RelayPassword)
@@ -10842,9 +10902,8 @@ func (rm *relayManager) reloadNow() {
 	log.Printf("[RELAY] Config reloaded: %d relay server(s)", len(servers))
 }
 
-// watchConfig polls config.json and Convex user settings every 2min for relay
-// server changes. Relay-URL changes are rare admin actions, so a tighter cadence
-// just burned Convex function calls (this /settings poll was our #2 cost driver);
+// watchConfig polls local config every 2 minutes for user-owned relay changes.
+// The hosted edge is compiled in, so recovery never depends on Convex settings;
 // SIGHUP -> reloadNow() still gives an instant local reload when needed.
 func (rm *relayManager) watchConfig(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Minute)
@@ -10855,80 +10914,14 @@ func (rm *relayManager) watchConfig(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Check config.json first (highest priority)
+			// Local configuration plus the built-in hosted edge is authoritative.
+			// Relay discovery no longer depends on Convex user settings.
 			cfg, err := LoadConfig()
-			if err == nil && len(cfg.RelayServers) > 0 {
-				var servers []RelayServerInfo
-				passwords := make(map[string]string)
-				for _, rs := range cfg.RelayServers {
-					servers = append(servers, RelayServerInfo{
-						ID:       rs.ID,
-						QuicAddr: rs.QuicAddr,
-						HttpURL:  rs.HttpURL,
-						Region:   rs.Region,
-						Priority: rs.Priority,
-					})
-					if rs.Password != "" {
-						passwords[rs.QuicAddr] = rs.Password
-					}
-				}
-				if cfg.RelayPassword != "" {
-					rm.setGlobalPassword(cfg.RelayPassword)
-				}
-				rm.applyRelayServers(servers, passwords)
+			if err != nil || cfg == nil {
 				continue
 			}
-
-			// No local config — reconcile against Convex user settings. This is
-			// the SELF-HEAL path for a managed box that came up relay-less (a
-			// transient /config fetch failure at boot, or a snapshot taken
-			// before it ever resolved a relay). We re-resolve when the relay URL
-			// changed OR when there are zero live tunnels right now — the latter
-			// guarantees a relay-less box recovers within one tick instead of
-			// staying permanently unreachable.
-			if rm.convexSiteURL == "" {
-				continue
-			}
-			noTunnels := rm.tunnelCount() == 0
-			settings, err := FetchUserSettings(rm.convexSiteURL, rm.authToken)
-			if err != nil {
-				continue
-			}
-			if settings.RelayUrl == "" {
-				continue
-			}
-			if settings.RelayUrl == rm.getLastSettingsRelay() && !noTunnels {
-				continue
-			}
-			log.Printf("[RELAY] Reconciling relay from user settings: %s (live tunnels=%d)", settings.RelayUrl, rm.tunnelCount())
-			// Build a DIALABLE relay entry: match the platform list first (real
-			// QUIC addr + id), else synth host:4433 from the URL. The old path
-			// built an entry with an empty QuicAddr, which could never dial.
-			var servers []RelayServerInfo
-			passwords := make(map[string]string)
-			if platformCfg, perr := FetchPlatformConfig(rm.convexSiteURL); perr == nil {
-				for _, rs := range platformCfg.RelayServers {
-					if relayHTTPURLsMatch(rs.HttpURL, settings.RelayUrl) {
-						servers = append(servers, rs)
-						break
-					}
-				}
-			}
-			if len(servers) == 0 {
-				if synth, ok := synthRelayServerInfoFromURL(settings.RelayUrl); ok {
-					servers = append(servers, synth)
-					if settings.RelayPassword != "" {
-						passwords[synth.QuicAddr] = settings.RelayPassword
-					}
-				}
-			}
-			if len(servers) == 0 {
-				continue // couldn't resolve a dialable relay; retry next tick
-			}
-			if settings.RelayPassword != "" {
-				rm.setGlobalPassword(settings.RelayPassword)
-			}
-			rm.setLastSettingsRelay(settings.RelayUrl)
+			servers, passwords := relayInfosFromConfig(runtimeRelayConfigs(cfg))
+			rm.setGlobalPassword(runtimeRelayPassword(cfg))
 			rm.applyRelayServers(servers, passwords)
 		}
 	}
@@ -11009,6 +11002,9 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 	}
 
 	for _, rs := range relayCfg {
+		if strings.TrimSpace(rs.HttpURL) == "" {
+			continue
+		}
 		status := &RelayHealthStatus{
 			URL:         rs.HttpURL,
 			LastChecked: time.Now(),
@@ -11060,15 +11056,16 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 
 		streak := noteProbeOutcome(rs.HttpURL, probe)
 		status.SplitBrainStreak = streak
-		if streak >= splitBrainHealThreshold && rs.QuicAddr != "" {
-			if rm.ForceReconnect(rs.QuicAddr) {
+		key := relayConfigKey(rs.QuicAddr, rs.HttpURL, rs.ID)
+		if streak >= splitBrainHealThreshold && key != "" {
+			if rm.ForceReconnect(key) {
 				log.Printf("[RELAY] auto-heal: split-brain confirmed on %s (streak=%d, kind=%s, vpn=%v) — forcing redial of %s",
-					rs.HttpURL, streak, probe.Kind, status.VPNInterfaces, rs.QuicAddr)
+					rs.HttpURL, streak, probe.Kind, status.VPNInterfaces, key)
 				status.HealedAt = time.Now()
 				resetSplitBrainStreak(rs.HttpURL)
 			} else {
 				log.Printf("[RELAY] auto-heal: split-brain confirmed on %s (streak=%d) but no in-flight attempt to cancel for %s",
-					rs.HttpURL, streak, rs.QuicAddr)
+					rs.HttpURL, streak, key)
 			}
 		}
 
@@ -11085,15 +11082,15 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 				status.TunnelRoundTripError = rtErr.Error()
 			}
 			streak := noteRoundTripOutcome(rs.HttpURL, rtErr == nil)
-			if rtErr != nil && streak >= roundTripHealThreshold && rs.QuicAddr != "" {
-				if rm.ForceReconnect(rs.QuicAddr) {
+			if rtErr != nil && streak >= roundTripHealThreshold && key != "" {
+				if rm.ForceReconnect(key) {
 					log.Printf("[RELAY] auto-heal: tunnel registered but not forwarding on %s (streak=%d: %v) — forcing redial of %s",
-						rs.HttpURL, streak, rtErr, rs.QuicAddr)
+						rs.HttpURL, streak, rtErr, key)
 					status.HealedAt = time.Now()
 					resetRoundTripStreak(rs.HttpURL)
 				} else {
 					log.Printf("[RELAY] auto-heal: tunnel not forwarding on %s (streak=%d) but no in-flight attempt to cancel for %s",
-						rs.HttpURL, streak, rs.QuicAddr)
+						rs.HttpURL, streak, key)
 				}
 			}
 		}
@@ -11118,7 +11115,7 @@ func (rm *relayManager) probeTunnelRoundTrip(rs RelayServerConfig) error {
 	if err != nil || cfg == nil || cfg.DeviceID == "" || strings.TrimSpace(rs.HttpURL) == "" {
 		return nil // nothing to probe with — don't manufacture a failure
 	}
-	token, password := currentRelayCredentials(rs.QuicAddr)
+	token, password := currentRelayCredentials(relayConfigKey(rs.QuicAddr, rs.HttpURL, rs.ID))
 	if token == "" {
 		token = cfg.AuthToken
 	}
@@ -11222,16 +11219,68 @@ func currentRelayCredentials(relayAddr string) (token, password string) {
 	// Per-relay password wins (a self-hosted/private relay has its own), then
 	// the account-wide per-user password, then the last cached one.
 	for _, rs := range cfg.RelayServers {
-		if rs.QuicAddr == relayAddr && strings.TrimSpace(rs.Password) != "" {
+		if relayConfigKey(rs.QuicAddr, rs.HttpURL, rs.ID) == relayAddr && strings.TrimSpace(rs.Password) != "" {
 			return token, strings.TrimSpace(rs.Password)
 		}
 	}
 	for _, rs := range cfg.CachedRelayServers {
-		if rs.QuicAddr == relayAddr && strings.TrimSpace(rs.Password) != "" {
+		if relayConfigKey(rs.QuicAddr, rs.HttpURL, rs.ID) == relayAddr && strings.TrimSpace(rs.Password) != "" {
 			return token, strings.TrimSpace(rs.Password)
 		}
 	}
 	return token, strings.TrimSpace(runtimeRelayPassword(cfg))
+}
+
+// runRelayWebSocketTunnel is the native path for HTTP-only edges such as the
+// hosted Cloudflare Worker. It does not manufacture a QUIC address or wait for
+// UDP to fail first: Workers speak HTTPS/WebSocket, while direct peer-to-peer
+// QUIC remains a separate preferred transport.
+func runRelayWebSocketTunnel(ctx context.Context, relay RelayServerInfo, agentAddr, deviceID, token, password string, rm *relayManager) {
+	key := relayInfoKey(relay)
+	wsURL := relayWebSocketURLFromHTTP(relay.HttpURL)
+	if key == "" || wsURL == "" {
+		log.Printf("[RELAY] HTTP-only relay has no usable endpoint: %+v", relay)
+		return
+	}
+	if key == hostedEdgeRelayURL {
+		// The managed edge authenticates Yaver sessions and device ownership.
+		// Legacy relay passwords are neither needed nor disclosed to it.
+		password = ""
+	}
+	backoff := time.Second
+	for ctx.Err() == nil {
+		if freshToken, freshPassword := currentRelayCredentials(key); freshToken != "" || freshPassword != "" {
+			if freshToken != "" {
+				token = freshToken
+			}
+			if freshPassword != "" && key != hostedEdgeRelayURL {
+				password = freshPassword
+			}
+		}
+		attemptCtx, cancel := context.WithCancel(ctx)
+		rm.registerAttemptCancel(key, cancel)
+		startedAt := time.Now()
+		log.Printf("[RELAY %s] Connecting directly over WebSocket...", key)
+		err := relayConnectAndServeWebSocket(attemptCtx, wsURL, agentAddr, deviceID, token, password)
+		rm.clearAttemptCancel(key)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		log.Printf("[RELAY %s] WebSocket connection ended after %s: %v", key, time.Since(startedAt).Round(time.Second), err)
+		if time.Since(startedAt) >= 30*time.Second {
+			backoff = time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > 60*time.Second {
+			backoff = 60 * time.Second
+		}
+	}
 }
 
 func relayWebSocketURLForQuicAddr(relayAddr string) string {
@@ -11854,8 +11903,31 @@ func relayConnectAndServeWebSocket(ctx context.Context, wsURL, agentAddr, device
 		if u.Scheme == "ws" {
 			origin = "http://" + u.Host
 		}
+		// The Cloudflare edge must select the per-device Durable Object before
+		// the WebSocket upgrade completes. This query value is routing identity,
+		// not authority; the bearer session and the device ownership row are
+		// verified first, and the registration frame must name the same device.
+		q := u.Query()
+		q.Set("deviceId", deviceID)
+		u.RawQuery = q.Encode()
+		wsURL = u.String()
 	}
-	ws, err := websocket.Dial(wsURL, "", origin)
+	wsConfig, err := websocket.NewConfig(wsURL, origin)
+	if err != nil {
+		return fmt.Errorf("configure websocket relay: %w", err)
+	}
+	// A Yaver bearer is the only hosted credential an agent receives. Never
+	// distribute Cloudflare account tokens, tunnel credentials, or management
+	// authority to a user machine.
+	wsConfig.Header.Set("Authorization", "Bearer "+token)
+	wsConfig.Header.Set("X-Yaver-Device-ID", deviceID)
+	if relayWebSocketDialerOverride != nil {
+		// Test-only seam for operation probes running behind a resolver that has
+		// not observed a newly-created custom domain yet. Production remains on
+		// the system resolver and never hardwires a third-party DNS service.
+		wsConfig.Dialer = relayWebSocketDialerOverride
+	}
+	ws, err := websocket.DialConfig(wsConfig)
 	if err != nil {
 		return fmt.Errorf("dial websocket relay: %w", err)
 	}
@@ -11878,6 +11950,8 @@ func relayConnectAndServeWebSocket(ctx context.Context, wsURL, agentAddr, device
 	defer atomic.AddInt32(&relayTunnelsLive, -1)
 
 	done := make(chan error, 1)
+	bridges := newRelayWSBridgeManager(ws, agentAddr)
+	defer bridges.closeAll()
 	go func() {
 		localClient := &http.Client{Timeout: 15 * time.Minute}
 		for {
@@ -11893,6 +11967,22 @@ func relayConnectAndServeWebSocket(ctx context.Context, wsURL, agentAddr, device
 					continue
 				}
 				go relayHandleWSProxiedRequest(ws, agentAddr, localClient, frame.ID, *frame.Request)
+			case "stream_request":
+				if frame.Request == nil {
+					_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_error", ID: frame.ID, Message: "missing request"})
+					continue
+				}
+				go relayHandleWSStreamRequest(ws, agentAddr, localClient, frame.ID, *frame.Request)
+			case "ws_open":
+				if frame.Request == nil {
+					_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "ws_error", ID: frame.ID, Message: "missing request"})
+					continue
+				}
+				go bridges.open(frame.ID, *frame.Request)
+			case "ws_data":
+				bridges.write(frame.ID, frame.MessageType, frame.Data)
+			case "ws_close":
+				bridges.close(frame.ID)
 			case "ping":
 				_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "pong", ID: frame.ID})
 			}
@@ -11907,7 +11997,196 @@ func relayConnectAndServeWebSocket(ctx context.Context, wsURL, agentAddr, device
 	}
 }
 
+func relayHandleWSStreamRequest(ws *websocket.Conn, agentAddr string, client *http.Client, frameID string, req relayTunnelRequest) {
+	target := agentAddr
+	if req.TargetPort > 0 {
+		target = fmt.Sprintf("127.0.0.1:%d", req.TargetPort)
+	}
+	targetURL := fmt.Sprintf("http://%s%s", target, req.Path)
+	if req.Query != "" {
+		targetURL += "?" + req.Query
+	}
+	httpReq, err := http.NewRequest(req.Method, targetURL, bytes.NewReader(req.Body))
+	if err != nil {
+		_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_error", ID: frameID, Message: "failed to build request"})
+		return
+	}
+	for key, value := range req.Headers {
+		httpReq.Header.Set(key, value)
+	}
+	httpReq.Header.Set("X-Yaver-Via-Relay", "1")
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_error", ID: frameID, Message: "agent error: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	headers := make(map[string]string)
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+	if err := relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_start", ID: frameID, StatusCode: resp.StatusCode, Headers: headers}); err != nil {
+		return
+	}
+	buffer := make([]byte, 32<<10)
+	for {
+		read, readErr := resp.Body.Read(buffer)
+		if read > 0 {
+			chunk := append([]byte(nil), buffer[:read]...)
+			if err := relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_data", ID: frameID, Data: chunk}); err != nil {
+				return
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_end", ID: frameID})
+			} else {
+				_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "stream_error", ID: frameID, Message: readErr.Error()})
+			}
+			return
+		}
+	}
+}
+
+var relayWebSocketDialerOverride *net.Dialer
+
 var relayWSWriteMu sync.Mutex
+
+type relayWSBridge struct {
+	conn    *gorillawebsocket.Conn
+	writeMu sync.Mutex
+}
+
+type relayWSBridgeManager struct {
+	relay     *websocket.Conn
+	agentAddr string
+	mu        sync.Mutex
+	bridges   map[string]*relayWSBridge
+}
+
+func newRelayWSBridgeManager(relay *websocket.Conn, agentAddr string) *relayWSBridgeManager {
+	return &relayWSBridgeManager{relay: relay, agentAddr: agentAddr, bridges: make(map[string]*relayWSBridge)}
+}
+
+func (m *relayWSBridgeManager) open(id string, req relayTunnelRequest) {
+	if id == "" {
+		return
+	}
+	target := m.agentAddr
+	if req.TargetPort > 0 {
+		target = fmt.Sprintf("127.0.0.1:%d", req.TargetPort)
+	}
+	targetURL := fmt.Sprintf("ws://%s%s", target, req.Path)
+	if req.Query != "" {
+		targetURL += "?" + req.Query
+	}
+	headers := make(http.Header)
+	for key, value := range req.Headers {
+		switch strings.ToLower(key) {
+		case "connection", "upgrade", "host", "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-protocol":
+			continue
+		}
+		headers.Set(key, value)
+	}
+	headers.Set("X-Yaver-Via-Relay", "1")
+	dialer := gorillawebsocket.Dialer{HandshakeTimeout: 15 * time.Second}
+	if protocols := req.Headers["Sec-Websocket-Protocol"]; protocols != "" {
+		dialer.Subprotocols = splitWebSocketProtocols(protocols)
+	} else if protocols := req.Headers["Sec-WebSocket-Protocol"]; protocols != "" {
+		dialer.Subprotocols = splitWebSocketProtocols(protocols)
+	}
+	conn, response, err := dialer.Dial(targetURL, headers)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		_ = relaySendWSFrame(m.relay, relayWSTunnelFrame{Type: "ws_error", ID: id, Message: "agent websocket: " + err.Error()})
+		return
+	}
+	bridge := &relayWSBridge{conn: conn}
+	m.mu.Lock()
+	if previous := m.bridges[id]; previous != nil {
+		_ = previous.conn.Close()
+	}
+	m.bridges[id] = bridge
+	m.mu.Unlock()
+	if err := relaySendWSFrame(m.relay, relayWSTunnelFrame{Type: "ws_opened", ID: id}); err != nil {
+		m.close(id)
+		return
+	}
+	for {
+		messageType, data, readErr := conn.ReadMessage()
+		if readErr != nil {
+			m.remove(id, bridge)
+			_ = relaySendWSFrame(m.relay, relayWSTunnelFrame{Type: "ws_close", ID: id})
+			return
+		}
+		if err := relaySendWSFrame(m.relay, relayWSTunnelFrame{Type: "ws_data", ID: id, MessageType: messageType, Data: data}); err != nil {
+			m.remove(id, bridge)
+			return
+		}
+	}
+}
+
+func splitWebSocketProtocols(raw string) []string {
+	var protocols []string
+	for _, protocol := range strings.Split(raw, ",") {
+		if protocol = strings.TrimSpace(protocol); protocol != "" {
+			protocols = append(protocols, protocol)
+		}
+	}
+	return protocols
+}
+
+func (m *relayWSBridgeManager) write(id string, messageType int, data []byte) {
+	m.mu.Lock()
+	bridge := m.bridges[id]
+	m.mu.Unlock()
+	if bridge == nil {
+		return
+	}
+	if messageType != gorillawebsocket.TextMessage && messageType != gorillawebsocket.BinaryMessage {
+		messageType = gorillawebsocket.BinaryMessage
+	}
+	bridge.writeMu.Lock()
+	err := bridge.conn.WriteMessage(messageType, data)
+	bridge.writeMu.Unlock()
+	if err != nil {
+		m.remove(id, bridge)
+		_ = relaySendWSFrame(m.relay, relayWSTunnelFrame{Type: "ws_error", ID: id, Message: "agent websocket write failed"})
+	}
+}
+
+func (m *relayWSBridgeManager) close(id string) {
+	m.mu.Lock()
+	bridge := m.bridges[id]
+	delete(m.bridges, id)
+	m.mu.Unlock()
+	if bridge != nil {
+		_ = bridge.conn.Close()
+	}
+}
+
+func (m *relayWSBridgeManager) remove(id string, expected *relayWSBridge) {
+	m.mu.Lock()
+	if m.bridges[id] == expected {
+		delete(m.bridges, id)
+	}
+	m.mu.Unlock()
+	_ = expected.conn.Close()
+}
+
+func (m *relayWSBridgeManager) closeAll() {
+	m.mu.Lock()
+	bridges := m.bridges
+	m.bridges = make(map[string]*relayWSBridge)
+	m.mu.Unlock()
+	for _, bridge := range bridges {
+		_ = bridge.conn.Close()
+	}
+}
 
 func relaySendWSFrame(ws *websocket.Conn, frame relayWSTunnelFrame) error {
 	relayWSWriteMu.Lock()

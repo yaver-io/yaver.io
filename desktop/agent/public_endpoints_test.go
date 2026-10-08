@@ -39,3 +39,12 @@ func TestConfiguredPublicEndpointsDeduplicates(t *testing.T) {
 		t.Fatalf("dedupe: got %#v, want %#v", got, want)
 	}
 }
+
+func TestConfiguredPublicEndpointsIncludesHostedEdgeWithoutCredentials(t *testing.T) {
+	cfg := &Config{DeviceID: "device-test"}
+	got := configuredPublicEndpoints(cfg)
+	want := hostedEdgeRelayURL + "/d/device-test"
+	if !reflect.DeepEqual(got, []string{want}) {
+		t.Fatalf("hosted edge endpoint: got %#v, want %#v", got, []string{want})
+	}
+}

@@ -16,7 +16,7 @@ import WebShellModal from "@/components/dashboard/WebShellModal";
 import RemoteDesktopModal from "@/components/dashboard/RemoteDesktopModal";
 import { agentClient, agentClientPool, type AgentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe, type TmuxSessionSummary, type McpServer, type ModelInfo, type TaskRunnerControlCatalog, type OpenCodeProviderSummary } from "@/lib/agent-client";
 import { isRunnerSeat, listTmuxRunnerSessions, type TmuxRunnerSessionRecord } from "@/lib/tmux-sessions";
-import { CONVEX_URL } from "@/lib/constants";
+import { CONVEX_URL, YAVER_EDGE_URL } from "@/lib/constants";
 import { useMachineRoles } from "@/lib/useMachineRoles";
 import { planConnectionFanout } from "@/lib/connectionFanout";
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
@@ -1400,7 +1400,7 @@ export default function DashboardPage() {
       if (r.ok) {
         const d = await r.json();
         applyProductPolicy(d.productPolicy);
-        relays = d.relayServers || [];
+        relays = (d.relayServers || []).filter((relay: any) => relay?.id !== "public-free");
       }
 
       // Fetch user settings to get relay password override + primary device
@@ -1410,7 +1410,11 @@ export default function DashboardPage() {
           if (sr.ok) {
             const sd = await sr.json();
             const pw = sd.settings?.relayPassword || sd.relayPassword;
-            if (pw) { relays = relays.map((r: any) => ({ ...r, password: pw })); }
+            if (pw) {
+              relays = relays.map((relay: any) =>
+                relay?.id === "yaver-edge" ? relay : { ...relay, password: pw },
+              );
+            }
             if (!cancelled && opts?.syncPrimary) {
               setPrimaryDeviceId(sd.settings?.primaryDeviceId ?? null);
               setSecondaryDeviceId(sd.settings?.secondaryDeviceId ?? null);
@@ -1432,7 +1436,10 @@ export default function DashboardPage() {
         } catch {}
       }
 
-      if (!cancelled && relays.length > 0) {
+      if (!relays.some((relay: any) => String(relay?.httpUrl || "").replace(/\/+$/, "") === YAVER_EDGE_URL)) {
+        relays.push({ id: "yaver-edge", quicAddr: "", httpUrl: YAVER_EDGE_URL, region: "global", priority: 99 });
+      }
+      if (!cancelled) {
         agentClient.setRelayServers(relays);
         agentClientPool.setRelayServersOnAll(relays);
       }

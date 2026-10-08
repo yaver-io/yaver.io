@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { CONVEX_URL } from "@/lib/constants";
+import { CONVEX_URL, YAVER_EDGE_URL } from "@/lib/constants";
 import type { RuntimeProjectSeed } from "@/lib/runtimeProjectSettings";
 import {
   resolveIdentityMerge,
@@ -272,33 +272,20 @@ function needsAttention(d: Pick<Device, "needsAuth" | "online" | "peerState" | "
 let relayPresenceUrlPromise: Promise<string | null> | null = null;
 
 async function getPrimaryRelayPresenceUrl(): Promise<string | null> {
-  if (!relayPresenceUrlPromise) {
-    relayPresenceUrlPromise = (async () => {
-      try {
-        const res = await fetch(`${CONVEX_URL}/config`);
-        if (!res.ok) return null;
-        const data = await res.json().catch(() => ({}));
-        const relays = Array.isArray(data?.relayServers) ? data.relayServers : [];
-        const primary = relays
-          .filter((relay: any) => typeof relay?.httpUrl === "string" && relay.httpUrl.trim() !== "")
-          .sort((a: any, b: any) => Number(a?.priority ?? 9999) - Number(b?.priority ?? 9999))[0];
-        return primary?.httpUrl ? String(primary.httpUrl).replace(/\/+$/, "") : null;
-      } catch {
-        return null;
-      }
-    })();
-  }
+  if (!relayPresenceUrlPromise) relayPresenceUrlPromise = Promise.resolve(YAVER_EDGE_URL);
   return relayPresenceUrlPromise;
 }
 
-async function applyRelayPresence(devices: Device[]): Promise<Device[]> {
+async function applyRelayPresence(devices: Device[], token: string): Promise<Device[]> {
   if (devices.length === 0) return devices;
   const relayUrl = await getPrimaryRelayPresenceUrl();
   if (!relayUrl) return devices;
   try {
     const ids = devices.map((device) => device.id).filter(Boolean).join(",");
     if (!ids) return devices;
-    const res = await fetch(`${relayUrl}/presence?ids=${encodeURIComponent(ids)}`);
+    const res = await fetch(`${relayUrl}/presence?ids=${encodeURIComponent(ids)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     if (!res.ok) return devices;
     const data = await res.json().catch(() => ({}));
     const table = data?.devices && typeof data.devices === "object" ? data.devices : {};
@@ -754,7 +741,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
       }});
 
       const collapsed = collapseDevices(mapped);
-      const withRelayPresence = await applyRelayPresence(collapsed);
+      const withRelayPresence = await applyRelayPresence(collapsed, token);
 
       // Stable order: preserve the previous ordering whenever the set
       // of device IDs hasn't changed. Devices only re-sort when one

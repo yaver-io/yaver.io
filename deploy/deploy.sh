@@ -72,6 +72,7 @@ Targets:
   convex       Alias for backend
   cloudflare   Cloudflare Workers web deploy
   web          Alias for cloudflare
+  edge         Cloudflare identity + automatic tunnel edge only
   ios          TestFlight deploy
   testflight   Alias for ios
   android      Play internal deploy + upload
@@ -116,6 +117,7 @@ Examples:
   ./deploy/deploy.sh all --dry-run
   ./deploy/deploy.sh backend
   ./deploy/deploy.sh cloudflare
+  ./deploy/deploy.sh edge
   ./deploy/deploy.sh ios
 USAGE
 }
@@ -209,6 +211,10 @@ case "$target" in
   cloudflare|web)
     require_deploy_boundary
     run "$ROOT/scripts/deploy-web.sh"
+    ;;
+  edge)
+    require_deploy_boundary
+    run "$ROOT/scripts/deploy-edge.sh"
     ;;
   ios|testflight)
     require_deploy_boundary

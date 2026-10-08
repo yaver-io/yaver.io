@@ -5,6 +5,7 @@
  * Override at build time by setting NEXT_PUBLIC_CONVEX_SITE_URL in .env or runtime env vars.
  */
 import { storedPrivateVpsUrl } from "./privateVps";
+export { YAVER_EDGE_URL } from "./_core/constants";
 
 export const HOSTED_CONVEX_URL =
   process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||

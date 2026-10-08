@@ -487,7 +487,7 @@ export default function SurveyScreen() {
           </Text>
         </View>
         <Text style={{ fontSize: 13, color: relayOptOut ? c.textMuted : c.textSecondary }}>
-          public.yaver.io (EU) — no setup needed
+          edge.yaver.io (global) — no setup needed
         </Text>
       </View>
 

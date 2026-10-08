@@ -47,6 +47,7 @@ import {
   type MobileExecutionMode,
 } from "../lib/executionMode";
 import { isHostedCloudSurfaceDevice } from "../lib/launchFlags";
+import { YAVER_EDGE_URL } from "../_core/constants";
 
 // Auto-connect probe budget. Matches the manual switch modal (4000ms) — the
 // automatic path used to run at 3000ms, so the path the user lands on by
@@ -534,21 +535,22 @@ function mirrorRelayPasswordToNative(
 // last resort, even when platform-config load failed and only a private relay is
 // configured — otherwise a phone on a private relay can't reach a free-relay box
 // (the exact mac-mini-unreachable case).
-const FREE_RELAY_HTTP = "https://public.yaver.io";
-function withFreeRelayFallback(list: RelayServer[], password?: string): RelayServer[] {
-  if (list.some((s) => normalizedURL(s.httpUrl) === normalizedURL(FREE_RELAY_HTTP))) return list;
+const FREE_RELAY_HTTP = YAVER_EDGE_URL;
+function withFreeRelayFallback(list: RelayServer[], _password?: string): RelayServer[] {
+  const active = list.filter((server) => server.id !== "public-free");
+  if (active.some((s) => normalizedURL(s.httpUrl) === normalizedURL(FREE_RELAY_HTTP))) return active;
   return [
-    ...list,
+    ...active,
     {
-      id: "public-free",
-      // Resolve at connection time so the platform can use A on IPv4-only
-      // networks and AAAA on IPv6-only networks. A literal IPv4 here made the
-      // universal fallback unavailable precisely when DNS + IPv6 still worked.
-      quicAddr: "public.yaver.io:4433",
+      id: "yaver-edge",
+      // Cloudflare Workers expose HTTPS/SSE/WebSocket, not raw QUIC. Direct
+      // peer-to-peer QUIC remains a separate preferred lane.
+      quicAddr: "",
       httpUrl: FREE_RELAY_HTTP,
-      region: "eu",
+      region: "global",
       priority: 99, // last resort — tried only after configured relays 502/fail
-      password, // the per-user relay password authenticates the free relay too
+      // The edge authenticates the Yaver bearer + access graph. Never attach a
+      // legacy shared-relay password (or any Cloudflare credential).
     },
   ];
 }

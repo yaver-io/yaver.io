@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { CONVEX_URL } from "@/lib/constants";
+import { YAVER_EDGE_URL } from "@/lib/constants";
 import { previewDeviceProxyHeaders } from "@/lib/preview-device-proxy";
 import { injectPreviewPathRebase } from "@/lib/previewRebase";
 
@@ -36,11 +36,6 @@ function preflightResponse(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers });
 }
 
-type RelayServer = {
-  httpUrl?: string;
-  password?: string;
-};
-
 async function readAuthToken(request: NextRequest): Promise<string | null> {
   const auth = request.headers.get("authorization");
   if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
@@ -48,53 +43,8 @@ async function readAuthToken(request: NextRequest): Promise<string | null> {
   return store.get("yaver_auth_token")?.value || store.get("yaver_session")?.value || null;
 }
 
-async function convexJson(path: string, token: string, init?: RequestInit) {
-  const res = await fetch(`${CONVEX_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers || {}),
-    },
-    cache: "no-store",
-  });
-  const text = await res.text();
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
-  return { res, json, text };
-}
-
-async function loadRelayTarget(token: string) {
-  const [{ res: configRes, json: configJson }, { res: settingsRes, json: settingsJson }] = await Promise.all([
-    convexJson("/config", token),
-    convexJson("/settings", token),
-  ]);
-
-  if (!configRes.ok) {
-    throw new Error(configJson?.error || `Failed to load relay config: HTTP ${configRes.status}`);
-  }
-  if (!settingsRes.ok) {
-    throw new Error(settingsJson?.error || `Failed to load settings: HTTP ${settingsRes.status}`);
-  }
-
-  const relays: RelayServer[] = Array.isArray(configJson?.relayServers) ? configJson.relayServers : [];
-  const relay = relays[0];
-  const password = settingsJson?.settings?.relayPassword || settingsJson?.relayPassword || relay?.password;
-  if (!relay?.httpUrl || !password) {
-    throw new Error("Relay preview is not configured for this account");
-  }
-  return { relayUrl: String(relay.httpUrl).replace(/\/+$/, ""), password: String(password) };
-}
-
-async function repairRelayPassword(token: string): Promise<void> {
-  await convexJson("/settings/repair-relay", token, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
+function loadRelayTarget() {
+  return { relayUrl: YAVER_EDGE_URL, password: "" };
 }
 
 async function proxyRelay(
@@ -189,22 +139,8 @@ async function handle(request: NextRequest, context: { params: Promise<{ deviceI
   }
   const restPath = path.join("/");
 
-  let target = await loadRelayTarget(token);
-  let response = await proxyRelay(request, target.relayUrl, target.password, token, deviceId, restPath);
-
-  if (response.status === 401) {
-    const body = await response.clone().text();
-    // Self-heal a missing/rotated password too, not just an invalid one. The
-    // relay says "relay password missing — sign in again to fetch it" for a
-    // fresh/rotated user with no password — the case that most needs re-pulling
-    // creds — so match missing|invalid|rejected|denied. Mirrors the agent's
-    // staleRelayPasswordHTTP.
-    if (/relay password (missing|invalid|rejected|denied)/i.test(body)) {
-      await repairRelayPassword(token);
-      target = await loadRelayTarget(token);
-      response = await proxyRelay(request, target.relayUrl, target.password, token, deviceId, restPath);
-    }
-  }
+  const target = loadRelayTarget();
+  const response = await proxyRelay(request, target.relayUrl, target.password, token, deviceId, restPath);
 
   const headers = new Headers();
   response.headers.forEach((value, key) => {
