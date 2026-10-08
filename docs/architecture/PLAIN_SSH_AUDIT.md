@@ -268,3 +268,15 @@ workspace references after the shared workstation cache disappeared. Release
 scripts for phone, TV and Wear now use `.yaver-build/android-gradle` by default,
 respecting an explicit `GRADLE_USER_HOME` override. That generated directory is
 ignored by git. A shared-cache cleanup no longer removes Yaver's release state.
+
+Release verification on 2026-10-08: App Store Connect reports the submitted
+iOS/embedded Watch, tvOS, visionOS and macOS builds above as `VALID` and not
+expired. CLI 1.99.477 and desktop GUI 0.1.17 release workflows completed;
+the downloaded macOS CLI passed published checksum and signature verification.
+Production `/ssh` returns HTTP 200, and the macOS download route redirects to
+GUI 0.1.17. The desktop release workflow now explicitly builds the native SSH
+helper before packaging, with a regression check for that step.
+
+The local RN-web SSH entry was also checked in a fresh full iPhone device
+context without a Yaver token: its host/user inputs and optional-auth screen
+remain usable. This is browser evidence, not physical phone/CarPlay testing.
