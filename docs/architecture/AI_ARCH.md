@@ -408,6 +408,37 @@ The intended “no game over” path for a signed-in phone is:
 5. phone immediately POSTs its token back via pair submit
 6. agent resumes normal authenticated behavior
 
+### Access Channel fallback (headless / no routable agent HTTP)
+
+Primary code:
+
+- `access-channel/src/index.ts`
+- `backend/convex/accessChannel.ts`
+- `desktop/agent/bus_websocket_access.go`
+- `desktop/agent/access_channel.go`
+- `mobile/src/lib/accessChannel.ts`
+
+The default hosted lane is a Cloudflare Durable Object using the Hibernation
+WebSocket API. MQTT remains an optional BYO adapter. This is a control plane,
+not another relay or data plane: its closed 2 KB grammar contains only wake,
+Yaver-auth, access, presence, and result intents. Source, terminal output,
+keystrokes, OAuth tokens/codes, screenshots, audio, video, and files cannot be
+represented and are rejected as unknown fields.
+
+Enrollment is account-owner-only and binds an existing device row's Ed25519
+public key. After enrollment the agent mints five-minute channel capabilities
+with a signed timestamp/nonce proof, so an expired Yaver bearer cannot strand a
+headless machine. Convex keeps only public enrollment metadata and a bounded
+replay window. The Worker verifies EdDSA JWTs from the public JWKS, isolates one
+opaque tenant per Durable Object, enforces direction/device binding, coalesces
+one active auth request per target, and stores no message bodies.
+
+Mobile's `Request sign-in` sends one `requests.auth` intent. The agent starts
+the existing device-code self-nomination and acknowledges it; the actual user
+code, approval, and minted session remain on the Convex auth path. Generic LAN
+and relay bus transports are explicitly forbidden from injecting Access
+Channel topics.
+
 ## Mobile Discovery and Connection Logic
 
 Primary code:
@@ -440,22 +471,19 @@ The phone probes `/health` to establish reachability and caches:
 
 ## Important Current Gap
 
-As of 2026-04-16, the server-side recovery path is more complete than the mobile-side use of it.
+The Access Channel currently carries the Yaver-account recovery trigger only.
+Runner-specific OAuth (Codex/Claude), KVM input, capture-card video, and command
+execution continue over their existing authenticated relay/direct paths; they
+must never be added as raw Access Channel payloads. A future hardware bridge
+(Raspberry Pi capture + M5Stack HID/power) should expose typed, capability- and
+session-scoped local actions through the Go agent, while media stays WebRTC and
+physical input remains encrypted end-to-end.
 
-Specifically:
-
-- `desktop/agent/auth_recover.go` already supports host-token recovery
-- `mobile/src/lib/quic.ts` method `recoverAgent(...)` only posts `{secret, mode}`
-- it does not send the mobile Bearer token
-- it is not wired into an automatic “agent auth expired, recover now” flow
-
-Practical effect:
-
-- the codebase has the pieces for seamless remote recovery
-- but normal signed-in-phone recovery is not fully productized
-- users can still land in a “remote machine is reachable but unauthenticated” dead state unless bootstrap auto-pair or manual secret-based recovery happens to save them
-
-This is the most important architecture issue around remote reboot resilience.
+Mobile foreground can open the Access WebSocket on demand. Background wake
+still requires the platform push path because iOS and Android do not promise a
+permanent app WebSocket. The Cloudflare Worker and Convex signing/JWKS
+environment must be deployed/configured before the hosted lane is available;
+the optional BYO MQTT path remains usable independently.
 
 ## Boot/Reboot Story
 

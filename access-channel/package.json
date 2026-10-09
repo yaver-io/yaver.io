@@ -1,0 +1,18 @@
+{
+  "name": "yaver-access-channel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Yaver's payload-minimal hibernating WebSocket access plane",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --experimental-strip-types --test src/*.test.mts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261009.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.149.0"
+  }
+}

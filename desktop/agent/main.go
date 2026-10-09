@@ -3668,6 +3668,21 @@ func runServe(args []string) {
 		}
 	}
 
+	// The hosted Access Channel is a hibernating WebSocket control plane. It is
+	// pure Go and needs no local browser or physical interaction on macOS,
+	// Linux/Raspberry Pi, or Windows. MQTT remains an optional BYO adapter.
+	if strings.TrimSpace(cfg.DeviceID) != "" && os.Getenv("YAVER_DISABLE_ACCESS_CHANNEL") != "1" {
+		wt := NewWebSocketAccessTransport(cfg, b)
+		wt.Start(ctx)
+		b.RegisterTransport(wt)
+		if strings.TrimSpace(cfg.AuthToken) != "" && os.Getenv("YAVER_DISABLE_MQTT_ACCESS") != "1" {
+			mt := NewMQTTAccessTransport(cfg, b)
+			mt.Start(ctx)
+			b.RegisterTransport(mt)
+		}
+	}
+	startAccessRequestConsumer(ctx, b, cfg, httpServer)
+
 	// Periodic + event-driven heartbeat. StartPeerHeartbeat emits
 	// one `online` event on boot, then `ping` every minute. The
 	// shutdown handler (wired further down) publishes `offline`.

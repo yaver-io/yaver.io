@@ -1,0 +1,15 @@
+name = "yaver-access-channel"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+JWKS_URL = "https://perceptive-minnow-557.eu-west-1.convex.site/access-channel/jwks"
+JWT_ISSUER = "https://yaver.io/access-channel"
+
+[[durable_objects.bindings]]
+name = "ACCESS_ROOMS"
+class_name = "AccessRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccessRoom"]

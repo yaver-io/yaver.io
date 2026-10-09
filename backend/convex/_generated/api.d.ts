@@ -9,6 +9,7 @@
  */
 
 import type * as access from "../access.js";
+import type * as accessChannel from "../accessChannel.js";
 import type * as admin from "../admin.js";
 import type * as agentRescue from "../agentRescue.js";
 import type * as agentSync from "../agentSync.js";
@@ -133,6 +134,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   access: typeof access;
+  accessChannel: typeof accessChannel;
   admin: typeof admin;
   agentRescue: typeof agentRescue;
   agentSync: typeof agentSync;

@@ -2105,6 +2105,23 @@ export default function SettingsScreen() {
         </View>
         <Text style={[styles.aboutValue, { color: c.accent }]}>Scan ›</Text>
       </Pressable>}
+      {!settingsPane && <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open Yaver Access Channel settings"
+        onPress={() => router.push("/access-channel")}
+        style={({ pressed }) => [
+          styles.tvSignInBar,
+          { backgroundColor: c.bgCard, borderColor: c.border },
+          pressed && { opacity: 0.72 },
+        ]}
+      >
+        <Ionicons name="radio-outline" size={22} color={c.accent} />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.aboutLabel, { color: c.textPrimary, fontWeight: "700" }]}>Access Channel</Text>
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>Secure wake and authorization signals</Text>
+        </View>
+        <Text style={[styles.aboutValue, { color: c.accent }]}>Configure ›</Text>
+      </Pressable>}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}

@@ -72,6 +72,8 @@ Targets:
   convex       Alias for backend
   cloudflare   Cloudflare Workers web deploy
   web          Alias for cloudflare
+  access-channel
+               Cloudflare hibernating WebSocket control plane
   ios          TestFlight deploy
   testflight   Alias for ios
   android      Play internal deploy + upload
@@ -116,6 +118,7 @@ Examples:
   ./deploy/deploy.sh all --dry-run
   ./deploy/deploy.sh backend
   ./deploy/deploy.sh cloudflare
+  ./deploy/deploy.sh access-channel
   ./deploy/deploy.sh ios
 USAGE
 }
@@ -209,6 +212,10 @@ case "$target" in
   cloudflare|web)
     require_deploy_boundary
     run "$ROOT/scripts/deploy-web.sh"
+    ;;
+  access-channel)
+    require_deploy_boundary
+    run "$ROOT/scripts/deploy-access-channel.sh"
     ;;
   ios|testflight)
     require_deploy_boundary

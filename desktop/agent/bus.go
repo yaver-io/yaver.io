@@ -92,6 +92,8 @@ type Bus struct {
 	published atomic.Uint64
 	received  atomic.Uint64
 	dupes     atomic.Uint64
+	rejected  atomic.Uint64
+	access    *accessSignalGuard
 
 	nowFn func() time.Time
 }
@@ -118,6 +120,7 @@ func NewBus(deviceID DeviceID, userID string) *Bus {
 		inbox:    make(chan BusEvent, 1024),
 		stop:     make(chan struct{}),
 		nowFn:    time.Now,
+		access:   newAccessSignalGuard(),
 	}
 }
 
@@ -179,6 +182,12 @@ func (b *Bus) Publish(ctx context.Context, topic string, payload interface{}, re
 		QoS:         qos,
 		Payload:     raw,
 	}
+	if isAccessTopic(topic) {
+		if err := b.access.Accept(evt); err != nil {
+			b.rejected.Add(1)
+			return BusEvent{}, fmt.Errorf("bus: access signal rejected: %w", err)
+		}
+	}
 
 	// Fire locally first — a subscriber on this device must never miss
 	// its own publish, even if every transport is down.
@@ -198,6 +207,9 @@ func (b *Bus) Publish(ctx context.Context, topic string, payload interface{}, re
 
 	var lastErr error
 	for _, t := range transports {
+		if isAccessTopic(topic) && t.Name() != "websocket-access" && t.Name() != "mqtt-access" {
+			continue
+		}
 		if err := t.Publish(ctx, evt); err != nil {
 			lastErr = err
 			log.Printf("[bus] publish via %s failed: %v", t.Name(), err)
@@ -265,9 +277,36 @@ func (b *Bus) Retained(prefix string) []BusEvent {
 // Enqueues for dispatch. Drops on full inbox (QoS 0) — QoS 1 relies
 // on publisher's ack/retry.
 func (b *Bus) Receive(evt BusEvent) {
+	if isAccessTopic(evt.Topic) {
+		b.rejected.Add(1)
+		log.Printf("[bus] rejected access topic from non-access transport")
+		return
+	}
+	b.receive(evt, false)
+}
+
+// ReceiveAccess is intentionally separate from Receive: generic LAN/relay bus
+// transports must not inject control-plane topics. Only the authenticated
+// Access Channel adapters call this entrypoint.
+func (b *Bus) ReceiveAccess(evt BusEvent) {
+	b.receive(evt, true)
+}
+
+func (b *Bus) receive(evt BusEvent, allowAccess bool) {
 	if evt.Publisher == b.deviceID {
 		// Our own event bouncing back through a relay fan-out. Skip.
 		return
+	}
+	if isAccessTopic(evt.Topic) {
+		if !allowAccess {
+			b.rejected.Add(1)
+			return
+		}
+		if err := b.access.Accept(evt); err != nil {
+			b.rejected.Add(1)
+			log.Printf("[bus] rejected access signal from %s: %v", evt.Publisher, err)
+			return
+		}
 	}
 	select {
 	case b.inbox <- evt:
@@ -414,6 +453,7 @@ type BusStatus struct {
 	Published  uint64   `json:"published"`
 	Received   uint64   `json:"received"`
 	Dupes      uint64   `json:"dupes"`
+	Rejected   uint64   `json:"rejected"`
 	Transports []string `json:"transports"`
 	Retained   int      `json:"retainedCount"`
 	Subs       int      `json:"subscriptionCount"`
@@ -437,6 +477,7 @@ func (b *Bus) Status() BusStatus {
 		Published:  b.published.Load(),
 		Received:   b.received.Load(),
 		Dupes:      b.dupes.Load(),
+		Rejected:   b.rejected.Load(),
 		Transports: names,
 		Retained:   len(b.retained),
 		Subs:       subCount,

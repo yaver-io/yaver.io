@@ -610,6 +610,46 @@ export default defineSchema({
     .index("by_deviceId", ["deviceId"])
     .index("by_hardwareId", ["hardwareId"]),
 
+  // Access Channel is only a rendezvous transport for public, typed signals.
+  // The hosted lane is a hibernating Cloudflare WebSocket Durable Object; MQTT
+  // remains an optional BYO adapter. OAuth/session tokens and message payloads
+  // never live here. Device grants are checked against devices.userId before
+  // issuance (accessChannel.ts).
+  accessBrokers: defineTable({
+    userId: v.id("users"),
+    brokerId: v.string(),
+    tenantTopicId: v.string(),
+    name: v.string(),
+    endpoint: v.string(),
+    deployment: v.union(v.literal("yaver-hosted"), v.literal("byo")),
+    // Public verification material only. Private CA/JWT signing keys belong in
+    // the broker secret store and Convex environment, never in a table.
+    caFingerprint: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    disabledAt: v.optional(v.number()),
+  })
+    .index("by_owner", ["userId"])
+    .index("by_broker_id", ["brokerId"]),
+
+  accessBrokerDevices: defineTable({
+    userId: v.id("users"),
+    brokerId: v.string(),
+    deviceId: v.string(),
+    // Copy of the already-registered Ed25519 public key. Enrollment refuses a
+    // supplied key that differs from devices.signPublicKey.
+    signPublicKey: v.string(),
+    state: v.union(v.literal("active"), v.literal("revoked")),
+    enrolledAt: v.number(),
+    revokedAt: v.optional(v.number()),
+    // Bounded replay window for signed, bearer-free reconnect proofs. This is
+    // public nonce/timestamp metadata, never a key or credential.
+    recentProofs: v.optional(v.array(v.object({ nonce: v.string(), expiresAt: v.number() }))),
+  })
+    .index("by_owner", ["userId"])
+    .index("by_broker_device", ["brokerId", "deviceId"])
+    .index("by_device", ["deviceId"]),
+
   // Physical phones/tablets attached to a Yaver agent host. This is discovery
   // metadata only: opaque id + model/capability state. ADB serials, network
   // addresses, screen pixels and input events remain on the host/P2P path.

@@ -5,7 +5,7 @@ import { api, internal } from "./_generated/api";
 import type { SessionScope } from "./auth";
 import { sha256Hex, randomHex } from "./auth";
 import { managedDeviceIdFor } from "./cloudMachines";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, importPKCS8, jwtVerify, SignJWT } from "jose";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 import { decryptStoredOidcSecret } from "./admin";
 import { estimatedHourlyCents, minimumReserveCents } from "./cloudLifecycle";
@@ -962,6 +962,7 @@ for (const path of [
   "/auth/device-code/authorize", "/auth/device-code/broker",
   "/auth/device-code/poll", "/auth/device-code/claim", "/auth/device-code/events",
   "/auth/device-code/pending",
+  "/access-channel/hosted", "/access-channel/brokers", "/access-channel/enroll", "/access-channel/revoke", "/access-channel/token", "/access-channel/device-token",
   "/auth/passkey/register/start", "/auth/passkey/register/finish",
   "/auth/passkey/login/start", "/auth/passkey/login/finish",
   "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
@@ -3466,6 +3467,241 @@ http.route({
       const msg = err instanceof Error ? err.message : String(err);
       const code = msg.includes("Unauthorized") ? 401 : msg.includes("Forbidden") ? 403 : 500;
       return errorResponse(msg, code);
+    }
+  }),
+});
+
+// ── Yaver Access Channel ───────────────────────────────────────────────
+// Access Channel is a wake/rendezvous lane only. The default hosted transport
+// is a Cloudflare hibernating WebSocket; MQTT is an optional BYO adapter. These
+// routes mint five-minute, capability-scoped JWTs after normal account auth.
+// No Yaver/OAuth credential is sent to or stored by either transport.
+
+type AccessCredentialGrant = {
+  role: "controller" | "device";
+  brokerId: string;
+  tenantTopicId: string;
+  endpoint: string;
+  transport: "websocket" | "mqtt";
+  caFingerprint: string | null;
+  deviceId?: string;
+};
+
+async function mintAccessCredential(grant: AccessCredentialGrant) {
+  const privatePem = (process.env.YAVER_ACCESS_JWT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+  if (!privatePem) throw new Error("access channel signer unavailable");
+  const key = await importPKCS8(privatePem, "EdDSA");
+  const now = Math.floor(Date.now() / 1000);
+  // Devices prove possession of their enrolled Ed25519 key and keep one idle,
+  // hibernating socket. An hourly capability avoids 288 Convex renewals/day;
+  // interactive controller grants remain five minutes. Revocation therefore
+  // has a bounded one-hour maximum for an already-connected device.
+  const lifetimeSeconds = grant.role === "device" ? 3600 : 300;
+  const devicePart = grant.role === "device" ? grant.deviceId! : randomHex(8);
+  const clientId = `${grant.role === "device" ? "yavd" : "yavc"}_${devicePart}`;
+  const root = `yaver/v1/${grant.tenantTopicId}`;
+  const acl = grant.role === "device"
+    ? [
+        { permission: "allow", action: "publish", topic: `${root}/device/${grant.deviceId}/events/#`, qos: [0, 1] },
+        { permission: "allow", action: "subscribe", topic: `${root}/device/${grant.deviceId}/requests/#`, qos: [0, 1] },
+        { permission: "deny", action: "all", topic: "#" },
+      ]
+    : [
+        { permission: "allow", action: "publish", topic: `${root}/device/+/requests/#`, qos: [0, 1] },
+        { permission: "allow", action: "subscribe", topic: `${root}/device/+/events/#`, qos: [0, 1] },
+        { permission: "deny", action: "all", topic: "#" },
+      ];
+  const accessToken = await new SignJWT({
+    username: clientId,
+    clientid: clientId,
+    role: grant.role,
+    actor: grant.role === "device" ? grant.deviceId : clientId,
+    device: grant.role === "device" ? grant.deviceId : undefined,
+    tenant: grant.tenantTopicId,
+    broker: grant.brokerId,
+    acl,
+  })
+    .setProtectedHeader({ alg: "EdDSA", kid: process.env.YAVER_ACCESS_JWT_KID || "yaver-access-v1" })
+    .setIssuer("https://yaver.io/access-channel")
+    .setAudience(grant.brokerId)
+    .setSubject(clientId)
+    .setJti(randomHex(16))
+    .setIssuedAt(now)
+    .setNotBefore(now - 5)
+    .setExpirationTime(now + lifetimeSeconds)
+    .sign(key);
+  return {
+    ok: true,
+    transport: grant.transport,
+    endpoint: grant.endpoint,
+    brokerId: grant.brokerId,
+    clientId,
+    username: clientId,
+    token: accessToken,
+    // MQTT calls the same capability JWT a password.
+    password: accessToken,
+    topicRoot: root,
+    caFingerprint: grant.caFingerprint,
+    expiresAt: (now + lifetimeSeconds) * 1000,
+  };
+}
+
+http.route({
+  path: "/access-channel/device-token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({}));
+    try {
+      const grant = await ctx.runMutation(internal.accessChannel.authorizeDeviceProof, {
+        deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+        timestamp: typeof body.timestamp === "number" ? body.timestamp : 0,
+        nonce: typeof body.nonce === "string" ? body.nonce : "",
+        signature: typeof body.signature === "string" ? body.signature : "",
+      });
+      return jsonResponse(await mintAccessCredential(grant));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg.includes("signer unavailable") ? msg : "device access denied", msg.includes("signer unavailable") ? 503 : 403);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/hosted",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const endpoint = process.env.YAVER_ACCESS_CHANNEL_URL || "";
+    if (!endpoint) return errorResponse("hosted access channel is unavailable", 503);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      return jsonResponse(await ctx.runMutation(internal.accessChannel.ensureHosted, { tokenHash, endpoint }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/jwks",
+  method: "GET",
+  handler: httpAction(async () => {
+    try {
+      const jwks = JSON.parse(process.env.YAVER_ACCESS_JWKS || "");
+      if (!Array.isArray(jwks?.keys) || jwks.keys.length === 0) {
+        return errorResponse("access channel signing keys unavailable", 503);
+      }
+      return jsonResponse(jwks);
+    } catch {
+      return errorResponse("access channel signing keys unavailable", 503);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/brokers",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      return jsonResponse(await ctx.runQuery(api.accessChannel.listMine, { tokenHash }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/brokers",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      return jsonResponse(await ctx.runMutation(api.accessChannel.registerByoBroker, {
+        tokenHash,
+        name: typeof body.name === "string" ? body.name : "",
+        endpoint: typeof body.endpoint === "string" ? body.endpoint : "",
+        caFingerprint: typeof body.caFingerprint === "string" ? body.caFingerprint : undefined,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/enroll",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      return jsonResponse(await ctx.runMutation(api.accessChannel.enrollOwnedDevice, {
+        tokenHash,
+        brokerId: typeof body.brokerId === "string" ? body.brokerId : "",
+        deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const status = msg.includes("Unauthorized") ? 401 : msg.includes("owned") || msg.includes("unavailable") ? 403 : 400;
+      return errorResponse(msg, status);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      return jsonResponse(await ctx.runMutation(api.accessChannel.revokeDevice, {
+        tokenHash,
+        brokerId: typeof body.brokerId === "string" ? body.brokerId : "",
+        deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 403);
+    }
+  }),
+});
+
+http.route({
+  path: "/access-channel/token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    const role = body.role === "device" ? "device" : body.role === "controller" ? "controller" : null;
+    if (!role) return errorResponse("role must be controller or device", 400);
+    try {
+      const grant = await ctx.runQuery(api.accessChannel.authorizeConnection, {
+        tokenHash,
+        brokerId: typeof body.brokerId === "string" ? body.brokerId : "",
+        role,
+        deviceId: typeof body.deviceId === "string" ? body.deviceId : undefined,
+      });
+      return jsonResponse(await mintAccessCredential(grant));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : msg.includes("unavailable") || msg.includes("enrolled") ? 403 : 400);
     }
   }),
 });
