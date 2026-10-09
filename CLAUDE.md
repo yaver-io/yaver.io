@@ -966,6 +966,12 @@ as `fix the /exit bug` remain ordinary coding prompts.
   `localStorage["yaver.secure.yaver_auth_token"]` (RN-web key,
   `mobile/src/lib/secureStoreCompat.ts`), drive with `devices["iPhone 15 Pro"]`
   — see `e2e/verify_live_console7.mjs` (verified 2026-08-09).
+- **Remote/headless app overview**: `mobile-test-open` now defaults to
+  `mode=overview`. It inventories static Expo Router routes and captures each
+  in a true `iPhone 15 Pro` browser context, with visible text and browser
+  failures in `manifest.json`. It never requests physical access to the host;
+  authentication walls are recorded as named results. Use `mode=open` only
+  when a human explicitly requests a headed manual session.
 
 ### Shared browser-automation queue (concurrent sessions)
 

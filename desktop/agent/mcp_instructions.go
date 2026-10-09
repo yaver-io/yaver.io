@@ -124,6 +124,16 @@ Existing app integration:
   the actual project. Use verify=web when a browser bundle is part of the
   requested surface.
 
+Remote React Native UI review:
+
+  When asked to inspect or overview a mobile app on a remote machine, call
+  mobile-test-open with mode=overview (or omit mode). It drives the browser
+  lane headlessly with a real iPhone device context, inventories static Expo
+  Router screens, and returns a manifest plus screenshots. Never choose
+  mode=open, a physical phone, QR scanning, or a local sign-in prompt unless
+  the user explicitly requests a manual headed session. An auth-blocked route
+  is a named overview result, not a reason to ask for physical access.
+
 Fleet coding:
 
   For substantial coding work, prefer agent_fleet_run. It makes the master

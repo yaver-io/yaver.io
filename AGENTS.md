@@ -265,6 +265,14 @@ absolute gap, not a flaky one. Rules, full version in [`CLAUDE.md`](CLAUDE.md):
   `mobile/src/lib/secureStoreCompat.ts`), then drive the app with
   `devices["iPhone 15 Pro"]` context. Verified 2026-08-09 with
   `e2e/verify_live_console7.mjs` (task detail → LiveConsoleSection).
+- **Remote/headless whole-app overview is the default:** call
+  `mobile-test-open` with `mode=overview` (or omit `mode`). It discovers static
+  Expo Router screens, drives RN-web with the full `iPhone 15 Pro` descriptor,
+  and writes one screenshot plus visible text/browser failures per route under
+  the agent-owned `~/.yaver/artifacts/mobile-overview/` namespace. It injects
+  the local Yaver agent token when present, records auth-blocked routes instead
+  of pausing, and never falls back to a physical phone or asks for interaction
+  on the remote host. `mode=open` is the explicit manual exception.
 - **Shared browser queue for concurrent threads:** when a closed-loop arc must
   wait for the browser coordinator, add one Markdown file under
   `e2e/browser-automation/test-cases/YYYY-MM-DD/`; never append to another

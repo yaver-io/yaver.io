@@ -364,11 +364,14 @@ export default function HomePage() {
               <p className="text-sm font-semibold text-surface-100">iPhone / iPad</p>
               <p className="mt-1 text-[11px] text-surface-500">App Store</p>
             </a>
-            <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
-              className="rounded-xl border border-surface-800 bg-surface-900/50 p-4 transition-colors hover:border-surface-600">
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
               <p className="text-sm font-semibold text-surface-100">Android</p>
-              <p className="mt-1 text-[11px] text-surface-500">Google Play</p>
-            </a>
+              <p className="mt-1 text-[11px] text-surface-500">Signed APK or Google Play</p>
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold">
+                <a href="https://download.yaver.io/latest.apk" className="text-emerald-400 hover:text-emerald-300">Download APK</a>
+                <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer" className="text-surface-300 hover:text-surface-100">Google Play</a>
+              </div>
+            </div>
             <a href="/download"
               className="rounded-xl border border-surface-800 bg-surface-900/50 p-4 transition-colors hover:border-surface-600">
               <p className="text-sm font-semibold text-surface-100">CLI (npm)</p>

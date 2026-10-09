@@ -19,11 +19,14 @@ export default function StudioConfigScreen() {
   const [lane, setLane] = useState<StudioLane>("device");
   const [runner, setRunner] = useState<StudioRunner>("shell");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const project = projects.find((item) => item.path === projectPath) || projects[0];
   const lanes = useMemo(() => studioLanesFor(project?.framework, project?.surfaces), [project]);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setLoadError("");
     Promise.all([
       quicClient.listProjects(true),
       AsyncStorage.getItem("yaver:studio:active"),
@@ -43,6 +46,11 @@ export default function StudioConfigScreen() {
         setLane(defaults.lane);
         setRunner(defaults.runner);
       }
+    }).catch((error) => {
+      if (!alive) return;
+      setProjects([]);
+      setProjectPath("");
+      setLoadError(error instanceof Error ? error.message : "The selected machine is not connected.");
     }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [activeDevice?.id]);
@@ -76,7 +84,9 @@ export default function StudioConfigScreen() {
           <View style={styles.choices}>{devices.map((device) => <Choice key={device.id} label={device.alias ? `@${device.alias}` : device.name} selected={activeDevice?.id === device.id} onPress={() => void selectDevice(device)} colors={colors} />)}</View>
         </Section>
         <Section title="Project" colors={colors}>
-          {loading ? <ActivityIndicator color={colors.accent} /> : <View style={styles.choices}>{projects.map((item) => <Choice key={item.path} label={item.name} selected={project?.path === item.path} onPress={() => void chooseProject(item)} colors={colors} />)}</View>}
+          {loading ? <ActivityIndicator color={colors.accent} /> : loadError ? (
+            <Text style={[styles.note, { color: colors.textMuted }]}>Connect or re-select a machine to load its projects.</Text>
+          ) : <View style={styles.choices}>{projects.map((item) => <Choice key={item.path} label={item.name} selected={project?.path === item.path} onPress={() => void chooseProject(item)} colors={colors} />)}</View>}
         </Section>
         <Section title="Lane" colors={colors}>
           <View style={styles.choices}>{lanes.map((item) => <Choice key={item} label={item === "live" ? "Runtime" : item} selected={lane === item} onPress={() => setLane(item)} colors={colors} />)}</View>

@@ -21,8 +21,7 @@
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 const require = createRequire(import.meta.url);
-const { chromium, devices } = require('/Users/kivanccakmak/Workspace/talos/web/node_modules/playwright');
-const EXE = process.env.CHROMIUM || '/Users/kivanccakmak/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+const { chromium, devices } = require('@playwright/test');
 const URL = process.env.MOBILE_WEB_URL || 'http://localhost:8081';
 // Token: explicit env wins; otherwise read the local agent config (the same
 // token the browser app would get from SecureStore on this machine).
@@ -40,7 +39,10 @@ if (!TOKEN) {
 
 const PROBE_PROMPT = 'Run exactly this shell command and nothing else, then stop: echo LIVE_CONSOLE_PROBE_$(date +%s) && ls /tmp | head -5';
 
-const browser = await chromium.launch({ headless: true, executablePath: EXE });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}),
+});
 const ctx = await browser.newContext({ ...devices['iPhone 15 Pro'], viewport: { width: 393, height: 852 } });
 const page = await ctx.newPage();
 let failures = 0;
