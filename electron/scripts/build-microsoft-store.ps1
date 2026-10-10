@@ -45,4 +45,45 @@ $arguments = @{
 }
 if ($RunPreflight -and $PreflightReport) { $arguments.ReportPath = $PreflightReport }
 & (Join-Path $repo "electron\store\assert-microsoft-store-package.ps1") @arguments
-Write-Host "Built: $artifact"
+
+# Partner Center permanently remembers whether a published device-family lane
+# used a bundle. Yaver's live Windows Desktop lane was introduced as a bundle,
+# so every later submission must remain a real MakeAppx bundle even when it
+# contains only the x64 package. A renamed zip/appxupload is not a bundle.
+$makeAppx = Get-Command makeappx.exe -ErrorAction SilentlyContinue
+if (-not $makeAppx) {
+  $sdkRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+  $makeAppx = Get-ChildItem -Path "$sdkRoot\*\x64\makeappx.exe" -File -ErrorAction SilentlyContinue |
+    Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
+    Select-Object -First 1
+}
+if (-not $makeAppx) { throw "MakeAppx.exe is required to produce the mandatory Store bundle." }
+$makeAppxPath = if ($makeAppx.Source) { $makeAppx.Source } else { $makeAppx.FullName }
+$bundleInput = Join-Path $env:RUNNER_TEMP ("yaver-store-bundle-input-" + [guid]::NewGuid().ToString("N"))
+$bundleInspect = Join-Path $env:RUNNER_TEMP ("yaver-store-bundle-inspect-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $bundleInput, $bundleInspect | Out-Null
+Copy-Item -LiteralPath $artifact -Destination (Join-Path $bundleInput ([IO.Path]::GetFileName($artifact)))
+$bundleVersion = "$($package.version).0"
+$bundle = Join-Path $electron "dist-microsoft-store\Yaver-$($package.version)-x64-store.appxbundle"
+& $makeAppxPath bundle /v /o /bv $bundleVersion /d $bundleInput /p $bundle
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $bundle -PathType Leaf)) {
+  throw "Microsoft Store bundle build failed."
+}
+& $makeAppxPath unbundle /v /o /p $bundle /d $bundleInspect
+if ($LASTEXITCODE -ne 0) { throw "Microsoft Store bundle validation failed." }
+$bundledPackages = @(Get-ChildItem -LiteralPath $bundleInspect -Filter *.appx -File -Recurse)
+if ($bundledPackages.Count -ne 1) { throw "Expected exactly one x64 AppX in the Store bundle, found $($bundledPackages.Count)." }
+$sourceHash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash
+$bundledHash = (Get-FileHash -LiteralPath $bundledPackages[0].FullName -Algorithm SHA256).Hash
+if ($sourceHash -ne $bundledHash) { throw "Bundling changed the validated inner AppX." }
+$bundleHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($PreflightReport) {
+  Add-Content -LiteralPath $PreflightReport -Encoding UTF8 -Value @(
+    "Bundle: $bundle",
+    "Bundle version: $bundleVersion",
+    "Bundle SHA-256: $bundleHash",
+    "PASS: real MakeAppx Desktop bundle contains the byte-identical validated x64 package"
+  )
+}
+Write-Host "Built package: $artifact"
+Write-Host "Built bundle: $bundle"

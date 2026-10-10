@@ -64,6 +64,7 @@ test("GitHub builds and lane-tests the Store package without Convex or a private
   assert.match(workflow, /YAVER_STORE_IDENTITY_NAME/);
   assert.match(workflow, /YAVER_STORE_DISPLAY_NAME/);
   assert.match(workflow, /Microsoft-signs-and-hosts/);
+  assert.match(workflow, /Yaver-\*-x64-store\.appxbundle/);
   assert.doesNotMatch(workflow, /secrets\.(?:CONVEX|WIN_CSC_LINK|YAVER_WINDOWS_CERT|CLOUDFLARE|HCLOUD)/i);
   assert.match(workflow, /if: \$\{\{ github\.event_name == 'push' \}\}/);
   const submitter = read("scripts/microsoft-store-appx-submission.mjs");
@@ -81,5 +82,13 @@ test("final package assertion requires the x64 native agent and rejects WSL payl
   assert.match(assertion, /privateNetworkClientServer/);
   assert.match(assertion, /ExpectedArchitecture = "x64"/);
   assert.match(assertion, /Native command probes intentionally use non-zero exit codes[\s\S]*exit 0\s*$/);
-  assert.doesNotMatch(builder, /assert-microsoft-store-package[\s\S]*LASTEXITCODE/);
+  const assertionInvocation = builder.slice(
+    builder.indexOf("assert-microsoft-store-package.ps1"),
+    builder.indexOf("# Partner Center permanently remembers"),
+  );
+  assert.doesNotMatch(assertionInvocation, /LASTEXITCODE/);
+  assert.match(builder, /makeappx\.exe/);
+  assert.match(builder, /bundle \/v \/o \/bv/);
+  assert.match(builder, /Expected exactly one x64 AppX in the Store bundle/);
+  assert.match(builder, /Bundling changed the validated inner AppX/);
 });

@@ -96,6 +96,7 @@ jobs:
           name: yaver-microsoft-store-x64-${{ github.run_id }}
           path: |
             electron/dist-microsoft-store/Yaver-*-x64-store.appx
+            electron/dist-microsoft-store/Yaver-*-x64-store.appxbundle
             ${{ runner.temp }}/Yaver-Store-Preflight.txt
           if-no-files-found: warn
           retention-days: 30
@@ -126,7 +127,7 @@ jobs:
         shell: bash
         run: |
           version="$(node -p "require('./electron/package.json').version")"
-          package="$(find release -name "Yaver-${version}-x64-store.appx" -type f -print -quit)"
+          package="$(find release -name "Yaver-${version}-x64-store.appxbundle" -type f -print -quit)"
           test -n "$package"
           archive="$RUNNER_TEMP/Yaver-${version}-Partner-Center.zip"
           PACKAGE="$package" ARCHIVE="$archive" python3 - <<'PY'
