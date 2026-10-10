@@ -10,6 +10,10 @@ const workflow = fs.readFileSync(
   path.join(root, ".github/workflows/release-gui.yml"),
   "utf8",
 );
+const appleSurfacesWorkflow = fs.readFileSync(
+  path.join(root, ".github/workflows/release-apple-surfaces.yml"),
+  "utf8",
+);
 const versions = JSON.parse(
   fs.readFileSync(path.join(root, "versions.json"), "utf8"),
 );
@@ -54,5 +58,10 @@ assert.match(
   masBuild,
   /CSC_INSTALLER_LINK: \$\{\{ secrets\.APPLE_INSTALLER_CERTIFICATE_P12 \}\}/,
   "the MAS package lane must receive its installer certificate explicitly",
+);
+assert.match(
+  appleSurfacesWorkflow,
+  /find-identity -v -p codesigning[\s\S]*Apple\|iPhone\) Distribution:/,
+  "tvOS packaging must reject a missing or expired distribution identity before archiving",
 );
 console.log("Desktop release contract passed.");

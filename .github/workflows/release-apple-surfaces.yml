@@ -96,6 +96,12 @@ jobs:
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" \
             $(security list-keychains -d user | tr -d '"')
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep -Eq '"(Apple|iPhone) Distribution:'; then
+            echo "ERROR: APPLE_CERTIFICATE_P12 does not contain a currently valid Apple Distribution identity." >&2
+            echo "Replace that GitHub secret with an unexpired distribution certificate and private key; a Developer ID or Apple Development certificate cannot export a tvOS App Store IPA." >&2
+            exit 2
+          fi
 
       - name: Configure App Store Connect API key
         env:
