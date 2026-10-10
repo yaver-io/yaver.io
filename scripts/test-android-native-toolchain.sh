@@ -251,7 +251,10 @@ if xcode_guard < skip_guard:
 PY
 grep -q -- '-PyaverTvApplicationId="$PACKAGE"' "$TV_DEPLOY"
 grep -q 'io.yaver.mobile' "$ROOT/androidtv/app/build.gradle.kts"
-grep -q 'mobile/android/gradlew.*androidtv' "$TV_DEPLOY"
+grep -q 'resolve_gradle_runner' "$TV_DEPLOY"
+grep -q 'services.gradle.org/distributions' "$TV_DEPLOY"
+grep -q 'STANDALONE_GRADLE_SHA256=' "$TV_DEPLOY"
+grep -q '"$GRADLE_RUNNER" -p "$ROOT/androidtv"' "$TV_DEPLOY"
 grep -q './deploy/deploy.sh android-tv' "$TV_RELEASE_WORKFLOW"
 grep -q 'package = "io.yaver.mobile"' "$TV_RELEASE_WORKFLOW"
 grep -q 'REMOTE_MAX + 1' "$TV_RELEASE_WORKFLOW"

@@ -11,6 +11,41 @@ MOBILE_VERSION_CODE="$(grep 'versionCode ' "$MOBILE_GRADLE" | head -1 | sed 's/[
 MOBILE_VERSION_NAME="$(grep 'versionName ' "$MOBILE_GRADLE" | head -1 | sed 's/.*versionName[[:space:]]*"\([^"]*\)".*/\1/')"
 VERSION_CODE="${TV_VERSION_CODE:-$((MOBILE_VERSION_CODE + 2))}"
 VERSION_NAME="${TV_VERSION_NAME:-${MOBILE_VERSION_NAME}-tv}"
+STANDALONE_GRADLE_VERSION="8.14.3"
+STANDALONE_GRADLE_SHA256="bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+
+resolve_gradle_runner() {
+  local mobile_wrapper="$ROOT/mobile/android/gradlew"
+  if [ -x "$mobile_wrapper" ]; then
+    printf '%s\n' "$mobile_wrapper"
+    return
+  fi
+
+  # mobile/android is generated and intentionally absent from a clean clone.
+  # Standalone TV packaging therefore cannot depend on its Gradle wrapper.
+  local cache_root="$ROOT/.yaver-build/gradle-dist"
+  local distribution="gradle-${STANDALONE_GRADLE_VERSION}"
+  local runner="$cache_root/$distribution/bin/gradle"
+  local archive="$cache_root/$distribution-bin.zip"
+  if [ ! -x "$runner" ]; then
+    command -v curl >/dev/null 2>&1 || { echo "ERROR: curl is required to provision Gradle." >&2; return 1; }
+    command -v unzip >/dev/null 2>&1 || { echo "ERROR: unzip is required to provision Gradle." >&2; return 1; }
+    mkdir -p "$cache_root"
+    echo "Provisioning pinned Gradle $STANDALONE_GRADLE_VERSION for standalone Android TV..." >&2
+    curl --fail --location --retry 3 \
+      "https://services.gradle.org/distributions/$distribution-bin.zip" \
+      --output "$archive.part"
+    if command -v sha256sum >/dev/null 2>&1; then
+      printf '%s  %s\n' "$STANDALONE_GRADLE_SHA256" "$archive.part" | sha256sum --check --status
+    else
+      [ "$(shasum -a 256 "$archive.part" | awk '{print $1}')" = "$STANDALONE_GRADLE_SHA256" ]
+    fi || { echo "ERROR: Gradle distribution checksum mismatch." >&2; return 1; }
+    mv "$archive.part" "$archive"
+    unzip -q -o "$archive" -d "$cache_root"
+  fi
+  [ -x "$runner" ] || { echo "ERROR: Gradle $STANDALONE_GRADLE_VERSION was not provisioned." >&2; return 1; }
+  printf '%s\n' "$runner"
+}
 
 usage() {
   cat <<'EOF'
@@ -92,7 +127,8 @@ if [ "$SKIP_BUILD" != "1" ]; then
     echo "Run ./scripts/bootstrap-android-signing.sh with the configured Yaver vault, then retry." >&2
     exit 2
   fi
-  "$ROOT/mobile/android/gradlew" -p "$ROOT/androidtv" bundleRelease \
+  GRADLE_RUNNER="$(resolve_gradle_runner)"
+  "$GRADLE_RUNNER" -p "$ROOT/androidtv" bundleRelease \
     -PyaverTvApplicationId="$PACKAGE" \
     -PyaverTvVersionCode="$VERSION_CODE" \
     -PyaverTvVersionName="$VERSION_NAME" \
