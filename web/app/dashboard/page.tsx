@@ -67,6 +67,7 @@ import VibeCodingView, { AssistantMarkdown } from "@/components/dashboard/VibeCo
 import TaskProofCard, { taskProofVisible } from "@/components/dashboard/TaskProofCard";
 import { capStreamText } from "@/lib/streamBuffer";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
+import AccessRecoveryPanel from "@/components/dashboard/AccessRecoveryPanel";
 import WebviewView from "@/components/dashboard/WebviewView";
 import RuntimeLabView, { type RuntimeLabIntent } from "@/components/dashboard/RuntimeLabView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, MODEL_OPTIONS_BY_RUNNER, type OpenCodeCatalogueProvider } from "@/components/dashboard/DevicesView";
@@ -4806,6 +4807,7 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "devices" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full space-y-4">
+              <AccessRecoveryPanel token={token} devices={displayDevices} />
               <PendingClaimsSection
                 items={pendingClaims}
                 onClaim={async (deviceId, name) => {

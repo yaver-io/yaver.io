@@ -479,7 +479,10 @@ must never be added as raw Access Channel payloads. A future hardware bridge
 session-scoped local actions through the Go agent, while media stays WebRTC and
 physical input remains encrypted end-to-end.
 
-Mobile foreground can open the Access WebSocket on demand. Background wake
+Mobile foreground and the web/desktop Devices control pane can open the Access
+WebSocket on demand. The web pane also mounts the existing pending device-code
+approval lane, so an enrolled headless box can be asked to start authentication
+and approved without leaving the dashboard. Background wake
 still requires the platform push path because iOS and Android do not promise a
 permanent app WebSocket. The Cloudflare Worker and Convex signing/JWKS
 environment must be deployed/configured before the hosted lane is available;
