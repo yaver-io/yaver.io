@@ -14,6 +14,16 @@ require_surface_disk() {
   fi
 }
 
+# Fail before the 30+ minute phone build, not after its Play upload. Android
+# Auto validates two source XML files with xmllint later in the sequence.
+# Missing this dependency previously burned a version code and left the family
+# half-published before exiting 127.
+if ! command -v xmllint >/dev/null 2>&1; then
+  echo "ERROR: xmllint is required before releasing the Android family." >&2
+  echo "Install it first: brew install libxml2 (macOS) or apt-get install libxml2-utils (Debian/Ubuntu)." >&2
+  exit 2
+fi
+
 # Phone/tablet is the shared Android Auto + headset-compatible AAB. Upload it
 # exactly once; the Auto/XR checks below verify the already-submitted artifact
 # instead of wasting version codes by uploading identical bytes repeatedly.

@@ -41,6 +41,8 @@ jobs:
 
       - name: Install release dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
           cd mobile
           npm ci --legacy-peer-deps
           python3 -m pip install --disable-pip-version-check \

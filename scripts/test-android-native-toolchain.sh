@@ -215,6 +215,18 @@ fi
 cleanup_ninja_test_root
 trap - EXIT
 grep -q 'deploy-playstore.sh' "$ANDROID_ALL_DEPLOY"
+grep -q 'command -v xmllint >/dev/null' "$ANDROID_ALL_DEPLOY"
+grep -q 'apt-get install -y --no-install-recommends libxml2-utils' "$ANDROID_ALL_WORKFLOW"
+python3 - "$ANDROID_ALL_DEPLOY" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+dependency_guard = source.index('command -v xmllint')
+phone_build = source.index('"$ROOT/scripts/deploy-playstore.sh"')
+if dependency_guard > phone_build:
+    raise SystemExit("Android family dependency guard runs after the phone build")
+PY
 grep -q 'deploy-android-auto.sh' "$ANDROID_ALL_DEPLOY"
 grep -q 'deploy-android-xr.sh.*--skip-build' "$ANDROID_ALL_DEPLOY"
 grep -q 'deploy-wear-os.sh.*--upload' "$ANDROID_ALL_DEPLOY"

@@ -46,6 +46,16 @@ require_file() {
   fi
 }
 
+require_command() {
+  local command_name="$1"
+  local install_hint="$2"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "ERROR: $command_name is required for Android Auto XML validation." >&2
+    echo "Install it first: $install_hint" >&2
+    exit 2
+  fi
+}
+
 require_text() {
   local path="$1"
   local needle="$2"
@@ -59,6 +69,7 @@ require_text() {
 }
 
 if [ "$SKIP_SOURCE_PREFLIGHT" != "1" ]; then
+  require_command xmllint "brew install libxml2 (macOS) or apt-get install libxml2-utils (Debian/Ubuntu)"
   require_file "$MANIFEST" "Android manifest"
   require_file "$AUTOMOTIVE_DESC" "Android Auto automotive app descriptor"
   require_file "$MAIN_APPLICATION" "MainApplication"
