@@ -5727,10 +5727,11 @@ func platformSegmentFromExePath(exePath string) string {
 	return ""
 }
 
-// probeAgentBinary runs `yaver version` against a freshly-placed binary and
-// requires BOTH a zero exit and the expected version string. A poisoned or
-// otherwise non-executable binary fails one or both, so the caller can abort
-// the update while the old installation is still intact.
+// probeAgentBinary proves both the cheap CLI inventory and the MCP operation
+// every coding surface actually needs. A macOS 26 poisoned inode was observed
+// to pass `codesign --verify` and `yaver version`, yet receive SIGKILL 137 as
+// soon as `yaver mcp` initialized. Version-only probing therefore allowed an
+// update that disconnected Codex, OpenCode and Claude while looking healthy.
 func probeAgentBinary(path, wantVersion string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -5742,6 +5743,39 @@ func probeAgentBinary(path, wantVersion string) bool {
 	}
 	if !strings.Contains(string(out), wantVersion) {
 		log.Printf("[auto-update] exec probe version mismatch for %s: want %q got %q", path, wantVersion, strings.TrimSpace(string(out)))
+		return false
+	}
+	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer mcpCancel()
+	mcpCmd := osexec.CommandContext(mcpCtx, path, "mcp")
+	mcpCmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"yaver-update-probe","version":"1"}}}` + "\n")
+	mcpOut, mcpErr := mcpCmd.CombinedOutput()
+	mcpSnippet := strings.TrimSpace(string(mcpOut))
+	if len(mcpSnippet) > 500 {
+		mcpSnippet = mcpSnippet[:500] + "…"
+	}
+	if mcpErr != nil {
+		log.Printf("[auto-update] MCP exec probe FAILED for %s: %v (out=%q)", path, mcpErr, mcpSnippet)
+		return false
+	}
+	mcpReady := false
+	for _, line := range strings.Split(string(mcpOut), "\n") {
+		var response struct {
+			ID     any `json:"id"`
+			Result struct {
+				ServerInfo struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				} `json:"serverInfo"`
+			} `json:"result"`
+		}
+		if json.Unmarshal([]byte(line), &response) == nil && response.ID != nil && response.Result.ServerInfo.Name == "yaver" && response.Result.ServerInfo.Version == wantVersion {
+			mcpReady = true
+			break
+		}
+	}
+	if !mcpReady {
+		log.Printf("[auto-update] MCP exec probe returned no matching initialize response for %s (want v%s, out=%q)", path, wantVersion, mcpSnippet)
 		return false
 	}
 	return true

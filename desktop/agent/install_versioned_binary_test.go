@@ -24,8 +24,9 @@ import (
 	"testing"
 )
 
-// fakeBinary writes a tiny executable that behaves like `yaver version`.
-// good=true → prints "yaver <version>" and exits 0 (a launchable binary).
+// fakeBinary writes a tiny executable that behaves like `yaver version` and
+// completes one MCP initialize request.
+// good=true → both operations succeed (a usable coding-surface binary).
 // good=false → exits 1 (the shape of a kernel-rejected/poisoned binary).
 func fakeBinary(t *testing.T, path, version string, good bool) {
 	t.Helper()
@@ -34,7 +35,11 @@ func fakeBinary(t *testing.T, path, version string, good bool) {
 	}
 	body := "#!/bin/sh\n"
 	if good {
-		body += "echo \"yaver " + version + "\"\n"
+		body += "case \"${1:-}\" in\n"
+		body += "  version) echo \"yaver " + version + "\" ;;\n"
+		body += "  mcp) read -r request; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"yaver\",\"version\":\"" + version + "\"}}}' ;;\n"
+		body += "  *) exit 2 ;;\n"
+		body += "esac\n"
 	} else {
 		body += "exit 1\n"
 	}
@@ -187,5 +192,13 @@ func TestProbeAgentBinary(t *testing.T) {
 	fakeBinary(t, bad, "1.99.999", false)
 	if probeAgentBinary(bad, "1.99.999") {
 		t.Fatal("binary that fails to exec must fail the probe")
+	}
+
+	versionOnly := filepath.Join(dir, "version-only")
+	if err := os.WriteFile(versionOnly, []byte("#!/bin/sh\nif [ \"${1:-}\" = version ]; then echo 'yaver 1.99.999'; exit 0; fi\nexit 137\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if probeAgentBinary(versionOnly, "1.99.999") {
+		t.Fatal("version-only success must not hide a broken MCP operation")
 	}
 }
