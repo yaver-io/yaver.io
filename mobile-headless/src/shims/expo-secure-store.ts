@@ -10,6 +10,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { dataDir } from "./storage-paths.js";
 
+export type SecureStoreOptions = {
+  keychainService?: string;
+  keychainAccessible?: string;
+  requireAuthentication?: boolean;
+  authenticationPrompt?: string;
+};
+
 function filePath(): string {
   return path.join(dataDir(), "secure.json");
 }
@@ -28,18 +35,18 @@ function writeAll(data: Record<string, string>) {
   try { fs.chmodSync(filePath(), 0o600); } catch { /* ok on windows */ }
 }
 
-export async function getItemAsync(key: string, _options?: any): Promise<string | null> {
+export async function getItemAsync(key: string, _options?: SecureStoreOptions): Promise<string | null> {
   const all = readAll();
   return key in all ? all[key] : null;
 }
 
-export async function setItemAsync(key: string, value: string, _options?: any): Promise<void> {
+export async function setItemAsync(key: string, value: string, _options?: SecureStoreOptions): Promise<void> {
   const all = readAll();
   all[key] = value;
   writeAll(all);
 }
 
-export async function deleteItemAsync(key: string, _options?: any): Promise<void> {
+export async function deleteItemAsync(key: string, _options?: SecureStoreOptions): Promise<void> {
   const all = readAll();
   delete all[key];
   writeAll(all);

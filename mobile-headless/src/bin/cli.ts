@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import minimist from "minimist";
 import { MobileClient } from "../mobile-client.js";
+import packageJson from "../../package.json";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
@@ -18,9 +19,14 @@ async function main() {
   });
 
   const [command, ...rest] = argv._;
-  if (!command || argv.h || argv.help) {
+  const helpRequested = Boolean(argv.h || argv.help);
+  if (command === "version" || argv.version) {
+    out({ version: packageJson.version });
+    return;
+  }
+  if (!command || helpRequested) {
     printHelp();
-    process.exit(command ? 0 : 1);
+    process.exit(helpRequested || command ? 0 : 1);
   }
 
   const mobile = new MobileClient({

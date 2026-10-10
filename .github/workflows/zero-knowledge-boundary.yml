@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: desktop/agent/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - name: Enforce Cloudflare and credential boundaries
         run: node scripts/verify-zero-knowledge-boundary.mjs
       - name: Prove retired gateway is body-blind
@@ -35,5 +38,8 @@ jobs:
       - name: Prove Relay Free tenant isolation
         working-directory: relay
         run: go test -count=1 ./...
+      - name: Install headless surface dependencies
+        working-directory: mobile-headless
+        run: bun install --frozen-lockfile
       - name: Headless Hetzner contract across every surface
         run: bash scripts/test-hetzner-all-surfaces.sh

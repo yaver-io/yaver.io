@@ -13,4 +13,8 @@ export function randomUUID(): string {
 export async function getRandomBytesAsync(n: number): Promise<Uint8Array> {
   return new Uint8Array(crypto.randomBytes(n));
 }
-export default { CryptoDigestAlgorithm, CryptoEncoding, digestStringAsync, randomUUID, getRandomBytesAsync };
+export function getRandomValues<T extends Uint8Array>(value: T): T {
+  crypto.randomFillSync(value);
+  return value;
+}
+export default { CryptoDigestAlgorithm, CryptoEncoding, digestStringAsync, randomUUID, getRandomBytesAsync, getRandomValues };

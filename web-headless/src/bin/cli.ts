@@ -18,8 +18,9 @@
 
 import minimist from "minimist";
 import { WebClient, type DevServerFramework } from "../web-client";
+import packageJson from "../../package.json";
 
-const VERSION = "0.1.0";
+const VERSION = packageJson.version;
 const DEFAULT_CONVEX = "https://perceptive-minnow-557.eu-west-1.convex.site";
 
 interface Args {

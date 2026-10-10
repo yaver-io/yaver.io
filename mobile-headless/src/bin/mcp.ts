@@ -13,6 +13,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { MobileClient } from "../mobile-client.js";
+import packageJson from "../../package.json";
 
 const mobile = new MobileClient({
   dataDir: process.env.YMH_DATA_DIR,
@@ -23,7 +24,7 @@ const mobile = new MobileClient({
 });
 
 const server = new Server(
-  { name: "yaver-mobile-headless", version: "0.1.2" },
+  { name: "yaver-mobile-headless", version: packageJson.version },
   { capabilities: { tools: {} } },
 );
 
