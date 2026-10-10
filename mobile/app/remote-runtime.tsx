@@ -19,10 +19,11 @@ export default function RemoteRuntimeScreen() {
   const pathname = usePathname();
   const { end: endDogfoodOverlay, goHome } = useDogfoodOverlay();
   const { width } = useWindowDimensions();
-  const params = useRouteParamsCompat<{ project?: string; path?: string; framework?: string; usageMode?: string; renderBehavior?: string; sessionBehavior?: string }>();
+  const params = useRouteParamsCompat<{ project?: string; path?: string; framework?: string; targetId?: string; usageMode?: string; renderBehavior?: string; sessionBehavior?: string }>();
   const project = typeof params.project === "string" ? params.project : "Project";
   const path = typeof params.path === "string" ? params.path : "";
   const framework = typeof params.framework === "string" ? params.framework : "";
+  const requestedTargetId = typeof params.targetId === "string" ? params.targetId : "";
   const usageMode = params.usageMode === "chat-only" || params.usageMode === "reload-only" || params.usageMode === "reload-and-chat"
     ? params.usageMode
     : undefined;
@@ -48,6 +49,7 @@ export default function RemoteRuntimeScreen() {
   const [connectionPhase, setConnectionPhase] = useState<string>("Preparing connection");
   const connectionTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const relayFallbackStarted = useRef(false);
+  const autoOpenedTarget = useRef("");
   const isCompact = width < 430;
   const panelWidth = Math.min(width - (isCompact ? 28 : 48), 560);
   const isDesktop = framework === "desktop";
@@ -188,6 +190,21 @@ export default function RemoteRuntimeScreen() {
       setBusyTargetId(null);
     }
   }, [path, framework, clearConnectionTimers, finishConnectionOverlay, pushConnectionLog]);
+
+  useEffect(() => {
+    if (!caps || !requestedTargetId || autoOpenedTarget.current === requestedTargetId) return;
+    autoOpenedTarget.current = requestedTargetId;
+    const target = caps.targets.find((candidate) => candidate.id === requestedTargetId);
+    if (!target) {
+      setError(`The selected runtime (${requestedTargetId}) is not available for this project.`);
+      return;
+    }
+    if (!target.enabled) {
+      setError(target.reason || `${target.label} is not available on this machine.`);
+      return;
+    }
+    void createSession(target);
+  }, [caps, createSession, requestedTargetId]);
 
   const fallbackToRelayFrames = useCallback(async (failed: RemoteRuntimeSession, reason?: string) => {
     if (!shouldFallbackToRelayFrames({

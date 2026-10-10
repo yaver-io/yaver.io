@@ -12,5 +12,10 @@ assert.equal(rejected.lane, "device", "an incompatible saved lane must never be 
 assert.equal(rejected.runner, "codex");
 assert.equal(rejected.splitRatio, 0.5, "persisted ratios are bounded so the lane cannot bury SSH");
 assert.equal(resolveStudioDefaults(null, "Expo", ["mobile"]).splitRatio, DEFAULT_STUDIO_DEFAULTS.splitRatio);
+assert.equal(resolveStudioDefaults(null, "Expo", ["mobile"]).voiceInputEnabled, false, "voice input must be opt-in");
+assert.equal(resolveStudioDefaults(null, "Expo", ["mobile"]).voiceOutputEnabled, false, "spoken output must be opt-in");
+const voiceEnabled = resolveStudioDefaults({ voiceInputEnabled: true, voiceOutputEnabled: true }, "Expo", ["mobile"]);
+assert.equal(voiceEnabled.voiceInputEnabled, true);
+assert.equal(voiceEnabled.voiceOutputEnabled, true);
 
 console.log("Studio workspace capability contract ok");

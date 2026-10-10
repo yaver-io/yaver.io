@@ -44,6 +44,8 @@ export default function TerminalView({
   tmuxSession,
   tmuxTaskId,
   sshProfile,
+  voiceInputEnabled = true,
+  voiceOutputEnabled = true,
   onCloseTerminal,
   onTmuxClosed,
 }: {
@@ -52,6 +54,8 @@ export default function TerminalView({
   tmuxSession?: string;
   tmuxTaskId?: string;
   sshProfile?: { shell: "default" | "bash" | "zsh" | "fish"; tmux: boolean; tmuxSession?: string };
+  voiceInputEnabled?: boolean;
+  voiceOutputEnabled?: boolean;
   onRunnerNeedsAuth?: (runner: "claude" | "codex") => void;
   onCloseTerminal?: () => void;
   onTmuxClosed?: () => void;
@@ -510,7 +514,7 @@ export default function TerminalView({
         >
           Close PTY
         </button>
-        {sttAvailable ? (
+        {voiceInputEnabled && sttAvailable ? (
           <button
             onClick={toggleDictation}
             disabled={status !== "open" || taskFollowUpOnly}
@@ -527,11 +531,11 @@ export default function TerminalView({
         <button onClick={() => changeFontSize(-1)} aria-label="Zoom terminal out" className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300">A−</button>
         <button onClick={() => changeFontSize(0)} aria-label="Reset terminal zoom" className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300">{fontSize}</button>
         <button onClick={() => changeFontSize(1)} aria-label="Zoom terminal in" className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-300">A+</button>
-        <button
+        {voiceOutputEnabled ? <button
           onClick={speakLatest}
           title={ttsAvailable ? "Read the latest terminal output" : "Spoken output is unavailable in this browser"}
           className={`shrink-0 rounded border px-2 py-1 text-xs ${speaking ? "border-violet-400 bg-violet-500 text-white" : "border-white/10 bg-white/5 text-gray-300"}`}
-        >{speaking ? "■ speaking" : "🔊"}</button>
+        >{speaking ? "■ speaking" : "🔊"}</button> : null}
         {voiceError ? <span className="shrink-0 text-xs text-rose-300">{voiceError}</span> : null}
         {closeError ? (
           <span className="shrink-0 text-xs text-rose-300">{closeError}</span>

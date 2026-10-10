@@ -36,7 +36,6 @@
 		7E0CEDAA389C30B231F33D93 /* MachinePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC389C91C8B5382905D6194B /* MachinePickerView.swift */; };
 		812D0A475176A47B5F8B7695 /* BoxlessCredentialSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCF092B4BD1BC1CC9DAA844 /* BoxlessCredentialSource.swift */; };
 		81DB028736C4430E2622C6F9 /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB4A93B698F49F0230F8DABF /* SessionView.swift */; };
-		82D80DF91ACD492496FBCEC1 /* yaver-login-wordmark-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 1E6E9B680E701DC27F124C4F /* yaver-login-wordmark-light.png */; };
 		852CC39FBF2CFDEF2DCD3BB1 /* AddBoxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3856FA2ADBC347EA996932EA /* AddBoxView.swift */; };
 		859933A9F2FF6DBD55DA507D /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0279D581187CF7B6DAB53B5 /* DashboardView.swift */; };
 		89B47BE583D9BB29091D01CB /* TVSSHView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB70CDEE789AA243F43BCD4 /* TVSSHView.swift */; };
@@ -72,6 +71,7 @@
 		E0D42899FE615119C171E320 /* TaskRuntimePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F41D8521019355088BB2706 /* TaskRuntimePlan.swift */; };
 		E6360E3A224D67440371A632 /* ProjectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C67130BF2C4EAD354C30FF32 /* ProjectsView.swift */; };
 		EC7C19BB4F488F251D7496A2 /* CredentialHandoffInteropTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A2E3F6614B8AD75EEA4B08 /* CredentialHandoffInteropTests.swift */; };
+		ECB92654CB0916C9666FF835 /* yaver-login-wordmark-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 25BA2FE606DA48817A3C70AE /* yaver-login-wordmark-light.png */; };
 		EEEB8D804BA1E102F39CD2E0 /* RemoteRuntimeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CED29C305D92275C2606A73C /* RemoteRuntimeModels.swift */; };
 		F6D6FD0612F8F2E9DD6D3A5C /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407EAB8C318A209F3AE94A17 /* SignInView.swift */; };
 		F7BEBB07F0E592CAFCFD739E /* VibeTurnPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED0118C15F635CF31061B51 /* VibeTurnPanel.swift */; };
@@ -103,8 +103,8 @@
 		13160FC9012BA60947E3FE74 /* VibingPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VibingPlan.swift; sourceTree = "<group>"; };
 		13B09883C3220F3715E4F3DF /* WebPreviewStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebPreviewStreamView.swift; sourceTree = "<group>"; };
 		15A2E3F6614B8AD75EEA4B08 /* CredentialHandoffInteropTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialHandoffInteropTests.swift; sourceTree = "<group>"; };
-		1E6E9B680E701DC27F124C4F /* yaver-login-wordmark-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "yaver-login-wordmark-light.png"; sourceTree = "<group>"; };
 		2168C1CC5D76DE846256CFAD /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		25BA2FE606DA48817A3C70AE /* yaver-login-wordmark-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "yaver-login-wordmark-light.png"; sourceTree = "<group>"; };
 		276D29BCA1F4A3A8DD33A6D3 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		2A900B18B742454D4D6C7359 /* YaverDictationField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YaverDictationField.swift; sourceTree = "<group>"; };
 		2F558EBFDD66510DEF9FEFB4 /* YaverTVUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = YaverTVUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -220,6 +220,15 @@
 			path = YaverTV;
 			sourceTree = "<group>";
 		};
+		1540CFB649696A58BEE64BC3 /* yaver */ = {
+			isa = PBXGroup;
+			children = (
+				BFA65624DA653ED2C6C43EAE /* mobile */,
+			);
+			name = yaver;
+			path = ..;
+			sourceTree = "<group>";
+		};
 		2735A7C7C60089638C70371B /* YaverTVUITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -230,12 +239,12 @@
 			path = YaverTVUITests;
 			sourceTree = "<group>";
 		};
-		560FDE1F3B58EBC4C34DBBE9 /* assets */ = {
+		2B460C088CB957DCAAAC4141 /* branding */ = {
 			isa = PBXGroup;
 			children = (
-				A985642E4ADC449C74A31B0A /* branding */,
+				25BA2FE606DA48817A3C70AE /* yaver-login-wordmark-light.png */,
 			);
-			path = assets;
+			path = branding;
 			sourceTree = "<group>";
 		};
 		71282555B3437D21B4A181FA /* Views */ = {
@@ -271,33 +280,32 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		9E243F830C2C328EED8D0EB7 /* yaver.io */ = {
+		79AE01D3B0791F4AD0914E56 /* assets */ = {
 			isa = PBXGroup;
 			children = (
-				FA4DCCEE7E62C57946D09C8A /* mobile */,
+				2B460C088CB957DCAAAC4141 /* branding */,
 			);
-			name = yaver.io;
-			path = ..;
-			sourceTree = "<group>";
-		};
-		A985642E4ADC449C74A31B0A /* branding */ = {
-			isa = PBXGroup;
-			children = (
-				1E6E9B680E701DC27F124C4F /* yaver-login-wordmark-light.png */,
-			);
-			path = branding;
+			path = assets;
 			sourceTree = "<group>";
 		};
 		AD227DAE013B4D6B7FE365D1 = {
 			isa = PBXGroup;
 			children = (
 				F11FA4A6D2EC2E8146CC9E91 /* Packages */,
-				9E243F830C2C328EED8D0EB7 /* yaver.io */,
+				1540CFB649696A58BEE64BC3 /* yaver */,
 				04030A85432F4E287B1A04E7 /* YaverTV */,
 				FFF5EADFCBAE2A1555B317FD /* YaverTVTests */,
 				2735A7C7C60089638C70371B /* YaverTVUITests */,
 				D6587CEE72510E3268F9262F /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		BFA65624DA653ED2C6C43EAE /* mobile */ = {
+			isa = PBXGroup;
+			children = (
+				79AE01D3B0791F4AD0914E56 /* assets */,
+			);
+			path = mobile;
 			sourceTree = "<group>";
 		};
 		D6587CEE72510E3268F9262F /* Products */ = {
@@ -316,14 +324,6 @@
 				F4DF69C0736F42DE766E67A5 /* PlainSSH */,
 			);
 			name = Packages;
-			sourceTree = "<group>";
-		};
-		FA4DCCEE7E62C57946D09C8A /* mobile */ = {
-			isa = PBXGroup;
-			children = (
-				560FDE1F3B58EBC4C34DBBE9 /* assets */,
-			);
-			path = mobile;
 			sourceTree = "<group>";
 		};
 		FFF5EADFCBAE2A1555B317FD /* YaverTVTests */ = {
@@ -455,7 +455,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BA1C4E5FB968311F8B9C37C7 /* Assets.xcassets in Resources */,
-				82D80DF91ACD492496FBCEC1 /* yaver-login-wordmark-light.png in Resources */,
+				ECB92654CB0916C9666FF835 /* yaver-login-wordmark-light.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

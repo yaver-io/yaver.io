@@ -9246,6 +9246,12 @@ export default function TasksScreen() {
                   modelLabel={undefined}
                   onBack={() => { closeFollowUpComposer(); setSelectedTask(null); setFollowUpText(""); }}
                   onOpenLogs={() => setShowLogs(true)}
+                  onOpenSSH={(selectedTask.executionSession?.tmuxSession || selectedTask.tmuxSession) ? () => {
+                    taskRouter.push({
+                      pathname: "/shell",
+                      params: { session: selectedTask.executionSession?.tmuxSession || selectedTask.tmuxSession },
+                    } as any);
+                  } : undefined}
                   primaryAction={
                     taskHasUnresolvedFailure(selectedTask) ? "retry"
                       : selectedTask.status === "review" ? "complete"

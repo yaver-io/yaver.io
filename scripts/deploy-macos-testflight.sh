@@ -78,6 +78,7 @@ if [ -f "$HOME/.appstoreconnect/yaver.env" ]; then
   source "$HOME/.appstoreconnect/yaver.env"
   set +a
 fi
+apple_unlock_signing_keychains
 
 PROFILE_VAR="YAVER_MAS_PROVISIONING_PROFILE"
 if [ "$DEV_BUILD" = "1" ]; then

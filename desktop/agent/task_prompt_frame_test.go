@@ -72,6 +72,32 @@ func TestFirstMessageCarriesSelectedProjectFrame(t *testing.T) {
 	}
 }
 
+func TestOpenCodeDeepSeekGetsAutonomyLadder(t *testing.T) {
+	tm := framedTestManager(t)
+	task := framedMobileTask(tm)
+	task.RunnerID = "opencode"
+	task.Model = "deepseek/deepseek-v4.1-flash"
+	task.runner = RunnerConfig{RunnerID: "opencode", Model: task.Model}
+
+	got := tm.composeTurnPrompt(task, "build the feature", promptFramePolicy{ArmPreamble: true})
+	if !strings.Contains(got, "[OpenCode + DeepSeek autonomy ladder]") {
+		t.Fatal("OpenCode with DeepSeek must receive the ambiguity decision ladder")
+	}
+}
+
+func TestAutonomyLadderDoesNotAlterCodexOrOtherOpenCodeModels(t *testing.T) {
+	tm := framedTestManager(t)
+	for _, task := range []*Task{
+		{Source: "mobile", RunnerID: "codex", Model: "deepseek/deepseek-v4.1-flash", WorkDir: tm.workDir, runner: RunnerConfig{RunnerID: "codex"}},
+		{Source: "mobile", RunnerID: "opencode", Model: "openai/gpt-5", WorkDir: tm.workDir, runner: RunnerConfig{RunnerID: "opencode"}},
+	} {
+		got := tm.composeTurnPrompt(task, "build the feature", promptFramePolicy{ArmPreamble: true})
+		if strings.Contains(got, "[OpenCode + DeepSeek autonomy ladder]") {
+			t.Fatalf("autonomy ladder leaked to runner=%q model=%q", task.RunnerID, task.Model)
+		}
+	}
+}
+
 // --- 2. every later turn is the user's words --------------------------------
 
 func TestFollowUpIsTheUsersWordsVerbatim(t *testing.T) {

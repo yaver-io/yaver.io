@@ -58,6 +58,47 @@ done
 apple_require_store_sdk iphoneos 26
 apple_ensure_simulator_runtime iOS iphonesimulator
 
+# Signing-keychain configuration is operational state, not inventory. Reject a
+# stale cross-project path before npm/pods spend minutes restoring a build that
+# cannot be signed. The same values are sourced again at the signing boundary
+# below so existing callers keep their environment precedence.
+if [ -f "$HOME/.appstoreconnect/yaver.env" ]; then
+  apple_source_env_defaults "$HOME/.appstoreconnect/yaver.env"
+fi
+if [ -n "${YAVER_SIGNING_KEYCHAIN:-}" ]; then
+  if [ ! -f "$YAVER_SIGNING_KEYCHAIN" ]; then
+    echo "ERROR: configured Yaver signing keychain does not exist: $YAVER_SIGNING_KEYCHAIN" >&2
+    echo "       Remove the stale setting or provision a Yaver-owned signing keychain before deploying." >&2
+    exit 1
+  fi
+  if [ -z "${YAVER_SIGNING_KEYCHAIN_PASSWORD:-}" ]; then
+    echo "ERROR: YAVER_SIGNING_KEYCHAIN is configured but its password is unavailable." >&2
+    exit 1
+  fi
+fi
+apple_unlock_signing_keychains
+
+# Prove that codesign can use the private key in this exact headless process.
+# `security find-identity` only sees the public certificate and was green while
+# every extension failed later with errSecInternalComponent. Signing a private
+# temporary copy of /usr/bin/true is the cheap operation-level probe.
+if [ -n "${YAVER_SIGNING_KEYCHAIN:-}" ]; then
+  SIGNING_PROBE_IDENTITY="$(security find-identity -v -p codesigning "$YAVER_SIGNING_KEYCHAIN" 2>/dev/null | awk '/Apple (Development|Distribution)/ { print $2; exit }')"
+else
+  SIGNING_PROBE_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Apple (Development|Distribution)/ { print $2; exit }')"
+fi
+if [ -n "$SIGNING_PROBE_IDENTITY" ]; then
+  SIGNING_PROBE="$(mktemp -t yaver-codesign-probe.XXXXXX)"
+  cp /usr/bin/true "$SIGNING_PROBE"
+  if ! /usr/bin/codesign --force --sign "$SIGNING_PROBE_IDENTITY" "$SIGNING_PROBE" >/dev/null 2>&1; then
+    rm -f "$SIGNING_PROBE"
+    echo "ERROR: the Apple signing private key is present but locked or unavailable to this process." >&2
+    echo "       Unlock login.keychain-db or configure a Yaver-owned signing keychain, then retry." >&2
+    exit 1
+  fi
+  rm -f "$SIGNING_PROBE"
+fi
+
 # Fail before dependency restoration, Expo prebuild, target injection, CocoaPods,
 # or a build-number bump when the archive cannot possibly fit. A preflight that
 # mutates the tracked Xcode project before refusing low disk is itself a failed

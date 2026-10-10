@@ -59,16 +59,18 @@ function defaultLayoutFor(n: number): LayoutId {
 
 const LAYOUT_STORAGE_KEY = "yaver:workspace:layout:v1";
 
-export default function WorkspaceShell({ configuration = false }: { configuration?: boolean }): React.ReactElement {
+export default function WorkspaceShell({ configuration: _configuration = false }: { configuration?: boolean }): React.ReactElement {
   const [kind, setKind] = useState<ProjectKind>("generic");
   const [workDir, setWorkDir] = useState<string>("");
   const [focusId, setFocusId] = useState<string>("");
   const [showHelp, setShowHelp] = useState(false);
   const [layoutOverride, setLayoutOverride] = useState<LayoutId | null>(null);
-  const launched = !configuration;
+  const [launched, setLaunched] = useState(false);
   const [sshExpanded, setSshExpanded] = useState(false);
   const [runner, setRunner] = useState<"shell" | "codex" | "claude" | "opencode">("shell");
   const [lane, setLane] = useState<"device" | "browser" | "runtime" | "logs">("browser");
+  const [voiceInputEnabled, setVoiceInputEnabled] = useState(false);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const [projects, setProjects] = useState<RemoteProject[]>([]);
 
   // One-shot fetch of project kind. The agent serves /project/kind;
@@ -84,9 +86,8 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
   }, []);
 
   useEffect(() => {
-    if (!configuration) return;
     agentClient.listProjects(true).then(setProjects).catch(() => setProjects([]));
-  }, [configuration]);
+  }, []);
 
   // Restore the user's previously-chosen layout for this project.
   useEffect(() => {
@@ -103,11 +104,13 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
         if (["shell", "codex", "claude", "opencode"].includes(saved.runner)) setRunner(saved.runner);
         if (["device", "browser", "runtime", "logs"].includes(saved.lane)) setLane(saved.lane);
         if (typeof saved.workDir === "string" && saved.workDir) setWorkDir(saved.workDir);
+        setVoiceInputEnabled(saved.voiceInputEnabled === true);
+        setVoiceOutputEnabled(saved.voiceOutputEnabled === true);
       }
     } catch { /* corrupt entry, ignore */ }
   }, [workDir]);
 
-  const panes = useMemo<PaneDef[]>(() => panesForKind(kind, workDir, runner, lane), [kind, lane, runner, workDir]);
+  const panes = useMemo<PaneDef[]>(() => panesForKind(kind, workDir, runner, lane, voiceInputEnabled, voiceOutputEnabled), [kind, lane, runner, voiceInputEnabled, voiceOutputEnabled, workDir]);
   const layoutId: LayoutId = layoutOverride ?? defaultLayoutFor(panes.length);
 
   // First pane defaults to focused so xterm gets keystrokes on land.
@@ -131,12 +134,12 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
       try {
         const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
         const obj = raw ? JSON.parse(raw) : {};
-        obj[`${workDir}:studio`] = { ratio: 30, runner, lane, workDir };
+        obj[`${workDir}:studio`] = { ratio: 30, runner, lane, workDir, voiceInputEnabled, voiceOutputEnabled };
         window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(obj));
       } catch {}
     }
-    window.location.assign("/studio");
-  }, [lane, runner, workDir]);
+    setLaunched(true);
+  }, [lane, runner, voiceInputEnabled, voiceOutputEnabled, workDir]);
 
   useWorkspaceKeyboard({
     onSelectPane: (idx) => {
@@ -181,6 +184,7 @@ export default function WorkspaceShell({ configuration = false }: { configuratio
           <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Project</span><select value={workDir} onChange={(event) => setWorkDir(event.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value={workDir}>{workDir || "Agent working directory"}</option>{projects.filter((project) => project.path !== workDir).map((project) => <option key={project.path} value={project.path}>{project.name}</option>)}</select></label>
           <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Lane</span><select value={lane} onChange={(event) => setLane(event.target.value as typeof lane)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value="device">Device / scrcpy</option><option value="browser">Browser</option><option value="runtime">Runtime</option><option value="logs">Logs / headless</option></select></label>
           <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Runner</span><select value={runner} onChange={(event) => setRunner(event.target.value as typeof runner)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value="shell">Shell / tmux</option><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="opencode">OpenCode</option></select></label>
+          <fieldset className="border border-zinc-800 rounded-lg p-3 text-xs"><legend className="block text-[10px] uppercase tracking-wider text-zinc-500 px-1">Voice</legend><div className="flex gap-4"><label className="flex items-center gap-2"><input type="checkbox" checked={voiceInputEnabled} onChange={(event) => setVoiceInputEnabled(event.target.checked)} /> STT input</label><label className="flex items-center gap-2"><input type="checkbox" checked={voiceOutputEnabled} onChange={(event) => setVoiceOutputEnabled(event.target.checked)} /> TTS output</label></div></fieldset>
           <ConfigLine label="Layout" value="Lane 30% / SSH 70%" />
           <button onClick={launchStudio} className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-3 text-sm font-semibold">Save and open Studio</button>
         </main>
@@ -257,21 +261,21 @@ function cycle(
 
 // ── Pane composition per project kind ─────────────────────────────────────
 
-function panesForKind(_kind: ProjectKind, cwd: string, runner: "shell" | "codex" | "claude" | "opencode", lane: "device" | "browser" | "runtime" | "logs"): PaneDef[] {
+function panesForKind(_kind: ProjectKind, cwd: string, runner: "shell" | "codex" | "claude" | "opencode", lane: "device" | "browser" | "runtime" | "logs", voiceInputEnabled: boolean, voiceOutputEnabled: boolean): PaneDef[] {
   return [
     lane === "logs"
       ? { id: "lane", title: "logs / headless lane", render: () => <LogsPane /> }
       : { id: "lane", title: lane === "device" ? "device / scrcpy lane" : `${lane} lane`, render: () => <WebPreviewPane /> },
-    { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} /> },
+    { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} /> },
   ];
 }
 
 // ── Per-pane content components ───────────────────────────────────────────
 
-function TerminalPane({ cwd, runner }: { cwd?: string; runner: "shell" | "codex" | "claude" | "opencode" }): React.ReactElement {
+function TerminalPane({ cwd, runner, voiceInputEnabled, voiceOutputEnabled }: { cwd?: string; runner: "shell" | "codex" | "claude" | "opencode"; voiceInputEnabled: boolean; voiceOutputEnabled: boolean }): React.ReactElement {
   return (
     <div className="h-full w-full">
-      <TerminalView cwd={cwd} launch={runner === "shell" ? undefined : runner} sshProfile={runner === "shell" ? { shell: "default", tmux: true, tmuxSession: "yaver-studio" } : undefined} />
+      <TerminalView cwd={cwd} launch={runner === "shell" ? undefined : runner} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} sshProfile={runner === "shell" ? { shell: "default", tmux: true, tmuxSession: "yaver-studio" } : undefined} />
     </div>
   );
 }

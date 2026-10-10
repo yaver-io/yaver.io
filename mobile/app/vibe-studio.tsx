@@ -12,9 +12,9 @@
 //   - "Device"  — a continuously streamed, interactive physical Android
 //     phone/tablet attached to the remote Yaver host.
 //
-// Studio opens directly with seeded defaults. Its only setup control navigates
-// to the separate /studio-config page. The terminal is not chat: Codex, Claude Code, OpenCode, tmux and
-// arbitrary shell/TUI programs run inside the PTY on the selected box.
+// Studio opens with a short machine/project/runner setup. The terminal is not
+// chat: Codex, Claude Code, OpenCode, tmux and arbitrary shell/TUI programs
+// run inside the PTY on the selected box.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -54,7 +54,7 @@ export default function VibeStudioScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const layout = useResponsiveLayout();
-  const { activeDevice, connectionStatus } = useDevice();
+  const { devices, activeDevice, selectDevice, connectionStatus } = useDevice();
   const params = useLocalSearchParams<{ project?: string }>();
   const requestedProject = typeof params.project === "string" ? params.project.trim().toLowerCase() : "";
   const connected = connectionStatus === "connected" && !!activeDevice;
@@ -67,7 +67,9 @@ export default function VibeStudioScreen() {
   const [lane, setLane] = useState<Lane>("device");
   const [runner, setRunner] = useState<StudioRunner>("shell");
   const [tmuxSession, setTmuxSession] = useState("yaver-studio");
-  const launched = true;
+  const [voiceInputEnabled, setVoiceInputEnabled] = useState(false);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
+  const [launched, setLaunched] = useState(false);
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [previewStarting, setPreviewStarting] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -100,15 +102,21 @@ export default function VibeStudioScreen() {
       setRunner(defaults.runner);
       setSplitRatio(0.3);
       setTmuxSession(defaults.tmuxSession);
+      setVoiceInputEnabled(defaults.voiceInputEnabled);
+      setVoiceOutputEnabled(defaults.voiceOutputEnabled);
     }).catch(() => {});
     return () => { alive = false; };
   }, [project?.path]);
 
   const launchStudio = useCallback(() => {
     if (!project || !availableLanes.includes(lane)) return;
-    const defaults = resolveStudioDefaults({ lane, runner, splitRatio, tmuxSession }, project.framework, project.surfaces);
-    AsyncStorage.setItem(`yaver:studio:last:${project.path}`, JSON.stringify(defaults)).catch(() => {});
-  }, [availableLanes, lane, project, runner, splitRatio, tmuxSession]);
+    const defaults = resolveStudioDefaults({ lane, runner, splitRatio, tmuxSession, voiceInputEnabled, voiceOutputEnabled }, project.framework, project.surfaces);
+    Promise.all([
+      AsyncStorage.setItem(`yaver:studio:last:${project.path}`, JSON.stringify(defaults)),
+      AsyncStorage.setItem("yaver:studio:active", JSON.stringify({ projectPath: project.path, deviceId: activeDevice?.id || "" })),
+    ]).catch(() => {});
+    setLaunched(true);
+  }, [activeDevice?.id, availableLanes, lane, project, runner, splitRatio, tmuxSession, voiceInputEnabled, voiceOutputEnabled]);
 
   // Load projects from the box on connect. Auto-select the first mobile/web
   // project so the pane isn't empty on first open; the user can change it.
@@ -176,7 +184,7 @@ export default function VibeStudioScreen() {
     } finally {
       setLoadingProjects(false);
     }
-  }, [connected, requestedProject]);
+  }, [activeDevice?.id, connected, requestedProject]);
 
   useEffect(() => {
     void loadProjects();
@@ -333,8 +341,13 @@ export default function VibeStudioScreen() {
       {!launched ? (
         <ScrollView contentContainerStyle={styles.prelaunch}>
           <Text style={[styles.prelaunchTitle, { color: c.textPrimary }]}>Open Studio</Text>
-          <Text style={[styles.prelaunchDetail, { color: c.textMuted }]}>Confirm the lane and remote workspace. Saved choices return automatically for this app.</Text>
-          <ConfigRow label="Machine" value={activeDevice?.alias ? `@${activeDevice.alias}` : activeDevice?.name || "No connected machine"} colors={c} />
+          <Text style={[styles.prelaunchDetail, { color: c.textMuted }]}>Choose where and how to work. Studio then stays out of the way: preview on the left, SSH on the right.</Text>
+          <View style={[styles.configBlock, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+            <Text style={[styles.configLabel, { color: c.textMuted }]}>MACHINE</Text>
+            <View style={styles.choiceRow}>
+              {devices.map((device) => <Choice key={device.id} label={device.alias ? `@${device.alias}` : device.name} selected={activeDevice?.id === device.id} onPress={() => { loadedOnceRef.current = false; setProject(null); void selectDevice(device); }} colors={c} />)}
+            </View>
+          </View>
           <Pressable onPress={handleRequestProject} accessibilityRole="button">
             <ConfigRow label="App / project" value={project ? `${project.name} · ${project.path}` : "Choose a project"} colors={c} />
           </Pressable>
@@ -348,6 +361,13 @@ export default function VibeStudioScreen() {
             <Text style={[styles.configLabel, { color: c.textMuted }]}>RUNNER</Text>
             <View style={styles.choiceRow}>
               {(["shell", "codex", "claude", "opencode"] as StudioRunner[]).map((value) => <Choice key={value} label={value === "shell" ? "Shell / tmux" : value} selected={runner === value} onPress={() => setRunner(value)} colors={c} />)}
+            </View>
+          </View>
+          <View style={[styles.configBlock, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+            <Text style={[styles.configLabel, { color: c.textMuted }]}>VOICE</Text>
+            <View style={styles.choiceRow}>
+              <Choice label="STT input" selected={voiceInputEnabled} onPress={() => setVoiceInputEnabled((value) => !value)} colors={c} />
+              <Choice label="TTS output" selected={voiceOutputEnabled} onPress={() => setVoiceOutputEnabled((value) => !value)} colors={c} />
             </View>
           </View>
           <ConfigRow label="Workspace" value={runner === "shell" ? `tmux · ${tmuxSession}` : `persistent ${runner} session`} colors={c} />
@@ -387,7 +407,7 @@ export default function VibeStudioScreen() {
                     <Ionicons name={mobileTarget ? "phone-portrait-outline" : "browsers-outline"} size={28} color={c.textTertiary} />
                     <Text style={{ color: c.textTertiary, fontSize: 13, marginTop: 8, textAlign: "center" }}>
                       {project
-                        ? "Preview this project beside the conversation."
+                        ? "Preview this project beside the SSH console."
                         : requestedProject
                           ? connected ? "Opening the selected project…" : "Connect the box to open the selected project."
                           : "Pick a project to open its preview."}
@@ -441,13 +461,13 @@ export default function VibeStudioScreen() {
           <View style={[styles.fixedDivider, { backgroundColor: c.border }]} />
           </>)}
           <View style={[styles.rightPane, sshExpanded ? { flex: 1 } : { flex: 0.7 }]} testID="studio-right-pane">
-            <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} expanded={sshExpanded} onToggleFullscreen={() => setSshExpanded((value) => !value)} />
+            <StudioTerminalPane cwd={project?.path} projectName={project?.name} framework={project?.framework} runner={runner} tmuxSession={tmuxSession} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} expanded={sshExpanded} onToggleFullscreen={() => setSshExpanded((value) => !value)} />
           </View>
         </View>
       ) : (
         /* ── PORTRAIT: terminal first; lane remains available above ── */
         <View style={styles.portraitCol}>
-          <StudioTerminalPane cwd={project?.path} runner={runner} tmuxSession={tmuxSession} />
+          <StudioTerminalPane cwd={project?.path} projectName={project?.name} framework={project?.framework} runner={runner} tmuxSession={tmuxSession} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} />
         </View>
       )}
 

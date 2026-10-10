@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
 import { useColors } from "../../context/ThemeContext";
 import { useDevice } from "../../context/DeviceContext";
-import { quicClient } from "../../lib/quic";
+import { quicClient, type RemoteRuntimeTarget } from "../../lib/quic";
 import type { StudioRunner } from "../../lib/studioWorkspace";
 import XtermView, { type XtermHandle } from "../PaneTerminalView";
 import { isTerminalMetaFrame, resizeFrame } from "../../lib/xtermBridge";
@@ -59,10 +59,36 @@ function terminalUrl(baseUrl: string, token: string, cwd: string | undefined, ru
   return `${baseUrl.replace(/^http/, "ws").replace(/\/+$/, "")}/ws/terminal?${params.toString()}`;
 }
 
-export function StudioTerminalPane({ cwd, runner, tmuxSession, expanded, onToggleFullscreen }: {
+const STUDIO_SURFACE_IDS = new Set([
+  "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator",
+  "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto",
+  "browser-window", "desktop-screen",
+]);
+
+const STUDIO_SURFACE_LABELS: Record<string, string> = {
+  "ios-simulator": "iPhone",
+  "ipados-simulator": "iPad",
+  "watchos-simulator": "Watch",
+  "tvos-simulator": "TV",
+  "visionos-simulator": "Vision",
+  "android-emulator": "Android",
+  "android-device": "Phone",
+  "android-wear": "Wear",
+  "android-tv": "Android TV",
+  "android-xr": "XR",
+  "android-auto": "Car",
+  "browser-window": "Web",
+  "desktop-screen": "Mac",
+};
+
+export function StudioTerminalPane({ cwd, projectName, framework, runner, tmuxSession, voiceInputEnabled, voiceOutputEnabled, expanded, onToggleFullscreen }: {
   cwd?: string;
+  projectName?: string;
+  framework?: string;
   runner: StudioRunner;
   tmuxSession: string;
+  voiceInputEnabled?: boolean;
+  voiceOutputEnabled?: boolean;
   expanded?: boolean;
   onToggleFullscreen?: () => void;
 }) {
@@ -79,11 +105,34 @@ export function StudioTerminalPane({ cwd, runner, tmuxSession, expanded, onToggl
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [fontSize, setFontSize] = useState(13);
+  const [runtimeTargets, setRuntimeTargets] = useState<RemoteRuntimeTarget[]>([]);
   const realtimeRef = useRef<{ stop: () => Promise<string> } | null>(null);
   const recordingRef = useRef<any>(null);
   const speechTailRef = useRef("");
   const decoderRef = useRef(typeof TextDecoder !== "undefined" ? new TextDecoder() : null);
   const fontKey = `yaver:studio:terminal-font:${cwd || "default"}`;
+
+  useEffect(() => {
+    let alive = true;
+    if (!cwd || !framework || connectionStatus !== "connected") {
+      setRuntimeTargets([]);
+      return () => { alive = false; };
+    }
+    quicClient.getRemoteRuntimeCapabilities(cwd, framework).then((caps) => {
+      if (alive) setRuntimeTargets((caps.targets || []).filter((target) => STUDIO_SURFACE_IDS.has(target.id)));
+    }).catch(() => {
+      if (alive) setRuntimeTargets([]);
+    });
+    return () => { alive = false; };
+  }, [connectionStatus, cwd, framework]);
+
+  const openRuntimeTarget = useCallback((target: RemoteRuntimeTarget) => {
+    if (!cwd || !framework || !target.enabled) return;
+    router.push({
+      pathname: "/remote-runtime",
+      params: { project: projectName || "Project", path: cwd, framework, targetId: target.id },
+    } as any);
+  }, [cwd, framework, projectName, router]);
 
   useEffect(() => {
     AsyncStorage.getItem(fontKey).then((value) => {
@@ -264,8 +313,8 @@ export function StudioTerminalPane({ cwd, runner, tmuxSession, expanded, onToggl
         <Pressable accessibilityLabel="Zoom terminal out" onPress={() => changeFontSize(-1)} style={styles.tool}><Text style={styles.toolText}>A−</Text></Pressable>
         <Pressable accessibilityLabel="Reset terminal zoom" onPress={() => changeFontSize(0)} style={styles.tool}><Text style={styles.toolText}>{fontSize}</Text></Pressable>
         <Pressable accessibilityLabel="Zoom terminal in" onPress={() => changeFontSize(1)} style={styles.tool}><Text style={styles.toolText}>A+</Text></Pressable>
-        <Pressable accessibilityLabel={listening ? "Stop voice input" : "Start voice input"} onPress={() => void toggleListening()} style={[styles.tool, listening && styles.toolActive]}><Text style={styles.toolText}>{listening ? "●" : "🎙"}</Text></Pressable>
-        <Pressable accessibilityLabel={speaking ? "Stop spoken output" : "Read latest terminal output"} onPress={() => void speakLatest()} style={[styles.tool, speaking && styles.toolActive]}><Text style={styles.toolText}>{speaking ? "■" : "🔊"}</Text></Pressable>
+        {voiceInputEnabled ? <Pressable accessibilityLabel={listening ? "Stop voice input" : "Start voice input"} onPress={() => void toggleListening()} style={[styles.tool, listening && styles.toolActive]}><Text style={styles.toolText}>{listening ? "●" : "🎙"}</Text></Pressable> : null}
+        {voiceOutputEnabled ? <Pressable accessibilityLabel={speaking ? "Stop spoken output" : "Read latest terminal output"} onPress={() => void speakLatest()} style={[styles.tool, speaking && styles.toolActive]}><Text style={styles.toolText}>{speaking ? "■" : "🔊"}</Text></Pressable> : null}
         {onToggleFullscreen ? (
           <Pressable
             accessibilityLabel={expanded ? "Show the preview pane" : "Full screen SSH"}
@@ -276,6 +325,28 @@ export function StudioTerminalPane({ cwd, runner, tmuxSession, expanded, onToggl
           </Pressable>
         ) : null}
       </View>
+      {runtimeTargets.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          style={[styles.toolsRow, { borderBottomColor: colors.border }]}
+          contentContainerStyle={styles.toolsRowContent}
+        >
+          <Text style={[styles.toolsLabel, { color: colors.textMuted }]}>OPEN</Text>
+          {runtimeTargets.map((target) => (
+            <Pressable
+              key={target.id}
+              disabled={!target.enabled}
+              accessibilityLabel={target.enabled ? `Open ${target.label}` : `${target.label} unavailable: ${target.reason || "not available"}`}
+              onPress={() => openRuntimeTarget(target)}
+              style={[styles.toolChip, !target.enabled && styles.toolDisabled]}
+            >
+              <Text style={styles.toolChipText}>{STUDIO_SURFACE_LABELS[target.id] || target.label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
       {runner === "shell" ? (
         <ScrollView
           horizontal

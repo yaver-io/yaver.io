@@ -327,6 +327,7 @@ func (tm *TaskManager) armedSystemFrame(task *Task, contextDir string) string {
 	case !task.AskFreely:
 		project := DetectProjectInfo(contextDir).Name
 		sb.WriteString(noQuestionsPreamble(renderVaultHintsForTask(currentRuntimeVaultStore(), project)))
+		sb.WriteString(openCodeDeepSeekAutonomyPreamble(task))
 		// Runner-agnostic "future work" contract: confirm cadence, then
 		// schedule_self instead of looping. Skipped for scheduler-spawned runs
 		// so a recurring task doesn't keep re-proposing its own schedule.

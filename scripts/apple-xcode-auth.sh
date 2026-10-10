@@ -33,6 +33,28 @@ apple_source_env_defaults() {
   if [ "$team_set" = x ]; then APPLE_TEAM_ID="$team"; export APPLE_TEAM_ID; fi
 }
 
+# Make an owner-only project keychain usable from SSH/launchd in this process.
+# Merely listing a certificate is not proof that codesign can access its private
+# key, so callers should still perform an operation-level signature probe.
+apple_unlock_signing_keychains() {
+  if [ -n "${YAVER_SIGNING_KEYCHAIN:-}" ]; then
+    if [ ! -f "$YAVER_SIGNING_KEYCHAIN" ]; then
+      echo "ERROR: configured Yaver signing keychain does not exist: $YAVER_SIGNING_KEYCHAIN" >&2
+      return 1
+    fi
+    if [ -z "${YAVER_SIGNING_KEYCHAIN_PASSWORD:-}" ]; then
+      echo "ERROR: YAVER_SIGNING_KEYCHAIN is configured but its password is unavailable." >&2
+      return 1
+    fi
+    security unlock-keychain -p "$YAVER_SIGNING_KEYCHAIN_PASSWORD" "$YAVER_SIGNING_KEYCHAIN"
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+      -k "$YAVER_SIGNING_KEYCHAIN_PASSWORD" "$YAVER_SIGNING_KEYCHAIN" >/dev/null
+    security set-keychain-settings -t 100000 -u "$YAVER_SIGNING_KEYCHAIN"
+    security list-keychains -d user -s "$YAVER_SIGNING_KEYCHAIN" \
+      "${YAVER_LOGIN_KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain-db}"
+  fi
+}
+
 apple_configure_xcode_auth() {
   local key_path="${APP_STORE_KEY_PATH:-}"
   local key_id="${APP_STORE_KEY_ID:-}"

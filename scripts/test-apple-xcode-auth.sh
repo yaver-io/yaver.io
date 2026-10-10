@@ -167,11 +167,19 @@ grep -q 'apple_upload_log_succeeded "$UPLOAD_LOG"' "$visionos_deploy" || \
 testflight_script="$ROOT/scripts/deploy-testflight.sh"
 disk_preflight_line="$(grep -n '^AVAILABLE_KB=' "$testflight_script" | head -1 | cut -d: -f1)"
 dependency_preflight_line="$(grep -n '^ensure_mobile_dependencies$' "$testflight_script" | head -1 | cut -d: -f1)"
+signing_keychain_preflight_line="$(grep -n 'configured Yaver signing keychain does not exist' "$testflight_script" | head -1 | cut -d: -f1)"
+codesign_probe_line="$(grep -n '^SIGNING_PROBE_IDENTITY=' "$testflight_script" | head -1 | cut -d: -f1)"
 watch_inject_line="$(grep -n '^node .*add-watch-ios-target.js' "$testflight_script" | head -1 | cut -d: -f1)"
 [ -n "$disk_preflight_line" ] && [ -n "$dependency_preflight_line" ] && [ -n "$watch_inject_line" ] && \
   [ "$disk_preflight_line" -lt "$dependency_preflight_line" ] && \
   [ "$disk_preflight_line" -lt "$watch_inject_line" ] || \
   fail "iOS disk preflight must run before dependency restoration or tracked target injection"
+[ -n "$signing_keychain_preflight_line" ] && [ -n "$dependency_preflight_line" ] && \
+  [ "$signing_keychain_preflight_line" -lt "$dependency_preflight_line" ] || \
+  fail "iOS signing-keychain path must be proven before dependency restoration"
+[ -n "$codesign_probe_line" ] && [ -n "$dependency_preflight_line" ] && \
+  [ "$codesign_probe_line" -lt "$dependency_preflight_line" ] || \
+  fail "iOS codesign private-key access must be proven before dependency restoration"
 ensure_line="$(grep -n '^ensure_mobile_dependencies$' "$testflight_script" | head -1 | cut -d: -f1)"
 [ -n "$ensure_line" ] && [ -n "$watch_inject_line" ] && [ "$ensure_line" -lt "$watch_inject_line" ] || \
   fail "mobile dependencies must be restored before Watch target injection"

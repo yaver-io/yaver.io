@@ -6,6 +6,8 @@ export type StudioDefaults = {
   runner: StudioRunner;
   splitRatio: number;
   tmuxSession: string;
+  voiceInputEnabled: boolean;
+  voiceOutputEnabled: boolean;
 };
 
 export const DEFAULT_STUDIO_DEFAULTS: StudioDefaults = {
@@ -13,6 +15,8 @@ export const DEFAULT_STUDIO_DEFAULTS: StudioDefaults = {
   runner: "shell",
   splitRatio: 0.3,
   tmuxSession: "yaver-studio",
+  voiceInputEnabled: false,
+  voiceOutputEnabled: false,
 };
 
 /** Capability filtering is framework-based and deliberately conservative.
@@ -42,5 +46,7 @@ export function resolveStudioDefaults(
       : DEFAULT_STUDIO_DEFAULTS.runner,
     splitRatio: Number.isFinite(requestedRatio) ? Math.max(0.2, Math.min(0.5, requestedRatio)) : 0.3,
     tmuxSession: saved?.tmuxSession?.trim() || DEFAULT_STUDIO_DEFAULTS.tmuxSession,
+    voiceInputEnabled: saved?.voiceInputEnabled === true,
+    voiceOutputEnabled: saved?.voiceOutputEnabled === true,
   };
 }

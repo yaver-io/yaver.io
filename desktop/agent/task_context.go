@@ -257,6 +257,29 @@ func noQuestionsPreamble(vaultHints string) string {
 	return sb.String()
 }
 
+// openCodeDeepSeekAutonomyPreamble reinforces the run policy for DeepSeek
+// models hosted by OpenCode. These models are capable tool users, but tend to
+// turn ordinary ambiguity into a prose question unless the decision ladder is
+// explicit. Keep this runner/model scoped: Codex and Claude retain their own
+// native planning behaviour.
+func openCodeDeepSeekAutonomyPreamble(task *Task) string {
+	if task == nil || normalizeRunnerID(task.RunnerID) != "opencode" {
+		return ""
+	}
+	model := strings.ToLower(strings.TrimSpace(task.Model))
+	if model == "" {
+		model = strings.ToLower(strings.TrimSpace(task.runner.Model))
+	}
+	if !strings.Contains(model, "deepseek") {
+		return ""
+	}
+	return `
+
+[OpenCode + DeepSeek autonomy ladder]
+Do not answer an implementation request with a question, an options list, or a request for permission. When details are missing, resolve them in this order: inspect the code and current state; follow the nearest existing convention; choose the safest reversible default; implement and verify it. State the assumption briefly in the final result after acting.
+Only call yaver_ask_user when proceeding would make an irreversible, security-sensitive, paid, or externally customer-visible choice and neither the repository nor current state supplies the answer. A preference that can be changed later is not a blocker. Never end the turn waiting for an answer when useful reversible work remains.`
+}
+
 // schedulingPreamble is the runner-agnostic "future work" contract spliced in
 // alongside noQuestionsPreamble. It makes every runner (claude / codex /
 // opencode / glm) treat recurring or deferred work the same way: don't loop

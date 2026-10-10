@@ -171,6 +171,7 @@ fi
 if [ -f "$HOME/.appstoreconnect/yaver.env" ]; then
   set -a; source "$HOME/.appstoreconnect/yaver.env"; set +a
 fi
+apple_unlock_signing_keychains
 apple_resolve_team_id "$VISION_DIR/project.yml"
 apple_configure_xcode_auth
 

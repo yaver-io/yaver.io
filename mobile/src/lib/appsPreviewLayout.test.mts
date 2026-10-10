@@ -14,6 +14,9 @@ const buildsSrc = readFileSync(join(mobileRoot, "app/(tabs)/builds.tsx"), "utf8"
 const studioSrc = readFileSync(join(mobileRoot, "app/vibe-studio.tsx"), "utf8");
 const studioConfigSrc = readFileSync(join(mobileRoot, "app/studio-config.tsx"), "utf8");
 const studioTerminalSrc = readFileSync(join(mobileRoot, "src/components/studio/StudioTerminalPane.tsx"), "utf8");
+const remoteRuntimeSrc = readFileSync(join(mobileRoot, "app/remote-runtime.tsx"), "utf8");
+const taskHeaderSrc = readFileSync(join(mobileRoot, "src/components/TaskHeader.tsx"), "utf8");
+const tasksSrc = readFileSync(join(mobileRoot, "app/(tabs)/tasks.tsx"), "utf8");
 const workspaceShellSrc = readFileSync(join(mobileRoot, "..", "web", "components", "workspace", "WorkspaceShell.tsx"), "utf8");
 
 assert.match(src, /<LaneStartupStatus[\s\S]{0,800}lines=\{webPreviewLogs\}/,
@@ -94,6 +97,12 @@ assert.match(sharedPreviewSrc, /onLogStateChange\(\{[\s\S]{0,180}lines:[\s\S]{0,
   "the shared preview must publish its existing bounded log state to its host");
 assert.match(studioSrc, /resolveStudioDefaults/,
   "Studio must restore capability-checked per-project defaults before launch");
+assert.match(studioSrc, /const \[launched, setLaunched\] = useState\(false\)/,
+  "Studio must ask how to work before it opens the terminal");
+assert.match(studioSrc, />MACHINE</,
+  "Studio's first-run setup must allow choosing the remote box in place");
+assert.match(studioSrc, />VOICE</,
+  "Studio setup must make STT and TTS explicit choices");
 assert.match(studioSrc, /useState\(0\.3\)/,
   "Studio must default to a narrow 30 percent lane");
 assert.doesNotMatch(studioSrc, /StudioChatPane/,
@@ -110,6 +119,14 @@ assert.match(studioSrc, /onToggleFullscreen=\{\(\) => setSshExpanded/,
   "the full-screen toggle must be wired into the SSH terminal pane");
 assert.match(studioTerminalSrc, /STUDIO_TOOLS/,
   "Studio SSH must offer one-tap coding-agent tools, not only typed commands");
+assert.match(studioTerminalSrc, /STUDIO_SURFACE_IDS/,
+  "Studio SSH must expose capability-derived runtime launch buttons");
+assert.match(remoteRuntimeSrc, /requestedTargetId[\s\S]{0,800}createSession\(target\)/,
+  "a Studio runtime button must open its selected target without a second picker tap");
+assert.match(taskHeaderSrc, />SSH</,
+  "task detail must expose a lean SSH console action");
+assert.match(tasksSrc, /pathname:\s*"\/shell"[\s\S]{0,160}tmuxSession/,
+  "task SSH mode must attach to the task's persistent tmux session");
 assert.match(studioTerminalSrc, /tmux new-window/,
   "Studio tools must open a new tmux window instead of nesting tmux inside tmux");
 assert.match(studioTerminalSrc, /onToggleFullscreen/,
@@ -118,5 +135,9 @@ assert.match(workspaceShellSrc, /sshExpanded/,
   "web Studio must expose the same full-screen SSH toggle as mobile");
 assert.match(workspaceShellSrc, /gridTemplateColumns:\s*sshExpanded/,
   "web Studio must actually change the lane/SSH split when the toggle is used");
+assert.match(workspaceShellSrc, /const \[launched, setLaunched\] = useState\(false\)/,
+  "web Studio must also ask how to work before opening SSH");
+assert.match(workspaceShellSrc, /STT input[\s\S]{0,300}TTS output/,
+  "web Studio must keep its terminal voice controls opt-in");
 
 console.log("Projects preview layout contract ok");

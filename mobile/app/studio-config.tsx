@@ -18,6 +18,8 @@ export default function StudioConfigScreen() {
   const [projectPath, setProjectPath] = useState("");
   const [lane, setLane] = useState<StudioLane>("device");
   const [runner, setRunner] = useState<StudioRunner>("shell");
+  const [voiceInputEnabled, setVoiceInputEnabled] = useState(false);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const project = projects.find((item) => item.path === projectPath) || projects[0];
@@ -45,6 +47,8 @@ export default function StudioConfigScreen() {
         const defaults = resolveStudioDefaults(saved, selected.framework, selected.surfaces);
         setLane(defaults.lane);
         setRunner(defaults.runner);
+        setVoiceInputEnabled(defaults.voiceInputEnabled);
+        setVoiceOutputEnabled(defaults.voiceOutputEnabled);
       }
     }).catch((error) => {
       if (!alive) return;
@@ -63,11 +67,13 @@ export default function StudioConfigScreen() {
     const defaults = resolveStudioDefaults(saved, next.framework, next.surfaces);
     setLane(defaults.lane);
     setRunner(defaults.runner);
+    setVoiceInputEnabled(defaults.voiceInputEnabled);
+    setVoiceOutputEnabled(defaults.voiceOutputEnabled);
   };
 
   const save = async () => {
     if (!project) return;
-    const defaults = resolveStudioDefaults({ lane, runner, splitRatio: 0.3, tmuxSession: "yaver-studio" }, project.framework, project.surfaces);
+    const defaults = resolveStudioDefaults({ lane, runner, splitRatio: 0.3, tmuxSession: "yaver-studio", voiceInputEnabled, voiceOutputEnabled }, project.framework, project.surfaces);
     await Promise.all([
       AsyncStorage.setItem(`yaver:studio:last:${project.path}`, JSON.stringify(defaults)),
       AsyncStorage.setItem("yaver:studio:active", JSON.stringify({ projectPath: project.path, deviceId: activeDevice?.id || "" })),
@@ -93,6 +99,12 @@ export default function StudioConfigScreen() {
         </Section>
         <Section title="Runner inside SSH" colors={colors}>
           <View style={styles.choices}>{(["shell", "codex", "claude", "opencode"] as StudioRunner[]).map((item) => <Choice key={item} label={item === "shell" ? "Shell / tmux" : item} selected={runner === item} onPress={() => setRunner(item)} colors={colors} />)}</View>
+        </Section>
+        <Section title="Voice" colors={colors}>
+          <View style={styles.choices}>
+            <Choice label="STT input" selected={voiceInputEnabled} onPress={() => setVoiceInputEnabled((value) => !value)} colors={colors} />
+            <Choice label="TTS output" selected={voiceOutputEnabled} onPress={() => setVoiceOutputEnabled((value) => !value)} colors={colors} />
+          </View>
         </Section>
         <View style={[styles.fixed, { borderColor: colors.border }]}><Text style={{ color: colors.textPrimary, fontWeight: "700" }}>Layout · Lane 30% / SSH 70%</Text></View>
         <Pressable disabled={!project || connectionStatus !== "connected"} onPress={() => void save()} style={[styles.save, { backgroundColor: colors.accent, opacity: project && connectionStatus === "connected" ? 1 : 0.45 }]}><Text style={styles.saveText}>Save and open Studio</Text></Pressable>
