@@ -21,13 +21,16 @@ try {
  await page.getByText(fixture.fingerprint,{exact:true}).waitFor();
  await page.getByRole("button",{name:"Trust host and connect",exact:true}).click();
  await page.getByRole("button",{name:/work · 0 · %/}).click();
- await page.locator(".xterm-screen").waitFor();
- await page.getByLabel("Message to selected pane").fill("electron-pane-proof");
- await page.getByRole("button",{name:"Send",exact:true}).click();
- await page.getByRole("tab",{name:"Pane chat",exact:true}).click();
- await page.getByTestId("live-pane-output").filter({hasText:"electron-pane-proof"}).waitFor();
+ const terminal=page.locator(".xterm-screen");
+ await terminal.waitFor();
+ await terminal.click();
+ await page.keyboard.type("electron-pane-proof");
+ await page.keyboard.press("Enter");
+ await page.locator(".xterm-rows").filter({hasText:"electron-pane-proof"}).waitFor();
+ assert.equal(await page.getByRole("tab").count(),0);
+ assert.equal(await page.getByLabel("Message to selected pane").count(),0);
  await page.screenshot({path:path.join(tmpdir(),"yaver-electron-plain-ssh.png")});
- await page.getByRole("button",{name:"Detach",exact:true}).click();
+ await page.getByRole("button",{name:"Close pane",exact:true}).click();
  await page.getByLabel("SSH username",{exact:true}).waitFor();
- console.log("Electron native SSH: no Yaver session, pinned host, real pane output/input, Raw/Pane chat and detach passed.");
+ console.log("Electron native SSH: no Yaver session, pinned host, full-screen raw pane input/output and close passed.");
 } finally { await app.close(); }
