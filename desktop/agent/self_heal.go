@@ -422,6 +422,19 @@ func ApplySelfHeal(ctx context.Context, rep *SelfHealReport, opts SelfHealOption
 		rep.ApplyErrors = append(rep.ApplyErrors, "no canonical binary identified — refusing to apply")
 		return
 	}
+	// The versioned release can already be present and runnable while the
+	// stable `current` link still targets an older (or kernel-rejected) local
+	// build. In that state `yaver self heal --apply --self-update` used to say
+	// everything was current because there was nothing left to download, yet
+	// launchd/systemd would keep restarting the bad target. Repair the pointer
+	// from the proven canonical release before reconciling loose copies.
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		if changed, repairErr := repointCurrentToCanonical(filepath.Join(home, ".yaver", "bin"), canonical); repairErr != nil {
+			rep.ApplyErrors = append(rep.ApplyErrors, repairErr.Error())
+		} else if changed {
+			rep.Applied = append(rep.Applied, fmt.Sprintf("current: now v%s (%s)", canonical.Version, filepath.Dir(filepath.Dir(canonical.Path))))
+		}
+	}
 	canonicalBytes, err := os.ReadFile(canonical.Path)
 	if err != nil {
 		rep.ApplyErrors = append(rep.ApplyErrors, fmt.Sprintf("read canonical %s: %v", canonical.Path, err))
@@ -461,6 +474,52 @@ func ApplySelfHeal(ctx context.Context, rep *SelfHealReport, opts SelfHealOption
 		}
 		rep.Applied = append(rep.Applied, fmt.Sprintf("%s: was sha256 %s, now v%s (backup at %s)", inst.Path, stamp, canonical.Version, filepath.Base(backupName)))
 	}
+}
+
+// repointCurrentToCanonical atomically repairs ~/.yaver/bin/current, but only
+// when canonical has the exact versioned-cache shape produced by the release
+// installer: <binDir>/<version>/<platform>/yaver. Package-manager binaries,
+// development builds and arbitrary paths are deliberately ignored.
+func repointCurrentToCanonical(binDir string, canonical YaverInstall) (bool, error) {
+	binDir = filepath.Clean(binDir)
+	canonicalPath := filepath.Clean(canonical.Path)
+	rel, err := filepath.Rel(binDir, canonicalPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return false, nil
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	wantName := "yaver"
+	if runtime.GOOS == "windows" {
+		wantName = "yaver.exe"
+	}
+	if len(parts) != 3 || parts[0] != canonical.Version || parts[1] == "" || parts[2] != wantName {
+		return false, nil
+	}
+	info, statErr := os.Stat(canonicalPath)
+	if statErr != nil || info.IsDir() {
+		return false, nil
+	}
+
+	currentLink := filepath.Join(binDir, "current")
+	currentBinary := filepath.Join(currentLink, parts[1], wantName)
+	currentInfo, currentErr := os.Stat(currentBinary)
+	canonicalInfo, canonicalErr := os.Stat(canonicalPath)
+	if currentErr == nil && canonicalErr == nil && os.SameFile(currentInfo, canonicalInfo) {
+		return false, nil
+	}
+	versionDir := filepath.Join(binDir, parts[0])
+	tmpLink := currentLink + ".tmp-link"
+	if err := os.Remove(tmpLink); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("remove stale current temp link: %w", err)
+	}
+	if err := os.Symlink(versionDir, tmpLink); err != nil {
+		return false, fmt.Errorf("create current temp link: %w", err)
+	}
+	if err := os.Rename(tmpLink, currentLink); err != nil {
+		_ = os.Remove(tmpLink)
+		return false, fmt.Errorf("repoint current to v%s: %w", canonical.Version, err)
+	}
+	return true, nil
 }
 
 // atomicReplaceBinary writes `data` to `targetPath` atomically. The

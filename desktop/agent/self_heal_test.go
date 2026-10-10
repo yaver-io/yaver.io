@@ -174,3 +174,72 @@ func TestStartupSelfHealMayApplyAllowsReleaseShapedBinary(t *testing.T) {
 		t.Fatalf("startup self-heal should apply from release-shaped yaver binary: %s", reason)
 	}
 }
+
+func TestRepointCurrentToCanonicalRepairsStaleReleasePointer(t *testing.T) {
+	binDir := t.TempDir()
+	version := "1.99.478"
+	platform := "darwin-arm64"
+	canonicalPath := filepath.Join(binDir, version, platform, "yaver")
+	if err := os.MkdirAll(filepath.Dir(canonicalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonicalPath, []byte("release"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleDir := filepath.Join(binDir, "local-headless")
+	if err := os.MkdirAll(filepath.Join(staleDir, platform), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, platform, "yaver"), []byte("stale"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(staleDir, filepath.Join(binDir, "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := repointCurrentToCanonical(binDir, YaverInstall{Path: canonicalPath, Version: version})
+	if err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if !changed {
+		t.Fatal("stale current link was not repaired")
+	}
+	got, err := os.Readlink(filepath.Join(binDir, "current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(binDir, version); got != want {
+		t.Fatalf("current target = %q, want %q", got, want)
+	}
+	if changedAgain, err := repointCurrentToCanonical(binDir, YaverInstall{Path: canonicalPath, Version: version}); err != nil || changedAgain {
+		t.Fatalf("second repair must be idempotent: changed=%v err=%v", changedAgain, err)
+	}
+}
+
+func TestRepointCurrentToCanonicalRejectsNonReleasePath(t *testing.T) {
+	binDir := t.TempDir()
+	staleTarget := filepath.Join(binDir, "local-headless")
+	if err := os.MkdirAll(staleTarget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(binDir, "current")
+	if err := os.Symlink(staleTarget, current); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "yaver")
+	if err := os.WriteFile(outside, []byte("dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := repointCurrentToCanonical(binDir, YaverInstall{Path: outside, Version: "1.99.478"})
+	if err != nil || changed {
+		t.Fatalf("non-release path must be ignored: changed=%v err=%v", changed, err)
+	}
+	got, err := os.Readlink(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != staleTarget {
+		t.Fatalf("current changed to %q", got)
+	}
+}
