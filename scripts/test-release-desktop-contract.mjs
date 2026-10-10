@@ -39,4 +39,20 @@ for (const platform of ["mac", "linux"]) {
   assert.ok(helper < workflow.indexOf(`npx electron-builder --${platform}`),
     `${platform} packaging must include the freshly built SSH helper`);
 }
+
+const desktopBuild = workflow.slice(
+  workflow.indexOf("  build:\n"),
+  workflow.indexOf("  mac-app-store-package:\n"),
+);
+const masBuild = workflow.slice(workflow.indexOf("  mac-app-store-package:\n"));
+assert.doesNotMatch(
+  desktopBuild,
+  /CSC_INSTALLER_LINK/,
+  "an unset installer certificate must not become an empty CSC path in the DMG lane",
+);
+assert.match(
+  masBuild,
+  /CSC_INSTALLER_LINK: \$\{\{ secrets\.APPLE_INSTALLER_CERTIFICATE_P12 \}\}/,
+  "the MAS package lane must receive its installer certificate explicitly",
+);
 console.log("Desktop release contract passed.");
