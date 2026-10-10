@@ -11,6 +11,8 @@
     "test:mobile-workspace-onboarding": "node mobile-workspace-onboarding-live.mjs",
     "browser-queue:validate": "node browser-automation/validate.mjs",
     "browser-queue:open": "node browser-automation/open-session.mjs",
+    "mobile-test": "node mobile-test/mobile-test.mjs",
+    "mobile-test:test": "node --test mobile-test/mobile-test.test.mjs",
     "report": "playwright show-report",
     "install-browsers": "playwright install --with-deps chromium"
   },

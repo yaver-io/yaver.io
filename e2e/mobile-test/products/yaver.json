@@ -1,0 +1,65 @@
+{
+  "product": "yaver",
+  "projectRoot": "../../..",
+  "scenarios": {
+    "contract-smoke": {
+      "description": "Fast deterministic mobile and Studio contracts.",
+      "steps": [
+        {
+          "id": "mobile-contracts",
+          "command": ["npx", "tsx", "--test", "src/lib/studioWorkspace.test.mts", "src/lib/appsPreviewLayout.test.mts", "src/lib/taskConsolePreview.test.mts"],
+          "cwd": "mobile",
+          "timeoutMs": 120000
+        }
+      ]
+    },
+    "fresh-onboarding": {
+      "description": "Fresh install and authenticated mobile onboarding through the real RN-web app.",
+      "requiredEnv": ["MOBILE_WEB_URL", "YAVER_TEST_TOKEN"],
+      "steps": [
+        {
+          "id": "onboarding",
+          "command": ["node", "mobile-workspace-onboarding-live.mjs"],
+          "cwd": "e2e",
+          "timeoutMs": 900000
+        }
+      ]
+    },
+    "rn-web-overview": {
+      "description": "Every static mobile route in a genuine iPhone device context.",
+      "requiredEnv": ["MOBILE_WEB_URL"],
+      "steps": [
+        {
+          "id": "overview",
+          "command": ["node", "mobile-ui-overview.mjs"],
+          "cwd": "e2e",
+          "timeoutMs": 900000
+        }
+      ]
+    },
+    "ios-native-stream": {
+      "description": "Native iOS Simulator session and live frame transport.",
+      "requiredEnv": ["YAVER_AGENT_TOKEN"],
+      "steps": [
+        {
+          "id": "ios-simulator",
+          "command": ["node", "ios-simulator-loop.mjs"],
+          "cwd": "e2e",
+          "timeoutMs": 1200000
+        }
+      ]
+    },
+    "android-native-vibe": {
+      "description": "Native Android emulator app, remote preview and pixel verdict.",
+      "requiredEnv": ["YAVER_TEST_TOKEN", "VIBE_BOX_HOST"],
+      "steps": [
+        {
+          "id": "android-emulator",
+          "command": ["node", "android-emu-vibe-loop.mjs"],
+          "cwd": "e2e",
+          "timeoutMs": 1200000
+        }
+      ]
+    }
+  }
+}
