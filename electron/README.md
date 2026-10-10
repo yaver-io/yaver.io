@@ -1,8 +1,9 @@
 # Yaver GUI (Electron)
 
-A hardened desktop shell around the **Yaver web dashboard** — chat, vibing,
-devices, projects, and previews in a native window with tray, notifications,
-and deep links. Built from the findings in
+A hardened desktop shell around **Yaver Studio**. It signs in through the web
+app, then opens the configuration-first Studio: runner PC, project, runner and
+lane, followed by a strict 30% mobile preview / 70% raw SSH console. The native
+window also provides tray, notifications, and deep links. Built from the findings in
 [`docs/audits/webui-chat-vibing-gui-2026-08-12.md`](../docs/audits/webui-chat-vibing-gui-2026-08-12.md).
 
 **The desktop app IS a Yaver node, not just a client shell.** It embeds and
@@ -40,8 +41,8 @@ respect the latest project + MCP choices on every surface.
 cd electron
 npm install
 npm test           # lifecycle, connectivity repair, auth transport, policy, navigation
-npm start          # production dashboard (https://yaver.io/dashboard)
-npm run dev        # localhost:3000 when a web dev server answers, else production
+npm start          # production Studio (https://yaver.io/dashboard?tab=runtime)
+npm run dev        # local Studio when localhost:3000 answers, else production
 ```
 
 Env overrides:
@@ -279,8 +280,9 @@ SimplySign-signed NSIS installer as the Store candidate.
 
 ## Known limitations
 
-The GUI renders the dashboard as-is, so it inherits the web-only findings the
-audit recorded — the GUI's job is to *surface* them, not hide them:
+The GUI renders the dashboard-owned Studio, so it inherits the web transport
+and lifecycle findings the audit recorded — the GUI's job is to *surface* them,
+not hide them:
 
 - A clean packaged Windows journey has not yet operation-proven account
   creation → local-agent owner claim → authenticated `/info`. The shared

@@ -6,9 +6,9 @@
  * A hardened desktop shell around the Yaver web dashboard. Design rules from
  * docs/audits/webui-chat-vibing-gui-2026-08-12.md:
  *
- *  1. The GUI is a shell, not a fork — it loads the real dashboard
- *     (https://yaver.io/dashboard, localhost:3000 in dev) so chat + vibing
- *     always match the deployed web app.
+ *  1. The GUI is a shell, not a fork — it loads the dashboard-owned Studio
+ *     (`/dashboard?tab=runtime`, localhost in dev) so configuration, preview,
+ *     device routing and the SSH console share the deployed web contract.
  *  2. Fixes the web-only "token in SSE URL" finding in the shell, where
  *     EventSource cannot be fixed: intercept requests, strip ?token=/?__rp=
  *     from stream URLs, re-inject as Authorization / X-Relay-Password
@@ -52,8 +52,12 @@ const {
 // runtime name from leaking back into local/dev launches.
 app.setName("Yaver");
 
-const DASHBOARD_PRODUCTION_URL = "https://yaver.io/dashboard";
+// Desktop is Studio-first. The dashboard still owns authentication and the
+// device connection lifecycle; `tab=runtime` opens the single canonical lean
+// Studio instead of the legacy dashboard home.
+const DASHBOARD_PRODUCTION_URL = "https://yaver.io/dashboard?tab=runtime";
 const DEV_SERVER_URL = "http://localhost:3000";
+const DEV_STUDIO_URL = `${DEV_SERVER_URL}/dashboard?tab=runtime`;
 // The sandboxed Mac App Store package is client-only. The Microsoft Store
 // package is a full-trust packaged desktop app and includes the native Windows
 // agent, so it supports client-only use, local-agent use, and both together.
@@ -456,7 +460,7 @@ async function resolveDashboardUrl() {
   if (explicit) return explicit;
   if (process.env.YAVER_DEV === "1") {
     const up = await probeDevServer();
-    return up ? DEV_SERVER_URL : DASHBOARD_PRODUCTION_URL;
+    return up ? DEV_STUDIO_URL : DASHBOARD_PRODUCTION_URL;
   }
   return DASHBOARD_PRODUCTION_URL;
 }
@@ -1348,14 +1352,20 @@ function dashboardUrlForTab(tab) {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
   try {
     const current = new URL(mainWindow.webContents.getURL());
-    if (current.protocol !== "http:" && current.protocol !== "https:") return `${DASHBOARD_PRODUCTION_URL}?tab=${encodeURIComponent(tab)}`;
+    if (current.protocol !== "http:" && current.protocol !== "https:") {
+      const fallback = new URL(DASHBOARD_PRODUCTION_URL);
+      fallback.searchParams.set("tab", tab);
+      return fallback.toString();
+    }
     current.pathname = "/dashboard";
     current.searchParams.set("tab", tab);
     current.hash = "";
     return current.toString();
   } catch {
     desktopLog.write("warn", "tray_navigation_fallback", `tab=${tab}`);
-    return `${DASHBOARD_PRODUCTION_URL}?tab=${encodeURIComponent(tab)}`;
+    const fallback = new URL(DASHBOARD_PRODUCTION_URL);
+    fallback.searchParams.set("tab", tab);
+    return fallback.toString();
   }
 }
 

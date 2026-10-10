@@ -73,6 +73,7 @@
 		EC7C19BB4F488F251D7496A2 /* CredentialHandoffInteropTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A2E3F6614B8AD75EEA4B08 /* CredentialHandoffInteropTests.swift */; };
 		ECB92654CB0916C9666FF835 /* yaver-login-wordmark-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 25BA2FE606DA48817A3C70AE /* yaver-login-wordmark-light.png */; };
 		EEEB8D804BA1E102F39CD2E0 /* RemoteRuntimeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CED29C305D92275C2606A73C /* RemoteRuntimeModels.swift */; };
+		F11E91B775049F67B1E1DBBD /* TVStudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D93BE855A64A77006245855 /* TVStudioView.swift */; };
 		F6D6FD0612F8F2E9DD6D3A5C /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407EAB8C318A209F3AE94A17 /* SignInView.swift */; };
 		F7BEBB07F0E592CAFCFD739E /* VibeTurnPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED0118C15F635CF31061B51 /* VibeTurnPanel.swift */; };
 		F94318B025A3D905717E944B /* VibingPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13160FC9012BA60947E3FE74 /* VibingPlan.swift */; };
@@ -130,6 +131,7 @@
 		72C2006AA5DE6D7B3F706F05 /* VibingPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VibingPlanTests.swift; sourceTree = "<group>"; };
 		7F41D8521019355088BB2706 /* TaskRuntimePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRuntimePlan.swift; sourceTree = "<group>"; };
 		8B47351433BB0B87175F60EA /* MachineRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineRegistry.swift; sourceTree = "<group>"; };
+		8D93BE855A64A77006245855 /* TVStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVStudioView.swift; sourceTree = "<group>"; };
 		8FE9E4B8D55E6F9BE758452A /* TaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailView.swift; sourceTree = "<group>"; };
 		925084532D186202A5CA57D2 /* TVWebPreviewLoopTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVWebPreviewLoopTests.swift; sourceTree = "<group>"; };
 		929E0B24C0426B8575B8C5D1 /* PrivateVPSURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateVPSURLTests.swift; sourceTree = "<group>"; };
@@ -270,6 +272,7 @@
 				B66293D9C377C3A9C9D374E3 /* TVInputStatus.swift */,
 				59F5766C895CDA0075AE65E7 /* TVSettingsView.swift */,
 				0DB70CDEE789AA243F43BCD4 /* TVSSHView.swift */,
+				8D93BE855A64A77006245855 /* TVStudioView.swift */,
 				9FAE4341960BE9EA05DE082D /* UpdateAgentView.swift */,
 				4ED0118C15F635CF31061B51 /* VibeTurnPanel.swift */,
 				4B5FCD77426D42F65FEB0D0A /* VibingView.swift */,
@@ -518,6 +521,7 @@
 				B9052B586A74B907CB88B108 /* TVOverlayInputState.swift in Sources */,
 				89B47BE583D9BB29091D01CB /* TVSSHView.swift in Sources */,
 				7379174AE578C3B3EE112B4E /* TVSettingsView.swift in Sources */,
+				F11E91B775049F67B1E1DBBD /* TVStudioView.swift in Sources */,
 				2B768810EB7C0232820C5AAB /* TaskComposerView.swift in Sources */,
 				229C96D90BE4C06BFCD7F34E /* TaskDetailView.swift in Sources */,
 				E0D42899FE615119C171E320 /* TaskRuntimePlan.swift in Sources */,

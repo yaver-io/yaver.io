@@ -69,7 +69,8 @@ import { capStreamText } from "@/lib/streamBuffer";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
 import AccessRecoveryPanel from "@/components/dashboard/AccessRecoveryPanel";
 import WebviewView from "@/components/dashboard/WebviewView";
-import RuntimeLabView, { type RuntimeLabIntent } from "@/components/dashboard/RuntimeLabView";
+import type { RuntimeLabIntent } from "@/components/dashboard/RuntimeLabView";
+import WorkspaceShell from "@/components/workspace/WorkspaceShell";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, MODEL_OPTIONS_BY_RUNNER, type OpenCodeCatalogueProvider } from "@/components/dashboard/DevicesView";
 import { CapabilityShelf } from "@/components/dashboard/CapabilityShelf";
 import RawFailureBanner, { announceRawFailure } from "@/components/dashboard/RawFailureBanner";
@@ -4586,23 +4587,11 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "runtime" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
-              <RuntimeLabView
-                intent={runtimeIntent}
+              <WorkspaceShell
+                client={projectSurfaceClient}
                 connectedDevice={connectedDevice}
                 devices={devices}
-                machineRoles={machineRoles.favorite}
-                onSaveMachineRoles={machineRoles.save}
-                onClearMachineRoles={machineRoles.clear}
-                desktopSurface={desktopSurface}
-                onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
-                onOpenTmux={(sessionName) => {
-                  if (!connectedDevice) {
-                    setConnectError("Connect to a device before joining its Yaver session.");
-                    return;
-                  }
-                  setShellTmuxSession(sessionName);
-                  setShellDevice(connectedDevice);
-                }}
+                onSelectDevice={connectToDevice}
               />
             </div>
           ) : activeTab === "vibe" ? (

@@ -2,6 +2,12 @@ name: Release Android TV
 
 on:
   workflow_dispatch:
+    inputs:
+      upload_to_play:
+        description: "Upload the signed Android TV AAB to Play internal testing"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-android-tv
@@ -48,9 +54,7 @@ jobs:
           chmod 600 mobile/android/keystore.properties
           PLAY_KEY="$RUNNER_TEMP/play-service-account.json"
           python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['PLAY_STORE_SERVICE_ACCOUNT_JSON']))" > "$PLAY_KEY" 2>/dev/null || true
-          if ! head -c1 "$PLAY_KEY" | grep -q '{'; then
-            printf '%s' "$PLAY_STORE_SERVICE_ACCOUNT_JSON" > "$PLAY_KEY"
-          fi
+          if ! head -c1 "$PLAY_KEY" | grep -q '{'; then printf '%s' "$PLAY_STORE_SERVICE_ACCOUNT_JSON" > "$PLAY_KEY"; fi
           head -c1 "$PLAY_KEY" | grep -q '{'
           chmod 600 "$PLAY_KEY"
           echo "PLAY_STORE_KEY_FILE=$PLAY_KEY" >> "$GITHUB_ENV"
@@ -83,8 +87,13 @@ jobs:
           echo "TV_VERSION_CODE=$CANDIDATE" >> "$GITHUB_ENV"
           echo "Android TV versionCode: $CANDIDATE (remote max: $REMOTE_MAX)"
 
-      - name: Build, verify, sign, and upload Android TV
-        run: ./deploy/deploy.sh android-tv
+      - name: Build and verify signed Android TV package
+        run: |
+          if [ "${{ inputs.upload_to_play }}" = "true" ]; then
+            ./deploy/deploy.sh android-tv
+          else
+            ./deploy/deploy.sh android-tv-package
+          fi
 
       - name: Upload signed AAB artifact
         uses: actions/upload-artifact@v4

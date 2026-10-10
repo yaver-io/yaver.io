@@ -198,7 +198,7 @@ private fun VibingProjectCard(project: ProjectRow, onClick: () -> Unit) {
  * then keeps the last good pixels visible while polling. The catalog/UI stays
  * deliberately parallel to tvOS; WebRTC can replace only this media seam. */
 @Composable
-fun PreviewStreamScreen(store: TvStore, nav: NavHostController, projectName: String) {
+fun PreviewStreamScreen(store: TvStore, nav: NavHostController, projectName: String, embedded: Boolean = false) {
     val box by store.selectedBox.collectAsState()
     var project by remember { mutableStateOf<ProjectRow?>(null) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -268,9 +268,11 @@ fun PreviewStreamScreen(store: TvStore, nav: NavHostController, projectName: Str
         }
     }
 
-    Column(Modifier.fillMaxSize().background(TvColors.Bg).padding(horizontal = 42.dp, vertical = 28.dp)) {
-        BackBar(projectName, box?.name?.let { "Live preview on $it" }, onBack = { nav.popBackStack() })
-        Spacer(Modifier.height(18.dp))
+    Column(Modifier.fillMaxSize().background(TvColors.Bg).padding(horizontal = if (embedded) 8.dp else 42.dp, vertical = if (embedded) 8.dp else 28.dp)) {
+        if (!embedded) {
+            BackBar(projectName, box?.name?.let { "Live preview on $it" }, onBack = { nav.popBackStack() })
+            Spacer(Modifier.height(18.dp))
+        }
         Box(
             Modifier.fillMaxWidth().fillMaxHeight()
                 .background(TvColors.Card, RoundedCornerShape(24.dp))

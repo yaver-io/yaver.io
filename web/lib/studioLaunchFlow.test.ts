@@ -4,28 +4,33 @@ import { join } from "node:path";
 import test from "node:test";
 
 const webRoot = join(import.meta.dirname, "..");
-const runtime = readFileSync(join(webRoot, "components/dashboard/RuntimeLabView.tsx"), "utf8");
+const runtime = readFileSync(join(webRoot, "components/workspace/WorkspaceShell.tsx"), "utf8");
 const dashboard = readFileSync(join(webRoot, "app/dashboard/page.tsx"), "utf8");
-
-function hasLeanStudioLaunchFlow(source: string): boolean {
-  const flow = source.indexOf('data-testid="studio-launch-flow"');
-  const configure = source.indexOf(">Configure</h2>", flow);
-  const launch = source.indexOf(">Launch</h2>", configure);
-  const launchAction = source.indexOf('"Launch Studio"', launch);
-  return flow >= 0 && configure > flow && launch > configure && launchAction > launch;
-}
+const terminal = readFileSync(join(webRoot, "components/dashboard/TerminalView.tsx"), "utf8");
 
 test("Studio leads with configuration and then one primary launch action", () => {
-  assert.equal(hasLeanStudioLaunchFlow(runtime), true);
-  assert.ok(runtime.includes("disabled={!selectedProject || !connectedDevice?.id || !effectiveRenderDeviceId || webPreviewBusy}"));
-  assert.ok(runtime.includes("onClick={() => void openWebUI()}"));
+  const configuration = runtime.indexOf("!launched ? (");
+  const machine = runtime.indexOf('aria-label="Runner PC"', configuration);
+  const project = runtime.indexOf(">Project</span>", machine);
+  const runner = runtime.indexOf(">Runner</span>", project);
+  const lane = runtime.indexOf(">Lane</span>", machine);
+  const launch = runtime.indexOf("Save and open Studio", runner);
+  assert.ok(configuration >= 0 && machine > configuration && project > machine && lane > machine && runner > project && launch > runner);
 });
 
 test("the setup-order guard fails when configuration is removed", () => {
-  assert.equal(hasLeanStudioLaunchFlow(runtime.replace(">Configure</h2>", ">Setup</h2>")), false);
+  assert.doesNotMatch(runtime.replace('aria-label="Runner PC"', 'aria-label="Machine"'), /aria-label="Runner PC"/);
 });
 
 test("dashboard navigation exposes Studio, not the old Vibing label", () => {
   assert.match(dashboard, /id: "runtime", label: "Studio"/);
   assert.doesNotMatch(dashboard, /id: "runtime", label: "Vibing"/);
+});
+
+test("Studio is a strict 30/70 phone-preview and console-only SSH workspace", () => {
+  assert.match(runtime, /"30% minmax\(0, 70%\)"/);
+  assert.match(runtime, /data-studio-preview-frame=.*"phone"/);
+  assert.match(runtime, /<TerminalView client=\{client\} consoleOnly/);
+  assert.match(terminal, /consoleOnly\?: boolean/);
+  assert.match(dashboard, /<WorkspaceShell/);
 });

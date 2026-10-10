@@ -19,7 +19,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
-import { agentClient, type RemoteProject } from "@/lib/agent-client";
+import { agentClient, type AgentClient, type RemoteProject } from "@/lib/agent-client";
+import type { Device } from "@/lib/use-devices";
 import {
   useWorkspaceKeyboard,
   WORKSPACE_SHORTCUT_ROWS,
@@ -59,7 +60,19 @@ function defaultLayoutFor(n: number): LayoutId {
 
 const LAYOUT_STORAGE_KEY = "yaver:workspace:layout:v1";
 
-export default function WorkspaceShell({ configuration: _configuration = false }: { configuration?: boolean }): React.ReactElement {
+export default function WorkspaceShell({
+  configuration: _configuration = false,
+  client = agentClient,
+  devices = [],
+  connectedDevice = null,
+  onSelectDevice,
+}: {
+  configuration?: boolean;
+  client?: AgentClient;
+  devices?: Device[];
+  connectedDevice?: Device | null;
+  onSelectDevice?: (device: Device) => Promise<void> | void;
+}): React.ReactElement {
   const [kind, setKind] = useState<ProjectKind>("generic");
   const [workDir, setWorkDir] = useState<string>("");
   const [focusId, setFocusId] = useState<string>("");
@@ -68,26 +81,27 @@ export default function WorkspaceShell({ configuration: _configuration = false }
   const [launched, setLaunched] = useState(false);
   const [sshExpanded, setSshExpanded] = useState(false);
   const [runner, setRunner] = useState<"shell" | "codex" | "claude" | "opencode">("shell");
-  const [lane, setLane] = useState<"device" | "browser" | "runtime" | "logs">("browser");
+  const [lane, setLane] = useState<"device" | "browser" | "runtime" | "logs">("device");
   const [voiceInputEnabled, setVoiceInputEnabled] = useState(false);
   const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const [projects, setProjects] = useState<RemoteProject[]>([]);
+  const [configurationError, setConfigurationError] = useState("");
 
   // One-shot fetch of project kind. The agent serves /project/kind;
   // older agents return generic via the client's fallback.
   useEffect(() => {
     let alive = true;
-    agentClient.getProjectKind().then((res) => {
+    client.getProjectKind().then((res) => {
       if (!alive) return;
       setKind(res.kind);
       setWorkDir(res.workDir);
     }).catch(() => { /* fall back to generic — already the default */ });
     return () => { alive = false; };
-  }, []);
+  }, [client, connectedDevice?.id]);
 
   useEffect(() => {
-    agentClient.listProjects(true).then(setProjects).catch(() => setProjects([]));
-  }, []);
+    client.listProjects(true).then(setProjects).catch(() => setProjects([]));
+  }, [client, connectedDevice?.id]);
 
   // Restore the user's previously-chosen layout for this project.
   useEffect(() => {
@@ -110,7 +124,7 @@ export default function WorkspaceShell({ configuration: _configuration = false }
     } catch { /* corrupt entry, ignore */ }
   }, [workDir]);
 
-  const panes = useMemo<PaneDef[]>(() => panesForKind(kind, workDir, runner, lane, voiceInputEnabled, voiceOutputEnabled), [kind, lane, runner, voiceInputEnabled, voiceOutputEnabled, workDir]);
+  const panes = useMemo<PaneDef[]>(() => panesForKind(client, kind, workDir, runner, lane, voiceInputEnabled, voiceOutputEnabled), [client, kind, lane, runner, voiceInputEnabled, voiceOutputEnabled, workDir]);
   const layoutId: LayoutId = layoutOverride ?? defaultLayoutFor(panes.length);
 
   // First pane defaults to focused so xterm gets keystrokes on land.
@@ -130,6 +144,15 @@ export default function WorkspaceShell({ configuration: _configuration = false }
   }, [workDir]);
 
   const launchStudio = useCallback(() => {
+    if (devices.length > 0 && !connectedDevice) {
+      setConfigurationError("Choose a reachable runner PC first.");
+      return;
+    }
+    if (!workDir) {
+      setConfigurationError("Choose a project first.");
+      return;
+    }
+    setConfigurationError("");
     if (typeof window !== "undefined") {
       try {
         const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
@@ -139,7 +162,7 @@ export default function WorkspaceShell({ configuration: _configuration = false }
       } catch {}
     }
     setLaunched(true);
-  }, [lane, runner, voiceInputEnabled, voiceOutputEnabled, workDir]);
+  }, [connectedDevice, devices.length, lane, runner, voiceInputEnabled, voiceOutputEnabled, workDir]);
 
   useWorkspaceKeyboard({
     onSelectPane: (idx) => {
@@ -173,19 +196,20 @@ export default function WorkspaceShell({ configuration: _configuration = false }
               {sshExpanded ? "⤡ lane" : "⤢ SSH"}
             </button>
           ) : null}
-          {launched ? <a href="/studio/config" aria-label="Configure Studio" className="text-xs px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800">configuration</a> : null}
+          {launched ? <button onClick={() => setLaunched(false)} aria-label="Configure Studio" className="text-xs px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800">configuration</button> : null}
         </div>
       </div>
 
       {!launched ? (
         <main className="w-full max-w-2xl mx-auto p-6 flex flex-col gap-3">
           <div><h1 className="text-xl font-semibold">Open Studio</h1><p className="text-xs text-zinc-500 mt-1">Confirm the lane and SSH workspace. These choices are remembered for this project.</p></div>
-          <ConfigLine label="Machine" value="Connected Yaver box" />
+          <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Runner PC</span><select aria-label="Runner PC" value={connectedDevice?.id ?? ""} onChange={(event) => { const device = devices.find((candidate) => candidate.id === event.target.value); if (device) void onSelectDevice?.(device); }} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value="" disabled>{devices.length ? "Choose a machine" : connectedDevice?.name ?? "Connect a Yaver machine"}</option>{devices.map((device) => <option key={device.id} value={device.id}>{device.alias || device.name}{device.online ? " · online" : " · offline"}</option>)}</select></label>
           <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Project</span><select value={workDir} onChange={(event) => setWorkDir(event.target.value)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value={workDir}>{workDir || "Agent working directory"}</option>{projects.filter((project) => project.path !== workDir).map((project) => <option key={project.path} value={project.path}>{project.name}</option>)}</select></label>
           <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Lane</span><select value={lane} onChange={(event) => setLane(event.target.value as typeof lane)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value="device">Device / scrcpy</option><option value="browser">Browser</option><option value="runtime">Runtime</option><option value="logs">Logs / headless</option></select></label>
           <label className="border border-zinc-800 rounded-lg p-3 text-xs"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Runner</span><select value={runner} onChange={(event) => setRunner(event.target.value as typeof runner)} className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2"><option value="shell">Shell / tmux</option><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="opencode">OpenCode</option></select></label>
           <fieldset className="border border-zinc-800 rounded-lg p-3 text-xs"><legend className="block text-[10px] uppercase tracking-wider text-zinc-500 px-1">Voice</legend><div className="flex gap-4"><label className="flex items-center gap-2"><input type="checkbox" checked={voiceInputEnabled} onChange={(event) => setVoiceInputEnabled(event.target.checked)} /> STT input</label><label className="flex items-center gap-2"><input type="checkbox" checked={voiceOutputEnabled} onChange={(event) => setVoiceOutputEnabled(event.target.checked)} /> TTS output</label></div></fieldset>
           <ConfigLine label="Layout" value="Lane 30% / SSH 70%" />
+          {configurationError ? <p role="alert" className="text-xs text-red-400">{configurationError}</p> : null}
           <button onClick={launchStudio} className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-3 text-sm font-semibold">Save and open Studio</button>
         </main>
       ) : <div className="flex-1 grid gap-1 p-1" style={{ gridTemplateColumns: sshExpanded ? "minmax(0, 1fr)" : "30% minmax(0, 70%)" }}>
@@ -261,26 +285,26 @@ function cycle(
 
 // ── Pane composition per project kind ─────────────────────────────────────
 
-function panesForKind(_kind: ProjectKind, cwd: string, runner: "shell" | "codex" | "claude" | "opencode", lane: "device" | "browser" | "runtime" | "logs", voiceInputEnabled: boolean, voiceOutputEnabled: boolean): PaneDef[] {
+function panesForKind(client: AgentClient, _kind: ProjectKind, cwd: string, runner: "shell" | "codex" | "claude" | "opencode", lane: "device" | "browser" | "runtime" | "logs", voiceInputEnabled: boolean, voiceOutputEnabled: boolean): PaneDef[] {
   return [
     lane === "logs"
       ? { id: "lane", title: "logs / headless lane", render: () => <LogsPane /> }
-      : { id: "lane", title: lane === "device" ? "device / scrcpy lane" : `${lane} lane`, render: () => <WebPreviewPane /> },
-    { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane cwd={cwd} runner={runner} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} /> },
+      : { id: "lane", title: lane === "device" ? "mobile app" : `${lane} lane`, render: () => <WebPreviewPane client={client} lane={lane} /> },
+    { id: "terminal", title: "SSH · tmux", render: () => <TerminalPane client={client} cwd={cwd} runner={runner} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} /> },
   ];
 }
 
 // ── Per-pane content components ───────────────────────────────────────────
 
-function TerminalPane({ cwd, runner, voiceInputEnabled, voiceOutputEnabled }: { cwd?: string; runner: "shell" | "codex" | "claude" | "opencode"; voiceInputEnabled: boolean; voiceOutputEnabled: boolean }): React.ReactElement {
+function TerminalPane({ client, cwd, runner, voiceInputEnabled, voiceOutputEnabled }: { client: AgentClient; cwd?: string; runner: "shell" | "codex" | "claude" | "opencode"; voiceInputEnabled: boolean; voiceOutputEnabled: boolean }): React.ReactElement {
   return (
     <div className="h-full w-full">
-      <TerminalView cwd={cwd} launch={runner === "shell" ? undefined : runner} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} sshProfile={runner === "shell" ? { shell: "default", tmux: true, tmuxSession: "yaver-studio" } : undefined} />
+      <TerminalView client={client} consoleOnly cwd={cwd} launch={runner === "shell" ? undefined : runner} voiceInputEnabled={voiceInputEnabled} voiceOutputEnabled={voiceOutputEnabled} sshProfile={runner === "shell" ? { shell: "default", tmux: true, tmuxSession: "yaver-studio" } : undefined} />
     </div>
   );
 }
 
-function WebPreviewPane(): React.ReactElement {
+function WebPreviewPane({ client, lane }: { client: AgentClient; lane: "device" | "browser" | "runtime" }): React.ReactElement {
   const [url, setUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("checking");
   const [err, setErr] = useState<string | null>(null);
@@ -289,7 +313,7 @@ function WebPreviewPane(): React.ReactElement {
     setStatus("starting");
     setErr(null);
     try {
-      const res = await agentClient.callOps("web-preview", { action: "start" });
+      const res = await client.callOps("web-preview", { action: "start", form: lane === "device" ? "phone" : lane });
       if (res.ok && res.initial) {
         const iframeUrl = (res.initial as any).iframeUrl ?? (res.initial as any).status?.bundleURL;
         if (iframeUrl) {
@@ -306,13 +330,13 @@ function WebPreviewPane(): React.ReactElement {
       setErr(e instanceof Error ? e.message : "start failed");
       setStatus("failed");
     }
-  }, []);
+  }, [client, lane]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const st = await agentClient.callOps("web-preview", { action: "status" });
+        const st = await client.callOps("web-preview", { action: "status" });
         if (!alive) return;
         if (st.ok && st.initial?.running && st.initial?.bundleURL) {
           setUrl(st.initial.bundleURL);
@@ -337,11 +361,15 @@ function WebPreviewPane(): React.ReactElement {
         <div className="flex items-center gap-2 px-2 py-1 border-b border-zinc-800 text-[10px] text-zinc-500 font-mono">
           <span className="truncate flex-1">{url}</span>
           <button
-            onClick={() => agentClient.callOps("web-preview", { action: "reload" })}
+            onClick={() => client.callOps("web-preview", { action: "reload" })}
             className="px-1.5 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800"
           >⟳ reload</button>
         </div>
-        <iframe src={url} className="flex-1 w-full bg-white" />
+        <div className={`min-h-0 flex-1 bg-zinc-950 p-3 flex items-center justify-center ${lane === "device" ? "overflow-auto" : ""}`}>
+          <div data-studio-preview-frame={lane === "device" ? "phone" : lane} className={lane === "device" ? "h-full max-h-[852px] aspect-[393/852] overflow-hidden rounded-[2rem] border-[6px] border-zinc-700 bg-black shadow-2xl" : "h-full w-full overflow-hidden rounded-lg border border-zinc-800"}>
+            <iframe title={lane === "device" ? "Mobile app preview" : "Studio preview"} src={url} className="h-full w-full bg-white" />
+          </div>
+        </div>
       </div>
     );
   }

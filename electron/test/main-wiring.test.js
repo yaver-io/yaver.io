@@ -149,7 +149,8 @@ test("renderer failures become visible and recoverable instead of a black window
 test("tray navigation has a safe fallback when the current page URL is empty or non-HTTP", () => {
   assert.match(main, /function dashboardUrlForTab\(tab\)/);
   assert.match(main, /tray_navigation_fallback/);
-  assert.match(main, /DASHBOARD_PRODUCTION_URL\}\?tab=/);
+  assert.match(main, /const fallback = new URL\(DASHBOARD_PRODUCTION_URL\)/);
+  assert.match(main, /fallback\.searchParams\.set\("tab", tab\)/);
   assert.doesNotMatch(main, /const origin = new URL\(mainWindow\.webContents\.getURL\(\)\)\.origin/);
 });
 

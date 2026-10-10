@@ -27,6 +27,7 @@ object Routes {
     const val COMPOSER = "composer"
     const val SESSION = "session"
     const val VIBING = "vibing"
+    const val STUDIO = "studio"
     const val SSH = "ssh"
     const val DROID = "droid"
     const val TASK_DETAIL = "task/{taskId}"
@@ -92,6 +93,7 @@ fun YaverTvApp(store: TvStore) {
         composable(Routes.COMPOSER) { TaskComposerScreen(store = store, nav = nav) }
         composable(Routes.SESSION) { SessionScreen(store = store, nav = nav) }
         composable(Routes.VIBING) { VibingScreen(store = store, nav = nav) }
+        composable(Routes.STUDIO) { StudioScreen(store = store, nav = nav) }
         composable(Routes.SSH) { SshScreen(store = store, nav = nav) }
         composable(Routes.DROID) { DroidStreamScreen(store = store, nav = nav) }
         composable(

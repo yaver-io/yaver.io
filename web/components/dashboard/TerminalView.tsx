@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { agentClient } from "@/lib/agent-client";
+import { agentClient, type AgentClient } from "@/lib/agent-client";
 import "@xterm/xterm/css/xterm.css";
 
 type ConnState = "connecting" | "open" | "closed" | "error";
@@ -39,6 +39,7 @@ const AGENT_LAUNCHERS: ReadonlyArray<{ id: string; label: string; command: strin
 ];
 
 export default function TerminalView({
+  client = agentClient,
   cwd,
   launch,
   tmuxSession,
@@ -46,9 +47,11 @@ export default function TerminalView({
   sshProfile,
   voiceInputEnabled = true,
   voiceOutputEnabled = true,
+  consoleOnly = false,
   onCloseTerminal,
   onTmuxClosed,
 }: {
+  client?: AgentClient;
   cwd?: string;
   launch?: "claude" | "codex" | "opencode";
   tmuxSession?: string;
@@ -56,6 +59,7 @@ export default function TerminalView({
   sshProfile?: { shell: "default" | "bash" | "zsh" | "fish"; tmux: boolean; tmuxSession?: string };
   voiceInputEnabled?: boolean;
   voiceOutputEnabled?: boolean;
+  consoleOnly?: boolean;
   onRunnerNeedsAuth?: (runner: "claude" | "codex") => void;
   onCloseTerminal?: () => void;
   onTmuxClosed?: () => void;
@@ -138,7 +142,7 @@ export default function TerminalView({
     setCloseBusy(true);
     setCloseError("");
     try {
-      await agentClient.closeTmuxTask(tmuxTaskId);
+      await client.closeTmuxTask(tmuxTaskId);
       try { wsRef.current?.close(1000, "Yaver session closed"); } catch {}
       if (onTmuxClosed) onTmuxClosed();
     } catch (err: any) {
@@ -146,7 +150,7 @@ export default function TerminalView({
     } finally {
       setCloseBusy(false);
     }
-  }, [closeBusy, onTmuxClosed, tmuxSession, tmuxTaskId]);
+  }, [client, closeBusy, onTmuxClosed, tmuxSession, tmuxTaskId]);
 
   // Open/close toggle: tap an idle runner to launch it, tap the active one to
   // send `/exit`. Best-effort state — reset on (re)connect since the PTY is new.
@@ -278,7 +282,7 @@ export default function TerminalView({
       const term = termRef.current;
       const fit = fitRef.current;
 
-      const url = await agentClient.terminalWsUrl(cwd, { launch, tmuxSession, sshProfile });
+      const url = await client.terminalWsUrl(cwd, { launch, tmuxSession, sshProfile });
       if (disposed) return;
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
@@ -439,7 +443,7 @@ export default function TerminalView({
       // reconnect attempts so scrollback survives. Component unmount
       // disposes via the second effect below.
     };
-  }, [cwd, launch, tmuxSession, sshProfile?.shell, sshProfile?.tmux, sshProfile?.tmuxSession, attempt]);
+  }, [client, cwd, launch, tmuxSession, sshProfile?.shell, sshProfile?.tmux, sshProfile?.tmuxSession, attempt]);
 
   // Dispose the terminal only on full component unmount.
   useEffect(() => {
@@ -454,12 +458,12 @@ export default function TerminalView({
 
   return (
     <div className="flex h-full w-full flex-col bg-[#0b0d10] overflow-hidden">
-      <div className="flex justify-end px-2 py-1">
+      {!consoleOnly ? <div className="flex justify-end px-2 py-1">
         <div role="tablist" aria-label="Terminal view" className="flex rounded-md border border-white/10 text-xs">
           {([false, true] as const).map((chat) => <button key={String(chat)} role="tab" aria-selected={paneChat === chat}
             onClick={() => setPaneChat(chat)} className={`rounded px-3 py-1.5 ${paneChat===chat ? "bg-white/10 text-gray-100" : "text-gray-400"}`}>{chat ? "Pane chat" : "Raw"}</button>)}
         </div>
-      </div>
+      </div> : null}
       {/* One-tap agent launchers + optional dictation */}
       <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1.5 overflow-x-auto">
         {tmuxSession ? (
@@ -542,8 +546,8 @@ export default function TerminalView({
         ) : null}
       </div>
       <div className="relative flex-1 overflow-hidden">
-        <div ref={ref} aria-hidden={paneChat} className={`h-full w-full p-2 ${paneChat ? "invisible" : ""}`} />
-        {paneChat && <div className="absolute inset-0 overflow-auto bg-[#0b0d10] p-4 space-y-3">
+        <div ref={ref} aria-hidden={!consoleOnly && paneChat} className={`h-full w-full p-2 ${!consoleOnly && paneChat ? "invisible" : ""}`} />
+        {!consoleOnly && paneChat && <div className="absolute inset-0 overflow-auto bg-[#0b0d10] p-4 space-y-3">
           {paneInput && <div className="ml-auto max-w-[90%] w-fit whitespace-pre-wrap rounded-xl bg-white/10 p-3 text-sm text-gray-100">{paneInput}</div>}
           <div className="rounded-xl border border-white/10 p-3"><div className="mb-2 text-xs text-gray-400">Live pane</div>
             <pre className="whitespace-pre-wrap break-words text-sm text-gray-200">{paneScreen || "Waiting for pane output…"}</pre>
@@ -565,7 +569,7 @@ export default function TerminalView({
         </div>
       ) : null}
       </div>
-      {paneChat && <form className="flex items-end gap-2 border-t border-white/10 p-2" onSubmit={(event) => {
+      {!consoleOnly && paneChat && <form className="flex items-end gap-2 border-t border-white/10 p-2" onSubmit={(event) => {
         event.preventDefault();
         if (!paneDraft || status !== "open" || taskFollowUpOnly) return;
         // xterm honors the remote application's bracketed-paste mode. The

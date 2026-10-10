@@ -7,6 +7,7 @@ TVOS_DIR="$ROOT/tvos"
 . "$ROOT/scripts/apple-xcode-auth.sh"
 "$ROOT/scripts/check-no-native-payment-sdks.sh" source
 UPLOAD=0
+ARCHIVE_ONLY=0
 DEVICE_MODE=0
 SIM_MODE=0
 CONFIGURATION="${CONFIGURATION:-Release}"
@@ -19,10 +20,11 @@ BUILD_NUMBER="${TVOS_BUILD_NUMBER:-}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy-tvos.sh [--upload] [--device [UDID]]
+Usage: scripts/deploy-tvos.sh [--upload | --archive-only] [--device [UDID]]
 
 Build the standalone Yaver tvOS app.
   --upload            archive + upload to App Store Connect (TestFlight).
+  --archive-only      archive + export a signed IPA without submitting it.
   --device [UDID]     build with automatic DEV signing + install straight to a
                       network-paired Apple TV via devicectl (no TestFlight).
                       UDID optional: uses the first paired Apple TV when omitted.
@@ -47,6 +49,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --upload) UPLOAD=1; shift ;;
+    --archive-only) ARCHIVE_ONLY=1; shift ;;
     --device) DEVICE_MODE=1; DEVICE_UDID=""; shift; [ $# -gt 0 ] && case "$1" in --*) ;; *) DEVICE_UDID="$1"; shift ;; esac ;;
     --simulator) SIM_MODE=1; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -189,7 +192,7 @@ if [ "$DEVICE_MODE" = "1" ]; then
   exit 0
 fi
 
-if [ "$UPLOAD" != "1" ]; then
+if [ "$UPLOAD" != "1" ] && [ "$ARCHIVE_ONLY" != "1" ]; then
   xcodebuild -project "$TVOS_DIR/YaverTV.xcodeproj" \
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \
@@ -291,7 +294,7 @@ EXPORT_DESTINATION="upload"
 # it archived + signed successfully, then failed with "Account credentials have
 # expired". Exporting the immutable IPA locally and handing it to altool keeps
 # the API-key lane API-key-only, like the working macOS TestFlight path.
-if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
+if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ] || [ "$ARCHIVE_ONLY" = "1" ]; then
   EXPORT_DESTINATION="export"
 fi
 if [ -n "$TVOS_PROVISIONING_PROFILE_SPECIFIER" ]; then
@@ -325,6 +328,16 @@ xcodebuild -exportArchive \
   ${ALLOW_PROVISIONING_UPDATES[@]+"${ALLOW_PROVISIONING_UPDATES[@]}"} \
   ${APPLE_XCODE_AUTH_ARGS[@]+"${APPLE_XCODE_AUTH_ARGS[@]}"} \
   2>&1 | apple_redact_xcode_auth_output
+
+if [ "$ARCHIVE_ONLY" = "1" ]; then
+  IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+  if [ -z "$IPA_PATH" ]; then
+    echo "ERROR: Xcode export succeeded but produced no tvOS IPA under $EXPORT_PATH." >&2
+    exit 1
+  fi
+  echo "tvOS signed IPA ready for manual submission: $IPA_PATH"
+  exit 0
+fi
 
 if [ "$APPLE_XCODE_AUTH_MODE" = "api-key" ]; then
   IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"

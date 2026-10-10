@@ -7,6 +7,11 @@ on:
         description: "Upload the standalone tvOS app"
         required: false
         type: boolean
+        default: false
+      build_tvos_package:
+        description: "Build and retain a signed tvOS IPA for manual submission"
+        required: false
+        type: boolean
         default: true
       upload_visionos:
         description: "Upload the native visionOS app"
@@ -32,6 +37,7 @@ jobs:
       - name: Verify release selection and GitHub secrets
         env:
           UPLOAD_TVOS: ${{ inputs.upload_tvos }}
+          BUILD_TVOS_PACKAGE: ${{ inputs.build_tvos_package }}
           UPLOAD_VISIONOS: ${{ inputs.upload_visionos }}
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -40,8 +46,8 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ "$UPLOAD_TVOS" != "true" ] && [ "$UPLOAD_VISIONOS" != "true" ]; then
-            echo "ERROR: select at least one Apple surface to upload." >&2
+          if [ "$UPLOAD_TVOS" != "true" ] && [ "$BUILD_TVOS_PACKAGE" != "true" ] && [ "$UPLOAD_VISIONOS" != "true" ]; then
+            echo "ERROR: select at least one Apple surface to build or upload." >&2
             exit 2
           fi
           missing=0
@@ -58,11 +64,12 @@ jobs:
       - name: Verify Apple release toolchain
         env:
           UPLOAD_TVOS: ${{ inputs.upload_tvos }}
+          BUILD_TVOS_PACKAGE: ${{ inputs.build_tvos_package }}
           UPLOAD_VISIONOS: ${{ inputs.upload_visionos }}
         run: |
           . scripts/apple-xcode-auth.sh
           apple_require_working_xcode
-          if [ "$UPLOAD_TVOS" = "true" ]; then
+          if [ "$UPLOAD_TVOS" = "true" ] || [ "$BUILD_TVOS_PACKAGE" = "true" ]; then
             apple_require_store_sdk appletvos 26
           fi
           if [ "$UPLOAD_VISIONOS" = "true" ]; then
@@ -127,6 +134,23 @@ jobs:
       - name: Upload tvOS to TestFlight
         if: inputs.upload_tvos
         run: ./deploy/deploy.sh tvos
+
+      - name: Build signed tvOS package for manual submission
+        if: inputs.build_tvos_package && !inputs.upload_tvos
+        env:
+          ARCHIVE_PATH: ${{ runner.temp }}/YaverTV.xcarchive
+          EXPORT_PATH: ${{ runner.temp }}/YaverTVExport
+          DERIVED_DATA_PATH: ${{ runner.temp }}/YaverTVBuild
+        run: ./deploy/deploy.sh tvos-package
+
+      - name: Retain signed tvOS IPA
+        if: inputs.build_tvos_package && !inputs.upload_tvos
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaver-tvos-ipa-${{ github.run_id }}
+          path: ${{ runner.temp }}/YaverTVExport/*.ipa
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload native visionOS to TestFlight
         if: inputs.upload_visionos

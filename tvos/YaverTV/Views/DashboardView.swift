@@ -26,7 +26,7 @@ struct DashboardView: View {
     @FocusState private var dashboardFocus: DashboardDestination?
 
     private enum DashboardDestination: Hashable {
-        case chat, vibing, ssh, devices, storage, settings, profile, machineSwitch
+        case chat, vibing, studio, ssh, devices, storage, settings, profile, machineSwitch
     }
 
     /// Open the TV directly on a screen instead of the tile grid.
@@ -119,6 +119,11 @@ struct DashboardView: View {
                             }
                             .focused($dashboardFocus, equals: .vibing)
                             .accessibilityIdentifier("dashboard.vibing")
+                            NavigationLink(destination: TVStudioView()) {
+                                Tile(icon: "rectangle.split.2x1.fill", title: "Studio", outerWidth: 216)
+                            }
+                            .focused($dashboardFocus, equals: .studio)
+                            .accessibilityIdentifier("dashboard.studio")
                             NavigationLink(destination: TVSSHView()) {
                                 Tile(icon: "terminal.fill", title: "SSH", outerWidth: 216)
                             }

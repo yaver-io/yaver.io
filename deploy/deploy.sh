@@ -84,7 +84,10 @@ Targets:
   android-upload
                Upload the already-built AAB to Play Internal; do not rebuild
   tvos         Apple TV standalone archive/upload (App Store Connect)
+  tvos-package Build a signed tvOS IPA for manual submission; do not upload
   android-tv   Android TV Play AAB + leanback manifest verification
+  android-tv-package
+               Build a signed Android TV AAB for manual submission; do not upload
   tv           Alias for android-tv + tvos
   wear-os      Wear OS AAB + Play internal upload
   visionos     visionOS archive/upload (App Store Connect)
@@ -353,9 +356,17 @@ case "$target" in
     require_deploy_boundary
     run_shell 'source ~/.appstoreconnect/yaver.env 2>/dev/null; bash "$ROOT/scripts/deploy-tvos.sh" --upload'
     ;;
+  tvos-package)
+    require_deploy_boundary
+    run_shell 'source ~/.appstoreconnect/yaver.env 2>/dev/null; bash "$ROOT/scripts/deploy-tvos.sh" --archive-only'
+    ;;
   android-tv)
     require_deploy_boundary
     run "$ROOT/scripts/deploy-android-tv.sh" --upload ${pass_args[@]+"${pass_args[@]}"}
+    ;;
+  android-tv-package)
+    require_deploy_boundary
+    run "$ROOT/scripts/deploy-android-tv.sh" ${pass_args[@]+"${pass_args[@]}"}
     ;;
   tv)
     require_deploy_boundary

@@ -16,8 +16,13 @@ struct TVSSHView: View {
     @State private var launch: String?
 
     var body: some View {
-        PlainSSHView(approvalBackend: Backend.convexSiteURL, approvalToken: store.token,
-                     paneContent: { AnyView(TVDirectPaneScreen(model: $0)) })
+        if let launch, let box = store.selectedBox {
+            TVTerminalScreen(box: box, token: store.token, launch: launch, consoleOnly: true) {
+                self.launch = nil
+            }
+        } else {
+            launcher
+        }
     }
 
     private var launcher: some View {
@@ -57,17 +62,19 @@ struct TVSSHView: View {
     }
 }
 
-private struct TVTerminalScreen: View {
+struct TVTerminalScreen: View {
     @StateObject private var model: TVTerminalModel
     @State private var command = ""
     @State private var paneChat = false
     @State private var lastSubmitted = ""
     @AppStorage("studioTerminalFontSize") private var fontSize = 19.0
     @State private var speaking = false
+    let consoleOnly: Bool
     let onExit: () -> Void
 
-    init(box: BoxTarget, token: String, launch: String, onExit: @escaping () -> Void) {
-        _model = StateObject(wrappedValue: TVTerminalModel(box: box, token: token, launch: launch))
+    init(box: BoxTarget, token: String, launch: String, cwd: String? = nil, consoleOnly: Bool = false, onExit: @escaping () -> Void = {}) {
+        _model = StateObject(wrappedValue: TVTerminalModel(box: box, token: token, launch: launch, cwd: cwd))
+        self.consoleOnly = consoleOnly
         self.onExit = onExit
     }
 
@@ -94,10 +101,10 @@ private struct TVTerminalScreen: View {
                         speaking = true
                     }
                 }
-                Picker("Terminal view", selection: $paneChat) {
+                if !consoleOnly { Picker("Terminal view", selection: $paneChat) {
                     Text("Raw").tag(false)
                     Text("Pane chat").tag(true)
-                }.pickerStyle(.segmented).frame(width: 260)
+                }.pickerStyle(.segmented).frame(width: 260) }
                 Button("Reconnect") { model.reconnect() }
             }
             .padding(.horizontal, 34).padding(.vertical, 18)
@@ -106,12 +113,12 @@ private struct TVTerminalScreen: View {
             ZStack(alignment: .topLeading) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        if paneChat && !lastSubmitted.isEmpty {
+                        if !consoleOnly && paneChat && !lastSubmitted.isEmpty {
                             Text(lastSubmitted).font(.system(size: fontSize))
                                 .padding(18).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                                 .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 28)
                         }
-                        if paneChat { Text("Live pane").font(.caption).foregroundStyle(.secondary) }
+                        if !consoleOnly && paneChat { Text("Live pane").font(.caption).foregroundStyle(.secondary) }
                         Text(model.screen.isEmpty ? "Connecting to the PTY…" : model.screen)
                             .font(.system(size: fontSize, design: .monospaced))
                             .foregroundStyle(Color(red: 0.82, green: 0.86, blue: 0.90))
@@ -167,7 +174,7 @@ private struct TVTerminalScreen: View {
 }
 
 @MainActor
-private final class TVTerminalModel: NSObject, ObservableObject {
+final class TVTerminalModel: NSObject, ObservableObject {
     @Published var screen = ""
     @Published var status = "connecting"
     @Published var error: String?
@@ -177,15 +184,17 @@ private final class TVTerminalModel: NSObject, ObservableObject {
     private let box: BoxTarget
     private let token: String
     private let launch: String
+    private let cwd: String?
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var endpointIndex = 0
     private var terminal = TVTerminalBuffer(columns: 110, rows: 34)
 
-    init(box: BoxTarget, token: String, launch: String) {
+    init(box: BoxTarget, token: String, launch: String, cwd: String? = nil) {
         self.box = box
         self.token = token
         self.launch = launch
+        self.cwd = cwd
         self.title = "\(box.aliasLabel ?? box.name) · \(launch == "terminal" ? "shell" : launch)"
     }
 
@@ -221,7 +230,7 @@ private final class TVTerminalModel: NSObject, ObservableObject {
             openNextEndpoint(); return
         }
         components.scheme = components.scheme == "https" ? "wss" : "ws"
-        components.queryItems = launch == "terminal"
+        var queryItems = launch == "terminal"
             ? [
                 URLQueryItem(name: "profile_tmux", value: "yaver-studio"),
                 URLQueryItem(name: "profile_shell", value: "default"),
@@ -231,6 +240,8 @@ private final class TVTerminalModel: NSObject, ObservableObject {
                 URLQueryItem(name: "launch", value: launch),
                 URLQueryItem(name: "term", value: "xterm-256color"),
             ]
+        if let cwd, !cwd.isEmpty { queryItems.append(URLQueryItem(name: "cwd", value: cwd)) }
+        components.queryItems = queryItems
         guard let url = components.url else { openNextEndpoint(); return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 12

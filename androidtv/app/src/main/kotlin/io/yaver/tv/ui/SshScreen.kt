@@ -92,11 +92,18 @@ fun SshScreen(store: TvStore, nav: NavHostController) {
 }
 
 @Composable
-private fun TerminalPane(box: BoxTarget, token: String, launch: String, onExit: () -> Unit) {
+internal fun TerminalPane(
+    box: BoxTarget,
+    token: String,
+    launch: String,
+    cwd: String? = null,
+    embedded: Boolean = false,
+    onExit: () -> Unit = {},
+) {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("yaver-studio", android.content.Context.MODE_PRIVATE) }
     val speech = remember { Speech(context.applicationContext) }
-    val controller = remember(box.id, token, launch) { AndroidTvTerminal(box, token, launch) }
+    val controller = remember(box.id, token, launch, cwd) { AndroidTvTerminal(box, token, launch, cwd) }
     val screen by controller.screen.collectAsState()
     val status by controller.status.collectAsState()
     val error by controller.error.collectAsState()
@@ -120,7 +127,7 @@ private fun TerminalPane(box: BoxTarget, token: String, launch: String, onExit: 
     ) {
         Row(Modifier.fillMaxWidth().background(Color(0xFF11151B)).padding(18.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            TvTextButton("Exit SSH", onClick = { controller.close(); onExit() })
+            if (!embedded) TvTextButton("Exit SSH", onClick = { controller.close(); onExit() })
             Text("${box.aliasLabel ?: box.name} · ${if (launch == "terminal") "shell" else launch}",
                 color = TvColors.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace)
@@ -179,6 +186,7 @@ private class AndroidTvTerminal(
     private val box: BoxTarget,
     private val token: String,
     private val launch: String,
+    private val cwd: String? = null,
 ) {
     private val _screen = MutableStateFlow("")
     val screen: StateFlow<String> = _screen
@@ -222,6 +230,7 @@ private class AndroidTvTerminal(
         } else {
             urlBuilder.addQueryParameter("launch", launch)
         }
+        cwd?.takeIf { it.isNotBlank() }?.let { urlBuilder.addQueryParameter("cwd", it) }
         val url = urlBuilder.build()
         val request = Request.Builder().url(url)
             .header("Authorization", "Bearer $token")

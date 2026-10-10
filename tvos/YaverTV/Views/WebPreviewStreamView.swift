@@ -13,6 +13,7 @@ struct WebPreviewStreamView: View {
     @EnvironmentObject var store: YaverStore
     let project: ProjectSummary
     let form: PreviewForm
+    var studioMode = false
 
     @State private var frame: UIImage?
     @State private var status = "Starting preview…"
@@ -184,10 +185,12 @@ struct WebPreviewStreamView: View {
                 // HMR lands in the frame stream that never stopped polling.
                 // The full project travels so the panel can seed the workDir
                 // picker + remember the choice to Convex (2026-08-10).
-                VibeTurnPanel(project: project, prefill: $auditPrefill)
-                    .padding(.horizontal, 32)
-                    .padding(.bottom, logLines.isEmpty ? 30 : 8)
-                if !logLines.isEmpty {
+                if !studioMode {
+                    VibeTurnPanel(project: project, prefill: $auditPrefill)
+                        .padding(.horizontal, 32)
+                        .padding(.bottom, logLines.isEmpty ? 30 : 8)
+                }
+                if !studioMode && !logLines.isEmpty {
                     logPanel
                         .padding(.horizontal, 32)
                         .padding(.bottom, 30)
