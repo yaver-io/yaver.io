@@ -41,8 +41,8 @@ grep -q 'prebuild-android-native.sh.*--ensure' "$DEPLOY"
 grep -q 'expo prebuild --platform android --clean --no-install' "$PREBUILD"
 grep -Fqx 'git -C "$ROOT" restore --source=HEAD --worktree -- mobile/android' "$PREBUILD"
 grep -q '"primaryColor": "#050506"' "$ROOT/mobile/app.json"
-grep -q 'color name="colorPrimary">#050506' "$PREBUILD"
-grep -q 'color name="splashscreen_background">#050506' "$PREBUILD"
+grep -q 'color name="colorPrimary">#050506</color>' "$PREBUILD"
+grep -q 'color name=\\"splashscreen_background\\">\$SPLASH_BG</color>' "$PREBUILD"
 grep -q 'YaverDogfoodPackage' "$PREBUILD"
 grep -q 'YaverBundleLoaderPackage' "$PREBUILD"
 grep -q 'sandbox/SandboxService.kt' "$PREBUILD"
@@ -173,6 +173,43 @@ grep -q '^# yaver-android-ninja-low-memory-v2$' "$ANDROID_SDK_ROOT/cmake/3.22.1/
 grep -q '^-j1 -t restat build.ninja$' "$YAVER_NINJA_TEST_LOG"
 if YAVER_ANDROID_NINJA_JOBS=0 "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" target >/dev/null 2>&1; then
   echo "Ninja low-memory wrapper accepted an invalid zero job count" >&2
+  exit 1
+fi
+
+# The x86_64-host-tool probe exists only for Linux ARM64 workers. Apple Silicon
+# ships a native darwin-arm64 NDK and must never be rejected for lacking the
+# unrelated linux-x86_64 directory. Mock uname so this regression test remains
+# deterministic on every CI host.
+mkdir -p "$NINJA_TEST_ROOT/mock-darwin-bin" "$NINJA_TEST_ROOT/empty-sdk"
+cat >"$NINJA_TEST_ROOT/mock-darwin-bin/uname" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  -s) printf '%s\n' Darwin ;;
+  -m) printf '%s\n' arm64 ;;
+  *) printf '%s\n' Darwin ;;
+esac
+EOF
+chmod +x "$NINJA_TEST_ROOT/mock-darwin-bin/uname"
+PATH="$NINJA_TEST_ROOT/mock-darwin-bin:$PATH" \
+  ANDROID_SDK_ROOT="$NINJA_TEST_ROOT/empty-sdk" \
+  yaver_android_probe_ndk_host
+
+# Conversely, the same missing host compiler must remain a named failure on
+# Linux ARM64, where Google distributes only the emulated x86_64 host tools.
+mkdir -p "$NINJA_TEST_ROOT/mock-linux-bin"
+cat >"$NINJA_TEST_ROOT/mock-linux-bin/uname" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  -s) printf '%s\n' Linux ;;
+  -m) printf '%s\n' aarch64 ;;
+  *) printf '%s\n' Linux ;;
+esac
+EOF
+chmod +x "$NINJA_TEST_ROOT/mock-linux-bin/uname"
+if PATH="$NINJA_TEST_ROOT/mock-linux-bin:$PATH" \
+  ANDROID_SDK_ROOT="$NINJA_TEST_ROOT/empty-sdk" \
+  yaver_android_probe_ndk_host >/dev/null 2>&1; then
+  echo "Linux ARM64 NDK probe accepted a missing x86_64 host compiler" >&2
   exit 1
 fi
 cleanup_ninja_test_root

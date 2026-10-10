@@ -166,5 +166,5 @@
     "ssh:build:android": "sh native/plain-ssh/build.sh android",
     "ssh:bridge": "cd native/plain-ssh/core && go run ./cmd/bridge"
   },
-  "version": "1.18.190"
+  "version": "1.18.191"
 }

@@ -96,10 +96,11 @@ EOF
 # route to repair rather than a late configure/build failure.
 yaver_android_probe_ndk_host() {
   local sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-  local host_arch
+  local host_os host_arch
+  host_os=$(uname -s)
   host_arch=$(uname -m)
-  case "$host_arch" in
-    arm64|aarch64) ;;
+  case "$host_os:$host_arch" in
+    Linux:arm64|Linux:aarch64) ;;
     *) return 0 ;;
   esac
 
