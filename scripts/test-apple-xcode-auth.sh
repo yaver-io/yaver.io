@@ -168,7 +168,7 @@ testflight_script="$ROOT/scripts/deploy-testflight.sh"
 disk_preflight_line="$(grep -n '^AVAILABLE_KB=' "$testflight_script" | head -1 | cut -d: -f1)"
 dependency_preflight_line="$(grep -n '^ensure_mobile_dependencies$' "$testflight_script" | head -1 | cut -d: -f1)"
 signing_keychain_preflight_line="$(grep -n 'configured Yaver signing keychain does not exist' "$testflight_script" | head -1 | cut -d: -f1)"
-codesign_probe_line="$(grep -n '^SIGNING_PROBE_IDENTITY=' "$testflight_script" | head -1 | cut -d: -f1)"
+codesign_probe_line="$(grep -n '^[[:space:]]*SIGNING_PROBE_IDENTITY=' "$testflight_script" | head -1 | cut -d: -f1)"
 watch_inject_line="$(grep -n '^node .*add-watch-ios-target.js' "$testflight_script" | head -1 | cut -d: -f1)"
 [ -n "$disk_preflight_line" ] && [ -n "$dependency_preflight_line" ] && [ -n "$watch_inject_line" ] && \
   [ "$disk_preflight_line" -lt "$dependency_preflight_line" ] && \
@@ -251,6 +251,8 @@ grep -q 'MACOS_BUILD_MIN_KB=.*3 \* 1024 \* 1024' "$macos_deploy" || \
   fail "macOS deploys must refuse before packaging when the universal lipo volume is too full"
 grep -q "Inspect the disposable output first" "$macos_deploy" || \
   fail "macOS low-disk failures must name the exact generated output to inspect"
+grep -q 'DEFAULT_DISTRIBUTION_PROFILE=.*\.appstoreconnect/profiles/yaver-mac-app-store.mobileprovision' "$macos_deploy" || \
+  fail "macOS headless deploys must discover the standard owner-only Yaver profile path"
 
 # Xcode echoes its full invocation, including API-key flags. Every Apple build
 # lane that supplies those flags must filter the stream before it reaches a

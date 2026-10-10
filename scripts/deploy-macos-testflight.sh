@@ -85,6 +85,10 @@ if [ "$DEV_BUILD" = "1" ]; then
   PROFILE_VAR="YAVER_MAS_DEV_PROVISIONING_PROFILE"
 fi
 PROFILE_PATH="${!PROFILE_VAR:-}"
+DEFAULT_DISTRIBUTION_PROFILE="$HOME/.appstoreconnect/profiles/yaver-mac-app-store.mobileprovision"
+if [ "$DEV_BUILD" != "1" ] && [ -z "$PROFILE_PATH" ] && [ -f "$DEFAULT_DISTRIBUTION_PROFILE" ]; then
+  PROFILE_PATH="$DEFAULT_DISTRIBUTION_PROFILE"
+fi
 if [ -z "$PROFILE_PATH" ] || [ ! -f "$PROFILE_PATH" ]; then
   echo "ERROR: $PROFILE_VAR must point to an existing $MAS_BUNDLE_ID provisioning profile." >&2
   echo "Create/download it in Apple Developer Certificates, Identifiers & Profiles, then retry." >&2
