@@ -160,9 +160,11 @@ export default function Header() {
             </>
           ) : (
             <>
+              {/* Pricing hidden: Yaver is free
               <Link href="/pricing" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
                 Pricing
               </Link>
+              */}
               <Link href="/faq" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
                 FAQ
               </Link>
@@ -251,7 +253,9 @@ export default function Header() {
       {mobileOpen && !isAuthenticated && (
         <div className="border-t border-surface-800 bg-surface-950 px-6 py-4 md:hidden">
           <div className="flex flex-col gap-4">
+            {/* Pricing hidden: Yaver is free
             <Link href="/pricing" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Pricing</Link>
+            */}
             <Link href="/faq" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>FAQ</Link>
             <Link href="/docs" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Docs</Link>
             <Link href="/docs/developers" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Developers</Link>

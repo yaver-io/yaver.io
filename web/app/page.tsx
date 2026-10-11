@@ -151,6 +151,8 @@ export default function HomePage() {
     description: LANDING_TAGLINE,
   };
 
+  // Pricing removed from the landing page (Yaver is free); kept for reference:
+  /*
   const pricingLd = {
     "@context": "https://schema.org",
     "@type": "OfferCatalog",
@@ -165,6 +167,7 @@ export default function HomePage() {
       },
     ],
   };
+  */
 
   return (
     <>
@@ -180,10 +183,12 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationLd) }}
       />
+      {/* pricing JSON-LD hidden: Yaver is free
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(pricingLd) }}
       />
+      */}
       {/* ── Section 1: Hero — product-first, real-device loop ── */}
       <section className="px-6 pb-10 pt-20 md:pt-28">
         <div className="mx-auto max-w-5xl text-center">
@@ -241,12 +246,14 @@ export default function HomePage() {
             >
               Download Yaver — free
             </Link>
+            {/* pricing button hidden: Yaver is free
             <Link
               href="/pricing"
               className="rounded-lg border border-surface-700 bg-surface-900/70 px-6 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
             >
               Relay Pro — $9/mo &rarr;
             </Link>
+            */}
           </div>
 
           <div className="mx-auto mt-10 w-full max-w-xl text-left">
@@ -440,11 +447,8 @@ export default function HomePage() {
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
                 Keep the repository and coding agent on your Mac, PC, Linux
-                box, or VPS. Relay Pro makes that runtime reachable by every
-                supported Yaver client and by apps using the Yaver SDK.{" "}
-                <Link href="/pricing" className="underline hover:text-surface-300">
-                  Pricing & details
-                </Link>.
+                box, or VPS. It stays reachable from every supported Yaver
+                client and from apps using the Yaver SDK.
               </p>
             </div>
 
@@ -536,7 +540,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Section 4: Pricing teaser ── */}
+      {/* ── Section 4: Pricing teaser — hidden: Yaver is free ──
       <section id="pricing" className="border-t border-surface-800/60 px-6 py-20">
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-3 text-center text-2xl font-bold text-surface-50 md:text-3xl">
@@ -615,6 +619,7 @@ export default function HomePage() {
           </p>
         </div>
       </section>
+      */}
 
       {/* ── Section 5: Why this exists ── */}
       <section className="border-t border-surface-800/60 px-6 py-20">

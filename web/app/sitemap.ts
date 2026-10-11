@@ -14,7 +14,7 @@ const staticRoutes: StaticRoute[] = [
   { path: "/download", changeFrequency: "weekly", priority: 0.9 },
   { path: "/remote-ai-coding-agent", changeFrequency: "monthly", priority: 0.9 },
   { path: "/about", changeFrequency: "monthly", priority: 0.8 },
-  { path: "/pricing", changeFrequency: "monthly", priority: 0.8 },
+  // { path: "/pricing", changeFrequency: "monthly", priority: 0.8 }, // hidden: Yaver is free
   { path: "/integrations", changeFrequency: "monthly", priority: 0.8 },
   { path: "/apps", changeFrequency: "weekly", priority: 0.8 },
   { path: "/games", changeFrequency: "weekly", priority: 0.8 },

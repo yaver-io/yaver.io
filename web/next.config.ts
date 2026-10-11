@@ -23,6 +23,8 @@ const nextConfig: NextConfig = {
       { source: "/for-agents", destination: "/llms.txt", permanent: true },
       { source: "/setup", destination: "/llms.txt", permanent: true },
       { source: "/ai", destination: "/llms.txt", permanent: true },
+      // Yaver is free; the pricing page is retired (temporary so it can return).
+      { source: "/pricing", destination: "/", permanent: false },
     ];
   },
   // Apple App Site Association lives under /.well-known/ but the
