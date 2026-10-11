@@ -647,6 +647,12 @@ func configuredPublicEndpoints(cfg *Config) []string {
 		seen[assigned] = true
 		out = append(out, assigned)
 	}
+	// Auto Cloudflare quick tunnel (cf_autotunnel.go): lowest priority, only
+	// present while cloudflared is actually up.
+	if ep := autoTunnelEndpoint(); ep != "" && !seen[ep] {
+		seen[ep] = true
+		out = append(out, ep)
+	}
 	// Manual list from config.json wins on first-position so
 	// `yaver ssh @alias` and the dashboard SSH/Shell tooltip resolve
 	// to the operator-provided host even when Cloudflare is wired

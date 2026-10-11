@@ -2490,6 +2490,7 @@ func runServe(args []string) {
 	workDir := fs.String("work-dir", ".", "Working directory for tasks")
 	noQUIC := fs.Bool("no-quic", false, "Disable QUIC server (HTTP only)")
 	noRelay := fs.Bool("no-relay", false, "Disable relay tunnel (direct only)")
+	noTunnel := fs.Bool("no-tunnel", false, "Disable the automatic Cloudflare tunnel (used when Tailscale is absent)")
 	waitForSession := fs.Bool("wait-for-session", false, "Wait for other Claude Code sessions to finish before starting tasks")
 	debug := fs.Bool("debug", false, "Run in foreground with verbose logging")
 	dummy := fs.Bool("dummy", false, "Use dummy runner (fake responses for network testing)")
@@ -4132,6 +4133,10 @@ func runServe(args []string) {
 
 	// Start LAN discovery beacon (UDP broadcast for same-network mobile discovery)
 	go startBeacon(ctx, cfg.DeviceID, *httpPort, hostname, ownerUserID)
+
+	// Free off-LAN path now that the shared relay is gone: Tailscale if the
+	// user has it, otherwise an auto-managed Cloudflare tunnel (cf_autotunnel.go).
+	go runAutoTunnel(ctx, cfg, *httpPort, *noTunnel)
 
 	// Out-of-band SSH control channel (dormant unless YAVER_SSH_CONTROL is set).
 	// The redundant, always-available control/task/self-heal channel — see
