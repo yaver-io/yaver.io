@@ -1,0 +1,90 @@
+{
+  "generated": "2026-11-01",
+  "branch": "chat-only",
+  "baseBranch": "main",
+  "restoreRecipe": "git log --oneline chat-only -- <path> ; git revert <sha>   (main is never merged into; every phase is its own commit)",
+  "entries": [
+    {
+      "phase": 1,
+      "name": "relay as a default transport",
+      "globs": [
+        "mobile/src/lib/quic.ts",
+        "backend/convex/devices.ts",
+        "backend/convex/schema.ts",
+        "desktop/agent/connection_preferences.go"
+      ],
+      "why": "the public/free relay must not be a default path; Tailscale address or a Cloudflare tunnel only. The relay/ source directory (79 tracked files) is KEPT in git and is not deleted.",
+      "restore": "Phase 1's own commit (the one that removed relay-as-default). Use `git log --oneline chat-only -- mobile/src/lib/quic.ts backend/convex/devices.ts backend/convex/schema.ts desktop/agent/connection_preferences.go` then `git revert <sha>`.",
+      "fileCount": 4,
+      "codeFiles": 4
+    },
+    {
+      "phase": 2,
+      "name": "the non-Chat, non-Machines screens",
+      "globs": [
+        "mobile/app/**/*.tsx excluding mobile/app/(tabs)/tasks.tsx, mobile/app/(tabs)/devices.tsx, mobile/app/(tabs)/_layout.tsx, mobile/app/index.tsx, mobile/app/login.tsx, mobile/app/connection.tsx, mobile/app/secure-handoff.tsx"
+      ],
+      "why": "two destinations only",
+      "restore": "Phase 2's own commit (the one that removed the extra mobile screens). Use `git log --oneline chat-only -- 'mobile/app/**/*.tsx'` then `git revert <sha>`.",
+      "fileCount": 125,
+      "codeFiles": 125
+    },
+    {
+      "phase": 3,
+      "name": "claude and codex runner plumbing",
+      "globs": [
+        "desktop/agent/claude_*.go",
+        "desktop/agent/codex_*.go",
+        "desktop/agent/acp_runner.go",
+        "desktop/agent/agent_mode.go",
+        "desktop/agent/agent_runner_resume.go",
+        "desktop/agent/ai_generator.go"
+      ],
+      "why": "opencode + DeepInfra/DeepSeek only",
+      "restore": "Phase 3's own commit (the one that removed the claude/codex runner plumbing). Use `git log --oneline chat-only -- 'desktop/agent/claude_*.go' 'desktop/agent/codex_*.go' desktop/agent/acp_runner.go desktop/agent/agent_mode.go desktop/agent/agent_runner_resume.go desktop/agent/ai_generator.go` then `git revert <sha>`.",
+      "fileCount": 12,
+      "codeFiles": 12,
+      "measuredOnThisCheckout": {
+        "grep -ril claude . (code extensions *.ts,*.tsx,*.go,*.swift,*.kt, node_modules excluded)": 670,
+        "grep -ril codex . (code extensions *.ts,*.tsx,*.go,*.swift,*.kt, node_modules excluded)": 569,
+        "grep -ril claude . (any extension, node_modules excluded)": 1170,
+        "grep -ril codex . (any extension, node_modules excluded)": 945
+      }
+    },
+    {
+      "phase": 4,
+      "name": "Convex functions and tables OAuth does not need",
+      "globs": [
+        "backend/convex/*.ts",
+        "backend/convex/*.mts",
+        "backend/convex/*.mjs"
+      ],
+      "why": "no backend beyond OAuth sign-in; code only, NO live data and NO Convex deploy",
+      "restore": "Phase 4's own commit (the one that removed the unused Convex functions and tables). Use `git log --oneline chat-only -- 'backend/convex/*.ts' 'backend/convex/*.mts' 'backend/convex/*.mjs'` then `git revert <sha>`. Never deploy Convex to restore it; revert only.",
+      "fileCount": 173,
+      "codeFiles": 122
+    },
+    {
+      "phase": 5,
+      "name": "web dashboard destinations and CLI runner verbs",
+      "globs": [
+        "web/app/**",
+        "web/components/dashboard/**",
+        "cli/**/*.go"
+      ],
+      "why": "same two destinations, opencode only",
+      "restore": "Phase 5's own commit (the one that removed the web dashboard destinations and CLI runner verbs). Use `git log --oneline chat-only -- 'web/app/**' 'web/components/dashboard/**' 'cli/**/*.go'` then `git revert <sha>`.",
+      "fileCount": 246,
+      "codeFiles": 243
+    },
+    {
+      "phase": 6,
+      "name": "proof steps",
+      "globs": [],
+      "why": "not a removal; the type checks, Yaver's tests and the one simulator screenshot that prove the rest.",
+      "restore": "Phase 6's own commit (the proof steps; nothing is removed by it, so a revert only drops the proof commands and the screenshot artifact). Use `git log --oneline chat-only` then `git revert <sha>`.",
+      "fileCount": 0,
+      "codeFiles": 0
+    }
+  ]
+}
