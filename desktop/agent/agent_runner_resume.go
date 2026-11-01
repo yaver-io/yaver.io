@@ -41,17 +41,6 @@ func resumeTransform(runner RunnerConfig, baseArgs []string, prompt, workDir, se
 		return baseArgs, false
 	}
 	switch normalizeRunnerID(runner.RunnerID) {
-	case "claude":
-		out := make([]string, 0, len(baseArgs)+2)
-		for _, a := range baseArgs {
-			if a == "--no-session-persistence" {
-				continue
-			}
-			out = append(out, a)
-		}
-		out = append(out, "--resume", sessionID)
-		return out, true
-
 	case "opencode", "remoteless":
 		return append(append([]string{}, baseArgs...), "--session", sessionID), true
 
@@ -158,7 +147,11 @@ func applyResumeRunnerSelection(runnerID string, args []string, model, reasoning
 //   - any other runner: needs both a captured id and a ResumeArgs template.
 func resumeCanCarryContext(runner RunnerConfig, sessionID string) bool {
 	switch normalizeRunnerID(runner.RunnerID) {
-	case "claude", "codex", "opencode", "remoteless":
+	// claude was removed in chat-only phase 3 (see docs/CHAT_ONLY.md). Leaving
+	// it in this list made resumeTransform's default arm append the (absent)
+	// ResumeArgs template and still report ok=true, i.e. claim a resume it
+	// could not perform.
+	case "codex", "opencode", "remoteless":
 		return strings.TrimSpace(sessionID) != ""
 	default:
 		return strings.TrimSpace(sessionID) != "" && len(runner.ResumeArgs) > 0

@@ -5,26 +5,24 @@ import (
 	"testing"
 )
 
-func TestResumeTransform_Claude(t *testing.T) {
+// TestResumeTransform_ClaudeWasRemoved pins the chat-only phase-3 contract: the
+// claude runner can no longer be selected, so a claude RunnerConfig must not
+// claim it can resume. Falling through to the default arm returns ok=false here
+// because the config carries no ResumeArgs template, so the follow-up spawns a
+// cold process — which is why resumeCanCarryContext must also report false and
+// the prompt composer must re-arm the Yaver preamble (task_prompt_frame.go).
+func TestResumeTransform_ClaudeWasRemoved(t *testing.T) {
 	runner := RunnerConfig{RunnerID: "claude", Command: "claude"}
 	base := []string{"-p", "{prompt}", "--no-session-persistence", "--tools", "Bash"}
 
-	// With a session id → --resume appended, --no-session-persistence stripped.
+	// No "--resume" arm exists for claude any more, and with no ResumeArgs
+	// template the transform must refuse rather than claim a resume.
 	out, ok := resumeTransform(runner, base, "go on", "/w", "sess-123")
-	if !ok {
-		t.Fatalf("claude: expected resume ok with session id")
+	if ok {
+		t.Fatalf("claude runner was removed — resumeTransform must not claim it can resume, got %v", out)
 	}
-	joined := strings.Join(out, " ")
-	if !strings.Contains(joined, "--resume sess-123") {
-		t.Errorf("claude: missing --resume, got %v", out)
-	}
-	if strings.Contains(joined, "--no-session-persistence") {
-		t.Errorf("claude: --no-session-persistence must be stripped, got %v", out)
-	}
-
-	// Without a session id → cannot resume.
-	if _, ok := resumeTransform(runner, base, "go on", "/w", ""); ok {
-		t.Errorf("claude: must not resume without a session id")
+	if strings.Contains(strings.Join(out, " "), "--resume") {
+		t.Errorf("claude runner was removed — no --resume arm may remain, got %v", out)
 	}
 }
 

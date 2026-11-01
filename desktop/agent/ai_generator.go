@@ -4,21 +4,25 @@ package main
 // autoinit / autoideas / autodev refill / autodev_harden_prompt
 // drivers all need to spawn an AI runner with a prompt and read
 // back its assistant text. Without this helper they'd each
-// hardcode `claude --print` and skip ollama / qwen / aider / codex.
+// hardcode a spawn and skip opencode / codex.
 //
 // Resolution order matches user expectation:
 //   1. Caller's explicit --engine / --runner picks first
 //   2. OpenCode, the product default, when no runner is requested
-//   3. Claude Code or Codex only as installed fallbacks
+//   3. Codex only as an installed fallback
 //   4. Surface a clear error listing missing CLIs
 //
 // All runners are wrapped in the same stdin-prompt + stream-json
 // (or plain --print) shape so the chat-event publisher sees their
 // output regardless of which one ran.
+//
+// CHAT-ONLY PHASE 3: the claude runner was removed — see
+// docs/CHAT_ONLY.md. Codex removal is a separate step.
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,10 +34,9 @@ import (
 // AIGeneratorSpec is what the caller hands us. Engine / Runner are
 // optional knobs that bias which CLI gets picked.
 type AIGeneratorSpec struct {
-	// Engine is the high-level autodev engine selector ("claude",
-	// "hybrid", "" = default). When set to "hybrid" we use the
-	// planner CLI (Claude) since the cheap implementer can't handle
-	// generation tasks well.
+	// Engine is the high-level autodev engine selector ("hybrid",
+	// "" = default). When set to "hybrid" we use the planner CLI
+	// since the cheap implementer can't handle generation tasks well.
 	Engine string
 
 	// Runner is an explicit runner ID override (e.g. "codex",
@@ -78,14 +81,12 @@ func RunAIGenerator(spec AIGeneratorSpec) (string, error) {
 	defer cancel()
 
 	switch cli {
-	case "claude":
-		return runAIGeneratorClaude(ctx, spec)
 	case "codex":
 		return runAIGeneratorCodex(ctx, spec)
 	case "opencode":
 		return runAIGeneratorOpenCode(ctx, spec)
 	default:
-		return "", fmt.Errorf("ai-generator: unsupported CLI %q (use claude, codex, or opencode)", cli)
+		return "", fmt.Errorf("ai-generator: unsupported CLI %q (use codex or opencode)", cli)
 	}
 }
 
@@ -93,12 +94,12 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 	have := func(bin string) bool { _, err := osexec.LookPath(bin); return err == nil }
 	runnerID, _ := splitAgentSpec(spec.Runner)
 
-	// Explicit --runner takes precedence.
+	// Explicit --runner takes precedence. The requested "claude" alias is
+	// translated to the claude CLI so RunAIGenerator surfaces the single
+	// phase-3 refusal instead of the generic no-CLI-on-PATH error.
 	switch strings.ToLower(strings.TrimSpace(runnerID)) {
 	case "claude", "claude-code":
-		if have("claude") {
-			return "claude"
-		}
+		return "claude"
 	case "codex":
 		if have("codex") {
 			return "codex"
@@ -112,13 +113,14 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 	// Engine bias.
 	switch strings.ToLower(strings.TrimSpace(spec.Engine)) {
 	case "hybrid":
-		// Planner = claude; fall through to standard order if missing.
+		// Planner = the strongest subscription lane; fall through to
+		// standard order if it is missing.
 	}
 
-	// Fallback chain — yaver's three first-class runners only. Keep this in
-	// the same preference order as supportedRunnerIDs. An installed but signed
-	// out Claude binary must not steal an otherwise healthy OpenCode request.
-	for _, bin := range []string{"opencode", "claude", "codex"} {
+	// Fallback chain — yaver's chat-only runners only. An installed but
+	// signed out Claude binary must not steal an otherwise healthy OpenCode
+	// request.
+	for _, bin := range []string{"opencode", "codex"} {
 		if have(bin) {
 			return bin
 		}
@@ -126,46 +128,9 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 	return ""
 }
 
+// claude runner removed in chat-only phase 3 — see docs/CHAT_ONLY.md
 func runAIGeneratorClaude(ctx context.Context, spec AIGeneratorSpec) (string, error) {
-	if err := CheckRunnerReady(GetRunnerConfig("claude"), spec.WorkDir); err != nil {
-		return "", err
-	}
-	args := []string{
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		"--add-dir", spec.WorkDir,
-	}
-	model := strings.TrimSpace(spec.Model)
-	if model == "" {
-		_, model = splitAgentSpec(spec.Runner)
-	}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-	cmd := osexec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = spec.WorkDir
-	cmd.Stdin = strings.NewReader(spec.Prompt)
-	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("spawn claude: %w", err)
-	}
-	resp, _, perr := parseClaudeStream(stdout)
-	if waitErr := cmd.Wait(); waitErr != nil && resp == nil {
-		return "", fmt.Errorf("claude: %w", waitErr)
-	}
-	if perr != nil && resp == nil {
-		return "", perr
-	}
-	if resp == nil {
-		return "", fmt.Errorf("claude: no result event")
-	}
-	return resp.Summary, nil
+	return "", errors.New("ai generator: the claude runner was removed in chat-only phase 3 (see docs/CHAT_ONLY.md)")
 }
 
 func runAIGeneratorCodex(ctx context.Context, spec AIGeneratorSpec) (string, error) {

@@ -71,8 +71,7 @@ type acpRunnerSpec struct {
 
 // acpAdapterCommand is the npm binary name for each adapter-backed runner.
 const (
-	acpClaudeAdapterBin = "claude-agent-acp"
-	acpCodexAdapterBin  = "codex-acp"
+	acpCodexAdapterBin = "codex-acp"
 )
 
 // acpRunnerSpecFor resolves the ACP launch spec for a runner. ok=false means
@@ -91,18 +90,6 @@ func acpRunnerSpecFor(runnerID string) (acpRunnerSpec, bool) {
 			ExtraArgs:              []string{"--pure"},
 			SubscriptionAuthMethod: "opencode-login",
 			DisplayName:            "OpenCode",
-		}, true
-	case "claude":
-		bin := resolveRunnerBinary(acpClaudeAdapterBin)
-		if bin == "" {
-			return acpRunnerSpec{}, false
-		}
-		return acpRunnerSpec{
-			RunnerID:               "claude",
-			Command:                bin,
-			SubscriptionAuthMethod: "claude-ai-login",
-			APIAuthMethod:          "console-login",
-			DisplayName:            "Claude Agent (via ACP)",
 		}, true
 	case "codex":
 		bin := resolveRunnerBinary(acpCodexAdapterBin)
@@ -177,8 +164,6 @@ func acpSubscriptionMethodID(runnerID string) string {
 	switch normalizeRunnerID(runnerID) {
 	case "opencode":
 		return "opencode-login"
-	case "claude":
-		return "claude-ai-login"
 	case "codex":
 		if os.Getenv("NO_BROWSER") == "1" {
 			return ""

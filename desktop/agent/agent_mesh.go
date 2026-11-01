@@ -654,30 +654,30 @@ func inferPreferredRunnerCandidates(node AgentGraphNodeSpec) []string {
 	if node.DesignPoints >= 0.8 {
 		// Plan/coherence: strongest subscription model first; glm is the cheap
 		// fallback when the subscription lane is already busy.
-		return []string{"claude-code", "codex", "glm", "opencode"}
+		return []string{"codex", "glm", "opencode"}
 	}
 	if node.BuildPoints >= 0.8 {
 		// Bulk implement: free subscription lane first, then the cheap apikey
-		// overflow lane before paying nothing extra falls back to claude-code.
-		return []string{"codex", "glm", "opencode", "claude-code"}
+		// overflow lane.
+		return []string{"codex", "glm", "opencode"}
 	}
 	if node.VerifyPoints >= 0.8 {
-		return []string{"codex", "claude-code", "glm", "opencode"}
+		return []string{"codex", "glm", "opencode"}
 	}
 	if strings.Contains(intent, "local llm") || strings.Contains(intent, "byok") {
-		return []string{"opencode", "glm", "codex", "claude-code"}
+		return []string{"opencode", "glm", "codex"}
 	}
 	if strings.Contains(intent, "testflight") || strings.Contains(intent, "ios") {
 		// iOS/TestFlight needs first-party Claude tooling on macOS; keep glm out.
-		return []string{"claude-code", "codex", "opencode"}
+		return []string{"codex", "opencode"}
 	}
 	switch node.Kind {
 	case AgentNodeChat:
-		return []string{"claude-code", "codex", "glm", "opencode"}
+		return []string{"codex", "glm", "opencode"}
 	case AgentNodeAutoIdeas:
-		return []string{"claude-code", "codex", "glm", "opencode"}
+		return []string{"codex", "glm", "opencode"}
 	default:
-		return []string{"claude-code", "codex", "glm"}
+		return []string{"codex", "glm"}
 	}
 }
 
@@ -705,11 +705,11 @@ func hybridLaneSet(degree int) map[string]bool {
 	case degree <= 0:
 		return nil
 	case degree == 1:
-		return map[string]bool{"claude-code": true}
+		return map[string]bool{"opencode": true}
 	case degree == 2:
-		return map[string]bool{"claude-code": true, "glm": true}
+		return map[string]bool{"opencode": true, "glm": true}
 	default:
-		return map[string]bool{"claude-code": true, "codex": true, "glm": true}
+		return map[string]bool{"opencode": true, "codex": true, "glm": true}
 	}
 }
 
@@ -727,7 +727,7 @@ func filterRunnerLanes(candidates []string, lanes map[string]bool) []string {
 		}
 	}
 	if len(out) == 0 {
-		for _, r := range []string{"claude-code", "codex", "glm"} {
+		for _, r := range []string{"opencode", "codex", "glm"} {
 			if lanes[r] {
 				out = append(out, r)
 			}
