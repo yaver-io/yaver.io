@@ -8635,13 +8635,16 @@ export class QuicClient {
   } {
     const prefs = this._connectionPreferences || [];
     if (prefs.length === 0) {
+      // The public relay is off by default in chat-only mode (see docs/CHAT_ONLY.md),
+      // so a direct Tailscale address or a Cloudflare tunnel is used unless the user
+      // explicitly configures a relay.
       return {
         hasPrefs: false,
         allowLanDirect: true,
         allowTailnet: true,
         allowPrivateDirect: true,
         allowTunnel: true,
-        allowRelay: true,
+        allowRelay: false,
       };
     }
     const enabled = new Set(
@@ -8658,7 +8661,9 @@ export class QuicClient {
       allowTailnet,
       allowPrivateDirect,
       allowTunnel: enabled.has("https-tunnel"),
-      allowRelay: enabled.has("free-relay") || enabled.has("private-relay"),
+      // free-relay (the platform/public relay) is deliberately not honoured any more;
+      // only an explicitly configured private relay is.
+      allowRelay: enabled.has("private-relay"),
     };
   }
 
